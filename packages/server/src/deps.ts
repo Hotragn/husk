@@ -110,6 +110,24 @@ export interface ServerConfig {
   triggers?: boolean;
   /** Turn the chat adapters off. Also off whenever their tokens are absent. */
   adapters?: boolean;
+  /**
+   * Serve the remote MCP endpoint at `/mcp`.
+   *
+   * On by default under `husk serve`; `createApp` callers that do not want the
+   * MCP SDK imported or real computers opened set it false. It refuses to mount
+   * at all on a non-loopback bind with no token.
+   */
+  mcp?: boolean;
+  /**
+   * Pin the provider remote MCP sessions run on. Defaults to `auto`.
+   *
+   * `auto` already refuses to settle for an unisolated provider at this
+   * endpoint, so this exists for the case where several isolated providers are
+   * available and the operator wants a specific one -- `fly` on a laptop that
+   * also has Docker, say, because a laptop that sleeps cannot back a cloud
+   * chat session.
+   */
+  mcpProvider?: string | undefined;
   bodyLimitBytes?: number;
 }
 
@@ -147,6 +165,8 @@ export function resolveConfig(partial: Partial<ServerConfig> = {}): ServerConfig
     corsOrigins: partial.corsOrigins ?? false,
     triggers: partial.triggers ?? true,
     adapters: partial.adapters ?? true,
+    mcp: partial.mcp ?? true,
+    mcpProvider: partial.mcpProvider ?? (env['HUSK_MCP_PROVIDER'] || undefined),
     bodyLimitBytes: partial.bodyLimitBytes ?? 32 * 1024 * 1024,
   };
   return cfg;

@@ -54,8 +54,18 @@ export async function run(argv: string[]): Promise<number> {
   ui.print(`${ui.green('✓')} control plane on ${ui.bold(server.url)}`);
   ui.print(ui.dim(`  health   ${server.url}/health`));
   ui.print(ui.dim(`  doctor   ${server.url}/v1/doctor`));
+  ui.print(ui.dim(`  mcp      ${server.url}/mcp  (streamable http — point a chat client here)`));
   ui.print(ui.dim(`  clients  new HuskClient({ baseUrl: "${server.url}" })  // @husk/sdk`));
   ui.note('');
+
+  // The MCP URL is only useful to a hosted chat surface if that surface can
+  // reach it, and a loopback bind means it cannot. Saying so here is cheaper
+  // than letting someone paste a localhost URL into ChatGPT and debug the
+  // timeout.
+  if (!process.env.HUSK_TOKEN) {
+    ui.note(ui.dim('  no HUSK_TOKEN — loopback clients only. A hosted chat surface needs a token and a'));
+    ui.note(ui.dim('  reachable address; see the MCP section of docs/API.md.'));
+  }
   ui.note(ui.dim('Ctrl-C to stop.'));
 
   await new Promise<void>((resolveWait) => {

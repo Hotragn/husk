@@ -13,6 +13,7 @@ import { computerRoutes } from './routes/computers.js';
 import { doctorRoutes } from './routes/doctor.js';
 import { eventRoutes } from './routes/events.js';
 import { huskRoutes, huskValidateRoute } from './routes/husks.js';
+import { mcpRoutes } from './routes/mcp.js';
 import { modelRoutes } from './routes/models.js';
 import { runRoutes } from './routes/runs.js';
 import { sessionRoutes } from './routes/sessions.js';
@@ -94,6 +95,12 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   await app.register(modelRoutes);
   await app.register(approvalRoutes);
   await app.register(eventRoutes);
+
+  // The remote MCP transport. On by default: a control plane that needs a flag
+  // before a chat surface can reach it is not reachable from a chat. It refuses
+  // to mount on a non-loopback bind with no token, so "on by default" does not
+  // mean "exposed by default".
+  if (config.mcp !== false) await app.register(mcpRoutes);
 
   if (config.triggers !== false) {
     const host = createTriggerHost(app);

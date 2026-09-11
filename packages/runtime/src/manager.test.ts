@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createLogger } from '@husk/core';
 import type { Availability, Computer, ComputerInfo, ComputerProvider, ComputerSpec } from '@husk/core';
 import { ComputerManager, defaultProviders } from './manager.js';
+import { listBindings } from './manager.js';
+import { loadInfos, persistInfo } from './registry.js';
 
 /**
  * Selection is the decision with the worst failure mode in the package.
@@ -31,7 +37,7 @@ class FakeProvider implements ComputerProvider {
     throw new Error('not used');
   }
 
-  async get(): Promise<Computer | null> {
+  async get(_id: string): Promise<Computer | null> {
     return null;
   }
 
@@ -198,5 +204,289 @@ describe('status', () => {
     expect(rows.map((r) => r.name)).toEqual(['docker', 'local']);
     expect(rows[0]).toMatchObject({ available: false, hint: 'start Docker Desktop', priority: 20 });
     expect(rows[1]).toMatchObject({ available: true, isolated: false, reason: 'guardrails, not a sandbox' });
+  });
+});
+
+/**
+ * Cleanup is non-transactional in both directions, and both directions used to
+ * be invisible: a registry record could outlive its workspace (an undeletable
+ * zombie that `husk ps` listed and no command could touch) and a workspace
+ * could outlive its record (real files no command could see).
+ */
+describe('stale bookkeeping', () => {
+  /**
+   * Shaped like `LocalProvider`: `list()` reads the JSON records, `get()`
+   * returns null once the backing workspace is gone. That asymmetry is the
+   * whole bug -- the computer is listed and unreachable at the same time.
+   */
+  class RegistryBackedProvider extends FakeProvider {
+    constructor() {
+      super('local', 10, { available: true, isolated: false });
+    }
+
+    override async list(): Promise<ComputerInfo[]> {
+      return (await loadInfos('local')).filter((i) => i.state !== 'destroyed');
+    }
+  }
+
+  async function withHome<T>(fn: (home: string, m: ComputerManager) => Promise<T>): Promise<T> {
+    const home = await mkdtemp(join(tmpdir(), 'husk-home-'));
+    const previous = process.env.HUSK_HOME;
+    process.env.HUSK_HOME = home;
+    try {
+      await mkdir(join(home, 'computers'), { recursive: true });
+      await mkdir(join(home, 'workspaces'), { recursive: true });
+      return await fn(home, manager([new RegistryBackedProvider()]));
+    } finally {
+      if (previous === undefined) delete process.env.HUSK_HOME;
+      else process.env.HUSK_HOME = previous;
+      await rm(home, { recursive: true, force: true });
+    }
+  }
+
+  async function writeRecord(home: string, id: string, extra: Partial<ComputerInfo> = {}): Promise<void> {
+    const now = new Date().toISOString();
+    const info: ComputerInfo = {
+      id,
+      name: id,
+      provider: 'local',
+      state: 'running',
+      image: 'local:wsl',
+      workdir: '/work',
+      createdAt: now,
+      lastUsedAt: now,
+      spec: {},
+      ...extra,
+    } as ComputerInfo;
+    await writeFile(join(home, 'computers', `${id}.json`), JSON.stringify(info), 'utf8');
+  }
+
+  it('destroy() clears a record whose machine is gone, instead of reporting failure', async () => {
+    await withHome(async (home, m) => {
+      // No provider can produce this machine -- exactly the state a deleted
+      // workspace leaves behind.
+      await writeRecord(home, 'cmp_zombie');
+      expect(await m.destroy('cmp_zombie')).toBe(true);
+      expect(existsSync(join(home, 'computers', 'cmp_zombie.json'))).toBe(false);
+    });
+  });
+
+  it('destroy() still reports false for an id that was never known', async () => {
+    await withHome(async (_home, m) => {
+      expect(await m.destroy('cmp_nosuchthing')).toBe(false);
+    });
+  });
+
+  it('destroyAll() counts the stale records it cleared, so the total is not a lie', async () => {
+    await withHome(async (home, m) => {
+      await writeRecord(home, 'cmp_one');
+      await writeRecord(home, 'cmp_two');
+      // The bug: "destroying 2 computers" followed by "destroyed 0", exit zero.
+      expect(await m.destroyAll()).toBe(2);
+      expect(await m.list()).toEqual([]);
+    });
+  });
+
+  it('destroy() releases the binding a stale record was holding', async () => {
+    await withHome(async (home, m) => {
+      await writeRecord(home, 'cmp_bound', { spec: { labels: { 'husk.key': 'mcp:abc' } } });
+      await writeFile(join(home, 'computers', 'bindings.json'), JSON.stringify({ 'mcp:abc': 'cmp_bound' }), 'utf8');
+      expect(await m.destroy('cmp_bound')).toBe(true);
+      const bindings = JSON.parse(await readFile(join(home, 'computers', 'bindings.json'), 'utf8'));
+      expect(bindings.bindings?.['mcp:abc'] ?? bindings['mcp:abc']).toBeUndefined();
+    });
+  });
+
+  it('finds workspace directories with no registry record', async () => {
+    await withHome(async (home, m) => {
+      await mkdir(join(home, 'workspaces', 'cmp_orphan', 'root'), { recursive: true });
+      await mkdir(join(home, 'workspaces', 'cmp_kept'), { recursive: true });
+      await writeRecord(home, 'cmp_kept');
+
+      expect(await m.orphanWorkspaces()).toEqual([join(home, 'workspaces', 'cmp_orphan')]);
+      expect(await m.pruneOrphanWorkspaces()).toBe(1);
+      expect(existsSync(join(home, 'workspaces', 'cmp_orphan'))).toBe(false);
+      // The one with a record is still someone's machine. Never touched.
+      expect(existsSync(join(home, 'workspaces', 'cmp_kept'))).toBe(true);
+    });
+  });
+});
+
+/**
+ * Binding is how a session finds its filesystem again, so the key is the unit
+ * of sharing -- and sharing a key means sharing a `/work`. Before refcounting,
+ * two holders of one key could not be distinguished, so whichever disconnected
+ * first destroyed the other's machine.
+ */
+describe('binding refcounts', () => {
+  class OneComputerProvider extends FakeProvider {
+    readonly created: FakeComputer[] = [];
+
+    constructor() {
+      super('local', 10, { available: true, isolated: false });
+    }
+
+    override async create(spec: ComputerSpec): Promise<Computer> {
+      const c = new FakeComputer(`cmp_fake${this.created.length}`, spec);
+      this.created.push(c);
+      await persistInfo(c.info);
+      return c as unknown as Computer;
+    }
+
+    override async get(id: string): Promise<Computer | null> {
+      const hit = this.created.find((c) => (c.id === id || c.info.name === id) && !c.destroyed);
+      return (hit as unknown as Computer) ?? null;
+    }
+
+    override async list(): Promise<ComputerInfo[]> {
+      return this.created.filter((c) => !c.destroyed).map((c) => c.info);
+    }
+  }
+
+  class FakeComputer {
+    destroyed = false;
+    readonly info: ComputerInfo;
+
+    constructor(
+      readonly id: string,
+      spec: ComputerSpec,
+    ) {
+      const now = new Date().toISOString();
+      this.info = {
+        id,
+        name: spec.name ?? id,
+        provider: 'local',
+        state: 'running',
+        image: 'fake',
+        workdir: '/work',
+        createdAt: now,
+        lastUsedAt: now,
+        spec,
+      } as ComputerInfo;
+    }
+
+    async destroy(): Promise<void> {
+      this.destroyed = true;
+      this.info.state = 'destroyed';
+    }
+  }
+
+  async function withHome<T>(fn: (make: () => ComputerManager, provider: OneComputerProvider) => Promise<T>) {
+    const home = await mkdtemp(join(tmpdir(), 'husk-home-'));
+    const previous = process.env.HUSK_HOME;
+    process.env.HUSK_HOME = home;
+    try {
+      await mkdir(join(home, 'computers'), { recursive: true });
+      await mkdir(join(home, 'workspaces'), { recursive: true });
+      // One shared provider, several managers: that is the shape of two
+      // independent sessions on one machine.
+      const provider = new OneComputerProvider();
+      return await fn(() => manager([provider]), provider);
+    } finally {
+      if (previous === undefined) delete process.env.HUSK_HOME;
+      else process.env.HUSK_HOME = previous;
+      await rm(home, { recursive: true, force: true });
+    }
+  }
+
+  it('gives two different keys two different computers', async () => {
+    await withHome(async (make) => {
+      const m = make();
+      const a = await m.ensure('mcp:session-a');
+      const b = await m.ensure('mcp:session-b');
+      // The whole point of keying on the session: separate /work.
+      expect(a.id).not.toBe(b.id);
+    });
+  });
+
+  it('gives the same key the same computer across calls', async () => {
+    await withHome(async (make) => {
+      const m = make();
+      expect((await m.ensure('mcp:session-a')).id).toBe((await m.ensure('mcp:session-a')).id);
+    });
+  });
+
+  it('counts one holder per manager, not one per ensure() call', async () => {
+    await withHome(async (make) => {
+      const m = make();
+      await m.ensure('shared');
+      await m.ensure('shared');
+      await m.ensure('shared');
+      expect((await listBindings()).shared?.refs).toBe(1);
+    });
+  });
+
+  it('counts two sessions sharing a key as two holders', async () => {
+    await withHome(async (make) => {
+      await make().ensure('shared');
+      await make().ensure('shared');
+      expect((await listBindings()).shared?.refs).toBe(2);
+    });
+  });
+
+  it('does not destroy a shared computer when one of two sessions leaves', async () => {
+    await withHome(async (make, provider) => {
+      const first = make();
+      const second = make();
+      await first.ensure('shared');
+      await second.ensure('shared');
+
+      // This is the bug: the first session to disconnect used to take the
+      // filesystem with it while the second was still running.
+      expect(await first.release('shared', { destroy: true })).toBe(false);
+      expect(provider.created[0]?.destroyed).toBe(false);
+      expect((await listBindings()).shared?.refs).toBe(1);
+    });
+  });
+
+  it('destroys it when the last holder leaves', async () => {
+    await withHome(async (make, provider) => {
+      const first = make();
+      const second = make();
+      await first.ensure('shared');
+      await second.ensure('shared');
+
+      await first.release('shared', { destroy: true });
+      expect(await second.release('shared', { destroy: true })).toBe(true);
+      expect(provider.created[0]?.destroyed).toBe(true);
+      expect((await listBindings()).shared).toBeUndefined();
+    });
+  });
+
+  it('keeps the computer when the holder asked not to destroy it', async () => {
+    await withHome(async (make, provider) => {
+      const m = make();
+      await m.ensure('kept');
+      expect(await m.release('kept', { destroy: false })).toBe(false);
+      expect(provider.created[0]?.destroyed).toBe(false);
+    });
+  });
+
+  it('ignores a release from a manager that never held the key', async () => {
+    await withHome(async (make) => {
+      await make().ensure('shared');
+      expect(await make().release('shared', { destroy: true })).toBe(false);
+      expect((await listBindings()).shared?.refs).toBe(1);
+    });
+  });
+
+  it('reads a pre-refcount bindings file as one holder rather than orphaning it', async () => {
+    await withHome(async (make, provider) => {
+      const m = make();
+      const c = await m.ensure('legacy');
+      // Rewrite the file in the old flat `key -> id` format, as an older husk
+      // would have left it.
+      await writeFile(
+        join(process.env.HUSK_HOME as string, 'computers', 'bindings.json'),
+        JSON.stringify({ legacy: c.id }),
+        'utf8',
+      );
+
+      const other = make();
+      expect((await other.ensure('legacy')).id).toBe(c.id);
+      // One migrated holder plus the new one.
+      expect((await listBindings()).legacy?.refs).toBe(2);
+      expect(provider.created).toHaveLength(1);
+    });
   });
 });

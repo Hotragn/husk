@@ -111,7 +111,12 @@ export const TOOLS: ToolDef[] = [
       type: 'object',
       properties: {
         url: { type: 'string', description: 'Absolute http(s) URL.' },
-        maxBytes: { type: 'number', description: 'Cap the extracted text. Defaults to 200 KB.' },
+        maxBytes: {
+          type: 'number',
+          description:
+            'Cap the readable text returned. Defaults to 200 KB. The page is downloaded and ' +
+            'stripped in full regardless, so a small value here costs you prose, not quality.',
+        },
         timeoutSec: { type: 'number', description: 'Give up after this long. Defaults to 30.' },
       },
       required: ['url'],
@@ -314,10 +319,15 @@ async function browse(computer: Computer, args: Record<string, unknown>): Promis
     ...(typeof args.timeoutSec === 'number' ? { timeoutSec: args.timeoutSec } : {}),
   });
 
+  // Say *which* budget was hit. "truncated" alone sends a model re-fetching
+  // with a bigger maxBytes when the download was what got cut, and vice versa.
+  const cut = [page.textTruncated ? 'text capped' : '', page.rawTruncated ? 'download capped' : '']
+    .filter(Boolean)
+    .join(', ');
   const head = [
     `${page.status} ${page.url}`,
     page.title ? `title     ${page.title}` : '',
-    `fetched   ${page.bytes} bytes via ${page.via}${page.truncated ? ' (truncated)' : ''}`,
+    `fetched   ${page.bytes} bytes via ${page.via}${cut ? ` (${cut})` : ''}`,
   ]
     .filter(Boolean)
     .join('\n');

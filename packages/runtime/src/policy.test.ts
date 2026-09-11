@@ -19,6 +19,30 @@ import {
   type JailMap,
 } from './policy.js';
 
+/**
+ * Can this host create a symlink at all?
+ *
+ * Windows without developer mode returns EPERM from `symlink()`. These cases
+ * used to swallow that with an early `return`, which made them *pass* -- a
+ * green tick for an assertion that never ran. Symlink escape is the jail's
+ * sharpest edge, so a silent pass here is worse than a visible gap: probe once
+ * and let vitest report the tests as skipped.
+ */
+async function symlinksWork(): Promise<boolean> {
+  const base = await mkdtemp(join(tmpdir(), 'husk-symlink-probe-'));
+  try {
+    await mkdir(join(base, 'target'), { recursive: true });
+    await symlink(join(base, 'target'), join(base, 'link'), 'dir');
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await rm(base, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+const SYMLINKS = await symlinksWork();
+
 async function makeJail(): Promise<JailMap> {
   const base = await mkdtemp(join(tmpdir(), 'husk-jail-'));
   const map = { root: join(base, 'root'), tmp: join(base, 'tmp') };
@@ -84,15 +108,11 @@ describe('assertInJail', () => {
     await expect(assertInJail(join(jail.root, 'a', 'b', 'c.txt'), jail)).resolves.toBeUndefined();
   });
 
-  it('refuses a symlink that escapes the jail', async () => {
+  it.skipIf(!SYMLINKS)('refuses a symlink that escapes the jail', async () => {
     const jail = await makeJail();
     const target = await mkdtemp(join(tmpdir(), 'husk-outside-'));
     const link = join(jail.root, 'escape');
-    try {
-      await symlink(target, link, 'dir');
-    } catch {
-      return; // Windows without developer mode cannot create symlinks; nothing to assert.
-    }
+    await symlink(target, link, 'dir');
     await expect(assertInJail(join(link, 'x'), jail)).rejects.toThrowError(/symlink/);
   });
 });
@@ -351,15 +371,11 @@ describe('assertInJail when the workspace has been destroyed under us', () => {
     await expect(assertInJail(join(jail.root, 'candidates.txt'), jail)).rejects.toThrowError(/no longer exists/);
   });
 
-  it('still reports a genuine escape as an escape', async () => {
+  it.skipIf(!SYMLINKS)('still reports a genuine escape as an escape', async () => {
     const jail = await makeJail();
     const outside = await mkdtemp(join(tmpdir(), 'husk-outside-'));
     const link = join(jail.root, 'escape');
-    try {
-      await symlink(outside, link, 'dir');
-    } catch {
-      return; // Windows without developer mode cannot create symlinks.
-    }
+    await symlink(outside, link, 'dir');
     await expect(assertInJail(join(link, 'x'), jail)).rejects.toThrowError(/symlink/);
   });
 });

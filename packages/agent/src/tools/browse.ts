@@ -5,15 +5,14 @@ import { defineTool, type AgentTool } from '../types.js';
 /**
  * The agent's browser, inside the agent's computer.
  *
- * `fetch_url` reaches the network from the *host* process. That is faster and it
- * needs no computer, but it is a different machine: a different IP, a different
- * DNS view, and an egress path the computer's `network` policy does not govern.
- * It also means the page a human sees in the console's Browser panel is not
- * necessarily the page the agent read.
+ * Same machine as the shell and the filesystem, so `browse` then `shell` then
+ * `write_file` are three views of one place -- and a page fetched here is
+ * subject to the policy declared in the husk.yaml.
  *
- * `browse` closes that gap. Same machine as the shell and the filesystem, so
- * `browse` then `shell` then `write_file` are three views of one place -- and a
- * page fetched here is subject to the policy declared in the husk.yaml.
+ * `fetch_url` now runs in the computer too, so the difference between the two is
+ * about output rather than about machines: `browse` returns links as structured
+ * data for navigating, `fetch_url` returns prose and is the better fit for a
+ * JSON API response.
  */
 
 interface BrowseResult {
@@ -50,7 +49,7 @@ export const browse = defineTool<{ url: string; maxBytes?: number; timeoutSec?: 
   async handler(input, ctx) {
     if (!ctx.computer) {
       throw new HuskError('E_TOOL_ERROR', 'browse needs a computer, and this husk has none', {
-        hint: 'set computer.enabled: true in husk.yaml, or use fetch_url to read from the host instead',
+        hint: 'set computer.enabled: true in husk.yaml — every husk browsing path runs in the machine',
       });
     }
 

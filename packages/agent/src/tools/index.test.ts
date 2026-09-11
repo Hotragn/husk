@@ -28,8 +28,17 @@ describe('resolveTools', () => {
   });
 
   it('skips every machine-bound tool when the husk has no computer', () => {
+    // `fetch_url` is machine-bound too now: it fetches from inside the computer
+    // rather than from the host process, so a husk with no computer cannot offer
+    // it. A web bundle that silently fetched from the host would be claiming an
+    // egress path the husk's network policy does not actually govern.
     const tools = resolveTools(['computer', 'files', 'web'], { spec, env: noKeys, hasComputer: false });
-    expect(names(tools)).toEqual(['fetch_url']);
+    expect(names(tools)).toEqual([]);
+  });
+
+  it('still offers web_search without a computer, since it is a host API call', () => {
+    const tools = resolveTools(['web'], { spec, env: { TAVILY_API_KEY: 'tvly-x' }, hasComputer: false });
+    expect(names(tools)).toEqual(['web_search']);
   });
 
   it('registers web_search only when a key is present', () => {

@@ -1,10 +1,16 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { HUSK_VERSION, createLogger, quiet } from '@husk/core';
 import type { Computer, ComputerSpec, Logger } from '@husk/core';
 import { ComputerManager } from '@husk/runtime';
+import { listWorkResources, readWorkResource } from './resources.js';
 import { TOOLS, callTool } from './tools.js';
 
 export interface HuskMcpOptions {
@@ -56,11 +62,16 @@ export class HuskMcpServer {
     this.mcp = new Server(
       { name: 'husk', version: HUSK_VERSION },
       {
-        capabilities: { tools: {} },
+        // `resources` is what lets a *person* see the machine. Tools return text
+        // into a transcript, so without it a client has nothing to render, nothing
+        // to attach and nothing to download -- "show me what the bot produced" had
+        // no answer but pasted characters. Files under /work are the answer.
+        capabilities: { tools: {}, resources: {} },
         instructions:
           'Husk gives you a Linux computer. Use `shell` for anything a command line can do; ' +
           'the filesystem at /work persists across calls in this session. Call `computer_info` ' +
-          'once before assuming a runtime or tool is installed.',
+          'once before assuming a runtime or tool is installed. Files you write under /work are ' +
+          'exposed as resources, so writing a result to /work is how you hand it to the user.',
       },
     );
 
@@ -81,6 +92,25 @@ export class HuskMcpServer {
         content.unshift({ type: 'text', text: this.isolationNote(computer) });
       }
       return { content, ...(result.isError ? { isError: true } : {}) };
+    });
+
+    /**
+     * Listing resources must not create a machine.
+     *
+     * Clients call `resources/list` eagerly on connect, sometimes before the
+     * user has said anything. Booting a container for that would undo the
+     * "adding the server costs nothing" property that makes people leave it
+     * installed -- so with no computer yet, there is nothing in /work, and the
+     * honest answer is an empty list.
+     */
+    this.mcp.setRequestHandler(ListResourcesRequestSchema, async () => {
+      if (!this.computer) return { resources: [] };
+      return { resources: await listWorkResources(this.computer) };
+    });
+
+    this.mcp.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      const computer = await this.getComputer();
+      return { contents: [await readWorkResource(computer, request.params.uri)] };
     });
   }
 
@@ -135,8 +165,14 @@ export class HuskMcpServer {
 
   async close(): Promise<void> {
     await quiet(() => this.mcp.close());
-    if (this.ephemeral && this.computer) {
-      await quiet(() => this.computer!.destroy());
+    if (!this.computer) return;
+    if (this.ephemeral) {
+      // Release rather than destroy: another session may be holding the same
+      // key, and taking its filesystem away mid-run is the failure mode the
+      // refcount exists to prevent. At the last holder this destroys.
+      await quiet(() => this.manager.release(this.sessionKey, { destroy: true }));
+    } else {
+      await quiet(() => this.manager.release(this.sessionKey, { destroy: false }));
     }
   }
 }

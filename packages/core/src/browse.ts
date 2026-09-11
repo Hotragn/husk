@@ -29,7 +29,13 @@ export interface BrowseBody {
   follow?: boolean;
   /** Give up after this many seconds. Defaults to 30. */
   timeoutSec?: number;
-  /** Cap the extracted text. Defaults to 200 KB. */
+  /**
+   * Cap the extracted text. Defaults to 200 KB.
+   *
+   * This is a budget for the *prose*, not for the download. See
+   * `rawBudgetFor` -- a small budget here must not shrink the HTML we strip,
+   * or the stripping stops working.
+   */
   maxBytes?: number;
 }
 
@@ -52,21 +58,33 @@ export interface BrowsePage {
   /** Readable text, tags stripped, whitespace collapsed. */
   text: string;
   links: BrowseLink[];
-  /** Bytes actually read, i.e. after any truncation. */
+  /** Bytes of HTML actually downloaded, i.e. after any truncation. */
   bytes: number;
   /** What the server claimed in Content-Length, when it said. Null otherwise. */
   totalBytes: number | null;
+  /** Something was cut: the download, the extracted text, or both. */
   truncated: boolean;
+  /** The extracted text hit `maxBytes`. The page itself may have arrived whole. */
+  textTruncated?: boolean;
+  /** The download hit the raw budget, so extraction saw a partial document. */
+  rawTruncated?: boolean;
   elapsedMs: number;
   /** The tool that did the fetch, so the console can say so. */
   via: 'python3' | 'curl';
 }
 
-/** Written into the computer once, then reused. */
-const FETCH_SCRIPT = String.raw`
+/**
+ * Written into the computer once, then reused.
+ *
+ * Exported so `browse-script.test.ts` can run the real thing against a real
+ * server. The strip-then-cap ordering below is only observable by executing it,
+ * and it is the fix for a bug that put raw JavaScript in a model's context.
+ */
+export const FETCH_SCRIPT = String.raw`
 import json, re, sys, html, urllib.request, urllib.error, urllib.parse, time
 
-url, follow, timeout, max_bytes = sys.argv[1], sys.argv[2] == "1", float(sys.argv[3]), int(sys.argv[4])
+url, follow, timeout = sys.argv[1], sys.argv[2] == "1", float(sys.argv[3])
+max_bytes, raw_bytes = int(sys.argv[4]), int(sys.argv[5])
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *a, **k):
@@ -87,16 +105,21 @@ try:
         final = res.geturl()
         ctype = res.headers.get("Content-Type", "")
         declared = res.headers.get("Content-Length")
-        raw = res.read(max_bytes + 1)
+        raw = res.read(raw_bytes + 1)
 except urllib.error.HTTPError as e:
     status, final, ctype = e.code, e.geturl(), e.headers.get("Content-Type", "")
-    raw = e.read(max_bytes + 1)
+    raw = e.read(raw_bytes + 1)
 except Exception as e:
     print(json.dumps({"error": str(e)}))
     raise SystemExit(0)
 
-truncated = len(raw) > max_bytes
-raw = raw[:max_bytes]
+# The download budget is deliberately independent of, and much larger than, the
+# text budget. Truncating the HTML first is what used to leak raw JavaScript: a
+# document cut mid-<script> has no closing tag for the non-greedy match below to
+# find, so the whole script body survives stripping and reaches the model. Strip
+# first, cap the prose second.
+raw_truncated = len(raw) > raw_bytes
+raw = raw[:raw_bytes]
 
 charset = "utf-8"
 m = re.search(r"charset=([\w-]+)", ctype, re.I)
@@ -130,9 +153,18 @@ if "html" in ctype.lower() or body.lstrip()[:15].lower().startswith(("<!doctype"
 else:
     text = body
 
+# Cap the prose on a UTF-8 byte boundary, so max_bytes means what the caller
+# thinks it means without ever splitting a codepoint.
+encoded = text.encode("utf-8")
+text_truncated = len(encoded) > max_bytes
+if text_truncated:
+    text = encoded[:max_bytes].decode("utf-8", errors="ignore")
+
 print(json.dumps({
     "url": final, "status": status, "contentType": ctype, "title": title,
-    "text": text, "links": links, "bytes": len(raw), "truncated": truncated,
+    "text": text, "links": links, "bytes": len(raw),
+    "truncated": raw_truncated or text_truncated,
+    "textTruncated": text_truncated, "rawTruncated": raw_truncated,
     "totalBytes": int(declared) if declared and declared.isdigit() else None,
     "elapsedMs": int((time.time() - started) * 1000),
 }))
@@ -162,6 +194,25 @@ function ownsLoopback(provider: string): boolean {
   return OWNS_LOOPBACK.has(provider);
 }
 
+/** Never download less than this, however small the text budget is. */
+const RAW_FLOOR = 1024 * 1024;
+/** Never download more than this, however large the text budget is. */
+const RAW_CEILING = 4 * 1024 * 1024;
+
+/**
+ * How much HTML to pull down in order to extract `maxBytes` of prose.
+ *
+ * These are two different budgets and conflating them was a real bug: a caller
+ * asking for 1200 bytes of text used to get 1200 bytes of *HTML*, which on any
+ * real page is `<head>` and a half-finished inline script. The stripping regex
+ * needs the whole document to work on, so the download floor stays generous
+ * even when the text budget is tiny -- which is exactly the case small local
+ * models hit, and exactly where the old behaviour was worst.
+ */
+export function rawBudgetFor(maxBytes: number): number {
+  return Math.min(RAW_CEILING, Math.max(RAW_FLOOR, maxBytes));
+}
+
 export async function browseInComputer(
   computer: Computer,
   req: BrowseRequest,
@@ -176,14 +227,29 @@ export async function browseInComputer(
   const maxBytes = req.maxBytes ?? 200 * 1024;
   const follow = req.follow !== false;
 
+  const rawBytes = rawBudgetFor(maxBytes);
+
   const hasPython = await probe(computer, 'python3', req.signal);
-  if (!hasPython) return await browseWithCurl(computer, parsed, { follow, timeoutSec, maxBytes, signal: req.signal });
+  if (!hasPython) {
+    return await browseWithCurl(computer, parsed, { follow, timeoutSec, maxBytes, rawBytes, signal: req.signal });
+  }
 
   await computer.writeFile(SCRIPT_PATH, FETCH_SCRIPT);
   const result = await computer.exec({
-    cmd: ['python3', SCRIPT_PATH, parsed.toString(), follow ? '1' : '0', String(timeoutSec), String(maxBytes)],
+    cmd: [
+      'python3',
+      SCRIPT_PATH,
+      parsed.toString(),
+      follow ? '1' : '0',
+      String(timeoutSec),
+      String(maxBytes),
+      String(rawBytes),
+    ],
     timeoutSec: timeoutSec + 10,
-    maxOutputBytes: maxBytes + 64 * 1024,
+    // The script's own output is text (<= maxBytes) plus up to 300 links, but
+    // JSON escaping can nearly double a byte count, so allow for that rather
+    // than truncating the JSON into something unparseable.
+    maxOutputBytes: Math.min(8 * 1024 * 1024, maxBytes * 2 + 128 * 1024),
     ...(req.signal ? { signal: req.signal } : {}),
   });
 
@@ -221,16 +287,24 @@ export async function browseInComputer(
     bytes: Number(parsedOut.bytes ?? 0),
     totalBytes: typeof parsedOut.totalBytes === 'number' ? parsedOut.totalBytes : null,
     truncated: Boolean(parsedOut.truncated),
+    textTruncated: Boolean(parsedOut.textTruncated),
+    rawTruncated: Boolean(parsedOut.rawTruncated),
     elapsedMs: Number(parsedOut.elapsedMs ?? 0),
     via: 'python3',
   };
 }
 
-/** No python3: fall back to curl and return the body with no extraction. */
+/**
+ * No python3: fall back to curl.
+ *
+ * Same rule as the python path -- download to the raw budget, strip, then cap
+ * the prose. Capping curl's output at the text budget would hand the model a
+ * half-closed `<script>` for exactly the same reason.
+ */
 async function browseWithCurl(
   computer: Computer,
   parsed: URL,
-  opts: { follow: boolean; timeoutSec: number; maxBytes: number; signal?: AbortSignal },
+  opts: { follow: boolean; timeoutSec: number; maxBytes: number; rawBytes: number; signal?: AbortSignal },
 ): Promise<BrowsePage> {
   const started = Date.now();
   const args = [
@@ -248,7 +322,7 @@ async function browseWithCurl(
   const res = await computer.exec({
     cmd: args,
     timeoutSec: opts.timeoutSec + 10,
-    maxOutputBytes: opts.maxBytes + 8192,
+    maxOutputBytes: opts.rawBytes + 8192,
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
 
@@ -261,20 +335,32 @@ async function browseWithCurl(
 
   const meta = /\nHUSK_META (\d+) (\S*) (\S+)\s*$/.exec(res.stdout);
   const body = meta ? res.stdout.slice(0, meta.index) : res.stdout;
+  const capped = clampTail(stripTags(body), opts.maxBytes);
   return {
     requestedUrl: parsed.toString(),
     url: meta?.[3] ?? parsed.toString(),
     status: meta ? Number(meta[1]) : 0,
     contentType: meta?.[2] ?? '',
     title: '',
-    text: stripTags(body),
+    text: capped.text,
     links: [],
     bytes: Buffer.byteLength(body, 'utf8'),
     totalBytes: null,
-    truncated: res.truncated,
+    truncated: res.truncated || capped.truncated,
+    textTruncated: capped.truncated,
+    rawTruncated: res.truncated,
     elapsedMs: Date.now() - started,
     via: 'curl',
   };
+}
+
+/** Cap on a UTF-8 boundary, keeping the head. */
+function clampTail(input: string, maxBytes: number): { text: string; truncated: boolean } {
+  const buf = Buffer.from(input, 'utf8');
+  if (buf.byteLength <= maxBytes) return { text: input, truncated: false };
+  // `toString` on a slice that ends mid-codepoint yields U+FFFD rather than a
+  // broken sequence, so trimming it off is enough.
+  return { text: buf.subarray(0, maxBytes).toString('utf8').replace(/�$/, ''), truncated: true };
 }
 
 async function probe(computer: Computer, bin: string, signal?: AbortSignal): Promise<boolean> {

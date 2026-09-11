@@ -30,8 +30,19 @@ export async function resolve(ref: string): Promise<Computer> {
   const all = await mgr.list();
   const byName = all.filter((c) => c.name === ref || c.id === ref || c.id.startsWith(ref));
   if (byName.length === 1) {
-    const found = await mgr.get((byName[0] as ComputerInfo).id);
+    const only = byName[0] as ComputerInfo;
+    const found = await mgr.get(only.id);
     if (found) return found;
+
+    // The registry still holds a record, but the provider cannot produce the
+    // machine -- its workspace or container is gone. Falling through to "no
+    // computer named X" below produced an error that contradicted its own hint
+    // ("running now: X") and left the record undeletable. Name the real state
+    // and say how to clear it.
+    throw new HuskError('E_COMPUTER_NOT_FOUND', `"${only.name}" is registered but its machine is gone`, {
+      hint: `nothing is left to connect to — clear the record with \`husk rm ${only.name}\``,
+      details: { id: only.id, provider: only.provider, workdir: only.workdir },
+    });
   }
   if (byName.length > 1) {
     throw new HuskError('E_COMPUTER_NOT_FOUND', `"${ref}" matches ${byName.length} computers`, {

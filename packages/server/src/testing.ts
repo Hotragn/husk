@@ -342,6 +342,7 @@ export async function buildTestApp(
     router?: RouterLike;
     agent?: AgentFactory;
     triggers?: boolean;
+    mcp?: boolean;
     approvalTimeoutMs?: number;
   } = {},
 ): Promise<TestApp> {
@@ -361,6 +362,7 @@ export async function buildTestApp(
       port: 0,
       token: overrides.token,
       triggers: overrides.triggers ?? false,
+      mcp: overrides.mcp ?? true,
       // A real console bundle would install a catch-all not-found handler and mask
       // the 404 shape these tests assert on.
       consoleDir: join(root, 'no-console'),

@@ -26,6 +26,8 @@
     "@fastify/websocket": "^11.3.0",
     "@husk/adapters": "0.1.0",
     "@husk/core": "0.1.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@husk/mcp": "0.1.0",
     "@husk/models": "0.1.0",
     "@husk/runtime": "0.1.0",
     "@husk/sessions": "0.1.0",

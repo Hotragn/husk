@@ -161,11 +161,20 @@ the `local` provider, which cannot filter egress at the OS level.
 This domain is for use…",
   "links": [{ "text": "More information", "href": "https://iana.org/domains/example" }],
   "bytes": 559, "totalBytes": 1256, "truncated": false,
+  "textTruncated": false, "rawTruncated": false,
   "elapsedMs": 142, "via": "python3" }
 ```
 
-`bytes` is what was read, after truncation; `totalBytes` is the server's
-`Content-Length` when it sent one, and null otherwise. A refused host returns
+`maxBytes` caps the **extracted text**, not the download. The two are separate
+budgets on purpose: the page is fetched and stripped whole, then the prose is
+capped. Capping the download first truncated the HTML mid-`<script>`, which left
+the closing tag missing and put raw JavaScript in the text — worse the smaller
+the budget, which is backwards for the small models husk is built around.
+
+`bytes` is how much HTML was downloaded; `totalBytes` is the server's
+`Content-Length` when it sent one, and null otherwise. `truncated` means
+something was cut; `textTruncated` and `rawTruncated` say which, so a caller
+knows whether a larger `maxBytes` would actually help. A refused host returns
 **403** and, unusually, carries `details` -- because a UI needs to tell "not in
 your allow-list" from "blocked by the built-in loopback rule":
 
@@ -330,6 +339,71 @@ WS /v1/events
 A firehose of `{ type, at, payload }` for the console: computer state changes, run
 lifecycle, reaper actions, provider availability flips. Send
 `{"type":"subscribe","topics":["computers","runs"]}` to filter.
+
+## MCP (remote)
+
+```
+POST   /mcp        Streamable HTTP: JSON-RPC in, JSON or an SSE stream back
+GET    /mcp        the standalone SSE stream for server-initiated notifications
+DELETE /mcp        end a session
+GET    /mcp/info   { transport, path, authRequired, activeSessions, sessionBinding }
+```
+
+The same MCP server `husk mcp` speaks on stdio, over HTTP, for chat surfaces that
+cannot spawn a local subprocess — a hosted client has no way to run a process on
+your laptop, so it needs a URL. `TOOLS` and `callTool` are mounted unchanged, and
+`husk mcp` is unaffected.
+
+Point a client at `http://127.0.0.1:8787/mcp`. Auth is the control plane's normal
+bearer token, not a second scheme:
+
+```
+kimi mcp add --transport http husk http://127.0.0.1:8787/mcp --header "Authorization: Bearer $HUSK_TOKEN"
+```
+
+`GET /mcp/info` is not part of MCP. It exists because the usual failure is a client
+pointed at the wrong URL or a host with no token, and a protocol error does not say
+which.
+
+**Which computer a request gets.** The binding key is the authenticated credential
+plus a session id, so two credentials never share a `/work`. The session half is
+resolved in this order:
+
+| source | comes from | when |
+| --- | --- | --- |
+| `explicit` | `X-Husk-Session:` or `?session=` | the client pinned a workspace; the only option that survives a client restart |
+| `mcp-session` | the `Mcp-Session-Id` the transport negotiated | 2025-era clients. Protocol-level sessions were removed in the 2026-07-28 revision, so this is not always available |
+| `principal` | the credential alone | stateless clients: one workspace per credential |
+
+Bindings are reference-counted, so two sessions sharing a key do not destroy each
+other's filesystem on disconnect. An idle session is reaped after 30 minutes,
+because a hosted chat surface does not reliably send `DELETE` when a user closes a
+tab.
+
+**What it refuses.**
+
+- A non-loopback bind with no `HUSK_TOKEN` → `E_CONFIG`, and `husk serve` does not
+  start. Serving an unauthenticated shell-execution endpoint on a network interface
+  is not a warning-level mistake.
+- A provider that does not claim isolation → `E_EXEC_DENIED`. `local` is the only
+  built-in one that does not, and `husk doctor` already reports it as
+  `local  not isolated`. A remote endpoint means input from a chat drives shell
+  commands; on `local` those run against the host filesystem, and one computer can
+  read every other computer's `/work` through `/mnt/c`. Per-session binding does not
+  fix that, so the gate is separate from the binding. Remote means `docker`,
+  `podman`, `ssh` or `fly`.
+
+Set `HUSK_MCP_PROVIDER` to pin which of those remote sessions use. `auto` already
+refuses an unisolated one; pin it when several are available and the choice
+matters — `fly` on a laptop that also runs Docker, because a laptop that sleeps
+cannot back a cloud chat session.
+
+**Resources.** Files under `/work` are exposed as MCP resources at
+`husk://work/<path>`, so a client can render, attach or download what the bot
+produced instead of receiving it pasted into a transcript. Text arrives as `text`,
+everything else as base64 `blob`. `resources/list` never creates a computer — a
+client that lists on connect must not cost you a container — so it is empty until
+the first tool call.
 
 ## Limits
 

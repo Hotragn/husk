@@ -61,16 +61,51 @@ export async function run(argv: string[]): Promise<number> {
     }
 
     const spin = ui.spinner(`destroying ${live.length} computers`);
-    const n = await mgr.destroyAll().finally(() => spin.stop());
-    if (values.json) ui.json({ destroyed: n });
-    else ui.print(`${ui.green('✓')} destroyed ${n} computer${n === 1 ? '' : 's'}`);
+    let n: number;
+    let orphans: number;
+    try {
+      n = await mgr.destroyAll();
+      // Workspace directories whose registry record is already gone. `list()`
+      // cannot see them, so without this sweep `rm --all` leaves real files and
+      // real disk behind and still reports success.
+      orphans = await mgr.pruneOrphanWorkspaces();
+    } finally {
+      spin.stop();
+    }
+
+    if (values.json) ui.json({ destroyed: n, orphanWorkspacesRemoved: orphans });
+    else {
+      ui.print(`${ui.green('✓')} destroyed ${n} computer${n === 1 ? '' : 's'}`);
+      if (orphans) {
+        ui.print(ui.dim(`  also removed ${orphans} orphan workspace${orphans === 1 ? '' : 's'} with no record`));
+      }
+      if (n < live.length) {
+        ui.print(ui.dim(`  ${live.length - n} could not be removed — run \`husk ps --all\` to see what is left`));
+      }
+    }
     return EXIT_OK;
   }
 
   const ref = positionals[0];
   if (!ref) throw new UsageError('missing <name|id> — or pass --all to remove every computer', 'rm');
 
-  const computer = await resolve(ref);
+  // A computer whose machine is already gone still has a registry record, and
+  // clearing that record is exactly what `rm` is for. `resolve` refuses it --
+  // correctly, since there is nothing to connect to -- so handle it here rather
+  // than leaving the record permanently undeletable.
+  let computer;
+  try {
+    computer = await resolve(ref);
+  } catch (err) {
+    if (!(err instanceof HuskError) || !/machine is gone/.test(err.message)) throw err;
+    const forgotten = await mgr.forget(ref);
+    if (!forgotten) throw err;
+    const cleared = (err.details as { id?: string } | undefined)?.id ?? ref;
+    if (values.json) ui.json({ destroyed: [{ id: cleared, name: ref, recordOnly: true }] });
+    else ui.print(`${ui.green('✓')} cleared the stale record for ${ui.bold(ref)} (its machine was already gone)`);
+    return EXIT_OK;
+  }
+
   const { name, id, workdir } = computer.info;
 
   if (!assumeYes) {

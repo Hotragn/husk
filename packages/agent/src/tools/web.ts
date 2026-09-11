@@ -1,9 +1,8 @@
-import { HuskError } from '@husk/core';
-import { extractTitle, htmlToText, looksLikeHtml } from '../html.js';
+import { HuskError, browseInComputer } from '@husk/core';
 import { assertUrlAllowed } from '../net.js';
 import { defineTool } from '../types.js';
 import type { AgentTool } from '../types.js';
-import { deadline, readCapped } from './fetching.js';
+import { deadline } from './fetching.js';
 import { int, object, str } from './util.js';
 
 const DEFAULT_FETCH_BYTES = 256 * 1024;
@@ -18,41 +17,64 @@ export interface FetchUrlResult {
   truncated: boolean;
 }
 
+/**
+ * Fetch a URL -- from inside the agent's own computer.
+ *
+ * This used to call the host's `fetch()`, which contradicted the principle
+ * stated at the top of `@husk/core`'s browse.ts: a fetch from the host process
+ * is a *different machine*, with a different IP, a different DNS view and an
+ * egress path the computer's network policy does not govern. So the two
+ * browsing paths disagreed about the product's central claim, and each had only
+ * half of what it needed -- this tool enforced `computer.network` but fetched
+ * from the wrong machine, while an in-computer `curl` ran in the right place and
+ * bypassed the allow-list.
+ *
+ * Routing through `browseInComputer` with the husk's declared policy passed
+ * explicitly gives one path both halves.
+ */
 export const fetch_url = defineTool<{ url: string; maxBytes?: number }, FetchUrlResult>({
   name: 'fetch_url',
   description:
-    'Fetch a web page or API response and return it as readable text. HTML is stripped down to its prose. ' +
-    'Subject to this husk network policy: hosts outside the allow-list are refused.',
+    'Fetch a web page or API response and return it as readable text, from inside your own computer. ' +
+    'HTML is stripped down to its prose. Subject to this husk network policy: hosts outside the ' +
+    'allow-list are refused.',
   parameters: object(
     {
       url: str('Absolute http or https URL.'),
-      maxBytes: int('Cap on the body read. Defaults to 256 KiB.', { minimum: 1024 }),
+      maxBytes: int('Cap on the readable text returned. Defaults to 256 KiB.', { minimum: 1024 }),
     },
     ['url'],
   ),
+  needsComputer: true,
   async handler(input, ctx) {
-    const parsed = assertUrlAllowed(input.url, ctx.spec.computer.network);
+    const policy = ctx.spec.computer.network;
+    // Checked here as well as inside `browseInComputer` so the refusal names the
+    // husk's declared policy, and so a bad URL costs nothing.
+    const parsed = assertUrlAllowed(input.url, policy);
+    if (!ctx.computer) {
+      throw new HuskError('E_TOOL_ERROR', 'fetch_url needs a computer, and this husk has none', {
+        hint: 'set computer.enabled: true in husk.yaml — husk fetches from the machine, not from the host process',
+      });
+    }
+
     const cap = Math.min(input.maxBytes ?? DEFAULT_FETCH_BYTES, Math.max(4096, ctx.maxOutputBytes));
     const d = deadline(ctx.signal, FETCH_TIMEOUT_MS);
     try {
-      const res = await fetch(parsed, {
-        redirect: 'follow',
-        signal: d.signal,
-        headers: { accept: 'text/html,application/xhtml+xml,application/json;q=0.9,text/plain;q=0.8,*/*;q=0.5' },
-      });
+      const page = await browseInComputer(
+        ctx.computer,
+        { url: parsed.toString(), maxBytes: cap, timeoutSec: Math.round(FETCH_TIMEOUT_MS / 1000), signal: d.signal },
+        policy,
+      );
       // A redirect chain can land somewhere the policy would have refused.
-      assertUrlAllowed(res.url || parsed.toString(), ctx.spec.computer.network);
+      assertUrlAllowed(page.url || parsed.toString(), policy);
 
-      const contentType = res.headers.get('content-type') ?? '';
-      const body = await readCapped(res, cap);
-      const isHtml = looksLikeHtml(contentType || null, body.text);
       return {
-        url: res.url || parsed.toString(),
-        status: res.status,
-        contentType,
-        title: isHtml ? extractTitle(body.text) : undefined,
-        text: isHtml ? htmlToText(body.text) : body.text,
-        truncated: body.truncated,
+        url: page.url || parsed.toString(),
+        status: page.status,
+        contentType: page.contentType,
+        ...(page.title ? { title: page.title } : {}),
+        text: page.text,
+        truncated: page.truncated,
       };
     } catch (err) {
       if (err instanceof HuskError) throw err;

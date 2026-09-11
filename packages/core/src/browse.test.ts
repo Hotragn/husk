@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { browseInComputer } from './browse.js';
+import { browseInComputer, rawBudgetFor } from './browse.js';
 import type { Computer, ExecRequest, ExecResult } from './types/computer.js';
 
 /**
@@ -127,5 +127,30 @@ describe('browseInComputer', () => {
     await expect(
       browseInComputer(c, { url: 'https://example.com' }, { mode: 'none' }),
     ).rejects.toThrowError(/refuses example\.com/);
+  });
+
+  it('passes the download budget separately from the text budget', async () => {
+    const c = fakeComputer({ stdout: page });
+    await browseInComputer(c, { url: 'https://example.com', maxBytes: 1200 });
+    const argv = c.execs.map((e) => e.cmd).find((cmd) => Array.isArray(cmd) && cmd.includes('python3')) as string[];
+    // The text budget the caller asked for, then the much larger download
+    // budget. Reversing these two, or dropping the second, is the bug.
+    expect(argv.slice(-2)).toEqual(['1200', String(rawBudgetFor(1200))]);
+    expect(rawBudgetFor(1200)).toBeGreaterThan(1200);
+  });
+});
+
+describe('rawBudgetFor', () => {
+  it('never downloads less than the floor, however small the text budget', () => {
+    expect(rawBudgetFor(1)).toBe(1024 * 1024);
+    expect(rawBudgetFor(1200)).toBe(1024 * 1024);
+  });
+
+  it('grows with a large text budget, because the text cannot exceed the download', () => {
+    expect(rawBudgetFor(2 * 1024 * 1024)).toBe(2 * 1024 * 1024);
+  });
+
+  it('stops at a ceiling, so one browse call cannot pull an unbounded page', () => {
+    expect(rawBudgetFor(500 * 1024 * 1024)).toBe(4 * 1024 * 1024);
   });
 });

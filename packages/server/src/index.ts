@@ -58,6 +58,19 @@ export type { ErrorBody, ServerErrorCode } from './errors.js';
 export { assertBindIsSafe, bearerToken, installAuth, isLoopbackHost } from './auth.js';
 export type { AuthOptions } from './auth.js';
 
+export {
+  SESSION_HEADER,
+  SESSION_QUERY,
+  REMOTE_PROVIDER_HINT,
+  assertMcpBindIsSafe,
+  assertProviderMayServeRemote,
+  sessionBindingKey,
+  sessionKeyForRequest,
+} from './mcp-session.js';
+export type { SessionIdentity, SessionKeyInput } from './mcp-session.js';
+
+export { MCP_PATH, mcpRoutes } from './routes/mcp.js';
+
 export { CronScheduler, nextFireTime, nextFireTimes, parseCron } from './cron.js';
 export type { CronExpression, CronJob } from './cron.js';
 

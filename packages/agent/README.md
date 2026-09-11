@@ -138,6 +138,14 @@ always fails.
   They also refuse loopback, link-local and RFC1918 addresses unless the operator named
   them in `computer.network.allow`, which keeps `mode: full` from meaning "and also the
   cloud metadata endpoint".
+- `fetch_url` and `browse` both fetch **from inside the computer**, via
+  `browseInComputer`. Neither uses the host's `fetch()`: the host is a different
+  machine with a different IP, a different DNS view and an egress path
+  `computer.network` does not govern, so a host fetch would report on the wrong
+  machine. Both therefore need a computer; `web_search` does not, because it is a
+  call to a search API rather than a claim about what this machine can reach.
+- `http_request` is still a host fetch. It exists for a request that needs specific
+  methods, headers and a body, and it is `dangerous` and opt-in for that reason.
 
 Write your own with `defineTool`, and hand it in as `tools: [...]`:
 
