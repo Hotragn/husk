@@ -1,0 +1,169 @@
+---
+title: Importing a transcript
+navTitle: Importing
+description: Claude Code, ChatGPT, Cursor, Gemini and markdown, normalised into one Transcript.
+order: 1
+---
+
+The conversation you had yesterday is a bot you can run today, and the first step is
+getting it out of whatever tool it happened in.
+
+```bash
+husk import
+```
+
+With no path, Husk searches the usual places, lists what it found, and asks you to
+choose:
+
+<Terminal title="husk import">
+{`Found 12 transcripts
+
+  #  SOURCE       WHAT                             SIZE    MODIFIED
+  1  claude-code  home/me/api  4f2a91c3             184KB   2026-09-08
+  2  chatgpt      conversations.json               2.1MB   2026-09-01
+  3  markdown     support-chat.md                  4KB     2026-08-30
+
+? import which? [1-12, or q to quit] 3
+✓ imported support-chat.md`}
+</Terminal>
+
+| Flag | What it does |
+| --- | --- |
+| `--source <s>` | Force an importer instead of detecting |
+| `--pick <n>` | Choose by number without being asked |
+| `--limit <n>` | How many candidates to list. Default 20 |
+| `--json` | Print the discovered list, or the imported transcript |
+
+```bash
+husk import --pick 1
+husk import ./chat.md --source markdown
+husk import ~/.claude/projects/-home-me-api/4f2a91c3.jsonl
+```
+
+Imported transcripts are cached under `~/.husk/transcripts/` and get an id you can hand
+to `husk distill`.
+
+## The five importers
+
+| Source | Format | Where it looks |
+| --- | --- | --- |
+| `claude-code` | JSONL event log | `~/.claude/projects/**/*.jsonl`, `~/.config/claude/projects/**/*.jsonl`, or `$CLAUDE_CONFIG_DIR/projects` |
+| `chatgpt` | `conversations.json` from a data export | `~/Downloads`, `~/Documents` |
+| `cursor` | `state.vscdb`, or an exported JSON/markdown chat | The platform's Cursor `globalStorage` directory |
+| `gemini` | CLI checkpoints, or a Takeout "My Activity" export | `~/.gemini/tmp/**` |
+| `markdown` | A pasted conversation with role markers | Nowhere — pass a path |
+
+Detection is a cheap sniff over the first 32 KB, scoring each importer 0–1, and the
+highest scorer that actually parses wins. `--source` skips it entirely.
+
+<NotYet>
+`TranscriptSource` also declares `claude-web`, `openai-api`, `anthropic-api` and
+`jsonl`. None of them has an importer. Passing one as `--source` falls through to
+ordinary detection rather than failing, which is worth knowing before you script it.
+</NotYet>
+
+## Branches
+
+Both Claude Code and ChatGPT store a conversation as a tree, not a list, because
+retrying a turn forks it. Husk reconstructs the branch you actually kept.
+
+**Claude Code**: nodes link through `parentUuid`. Husk finds every leaf, walks each one
+back to the root, and takes the **longest chain**, breaking ties by the later leaf
+timestamp. A retried turn abandons its branch, and the branch you kept going down is the
+longer one. Cycles are guarded with a seen-set.
+
+**ChatGPT**: the export names a `current_node`. Husk walks `parent` links back from it
+and reverses. When `current_node` is missing or dangling, it falls back to the deepest
+leaf.
+
+The result is the conversation as it ran, not every dead end.
+
+## What gets dropped, and why
+
+Claude Code transcripts carry a lot that is not conversation:
+
+| Dropped | Kept as |
+| --- | --- |
+| `thinking` and `redacted_thinking` blocks | A count in `meta.thinkingBlocks` |
+| Sidechain nodes (`isSidechain: true`) | Their tool names, in `meta.sidechainTools` |
+| `isMeta` nodes — injected images, loaded skill docs, hook output | Nothing |
+| Unparseable JSONL lines | A count in `meta.parse.unparseable` |
+
+A truncated final line is recorded as `truncatedTail` rather than counted as corruption,
+because an append-only log that is still being written always has one.
+
+`tool_use` becomes an assistant message with the text `[tool: <name>]`, plus `toolName`
+and `toolInput`. `tool_result` becomes a `tool`-role message, with its name resolved from
+a file-wide map of tool-use ids.
+
+Husk also scans `<dir>/<basename>/subagents/*.jsonl` next to a Claude transcript and
+merges those tool names in, so a husk distilled from a session that used subagents knows
+which tools were really in play.
+
+## The Cursor caveat
+
+Cursor stores chats in a SQLite database, and Husk has no SQLite driver — no native
+modules is a build-contract rule, not an oversight.
+
+So the `.vscdb` path is a byte-level salvage: Husk scans for JSON objects anchored on
+`"composerId"`, `"bubbles"`, `"conversation"`, `"richText"` or `"composerData"`, does a
+brace-depth scan that understands strings and escapes, and parses only the objects that
+come out **balanced**. An object split across a SQLite overflow page is dropped.
+
+It never invents a partial conversation. It does silently recover less than everything.
+
+## The Transcript
+
+Whatever the source, you get one shape:
+
+```ts
+interface Transcript {
+  id: string;
+  source: TranscriptSource;
+  title?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  origin?: string;          // a file path, an export id, a URL
+  messages: TranscriptMessage[];
+  meta?: Record<string, unknown>;
+}
+
+interface TranscriptMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  ts?: string;
+  toolName?: string;        // set on a tool call or a tool result
+  toolInput?: unknown;
+  meta?: Record<string, unknown>;
+}
+```
+
+## Discovery caveats worth knowing
+
+`husk import` with no path lists candidates from four sources. Two things about that list
+are not obvious:
+
+**Message counts are only real for Claude Code.** Husk reads a 96 KB head-and-tail window
+and, when the file fits, parses it exactly. When it does not, it extrapolates from the
+density of message-bearing lines and marks the result approximate. For ChatGPT, Cursor
+and Gemini, counting turns would mean parsing the whole document, so the picker shows
+`0` and marks it approximate rather than paying that cost for a list you are about to
+narrow to one.
+
+**`minMessages` therefore only filters Claude Code.** The other three always pass.
+
+## Redaction
+
+Everything that leaves the importer can be run through `redactTranscript`, which scrubs
+three kinds of thing:
+
+| Kind | Becomes |
+| --- | --- |
+| Credentials — Anthropic, OpenAI, Groq, Google, GitHub, Slack, AWS keys and PEM private keys | `sk-ant...[redacted]`, or `[redacted private key]` |
+| Your home directory, in all its spellings | `~` |
+| Email addresses | `[email]` |
+
+It covers message content, tool input, the title and the origin. It does **not** touch
+`message.meta` or `transcript.meta`, which for Claude Code includes `meta.cwd` — a full
+home path. That is not a leak into a `husk.yaml`, because `toSpec` does not copy it, but
+a redacted `Transcript` object still carries it.

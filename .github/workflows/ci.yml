@@ -1,0 +1,102 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HUSK_LOG_LEVEL: warn
+
+jobs:
+  packages:
+    name: packages (node ${{ matrix.node }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is in the matrix on purpose: the "no native modules" rule only
+        # holds if it is enforced somewhere that would notice it breaking.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build:packages
+      - run: npm run typecheck
+      - run: npm test
+
+  cli-smoke:
+    name: cli smoke (no keys, no docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      - run: npm run build:packages
+      # The free path is the product. If it needs a key or a daemon, this fails.
+      - name: doctor reports honestly with nothing configured
+        run: node packages/cli/dist/bin.js doctor --json
+      # These are the exact commands from the README quickstart. If the README
+      # drifts from the CLI, this job is where we find out.
+      - name: a local computer works with no Docker and no API key
+        run: |
+          set -euo pipefail
+          node packages/cli/dist/bin.js up ci-smoke --provider local
+          node packages/cli/dist/bin.js exec ci-smoke -- 'echo hello from husk > /work/a.txt'
+          test "$(node packages/cli/dist/bin.js exec ci-smoke -- 'cat /work/a.txt')" = 'hello from husk'
+          node packages/cli/dist/bin.js ps
+          node packages/cli/dist/bin.js rm ci-smoke --yes
+
+      - name: the command policy refuses what it promises to refuse
+        run: |
+          if node packages/cli/dist/bin.js up deny-check --provider local &&
+             node packages/cli/dist/bin.js exec deny-check -- 'sudo rm -rf /'; then
+            echo "deny list did not fire" >&2; exit 1
+          fi
+          node packages/cli/dist/bin.js rm deny-check --yes
+
+      - name: shipped examples validate
+        run: |
+          for f in examples/*.yaml; do node packages/cli/dist/bin.js validate "$f"; done
+      - name: mcp server starts and lists its tools
+        run: node packages/mcp/dist/smoke.js
+
+  images:
+    name: sandbox images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build base
+        uses: docker/build-push-action@v6
+        with:
+          context: sandbox
+          file: sandbox/Dockerfile.base
+          tags: ghcr.io/husk-sh/husk-base:ci
+          load: true
+      - name: the image is not root and huskinfo works
+        run: |
+          test "$(docker run --rm ghcr.io/husk-sh/husk-base:ci id -un)" = husk
+          docker run --rm ghcr.io/husk-sh/husk-base:ci huskinfo
+
+  web:
+    name: web build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      - run: npm run build:packages
+      - run: npm run build --workspace=@husk/web

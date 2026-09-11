@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-labelledby="husk-mark-title">
+  <title id="husk-mark-title">Husk</title>
+  <style>
+    /* Overridable when the SVG is inlined; falls back to the dark-theme values
+       when it is loaded through an img tag. No external references. */
+    .husk-shell { fill: var(--husk-mark-shell, #deb076); }
+    .husk-core  { fill: var(--husk-mark-core,  #42d0cf); }
+    @media (prefers-color-scheme: light) {
+      .husk-shell { fill: var(--husk-mark-shell, #623d00); }
+      .husk-core  { fill: var(--husk-mark-core,  #005251); }
+    }
+  </style>
+
+  <!-- Shell: the heavy half of the husk. Pointed top and bottom, four long
+       outer facets, a mouth cut into the right side. Ink box is 29x29 units
+       inside a 32 viewBox, so the mark sits square. -->
+  <path class="husk-shell" d="M13 1.5 L3.5 9 L1.5 19 L9 30.5 L17 28 L13.5 22 L12.5 15.5 L15.5 8.5 L20 4 Z"/>
+
+  <!-- Flap: the peeled half, thinner and shorter. The asymmetry between the two
+       halves is what stops the mark reading as an eye or a coffee bean. -->
+  <path class="husk-shell" d="M23.5 3 L30 10 L30.5 20 L26 27.5 L23.5 20 L23.8 11 Z"/>
+
+  <!-- Core: one asymmetric blade, widest at 40% height, leaning right and down
+       out of the mouth. It is also a caret. -->
+  <path class="husk-core" d="M18.2 9.5 L21 15 L18.8 26.5 L15.5 15.5 Z"/>
+</svg>

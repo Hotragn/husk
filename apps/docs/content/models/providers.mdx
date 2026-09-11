@@ -1,0 +1,254 @@
+---
+title: Providers and API keys
+navTitle: Providers and keys
+description: Eleven providers, the exact environment variable each one reads, where to get a key, and which four have a free tier you can actually use.
+order: 2
+---
+
+Eleven providers ship in `@husk/models`. Three have their own wire format and their own
+file; the rest speak OpenAI's `/v1/chat/completions` dialect and are configuration
+rather than code.
+
+| Provider | Priority | Environment variable | Free tier |
+| --- | --- | --- | --- |
+| `anthropic` | 95 | `ANTHROPIC_API_KEY` | no |
+| `openai` | 85 | `OPENAI_API_KEY` | no |
+| `google` | 80 | `GOOGLE_API_KEY` or `GEMINI_API_KEY` | **yes** |
+| `groq` | 60 | `GROQ_API_KEY` | **yes** |
+| `deepseek` | 58 | `DEEPSEEK_API_KEY` | no |
+| `cerebras` | 56 | `CEREBRAS_API_KEY` | **yes** |
+| `openrouter` | 55 | `OPENROUTER_API_KEY` | **yes**, on `:free` models |
+| `mistral` | 52 | `MISTRAL_API_KEY` | no |
+| `together` | 50 | `TOGETHER_API_KEY` | no |
+| `lmstudio` | 42 | none — `LMSTUDIO_HOST` moves the endpoint | local, so free |
+| `ollama` | 40 | none — `OLLAMA_HOST` moves the endpoint | local, so free |
+
+Priority is the quality ordering `auto` walks, highest first. It is not a statement about
+which provider is better at your task.
+
+A provider with no key set is not an error. It is reported, with the fix:
+
+<Terminal title="husk doctor, models section">
+{`MODELS
+  ✓ ollama
+      ollama/qwen2.5:1.5b, ollama/qwen2.5:7b, ollama/llama3.2:latest
+  ✗ anthropic
+      ANTHROPIC_API_KEY is not set
+      fix: Set ANTHROPIC_API_KEY for Claude, or run \`ollama pull gemma3\` for a free local model.
+  ✗ google
+      GOOGLE_API_KEY is not set
+      fix: Set GOOGLE_API_KEY — aistudio.google.com gives a free key with a Gemini Flash free tier.`}
+</Terminal>
+
+## Setting a key
+
+Husk reads keys from the process environment. Nothing is stored in `~/.husk`, and no
+command writes a key to disk.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+husk doctor            # confirms it took
+```
+
+For a persistent, non-shell-history setup, `~/.husk/.env` is the file Husk reserves for
+local overrides. On Windows, `setx ANTHROPIC_API_KEY "sk-ant-..."` and open a new
+terminal.
+
+<Warning>
+A key in the environment is visible to every process you launch. It is **not** passed
+into a computer: [environment scrubbing](/security/secrets) removes it before any agent
+command runs. If a husk genuinely needs a credential inside the machine, put it in
+`computer.env` in the `husk.yaml`, where a reviewer can see the decision.
+</Warning>
+
+## The three first-party providers
+
+### anthropic
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...       # console.anthropic.com
+export ANTHROPIC_BASE_URL=...             # optional, for a proxy
+```
+
+Catalogued models: `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5-20251001`. All
+three support tools, vision, streaming and extended thinking, with a 200k context
+window.
+
+Three things here are not shared with the OpenAI dialect, and they are why this provider
+has its own file: tool results ride inside a `user` message rather than a `tool` role,
+extended thinking is a content block whose signature must be echoed back verbatim, and
+prompt caching is opt-in per block.
+
+Caching is placed on exactly two blocks — the system prompt, and the last *stable* user
+turn. Every `cache_control` marker costs a cache write, and marking the newest turn
+caches a prefix that will never be seen again.
+
+Anthropic is also the one provider here that charges to *write* a cache entry. The
+catalog carries `cacheWritePerMTok` as an explicit price rather than a multiplier,
+because the write price is not a fixed fraction of input anywhere else.
+
+When you enable thinking, Husk raises `max_tokens` to at least the thinking budget plus
+1024 and drops `temperature` and `top_p`, because the API rejects a sampling override
+while thinking is on.
+
+### openai
+
+```bash
+export OPENAI_API_KEY=sk-...              # platform.openai.com
+export OPENAI_BASE_URL=...                # optional, for a compatible gateway
+```
+
+Catalogued: `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-5`, `gpt-5-mini`, `gpt-4o`,
+`gpt-4o-mini`, `o3`, `o4-mini`.
+
+This is the base dialect plus the quirks OpenAI's own models have. Anything matching
+`o1`–`o9` or `gpt-5` is treated as a reasoning model: `max_tokens` becomes
+`max_completion_tokens`, `temperature` and `top_p` are deleted, and a thinking budget is
+mapped onto `reasoning_effort`.
+
+| Thinking budget | `reasoning_effort` |
+| --- | --- |
+| unset | `medium` |
+| ≤ 2048 | `low` |
+| 2049–16383 | `medium` |
+| ≥ 16384 | `high` |
+
+Sending the wrong parameter name to a reasoning model is a 400, and a 400 is the one
+error class the router will not retry — so getting this right here is the difference
+between a working request and a dead one.
+
+### google
+
+```bash
+export GOOGLE_API_KEY=AIza...             # aistudio.google.com; GEMINI_API_KEY also read
+export GOOGLE_BASE_URL=...                # optional
+```
+
+Catalogued: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`. Flash and
+Flash-Lite are marked free — reachable at zero cost on the Gemini API free tier, at a
+low rate limit. Pro is not.
+
+Gemini is genuinely a different wire format, not a dialect: `contents` instead of
+`messages`, `model` instead of `assistant`, function results keyed by **name** rather
+than by call id, and a JSON Schema subset that rejects half of draft-07. Each of those
+is a translation `@husk/models` owns.
+
+<Note>
+Google prices Gemini 2.5 Pro in two tiers, above and below a 200k-token prompt.
+`ModelInfo` has one price slot, so the catalog carries the ≤200k rate. A long prompt
+costs roughly twice the estimate. The model carries a `tiered-pricing` tag so you can
+find it.
+</Note>
+
+## The OpenAI-compatible providers
+
+Each of these is a base URL, an environment variable and at most one quirk. If you find
+yourself needing a method for one, the quirk belongs behind a config flag instead.
+
+### groq — free tier
+
+```bash
+export GROQ_API_KEY=gsk_...               # console.groq.com/keys
+```
+
+Catalogued: `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`. Both are marked free and
+both support tools. Groq's selling point is latency; the 70B is the most capable
+genuinely-free hosted model in the catalog.
+
+### cerebras — free tier
+
+```bash
+export CEREBRAS_API_KEY=...               # cloud.cerebras.ai
+```
+
+Catalogued: `llama-3.3-70b`, `llama3.1-8b`, both marked free. Cerebras rejects
+`stream_options.include_usage`, so Husk does not send it — which means token counts on a
+streamed Cerebras call come from Husk's own estimate rather than from the provider.
+
+### openrouter — free on `:free` models
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...       # openrouter.ai
+```
+
+OpenRouter is one of three providers Husk asks for a live catalogue instead of trusting
+the static one. The `:free` suffix is the whole pricing signal:
+`deepseek/deepseek-chat` bills and `deepseek/deepseek-chat:free` does not, so a
+discovered model ending in `:free` is priced at zero and is eligible for `--model free`.
+
+Husk sends OpenRouter's two attribution headers, `http-referer: https://husk.sh` and
+`x-title: Husk`. Without them your calls are filed as anonymous on OpenRouter's activity
+page.
+
+### deepseek
+
+```bash
+export DEEPSEEK_API_KEY=...               # platform.deepseek.com
+```
+
+Catalogued: `deepseek-chat`, `deepseek-reasoner`. Both prices are conservative estimates,
+not published figures — see [Cost](/models/cost#which-prices-are-real).
+
+### mistral
+
+```bash
+export MISTRAL_API_KEY=...                # console.mistral.ai
+```
+
+Catalogued: `mistral-large-latest`, `mistral-small-latest`. Mistral's endpoint rejects
+unknown top-level stream options, so `stream_options` is not sent.
+
+### together
+
+```bash
+export TOGETHER_API_KEY=...               # api.together.ai/settings/api-keys
+```
+
+Catalogued: `meta-llama/Llama-3.3-70B-Instruct-Turbo`, `Qwen/Qwen2.5-Coder-32B-Instruct`.
+Together is asked for a live catalogue. Note that a Together model id contains a slash
+of its own; Husk splits `provider/model` at the first slash only, so
+`together/meta-llama/Llama-3.3-70B-Instruct-Turbo` resolves correctly.
+
+### lmstudio — local
+
+No key. Husk probes `http://127.0.0.1:1234/v1/models` with a 2-second timeout and treats
+everything LM Studio serves as free.
+
+```bash
+export LMSTUDIO_HOST=http://192.168.1.20:1234/v1   # optional, to point elsewhere
+```
+
+Unavailable reads as `http://127.0.0.1:1234/v1 is not listening`, with the fix
+`Start the LM Studio local server (Developer tab) and load a model.`
+
+### ollama — local
+
+No key. Husk lists what is actually pulled on the machine — never a catalogue of models
+you would have to download first — and reads the real context window and tool support
+from `/api/show`.
+
+```bash
+export OLLAMA_HOST=http://127.0.0.1:11434          # the default
+```
+
+[Local models](/models/local) is the end-to-end setup for both of these.
+
+## Self-hosting a compatible endpoint
+
+Anything that speaks `/v1/chat/completions` can be pointed at through the base-URL
+override of a provider you are not otherwise using:
+
+```bash
+export OPENAI_BASE_URL=http://10.0.0.5:8000/v1
+export OPENAI_API_KEY=whatever-your-gateway-wants
+husk models
+```
+
+Husk will apply OpenAI's reasoning-model quirks to any model id matching `o1`–`o9` or
+`gpt-5`, so avoid those names on a gateway that does not want them.
+
+## What Husk sends where
+
+Only two kinds of outbound request exist in the codebase: the model provider you
+configured, and a container registry when a flavor's image is not already pulled. There
+is no telemetry, no analytics and no crash reporter — absent, not disabled by a flag.

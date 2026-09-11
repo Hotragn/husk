@@ -1,0 +1,469 @@
+---
+title: Error codes
+navTitle: Errors
+description: Every HuskErrorCode — what raises it, what the message looks like, and what to do about it.
+order: 5
+---
+
+Every failure in Husk is a `HuskError` with a `code`, a `message`, and a one-line
+`hint` that says what to do next. The CLI prints the message in red and the hint dimmed
+underneath; the control plane returns all three as JSON.
+
+```text
+error refused: privilege escalation
+hint:  add a pattern to guardrails.allowCommands in husk.yaml if this is intentional
+```
+
+```json
+{ "error": { "code": "E_EXEC_DENIED",
+             "message": "refused: privilege escalation",
+             "hint": "add a pattern to guardrails.allowCommands in husk.yaml if this is intentional" } }
+```
+
+`--debug` adds the stack and the `cause` chain. `--json` puts the same object on stdout
+so a script that checks the exit code still gets parseable output on both paths.
+
+## The codes
+
+Twenty are declared in `@husk/core`. The server declares five more.
+
+Two of the twenty are **reserved**: `E_EXEC_TIMEOUT` and `E_STEP_LIMIT`, listed
+together in the exported `RESERVED_ERROR_CODES`. Husk never throws them, because both
+conditions produce a result worth keeping — partial exec output, a partly finished run
+— and an exception would destroy it. They stay declared so the HTTP mapping has a name
+for a gateway 504, and so removing one is a deliberate breaking change. Read
+`ExecResult.timedOut` and `RunResult.stopReason` instead.
+
+| Code | HTTP | Raised by |
+| --- | --- | --- |
+| [`E_PROVIDER_UNAVAILABLE`](#e_provider_unavailable) | 503 | a computer provider that cannot run |
+| [`E_COMPUTER_NOT_FOUND`](#e_computer_not_found) | 404 | a name or id that resolves to nothing |
+| [`E_COMPUTER_FAILED`](#e_computer_failed) | 500 | a machine that would not come up |
+| [`E_EXEC_FAILED`](#e_exec_failed) | 500 | the exec mechanism itself, not the command |
+| [`E_EXEC_TIMEOUT`](#e_exec_timeout) | 504 | *reserved — never thrown* |
+| [`E_EXEC_DENIED`](#e_exec_denied) | 403 | the command or network policy |
+| [`E_FS_DENIED`](#e_fs_denied) | 403 | the path jail, or a failed filesystem operation |
+| [`E_QUOTA`](#e_quota) | 429 | the machine limit, or provider rate limiting |
+| [`E_MODEL_UNAVAILABLE`](#e_model_unavailable) | 503 | no provider can serve the model asked for |
+| [`E_MODEL_ERROR`](#e_model_error) | 500 | the provider answered badly, or not at all |
+| [`E_NO_CREDENTIALS`](#e_no_credentials) | 401 | a missing or rejected key |
+| [`E_SPEC_INVALID`](#e_spec_invalid) | 422 | a `husk.yaml`, or a malformed request body |
+| [`E_IMPORT_FAILED`](#e_import_failed) | 500 | transcript import and distillation |
+| [`E_TOOL_ERROR`](#e_tool_error) | 500 | a tool that could not do what it was asked |
+| [`E_BUDGET_EXCEEDED`](#e_budget_exceeded) | 429 | the cost ceiling |
+| [`E_STEP_LIMIT`](#e_step_limit) | 500 | *reserved — never thrown* |
+| [`E_ABORTED`](#e_aborted) | 500 | Ctrl-C, a cancel, or a disconnect |
+| [`E_NOT_IMPLEMENTED`](#e_not_implemented) | 501 | a package that would not load |
+| [`E_CONFIG`](#e_config) | 500 | configuration that cannot be resolved |
+| [`E_INTERNAL`](#e_internal) | 500 | a bug |
+| `E_HUSK_NOT_FOUND` | 404 | server only |
+| `E_RUN_NOT_FOUND` | 404 | server only |
+| `E_APPROVAL_NOT_FOUND` | 404 | server only |
+| `E_TRANSCRIPT_NOT_FOUND` | 404 | server only |
+| `E_ROUTE_NOT_FOUND` | 404 | server only |
+
+---
+
+### `E_PROVIDER_UNAVAILABLE`
+
+You named a computer provider that is not usable, or none is.
+
+```text
+error provider "docker" is not usable: docker is installed but the daemon is not reachable
+hint:  start Docker Desktop (or `sudo systemctl start docker`), then re-run `husk doctor`
+```
+
+```text
+error no ssh target is configured
+hint:  export HUSK_SSH_TARGET=user@host, or set labels."husk.ssh" in husk.yaml
+```
+
+Husk never silently substitutes a weaker provider for the one you asked for, which is
+why this is an error rather than a downgrade. Run `husk doctor` for every provider's
+state and its fix. It is also raised by the model router when a provider exists but
+cannot serve the requested model.
+
+### `E_COMPUTER_NOT_FOUND`
+
+```text
+error no computer named "nope"
+hint:  running now: console-demo, docsbox
+```
+
+```text
+error "box" matches 3 computers
+hint:  use the id — `husk ps` shows them
+```
+
+Also raised when a machine's record survives but its backing container, Fly machine or
+remote directory does not, and when a destroyed machine is used again:
+
+```text
+computer cmp_x has been destroyed
+computer cmp_x has no container behind it
+```
+
+`husk ps --all` includes stopped machines. A destroyed one is gone.
+
+### `E_COMPUTER_FAILED`
+
+The machine would not come up. The message carries the provider's own words:
+
+```text
+error could not start a docker container: <docker's stderr>
+hint:  run `docker info` to check the engine is healthy
+```
+
+```text
+error could not create the remote workspace: Permission denied
+```
+
+### `E_EXEC_FAILED`
+
+The exec *mechanism* failed — not the command. A command that exits non-zero is a
+successful exec with a non-zero `exitCode`.
+
+```text
+error could not start a shell: spawn /bin/sh ENOENT
+error empty command array
+error the fly exec endpoint cannot accept stdin
+```
+
+### `E_EXEC_TIMEOUT`
+
+Declared in `HuskErrorCode` and mapped to HTTP 504, and **never thrown**. A timed-out
+exec returns an `ExecResult` with `timedOut: true` and the partial output, because the
+partial output is usually the useful part. Check `result.timedOut`, not for this error.
+
+### `E_EXEC_DENIED`
+
+The command deny list, the husk's own `denyCommands`, or the network policy.
+
+```text
+error refused: privilege escalation
+hint:  add a pattern to guardrails.allowCommands in husk.yaml if this is intentional
+```
+
+```text
+error network policy refuses example.com
+hint:  add "example.com" to computer.network.allow in husk.yaml
+```
+
+```text
+error refused private address 169.254.169.254
+hint:  loopback, link-local and RFC1918 hosts must be named in computer.network.allow
+```
+
+```text
+error refused file: URL
+hint:  only http and https are fetchable from a husk
+```
+
+See [Isolation](/security/isolation#the-command-deny-list) and
+[Network](/security/network).
+
+### `E_FS_DENIED`
+
+The path jail, or a filesystem operation that failed inside the machine.
+
+```text
+error path is outside the machine's writable area: /etc/passwd
+hint:  this computer exposes /work and /tmp; use a path under one of them
+```
+
+```text
+error path resolves outside the workspace through a symlink
+hint:  husk refuses to follow links that leave the machine
+```
+
+```text
+error refusing to delete the workspace root
+```
+
+The jail covers the filesystem **API**, not shell commands.
+[Details](/security/isolation#what-the-path-jail-does-not-cover).
+
+### `E_QUOTA`
+
+Too many machines, or a provider rate limiting you.
+
+```text
+error already running 8 computers (limit 8)
+hint:  destroy one with `husk rm <name>`, or raise maxComputers in ~/.husk/config.json
+```
+
+```text
+error Groq (llama-3.3-70b-versatile) returned 429: rate limit exceeded
+hint:  Groq is rate limiting. Husk will back off and fall back; set a cheaper model …
+```
+
+Only `running` and `creating` machines count toward the eight-machine quota. A model
+provider's 429 is retried with backoff and then falls back to the next candidate; you
+only see the error when every candidate is exhausted.
+
+<Note>
+The rate-limit hint suggests `husk config set model free`. There is no `husk config`
+command. Set the model with `--model free`, with `model:` in the `husk.yaml`, or with
+`"model": "free"` in `~/.husk/config.json`.
+</Note>
+
+### `E_MODEL_UNAVAILABLE`
+
+```text
+error no model provider is reachable
+hint:  set ANTHROPIC_API_KEY or OPENAI_API_KEY, or run `ollama serve` for a free local model
+```
+
+```text
+error Unknown model "sonet"
+hint:  Use provider/model, or one of: opus, sonnet, haiku, gpt, gemini, flash, gemma, llama, qwen, local, free, auto.
+```
+
+```text
+error no reachable model matches "opus"
+hint:  try one of: ollama/qwen2.5:7b, ollama/llama3.2:latest
+```
+
+Also raised when a provider answers 404 for a model id it does not serve. Run
+`husk models` for what is actually reachable, and `husk models --all` to include
+providers with no key.
+
+If Ollama is running and you still see "no model provider is reachable", see
+[Troubleshooting](/troubleshooting#ollama-is-running-but-husk-says-no-model-provider-is-reachable).
+
+### `E_MODEL_ERROR`
+
+The provider was reached and did not produce a usable answer: a 5xx, an unparseable
+stream, a network failure, or every candidate failing.
+
+```text
+error Anthropic (claude-sonnet-5) returned 503: upstream connect error
+hint:  Anthropic is having a bad time. Husk will retry, then fall back to the next provider.
+```
+
+```text
+error Ollama is unreachable: fetch failed
+hint:  Check network access to Ollama. Husk will fall back to another provider if one is configured.
+```
+
+Retryable. A 400 or 422 is not — the message says so, and the router will not shop a
+malformed request around six providers.
+
+### `E_NO_CREDENTIALS`
+
+A key is missing, or the provider rejected it.
+
+```text
+error Anthropic has no credential configured
+hint:  Set ANTHROPIC_API_KEY.
+```
+
+```text
+error Anthropic (claude-sonnet-5) returned 401: invalid x-api-key
+hint:  ANTHROPIC_API_KEY is missing or rejected. Re-check the value, or run `husk doctor` to see what else is reachable.
+```
+
+Over HTTP, also returned when `HUSK_TOKEN` is set and the request's bearer token is
+missing or wrong.
+
+Never retried — a 401 does not improve on a second attempt.
+
+### `E_SPEC_INVALID`
+
+A `husk.yaml`, or a malformed request body. Every problem is listed at once.
+
+```text
+error husk.yaml is not a valid husk
+  ✗ name: name must be lowercase alphanumeric with dashes
+  ✗ limits.maxSteps: Number must be less than or equal to 500
+hint:  `husk init --force` regenerates a valid file, or see `husk help init`
+```
+
+```text
+error husk.yaml is not valid YAML: bad indentation of a mapping entry at line 4
+```
+
+Over HTTP: `missing required query parameter 'path'`, `run requires a non-empty 'input'`,
+`body must carry either 'spec' or 'yaml'`, and a strict-schema rejection of an unknown
+key on `POST /v1/computers`.
+
+`details.issues` carries the list. `POST /v1/husks/validate` returns the same list with
+HTTP 200 rather than throwing.
+
+### `E_IMPORT_FAILED`
+
+Transcript import and distillation.
+
+```text
+error no transcript "abc" — not a stored id and not a file
+```
+
+```text
+error Claude Code import needs a path or content.
+```
+
+```text
+error Claude Code found no messages
+hint:  check the file is a conversation export and not an empty or partial one
+```
+
+### `E_TOOL_ERROR`
+
+A tool could not do what it was asked. These reach the model as a tool result rather
+than ending the run, which is deliberate — the model reads the hint and retries.
+
+```text
+Error: /work/src is a directory
+Error: oldString and newString are identical, so this edit would do nothing
+Error: not a valid URL: htps://example.com
+Error: could not fetch example.com: fetch failed
+```
+
+### `E_BUDGET_EXCEEDED`
+
+The cost ceiling, checked before the call rather than after.
+
+```text
+error anthropic/claude-opus-5 would cost at least $0.0600 for this prompt, over the $0.05 limit
+hint:  Raise maxCostUsd, shorten the prompt (~12000 tokens), or use a free model: `--model free`.
+```
+
+```text
+error no auto model can serve a ~12000 token prompt for under $0.05
+hint:  Raise maxCostUsd, or use `--model ollama/qwen2.5:7b`.
+```
+
+Inside a run, the same condition ends the run with `stopReason: 'budget'` and an error
+object carrying this code, rather than throwing — whatever the agent produced is still
+in the result. Never retried.
+
+See [Cost and budgets](/models/cost).
+
+### `E_STEP_LIMIT`
+
+Declared in `HuskErrorCode` and **never thrown**. Hitting `limits.maxSteps` ends the run
+with `stopReason: 'step_limit'`, which is not an error condition — the agent simply ran
+out of turns. Check `result.stopReason`.
+
+### `E_ABORTED`
+
+Ctrl-C, `POST /v1/runs/:id/cancel`, an HTTP client disconnecting, a stalled SSE
+consumer, or a server shutting down.
+
+```text
+error request aborted
+hint:  The caller cancelled this request.
+```
+
+Internal messages you may see in a log: `run cancelled by the operator`,
+`the caller aborted this run`, `client disconnected`, `the consumer stopped reading`,
+`terminal socket closed`.
+
+The CLI renders an interrupt as `interrupted` and exits **130**. A run stops between
+steps; the computer is left alone.
+
+### `E_NOT_IMPLEMENTED`
+
+A sibling package would not load, or a capability genuinely does not exist for this
+provider.
+
+```text
+error could not load @husk/server: Cannot find module '@husk/server'
+hint:  run `npm install && npm run build` at the repo root
+```
+
+```text
+error this computer was not created by a provider that can rebuild it
+```
+
+In a monorepo checkout this almost always means a package has not been built. Run
+`npm install && npm run build` at the root.
+
+### `E_CONFIG`
+
+Configuration that cannot be resolved, or a refusal to overwrite something.
+
+```text
+error husk.yaml already exists
+hint:  pass --force to overwrite it, or --out to write somewhere else
+```
+
+```text
+error Model alias "fast" loops back on itself
+hint:  Fix the modelAliases entry for "fast" in ~/.husk/config.json.
+```
+
+```text
+error ssh target "user@host:abc" has an invalid port: abc
+```
+
+```text
+error refusing to bind 0.0.0.0 without an auth token: this API can execute shell commands
+hint:  set HUSK_TOKEN=$(openssl rand -hex 32) before `husk serve --host 0.0.0.0`, or bind 127.0.0.1
+```
+
+### `E_INTERNAL`
+
+A bug. The hint says so.
+
+```text
+error something broke
+hint:  this is a bug in husk -- please report it
+```
+
+Also used by the SDK for a transport failure and for a malformed SSE frame:
+
+```text
+error cannot reach the husk control plane at http://127.0.0.1:7377/v1/computers: fetch failed
+hint:  start it with `husk serve`, or point the client at the right baseUrl
+```
+
+Re-run with `--debug` for the stack and the `cause` chain before filing.
+
+---
+
+## Server-only codes
+
+Declared in `@husk/server` rather than `@husk/core`, because the API needs a distinct
+404 family and core only has `E_COMPUTER_NOT_FOUND`.
+
+| Code | Message | Hint |
+| --- | --- | --- |
+| `E_HUSK_NOT_FOUND` | `no husk with id <name>` | run `husk ls` to list husks |
+| `E_RUN_NOT_FOUND` | `no run with id <id>` | run `husk runs` to list recent runs |
+| `E_APPROVAL_NOT_FOUND` | `no approval with id <id>` | approvals expire 120s after they are raised |
+| `E_TRANSCRIPT_NOT_FOUND` | `no transcript with id <id>` | import it again with `husk import` |
+| `E_ROUTE_NOT_FOUND` | `no route for GET /v1/x` | see docs/API.md for the endpoints this server serves |
+
+<Note>
+Two of those hints name commands that do not do what they say. `husk ls` is an alias
+for `husk ps` and lists **computers**; there is no CLI command that lists husks. `husk
+runs` does not exist at all. Use `GET /v1/husks` and `GET /v1/runs` while the control
+plane is up.
+</Note>
+
+<Warning>
+`@husk/sdk` does not know the five server-only codes. Its `KNOWN_CODES` set is the
+twenty from core, so a 404 carrying `E_HUSK_NOT_FOUND` is reconstructed as
+`E_COMPUTER_NOT_FOUND` — the status-derived fallback for 404. The original is preserved
+in `details.serverCode`. Branch on that if you need to tell a missing husk from a
+missing computer.
+</Warning>
+
+## Handling them
+
+```ts
+import { HuskError, isHuskError } from '@husk/core';
+
+try {
+  await manager.create({ flavor: 'python' });
+} catch (err) {
+  if (isHuskError(err) && err.code === 'E_QUOTA') {
+    console.error(err.message, err.hint, err.details);
+  }
+  throw err;
+}
+```
+
+`err.toJSON()` gives `{ name, code, message, hint, details }` — the same shape the
+control plane puts on the wire.

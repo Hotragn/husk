@@ -1,0 +1,202 @@
+---
+title: Cost and budgets
+navTitle: Cost
+description: How Husk estimates spend before a call, where the maxCostUsd ceiling is enforced, which catalog prices are guesses, and why a local model is genuinely zero.
+order: 4
+---
+
+Every ceiling in Husk is checked **before** the next model call, using an estimate of
+what that call will cost. Checking afterwards detects an overspend exactly one call too
+late, which is one call too many.
+
+## The four buckets
+
+A model's price is four numbers, all in USD per million tokens:
+
+| Field | Meaning | When absent |
+| --- | --- | --- |
+| `inputPerMTok` | Prompt tokens | `0` |
+| `outputPerMTok` | Completion tokens | `0` |
+| `cacheReadPerMTok` | Tokens served from a prompt cache | `inputPerMTok × 0.1` |
+| `cacheWritePerMTok` | Tokens written into a prompt cache | `0` |
+
+The buckets **add** rather than overlap: Anthropic reports `input_tokens` excluding
+anything served from or written to the cache, so the arithmetic is a straight sum.
+Providers that do not do prompt caching report zero for the cache buckets and nothing
+changes.
+
+A cache write defaults to free rather than to a fraction of input. Most providers charge
+nothing to populate a cache entry, and guessing high there would invent cost that never
+appears on a bill. Anthropic does charge for it, and the catalog spells out the number
+per model.
+
+```ts
+import { breakdown, costOf, formatUsd } from '@husk/models';
+
+const usage = { inputTokens: 12_000, outputTokens: 800, cacheReadTokens: 40_000 };
+costOf(info, usage);      // 0.0546
+breakdown(info, usage);   // { inputUsd, outputUsd, cacheReadUsd, cacheWriteUsd, totalUsd }
+formatUsd(0.0546);        // "$0.0546"
+```
+
+Totals are rounded to eight decimal places — sub-cent precision matters when a run makes
+forty calls. `formatUsd` prints `$0.00` for zero, six significant decimals below a cent,
+and four decimals above it.
+
+## Estimating before the call
+
+There is no tokeniser. `estimateTokens` is `Math.ceil(text.length / 3.6)`, plus a
+4-token framing allowance per message, 16 tokens of preamble for a tool list, and a flat
+1,200 tokens for an image. Shipping a 2 MB BPE table to save a budget guard from a 15%
+error is the wrong trade.
+
+<Warning>
+The estimate is used to decide what to drop and whether a call is affordable. It is
+never used to bill anyone, and it is not what your provider will invoice. Treat
+`maxCostUsd` as a circuit breaker, not as an accounting control.
+</Warning>
+
+Two numbers come out of the same price table:
+
+- **`minimumCostUsd(info, inputTokens)`** — the prompt alone. You pay for it whatever
+  happens, and the model is free to answer with nothing. This is what a budget guard
+  compares against, because refusing on an optimistic estimate lets through a call that
+  then blows the budget.
+- **`maximumCostUsd(info, inputTokens, maxOutputTokens)`** — the prompt plus the model
+  filling its entire output allowance.
+
+## Where the ceiling is enforced
+
+There are three ceilings, and they are not the same one.
+
+| Ceiling | Default | Set in | Enforced by |
+| --- | --- | --- | --- |
+| `limits.maxCostUsd` | `0.5` | `husk.yaml` | The agent's `Budget`, before every model call |
+| `maxCostUsd` | `5` | `~/.husk/config.json` | `ModelRouter`, when candidates are chosen |
+| `--max-cost` | from the spec | the command line | The agent's `Budget` |
+
+### In the agent loop
+
+`Budget.check()` runs before every model call and refuses on the first ceiling it
+crosses:
+
+```text
+the next call would cost about $0.5231, over the $0.5 ceiling
+```
+
+It also carries the step, token and wall-clock ceilings:
+
+```text
+reached the step ceiling of 24
+ran out of time after 300s
+the next call would reach about 204813 tokens, over the 200000 ceiling
+```
+
+The run ends with `stopReason: 'budget'`, `'step_limit'` or `'timeout'` — not with an
+error. Whatever the agent produced up to that point is still in the result.
+
+When the model's price is unknown — a local model, or a router that cannot introspect —
+the estimate falls back to **the most expensive call observed so far in this run**. That
+is `$0` on the first call and honest after that.
+
+### In the router
+
+`ModelRouter` filters candidates by `minimumCostUsd(candidate, promptTokens) <= limit`.
+
+An **explicitly named** model is never quietly swapped for a cheaper one. If you asked
+for `opus` and `opus` is unaffordable, that is an error, not a downgrade:
+
+```text
+error anthropic/claude-opus-5 would cost at least $0.0600 for this prompt, over the $0.05 limit
+hint:  Raise maxCostUsd, shorten the prompt (~12000 tokens), or use a free model: `--model free`.
+```
+
+A **dynamic** alias — `auto`, `free`, `local` — filters instead. If every reachable model
+is priced out, you get one error rather than a silent downgrade:
+
+```text
+error no auto model can serve a ~12000 token prompt for under $0.05
+hint:  Raise maxCostUsd, or use `--model ollama/qwen2.5:7b`.
+```
+
+### Over the control plane
+
+`POST /v1/husks/:name/run` clamps the request against the husk file:
+
+```ts
+maxCostUsd: Math.min(body.maxCostUsd ?? spec.limits.maxCostUsd, spec.limits.maxCostUsd)
+```
+
+A caller can lower the ceiling for one run and cannot raise it above what the
+`husk.yaml` declares.
+
+<Warning>
+`husk run --max-cost` is **not** validated. The value goes through a bare `Number()`, so
+`--max-cost abc` becomes `NaN`, every `projected > NaN` comparison is false, and the
+cost ceiling is silently disabled for that run. `--max-steps` and `--memory` are
+validated and reject a bad value with a usage error; `--max-cost` is the one that is
+not. Pass a number.
+</Warning>
+
+## Why local is zero
+
+Ollama and LM Studio models are priced at `inputPerMTok: 0, outputPerMTok: 0` and
+flagged `free: true`. That is not a rounded-down estimate — no money moves. `husk run`
+prints `free` rather than a dollar figure:
+
+```text
+3 steps · 1m07s · 4162 tokens · free
+```
+
+`maxCostUsd: 0` in a `husk.yaml` therefore means "local models only, and fail rather
+than fall back to anything that bills". It is the strongest cost guarantee Husk offers,
+and it is one line.
+
+## Which prices are real
+
+The catalog is honest about its own confidence. Prices marked `estimatedPricing: true`
+are **not** published figures — they are conservative estimates derived from the previous
+generation of the same tier, and they deliberately err high so a budget guard refuses
+early rather than late.
+
+Estimated today: every Anthropic model except Haiku 4.5, `gpt-5` and `gpt-5-mini`, both
+DeepSeek models, both Mistral models, both Cerebras models, both Together models, and
+`openrouter/deepseek/deepseek-chat`.
+
+Published (as far as we know, and only as fresh as the file): the GPT-4.1 family, the
+GPT-4o family, `o3`, `o4-mini`, `claude-haiku-4-5`, the Gemini 2.5 family, both Groq
+models.
+
+`husk models --json` prints the flag, so a script can tell the two apart:
+
+```bash
+husk models --json | jq -r '.[] | select(.estimatedPricing) | .id'
+```
+
+<Warning>
+Google prices Gemini 2.5 Pro in two tiers, above and below a 200k-token prompt.
+`ModelInfo` has one price slot and the catalog carries the ≤200k rate, so a prompt
+longer than that costs roughly twice the estimate. The model carries a `tiered-pricing`
+tag.
+</Warning>
+
+## Reading the real number back
+
+The router fills in `usage.costUsd` from the catalog whenever the provider did not
+report one, and warns when the actual cost lands above the ceiling the estimate cleared:
+
+```text
+warn  anthropic/claude-sonnet-5 cost $0.6120, over the $0.5000 ceiling; the estimate was low
+```
+
+That warning is the audit trail for a bad estimate. If you see it often on a model, its
+catalog price is wrong — which is worth a bug report, because the whole guard depends on
+it.
+
+```bash
+husk run husk.yaml "…" --json | jq '.usage'
+```
+
+```json
+{ "inputTokens": 12480, "outputTokens": 806, "costUsd": 0.049 }
+```

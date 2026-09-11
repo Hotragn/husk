@@ -1,0 +1,160 @@
+---
+title: Triggers
+description: http, cron and webhook are mounted by the server. discord, slack and telegram are built and not connected.
+order: 5
+---
+
+A husk becomes a bot through triggers declared in its spec. `husk serve` reads them and
+mounts what it can.
+
+```yaml
+triggers:
+  - type: http
+  - type: cron
+    schedule: '*/15 * * * *'
+    prompt: Any red builds on main in the last 15 minutes?
+  - type: webhook
+    path: /gh
+    secret: ${GITHUB_WEBHOOK_SECRET}
+```
+
+```bash
+curl -s localhost:7377/v1/triggers | jq
+```
+
+## What is actually mounted
+
+The spec accepts seven trigger types. `TriggerHost.sync()` has branches for three.
+
+| Type | Mounted | Where |
+| --- | --- | --- |
+| `http` | yes | `ALL /v1/t/<husk><path>` |
+| `webhook` | yes | `POST /v1/w/<husk><path>` |
+| `cron` | yes | The in-process scheduler |
+| `cli` | n/a | It is the default; it means "no server surface", which is correct |
+| `discord` | **no** | — |
+| `slack` | **no** | — |
+| `telegram` | **no** | — |
+
+<NotYet>
+`discord`, `slack` and `telegram` triggers parse, validate, save, and appear in a
+husk's summary — and then do nothing. `TriggerHost.sync()` is an `if / else if` chain
+covering `http`, `webhook` and `cron`; anything else falls through with no branch, no
+warning, and no entry in `GET /v1/triggers`.
+
+The adapters themselves are complete. `@husk/adapters` ships a Discord gateway client
+with resume and heartbeat handling, a Slack adapter with both Socket Mode and a
+signature-verified Events API endpoint, and a Telegram long-poller with an allowlist.
+`@husk/server` declares `@husk/adapters` as a dependency and never imports it.
+`ServerConfig.adapters` is resolved, defaulted to `true`, and never read. The `adapters`
+event topic exists and nothing emits on it.
+
+If you need one of these today, construct the adapter yourself — `createAdapter(kind,
+options)` is the intended factory — and supply an `AdapterContext` with a `run()`
+function. Nothing in the server implements that context, so `mountHttp` (which the
+Slack Events API mode and the whole webhook adapter depend on) has no implementation
+outside the test harness.
+</NotYet>
+
+<Note>
+Connecting one yourself is about 40 lines: construct the adapter, and hand it an
+`AdapterContext` whose `run()` posts to `POST /v1/husks/:name/run`.
+[The Discord guide](/guides/discord-bot#step-6-the-glue) is that script, tested against
+a running control plane.
+</Note>
+
+## http
+
+```yaml
+triggers:
+  - type: http
+    path: /triage      # default '/'
+    auth: token        # default 'token'
+```
+
+Mounted at `/v1/t/<husk-name><path>` and it answers any method.
+
+```bash
+curl -X POST localhost:7377/v1/t/ci-triage \
+  -H 'content-type: application/json' \
+  -d '{"input":"why is main red?"}'
+```
+
+The prompt is extracted in this order:
+
+1. Query `?input=`, `?text=`, `?q=`
+2. A raw string or `Buffer` body
+3. JSON keys `input`, `text`, `message`, `prompt`, `content`, `query`
+4. Otherwise, the whole JSON body stringified
+
+No prompt anywhere is a 422 with `no prompt found in the request`.
+
+Stream instead of buffering with `Accept: text/event-stream` or `?stream=true`; you then
+get `RunEvent` frames.
+
+```json
+{ "runId": "run_x", "text": "…", "stopReason": "complete", "usage": { } }
+```
+
+<Warning>
+`auth` is stored and reported but never checked. `GET /v1/triggers` shows
+`detail: "auth=none"`, and the handler does not read it — an HTTP trigger is protected
+by the global bearer-token hook or by nothing, depending on whether `HUSK_TOKEN` is
+set. `auth: none` cannot make a trigger public when the token is set, and `auth: token`
+cannot protect one when it is not.
+</Warning>
+
+## webhook
+
+```yaml
+triggers:
+  - type: webhook
+    path: /gh
+    secret: ${GITHUB_WEBHOOK_SECRET}
+```
+
+Mounted at `POST /v1/w/<husk-name><path>`. With a `secret`, the body is verified as
+HMAC-SHA256 over the **raw** bytes, and the signature is read from the first of
+`X-Husk-Signature`, `X-Hub-Signature-256`, `X-Signature-256`, with a leading `sha256=`
+stripped. A mismatch is a 403 `E_EXEC_DENIED`.
+
+Without a `secret`, `GET /v1/triggers` reports the mount as
+`UNSIGNED -- set 'secret' on the trigger`. Anyone who can reach the port can spend your
+model budget.
+
+Prompt extraction is the same as for `http`.
+
+## cron
+
+```yaml
+triggers:
+  - type: cron
+    schedule: '*/15 * * * *'
+    prompt: Any red builds on main in the last 15 minutes? If none, reply exactly "clear".
+```
+
+Both `schedule` and `prompt` are required; the schema gives them no defaults, because a
+cron trigger with nothing to say is not a trigger.
+
+Standard five-field cron. The scheduler runs in the `husk serve` process — there is no
+external cron and no persistence, so a missed window while the server was down is not
+replayed. An invalid schedule is logged as `husk <name>: <message>` and that one job is
+skipped; the rest of the husk still mounts.
+
+`GET /v1/triggers` reports each binding's next fire time, or `never fires`.
+
+## cli
+
+The default when a spec declares no `triggers`. It means the husk is run with `husk run`
+and exposes no server surface, which is the right default for something you have just
+distilled and not yet reviewed.
+
+## Idempotency
+
+The control plane honours `Idempotency-Key` on `POST`, `PUT`, `PATCH` and `DELETE`,
+including on the trigger paths. A replay returns the recorded status and body with
+`Idempotency-Replayed: true`.
+
+The cache is in memory with a 15-minute TTL, so it does not survive a restart, and it
+does not cover streaming responses — an SSE reply is never recorded, so a retried
+streaming request runs the agent again.

@@ -1,0 +1,17 @@
+Do these steps in order. Use one tool per step.
+
+1. shell: python3 /work/digest.py
+2. read_file /work/candidates.txt
+3. Pick 5 stories from that file, preferring the newest DATE values.
+4. write_file /work/good-news-sep-10.txt containing:
+
+GOOD NEWS - 10 September 2026
+Collected by Sprout from inside its own husk computer.
+
+1. <TITLE copied exactly from candidates.txt>
+   <your own one or two sentence summary>
+   Source: <URL copied exactly from candidates.txt>
+
+(then 2 through 5 the same way)
+
+5. read_file /work/good-news-sep-10.txt and show it.

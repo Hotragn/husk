@@ -1,0 +1,235 @@
+---
+title: Running and serving
+description: husk run, what the loop actually does between steps, and husk serve.
+order: 4
+---
+
+```bash
+husk run husk.yaml "summarise /work/notes.md"
+husk run support-bot --approve ask
+husk run husk.yaml "list the files" --json | jq -r .text
+```
+
+| Flag | What it does |
+| --- | --- |
+| `--model <m>` | Override the spec's model |
+| `--max-steps <n>` | Lower the step ceiling for this run |
+| `--max-cost <usd>` | Lower the cost ceiling for this run |
+| `--approve <mode>` | `auto`, `ask`, `readonly`. Default: from the spec |
+| `--no-computer` | Run without giving the agent a machine |
+| `--var k=v` | Fill a `{{k}}` placeholder in the persona. Repeatable |
+| `--json` | Print the run result instead of streaming |
+
+<Note>
+`--max-cost` and `--var` are accepted by the parser but missing from `husk help run`.
+</Note>
+
+Ctrl-C stops the run cleanly between steps and leaves the machine alone. Nothing is
+destroyed — you interrupted the agent, not the filesystem you were about to inspect.
+
+## What a run looks like
+
+<Terminal title="husk run">
+{`  husk       filecheck Writes a file and reads it back.
+  model      ollama/qwen2.5:1.5b
+  computer   created on first use
+  tools      shell, expose_port, computer_info, read_file, write_file, edit_file, list_dir, search_files, move, delete
+  approvals  auto
+
+── step 1
+→ write_file /work/hi.txt
+→ read_file /work/hi.txt
+computer ready: cmp_16pc4r9zyk15 (local)
+✗ 6.5s  Error: cannot read /work/hi.txt
+✓ 6.5s  wrote 6 bytes to /work/hi.txt
+── step 2
+The file "/work/hi.txt" contains the word banana.
+
+2 steps · 32.0s · 2694 tokens · free`}
+</Terminal>
+
+The header names the model actually chosen, not the alias you asked for.
+
+## The loop
+
+A conventional tool-calling loop with the boring parts done properly.
+
+### Ceilings, checked before each call
+
+| Ceiling | Source | Stop reason |
+| --- | --- | --- |
+| Steps | `limits.maxSteps`, default 24 | `step_limit` |
+| Wall clock | `limits.timeoutSec`, default 300 | `timeout` |
+| Cost | `limits.maxCostUsd`, default 0.5 | `budget` |
+| Tokens | `limits.maxTokens`, default 200000 | `budget` |
+
+The check runs **before** the next model call, using an estimate of that call, so a run
+stops rather than overshooting:
+
+```text
+the next call would cost about $0.5231, over the $0.5 ceiling
+ran out of time after 301s
+reached the step ceiling of 24
+```
+
+When the router has no pricing for the chosen model, the estimate falls back to the
+worst call seen so far in this run — zero on the first call. A model with no catalog
+entry therefore gets one free call before the budget can see it.
+
+### Abort propagates all the way down
+
+One `AbortController` per run, fed by three things: the wall-clock timer, `opts.signal`
+from the caller, and the consumer breaking out of the event stream. It is handed to the
+model request **and** to every tool call, so an abort stops the in-flight `fetch` and the
+underlying `docker exec`, not just the loop.
+
+### Tools run four at a time
+
+Up to four tool calls execute concurrently, and results are appended in the model's
+original order regardless of completion order. That is why the transcript above shows the
+`read_file` failure printed before the `write_file` success: the model emitted both in one
+turn, and the read lost the race.
+
+If a model needs one call to see another's effect, it has to put them in separate turns.
+Larger models do; small ones sometimes do not.
+
+### Every tool result is clamped, then redacted
+
+Clamp first, to `limits.maxOutputBytes` (default 256 KiB), keeping head and tail. Then
+`redact()`, unless `guardrails.redactSecrets` is false. Clamping first means redaction
+runs over bounded input.
+
+An agent that `cat`s a `.env` sees the file. The model sees `sk-ant…[redacted]`.
+
+### The loop breaker
+
+Byte-identical consecutive tool turns are counted. The signature is the tool name plus
+its arguments with object keys sorted, so argument ordering does not hide a repeat.
+
+| Count | What happens |
+| --- | --- |
+| 3 | A warning, and a system nudge appended after the tool results |
+| 5 | The run stops |
+
+The nudge is explicit rather than vague:
+
+```text
+[husk] You have called shell with byte-identical arguments 3 times in a row and the
+result is not changing. Do something different: change the arguments, use another
+tool, or tell the user what is blocking you.
+```
+
+At five, the run ends with `stopReason: 'error'` and code `E_TOOL_ERROR`. The core type
+also declares a `'loop'` stop reason for exactly this case, and the agent does not use
+it — a consumer switching on `stopReason` will see `'error'`.
+
+### The computer is lazy and shared
+
+`ctx.acquireComputer()` memoises on the promise, so four parallel tool calls share one
+machine rather than racing into four. A failed boot clears the memo so a later call can
+retry.
+
+### Stop reasons
+
+`complete`, `timeout`, `aborted`, `error`, `step_limit`, `budget`.
+
+## Approvals
+
+```bash
+husk run support-bot --approve ask
+```
+
+In `ask` mode a dangerous tool pauses for a human. With no approver wired up, the call is
+**denied**, not allowed:
+
+```text
+Denied: shell needs approval and no approver is wired to this run
+Denied: the operator declined write_file
+Denied: write_file can change state and this run is in readonly mode
+```
+
+An approver that throws is treated as a refusal.
+
+## husk serve
+
+```bash
+husk serve
+husk serve --port 8080
+```
+
+| Flag | Default |
+| --- | --- |
+| `--port <n>` | `7377` |
+| `--host <h>` | `127.0.0.1` |
+
+`husk serve` starts the control plane, mounts every trigger the registered husks declare,
+and starts the reaper on a 60-second interval.
+
+It refuses to start on a non-loopback address without `HUSK_TOKEN`:
+
+```text
+error refusing to bind 0.0.0.0 without an auth token: this API can execute shell commands
+hint:  set HUSK_TOKEN=$(openssl rand -hex 32) before `husk serve --host <host>`, or bind 127.0.0.1
+```
+
+<Terminal title="husk serve">
+{`$ husk serve
+starting the control plane on 127.0.0.1:7377...
+info  [husk] husk serve listening on http://127.0.0.1:7377
+info  [husk] no HUSK_TOKEN set -- loopback connections only
+✓ control plane on http://127.0.0.1:7377
+  health   http://127.0.0.1:7377/health
+  doctor   http://127.0.0.1:7377/v1/doctor
+  clients  new HuskClient({ baseUrl: "http://127.0.0.1:7377" })  // @husk/sdk
+
+Ctrl-C to stop.`}
+</Terminal>
+
+<Note>
+An earlier revision of this page said `husk serve` would not start when a built console
+was present at `apps/console/dist/index.html`, because `installConsole` registered a
+second root not-found handler and Fastify refused with
+`Not found handler already set for Fastify instance with prefix: '/'`.
+
+That is fixed. The static plugin is registered with `wildcard: false` and the
+single-page-app fallback is installed through `setNotFoundFallback` rather than as a
+second handler, so it no longer collides with the API's own. Verified against this
+checkout with the console built.
+
+The line about the SDK in that paragraph still stands: `@husk/sdk` targets a different
+set of paths than the server serves. See [SDK](/reference/sdk).
+</Note>
+
+[HTTP API](/reference/api) is the full route list, and
+[Self-hosting](/guides/self-hosting) puts this on a box you own.
+
+## Running from the library
+
+```ts
+import { Agent } from '@husk/agent';
+import { ModelRouter } from '@husk/models';
+import { ComputerManager } from '@husk/runtime';
+import { parseSpec } from '@husk/core';
+
+const agent = new Agent({
+  spec: parseSpec({ name: 'notes', model: 'sonnet', tools: ['computer', 'files'] }),
+  router: new ModelRouter(),
+  computers: new ComputerManager(),
+});
+
+const result = await agent.run({
+  input: 'Create /work/notes.md with three bullet points, then read it back.',
+  onEvent(event) {
+    if (event.type === 'text_delta') process.stdout.write(event.text);
+    if (event.type === 'tool_start') console.log(`\n[tool] ${event.call.name}`);
+  },
+});
+
+console.log(result.stopReason, result.steps, result.usage.costUsd);
+```
+
+`run()` is `stream()` drained to completion, so there is one code path rather than two.
+
+The router and the computer source are structural interfaces, not concrete imports:
+`@husk/agent` depends on `@husk/core` and nothing else in the workspace, so you can pass
+a fake in a test without a container anywhere near it.

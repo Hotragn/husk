@@ -1,0 +1,436 @@
+---
+title: husk.yaml reference
+navTitle: husk.yaml
+description: Every field of the spec, its type, its default and what it does — taken field by field from the zod schema in packages/core/src/spec.ts.
+order: 3
+---
+
+`husk.yaml` is the whole agent in one file: portable, diffable, reviewable, and the only
+thing the runtime needs to bring a bot up. It is validated by a zod schema, so an invalid
+file fails with every problem listed at once rather than the first one.
+
+```bash
+husk init                    # scaffold one
+husk validate                # check ./husk.yaml
+husk validate support.yaml   # or a named file
+```
+
+<Terminal>
+{`$ husk validate examples/ci-triage.yaml
+✓ ci-triage is valid
+
+  model      sonnet  → flash → gemma
+  tools      computer, files
+  computer   node, network egress
+  approvals  auto
+  limits     20 steps · $0.25 · 240s
+  triggers   http, cron
+
+$ husk validate broken.yaml
+error broken.yaml is not a valid husk
+  ✗ name: name must be lowercase alphanumeric with dashes
+hint:  \`husk init --force\` regenerates a valid file, or see \`husk help init\``}
+</Terminal>
+
+## The smallest valid file
+
+`name` is the only required field. Everything else has a default.
+
+```yaml
+name: my-bot
+```
+
+That expands to a husk on `model: auto` with an empty persona, the `computer` tool
+bundle, a `cli` trigger, and every limit at its default.
+
+## Top level
+
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `apiVersion` | `"husk/v1"` | `husk/v1` | Schema version. Bumped only on a breaking change |
+| `name` | string | **required** | 1–64 chars, `^[a-z0-9][a-z0-9-]*$`. The URL and the CLI handle |
+| `displayName` | string ≤ 96 | — | Human label |
+| `version` | string | `0.1.0` | Your version, not Husk's |
+| `description` | string ≤ 280 | `""` | One line |
+| `model` | string | `auto` | An [alias](/models#aliases) or a `provider/model` id |
+| `fallbackModels` | string[] | `[]` | Tried in order when the primary is unavailable, rate limited or over budget |
+| `temperature` | number 0–2 | — | Passed to the provider when set |
+| `persona` | string | `""` | The system prompt. Supports `{{var}}` interpolation |
+| `knowledge` | object[] | `[]` | Stable reference text, appended to the prompt |
+| `examples` | object[] | `[]` | Few-shot pairs |
+| `tools` | string[] | `['computer']` | Bundle names or individual tool names |
+| `computer` | object | all defaults | The machine. See below |
+| `limits` | object | all defaults | Ceilings on a run |
+| `guardrails` | object | all defaults | Approval mode, deny list, refusals |
+| `memory` | object | all defaults | History trimming |
+| `triggers` | array | `[{ type: cli }]` | How the husk is reached |
+| `metadata` | record | `{}` | Free-form, carried through untouched |
+| `origin` | object | — | Provenance. Written by the distiller |
+
+### persona
+
+The system prompt. `{{var}}` placeholders are interpolated from `RunOptions.vars`
+(`husk run --var key=value`); an unknown variable is left intact rather than blanked.
+
+At run time Husk appends two sections when they have content:
+
+- `## Reference` — one `### <title>` block per knowledge item.
+- `## Out of scope` — `Decline these, briefly, and say what you can do instead:` followed
+  by one bullet per `guardrails.refuse` entry.
+
+### knowledge
+
+```yaml
+knowledge:
+  - title: Repository layout
+    content: |
+      packages/* are libraries, apps/* are deployables.
+    source: https://github.com/org/repo   # optional, free-form
+```
+
+`title` and `content` are required; there is no length cap in the schema.
+
+### examples
+
+```yaml
+examples:
+  - user: main is red
+    assistant: >
+      The `build (node 20)` job failed at `packages/core` with TS2345.
+```
+
+Both sides required.
+
+### tools
+
+Bundle names expand; individual names are also accepted.
+
+| Bundle | Tools |
+| --- | --- |
+| `computer` | `shell`, `expose_port`, `computer_info` |
+| `files` | `read_file`, `write_file`, `edit_file`, `list_dir`, `search_files`, `move`, `delete` |
+| `web` | `fetch_url`, and `web_search` when `TAVILY_API_KEY` or `BRAVE_API_KEY` is set |
+| `http` | `http_request` |
+
+A tool that cannot work is skipped rather than registered-and-broken: a tool the model
+can see is a promise that calling it will do something. Tools needing a machine are
+dropped when `computer.enabled` is false, and `http_request` is opt-in — naming the
+`http` bundle counts as naming it.
+
+## computer
+
+```yaml
+computer:
+  enabled: true
+  flavor: python
+  packages: [pandas, numpy]
+  network:
+    mode: egress
+    allow: ['pypi.org', 'files.pythonhosted.org']
+  memoryMb: 4096
+  idleTimeoutSec: 600
+  persist: true
+  setup: mkdir -p /work/out
+```
+
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `true` | `false` disables the machine entirely |
+| `provider` | string | best available | `docker`, `podman`, `local`, `ssh`, `fly` |
+| `flavor` | enum | `base` | `base`, `python`, `node`, `full` |
+| `image` | string | — | Explicit image reference. Overrides `flavor` |
+| `cpus` | number > 0, ≤ 64 | `2` at create time | CPU allocation |
+| `memoryMb` | int > 0, ≤ 131072 | `2048` at create time | Memory ceiling |
+| `diskMb` | int > 0 | `2048` at create time | Size of the writable `/work` layer |
+| `idleTimeoutSec` | int ≥ 0 | `900` | Destroy after this long idle. `0` disables |
+| `maxLifetimeSec` | int ≥ 0 | `0` | Hard lifetime ceiling. `0` disables |
+| `network` | object | `{ mode: 'egress' }` | See below |
+| `packages` | string[] | `[]` | Installed on first boot by the flavor's package manager |
+| `setup` | string | — | A shell snippet run once after creation |
+| `env` | record | `{}` | Variables passed in explicitly |
+| `workdir` | string | `/work` | Default working directory |
+| `persist` | boolean | `false` | Keep the filesystem across restarts |
+| `mounts` | object[] | `[]` | Host paths. `readonly` defaults to `true` |
+| `user` | string | provider's default | Unprivileged user inside the machine |
+| `labels` | record | — | Provider-specific overrides. See below |
+
+### computer.labels
+
+Per-husk provider configuration, for the two providers that point at something outside
+this machine. Set here, a husk.yaml needs no environment variables at all:
+
+```yaml
+computer:
+  provider: ssh
+  labels:
+    husk.ssh: deploy@build-box:2222
+    husk.ssh.key: ~/.ssh/id_ed25519
+```
+
+| Label | Provider | Environment equivalent |
+| --- | --- | --- |
+| `husk.ssh` | ssh | `HUSK_SSH_TARGET` |
+| `husk.ssh.key` | ssh | `HUSK_SSH_KEY` |
+| `husk.fly.app` | fly | `HUSK_FLY_APP` / `FLY_APP_NAME` |
+| `husk.fly.region` | fly | `HUSK_FLY_REGION` / `FLY_REGION` |
+| `husk.fly.ports` | fly | — |
+
+The label wins over the environment, so one machine can drive several boxes. Values are
+strings; anything else is rejected at parse time. Husk adds a `husk.key` label of its
+own when it binds a machine to a session — do not set that one.
+
+### computer.network
+
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `mode` | `none` \| `egress` \| `full` | `egress` | See [Networking](/computers/networking) |
+| `allow` | string[] | — | Hostnames. A single leading `*.` wildcard is supported |
+| `deny` | string[] | — | Always refused, including in `full` |
+
+An `egress` policy with no `allow` list permits nothing.
+
+### computer.mounts
+
+```yaml
+mounts:
+  - source: ./data
+    target: /work/data
+    readonly: true
+```
+
+`source` and `target` are required. `readonly` defaults to `true` — a host mount is the
+one hole in a container, and an agent that only needs to read a repository must not
+rewrite it.
+
+### computer.env
+
+Explicit values always win over the environment scrub, which is how you pass a
+credential deliberately:
+
+```yaml
+computer:
+  env:
+    GITHUB_TOKEN: ${GITHUB_TOKEN}
+```
+
+Explicit beats implicit, and now it is in the file where a reviewer can see it.
+
+## limits
+
+```yaml
+limits:
+  maxSteps: 20
+  maxCostUsd: 0.25
+  timeoutSec: 240
+```
+
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `maxSteps` | int 1–500 | `24` | Ceiling on tool-calling rounds |
+| `maxCostUsd` | number ≥ 0 | `0.5` | Ceiling on estimated spend for the run |
+| `maxTokens` | int > 0 | `200000` | Ceiling on total tokens |
+| `timeoutSec` | int > 0 | `300` | Wall clock for the whole run |
+| `execTimeoutSec` | int > 0 | `120` | Per-exec ceiling inside the machine |
+| `maxOutputBytes` | int > 0 | `262144` | Per-tool-result cap, before redaction |
+
+Every ceiling is checked **before** the next model call, not after, so a run stops
+rather than overshooting. See [Cost and budgets](/models/cost) for what the cost
+estimate can and cannot know.
+
+## guardrails
+
+```yaml
+guardrails:
+  approvalMode: auto
+  denyCommands:
+    - 'git\s+(push|commit|reset\s+--hard)'
+  refuse:
+    - deploying, reverting, or merging anything
+```
+
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `approvalMode` | `auto` \| `ask` \| `readonly` | `auto` | See below |
+| `denyCommands` | string[] | `[]` | Regexes matched against a shell command before it runs |
+| `allowCommands` | string[] | `[]` | Regexes that override both your deny list and the built-in one |
+| `refuse` | string[] | `[]` | Topics to decline, appended to the prompt as `## Out of scope` |
+| `redactSecrets` | boolean | `true` | Pass every tool result through `redact()` before the model sees it |
+
+`allowCommands` wins over `denyCommands` and over the built-in deny list: an explicit
+allow entry is you saying you know better about your own machine, and you do. An entry
+that is not valid regex falls back to a substring match rather than throwing.
+
+### approvalMode
+
+| Mode | Behaviour when a `dangerous` tool is called |
+| --- | --- |
+| `auto` | It runs |
+| `ask` | The run pauses for an approver. **With no approver wired up, the call is denied** |
+| `readonly` | Denied, approver or not |
+
+`ask` fails closed. A headless server running an `ask`-mode husk denies rather than
+allows, which is the only safe default for a mode whose whole point is a human in the
+loop.
+
+Dangerous tools: `shell`, `write_file`, `edit_file`, `move`, `delete`, `expose_port`,
+`http_request`. Not dangerous: `read_file`, `list_dir`, `search_files`, `computer_info`,
+`fetch_url`, `web_search`.
+
+## memory
+
+```yaml
+memory:
+  enabled: true
+  windowTurns: 20
+  summarise: true
+```
+
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `false` | The only gate. Off, and history is never trimmed |
+| `backend` | `sqlite` \| `memory` \| `file` | `sqlite` | **Not read by any code** |
+| `windowTurns` | int > 0 | `20` | Turns kept verbatim before older ones are summarised |
+| `summarise` | boolean | `true` | Summarise the elided middle instead of dropping it |
+
+With `enabled: true`, the loop keeps the system messages, the first user message as an
+anchor, and the last `windowTurns` turns. The middle is either replaced by a model-written
+summary or by a marker:
+
+```text
+[husk: 42 earlier messages summarised]
+…
+[husk: 42 earlier messages elided to stay inside the context window]
+```
+
+Cuts land on turn boundaries and orphaned pairs are pruned, so a `tool_call` is never
+separated from its `tool_result`. The summary call is charged to the run's budget.
+
+<NotYet>
+`memory.backend` is validated, defaulted and then ignored. Nothing in any package reads
+it, there is no persistence layer, and trimming happens entirely in memory over the
+current run's message array. Setting `backend: file` does not write a file, and setting
+`backend: sqlite` does not open a database — Husk ships no SQLite driver at all.
+</NotYet>
+
+## triggers
+
+```yaml
+triggers:
+  - type: http
+  - type: cron
+    schedule: '*/15 * * * *'
+    prompt: Any red builds on main in the last 15 minutes?
+```
+
+The schema accepts seven types. Three are wired into the server — see
+[Triggers](/chat-to-bot/triggers) for which and what happens to the rest.
+
+| Type | Fields |
+| --- | --- |
+| `http` | `path` (default `/`), `auth`: `none` \| `token` (default `token`) |
+| `cron` | `schedule` **required**, `prompt` **required** |
+| `discord` | `channels` (default `[]`), `mentionOnly` (default `true`) |
+| `slack` | `channels` (default `[]`), `mentionOnly` (default `true`) |
+| `telegram` | `allowlist` (default `[]`) |
+| `webhook` | `path` **required**, `secret` optional |
+| `cli` | none |
+
+## metadata and origin
+
+`metadata` is a free-form record carried through untouched. Husk itself writes exactly
+two keys into it, both from distillation:
+
+| Key | Type | |
+| --- | --- | --- |
+| `distilledConfidence` | number, 0–1 | how much the distiller trusts what it extracted |
+| `distillerNotes` | string[] | what it had to guess at, and why |
+
+These names are the contract. Every path that distils — `husk distill`,
+`POST /v1/sessions/distill`, and `toSpec` in `@husk/sessions` directly — goes through
+the one mapper and writes these two. Nothing writes `distillConfidence` or
+`distillNotes`; if you are reading a husk.yaml written by an older build, those are the
+same two values under the old spellings.
+
+Everything else under `metadata` is yours, and husk will not touch it.
+
+`origin` records provenance. It survives a round trip through `husk validate` and back
+out to YAML, so a distilled husk can always say where it came from:
+
+| Field | Type | |
+| --- | --- | --- |
+| `source` | string | **required** within `origin`. The transcript's `origin` (its file path) when it has one, otherwise its `source` (`claude-code`, `chatgpt`, …) |
+| `transcriptId` | string | optional |
+| `importedAt` | string | optional |
+| `messageCount` | number | optional |
+
+## A complete example
+
+```yaml title="ci-triage.yaml"
+apiVersion: husk/v1
+name: ci-triage
+displayName: CI Triage
+version: 0.2.0
+description: Reads failing CI logs and says what broke, in one paragraph.
+
+model: sonnet
+fallbackModels: [flash, gemma]
+
+persona: |
+  You triage CI failures for a TypeScript monorepo.
+
+  Always read the failing job's log before forming an opinion. Quote the first
+  line that actually failed -- not the last line, which is usually the runner
+  giving up.
+
+  Answer in one paragraph. No preamble.
+
+knowledge:
+  - title: Repository layout
+    content: |
+      packages/* are libraries, apps/* are deployables. Any change under
+      packages/core forces a full rebuild.
+
+tools: [computer, files]
+
+computer:
+  flavor: node
+  network:
+    mode: egress
+    allow: ['*.github.com', 'objects.githubusercontent.com']
+  idleTimeoutSec: 600
+
+limits:
+  maxSteps: 20
+  maxCostUsd: 0.25
+  timeoutSec: 240
+
+guardrails:
+  approvalMode: auto
+  denyCommands:
+    - 'git\s+(push|commit|reset\s+--hard)'
+    - 'gh\s+(pr|release)\s+(create|merge|edit)'
+  refuse:
+    - deploying, reverting, or merging anything
+
+triggers:
+  - type: http
+  - type: cron
+    schedule: '*/15 * * * *'
+    prompt: Any red builds on main in the last 15 minutes? If none, reply exactly "clear".
+```
+
+## Validation errors
+
+Every problem at once, each as `path: message`:
+
+```text
+error husk.yaml is not a valid husk
+  ✗ name: name must be lowercase alphanumeric with dashes
+  ✗ limits.maxSteps: Number must be less than or equal to 500
+  ✗ triggers.0.schedule: Required
+hint:  `husk init --force` regenerates a valid file, or see `husk help init`
+```
+
+The same check is available over the control plane at `POST /v1/husks/validate`, which
+returns `{ ok, issues }` with HTTP 200 either way — it is a validator, not an operation
+that can fail.

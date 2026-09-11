@@ -1,0 +1,26 @@
+Collect today's good news and save it to a file on your computer.
+
+Do exactly this, in order:
+
+1. Fetch https://www.goodnewsnetwork.org/feed/ into /work/gnn.xml with curl, then
+   list its items with the python3 snippet you know.
+2. Do the same for https://www.positive.news/feed/ into /work/pn.xml.
+3. Do the same for https://reasonstobecheerful.world/feed/ into /work/rtbc.xml.
+4. Choose the 5 best genuinely-good-news stories across all three feeds. Prefer
+   items published on or closest to 10 September 2026.
+5. Write /work/good-news-sep-10.txt using the write_file tool. Format it exactly:
+
+   GOOD NEWS - 10 September 2026
+   Collected by Sprout from inside its own husk computer.
+
+   1. <headline>
+      <one or two sentence summary, in your own words>
+      Source: <full url>
+
+   ...and so on to 5.
+
+   At the bottom add a line: "Fetched: <the date and time you ran this>".
+
+6. Read the file back with read_file and show it to me.
+
+If a feed fails, say so in the file rather than inventing anything.

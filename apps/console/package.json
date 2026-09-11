@@ -1,0 +1,30 @@
+{
+  "name": "@husk/console",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.app.json --noEmit && vite build",
+    "lint": "oxlint",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@husk/core": "0.1.0",
+    "@husk/sdk": "0.1.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "oxlint": "^1.79.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.2"
+  }
+}

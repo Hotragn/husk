@@ -1,0 +1,96 @@
+---
+title: Lifetimes and the reaper
+description: idleTimeoutSec, maxLifetimeSec, which providers are actually swept, and how a machine gets bound to a session.
+order: 7
+---
+
+A computer is disposable. Two ceilings decide when one goes away on its own.
+
+| Field | Default | What it means |
+| --- | --- | --- |
+| `idleTimeoutSec` | `900` (15 minutes) | Destroy after this long with no `exec` |
+| `maxLifetimeSec` | `0` (off) | Destroy this long after creation, whatever the activity |
+
+Both are per-machine and both are disabled by `0`.
+
+```yaml
+computer:
+  idleTimeoutSec: 600
+  maxLifetimeSec: 7200
+```
+
+```bash
+husk up scratch --idle-timeout 3600
+```
+
+"Idle" means no `exec`. Every `exec` on the `local` provider touches `lastUsedAt` and
+rewrites the record; the container providers read `State.StartedAt` from the engine.
+
+## The reaper
+
+`ComputerManager.startReaper(intervalMs = 60_000)` starts a sweep every 60 seconds. The
+interval timer is `unref`'d, so it never holds a CLI process open, and `startReaper` is
+idempotent.
+
+`husk serve` starts it. The CLI's one-shot commands do not — a `husk exec` that also
+garbage-collected somebody else's machine would be a surprise.
+
+The sweep asks every provider that implements `reap()` and ignores the ones that do not.
+
+<Warning>
+`reap()` is implemented by `local`, `ssh` and `fly`. It is **not** implemented by the
+shared `OciProvider` base class, so **`docker` and `podman` containers are never
+reaped**, whatever `idleTimeoutSec` says.
+
+`docs/ARCHITECTURE.md` states that "a reaper honours `idleTimeoutSec` and
+`maxLifetimeSec`" without qualification. On the container providers today, an idle
+machine stays up until you run `husk rm`, or until the engine restarts. Budget for that,
+or use `docker ps` and clean up by hand.
+</Warning>
+
+A reaper failure in one provider is logged at debug and does not stop the others.
+
+## Stopping versus destroying
+
+| Command | Filesystem | Recoverable |
+| --- | --- | --- |
+| `husk stop <name>` | kept | yes, with `husk start` |
+| `husk rm <name>` | gone | no |
+
+A stopped machine still counts against nothing — only `running` and `creating` machines
+count toward the eight-machine quota — but it still occupies disk.
+
+## Session bindings
+
+`ComputerManager.ensure(key, spec)` maps a stable key onto a machine, so a conversation
+keeps one filesystem without the caller tracking ids.
+
+The map lives in `~/.husk/computers/bindings.json`, written with write-then-rename. When
+a binding points at a machine that no longer exists, it is cleared and a new machine is
+created.
+
+MCP uses this: the session key defaults to `$HUSK_SESSION`, then to the literal `mcp`,
+and the machine is named `mcp-<key>`. It is created with `idleTimeoutSec: 3600` — an hour,
+because a conversation has long pauses in it — and destroyed when the client disconnects
+unless you pass `--keep`.
+
+```bash
+claude mcp add husk-api -- npx -y @husk/mcp --session api --flavor python
+claude mcp add husk-web -- npx -y @husk/mcp --session web --flavor node
+```
+
+Two keys, two machines, two filesystems, one client.
+
+## Shutdown paths
+
+| Trigger | What happens |
+| --- | --- |
+| `husk rm` | The machine and its filesystem are destroyed; the binding is cleared |
+| MCP client disconnects (stdin closes) | The machine is destroyed unless `--keep` |
+| SIGINT / SIGTERM to `husk mcp` | Same |
+| Ctrl-C during `husk run` | The run aborts between steps. **The machine is left alone** |
+| Reaper | Only on `local`, `ssh` and `fly` |
+
+Ctrl-C during a run is deliberately non-destructive. You interrupted the agent, not the
+machine, and destroying the filesystem you were about to inspect would be the wrong
+reading of that keystroke.

@@ -1,0 +1,23 @@
+Collect today's good news into a file on your computer.
+
+Step 1. Run: python3 /work/digest.py
+Step 2. read_file /work/candidates.txt
+Step 3. Pick the 5 best genuinely-good-news stories from that file. Prefer the
+        most recent dates.
+Step 4. write_file /work/good-news-sep-10.txt with exactly this shape:
+
+GOOD NEWS - 10 September 2026
+Collected by Sprout from inside its own husk computer.
+
+1. <TITLE copied exactly from candidates.txt>
+   <your own one or two sentence summary>
+   Source: <URL copied exactly from candidates.txt>
+
+2. ...
+
+Fetched: <the Generated: timestamp from the bottom of candidates.txt>
+
+Step 5. Verify: for each URL you wrote, run
+        grep -F '<that url>' /work/candidates.txt
+        Every one must print a line. If any does not, you invented it: fix it.
+Step 6. read_file /work/good-news-sep-10.txt and show me the result.

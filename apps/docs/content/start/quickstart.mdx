@@ -1,0 +1,207 @@
+---
+title: Quickstart
+description: Sixty seconds to a running Linux computer. No account, no API key, no Docker.
+order: 2
+---
+
+This needs Node 20.10 or newer and nothing else. Docker, an API key and an account all
+make Husk better; none of them make it work.
+
+You are going to do four things: find out what your machine can do, create a computer,
+drive it, and throw it away. If step one tells you something is missing, keep going —
+every capability in Husk degrades to something that still runs, and `husk doctor` always
+tells you which version of the product you are currently using.
+
+One thing to read before you start: on the `local` provider Husk gives you process
+guardrails, not containment. What that means precisely is on the
+[Security](/security) page. It is worth four minutes if anything sensitive lives on this
+machine.
+
+## 1. Find out what this machine can do
+
+```bash
+npx -y @husk/cli doctor
+```
+
+On a Windows laptop with Docker installed but not running, Ollama up, and no API keys,
+that prints:
+
+<Terminal title="husk doctor">
+{`husk 0.1.0  node 24.14.0 · win32-arm64
+state: C:\\Users\\me\\.husk
+
+COMPUTERS
+  ✗ docker   isolated
+      Kernel-level isolation via Docker
+      docker is installed but the daemon is not reachable
+      fix: start Docker Desktop (or \`sudo systemctl start docker\`), then re-run \`husk doctor\`
+  ✗ podman   isolated
+      Kernel-level isolation via Podman, rootless and daemonless
+      the podman CLI is not on PATH
+      fix: install Podman Desktop or \`winget install RedHat.Podman\`, then \`podman machine init\`
+  ✗ ssh      isolated
+      A Linux box you already own, reached over ssh. Free if the box is.
+      no remote host is configured
+      fix: export HUSK_SSH_TARGET=user@host (an Oracle Cloud Always Free ARM instance costs nothing)
+  ✗ fly      isolated
+      A Fly.io microVM per computer. Real isolation, metered by the second.
+      FLY_API_TOKEN is not set
+      fix: run \`fly auth token\` and export it as FLY_API_TOKEN (fly machines are metered, not free)
+  ✓ local    not isolated
+      A guarded working directory on this machine. Free, always available, not isolated.
+      via WSL2 (Ubuntu)
+      guarded working directory -- process guardrails, not a sandbox
+
+MODELS
+  ✓ ollama
+      ollama/qwen2.5:1.5b, ollama/qwen2.5:7b, ollama/llama3.2:latest
+  ✗ anthropic
+      ANTHROPIC_API_KEY is not set
+      fix: Set ANTHROPIC_API_KEY for Claude, or run \`ollama pull gemma3\` for a free local model.
+
+SELECTION  what husk would use right now
+  computer   local  highest-priority available provider (10)
+  isolation  guardrails only
+  model      ollama/qwen2.5:1.5b  first reachable model on Ollama
+
+WARNINGS
+  ! The "local" provider gives guardrails, not isolation. A prompt-injected model is closer to an adversary than to an accident — start Docker before running anything you did not write.
+  ! Docker is installed but its daemon is not running, so husk is falling back to weaker isolation.
+
+husk sends nothing anywhere except the model provider you configure. There is no telemetry.`}
+</Terminal>
+
+Docker being down is a row in the table, not an error. Husk keeps going with the
+`local` provider and says so twice: once in the `SELECTION` block and once in
+`WARNINGS`. [Reading the doctor report](/start/doctor) goes through it line by line.
+
+## 2. Create a computer
+
+```bash
+npx -y @husk/cli up scratch
+```
+
+<Terminal title="husk up scratch">
+{`Welcome to husk. This runs once.
+
+  provider   local — WSL2 (Ubuntu)
+  isolation  none — guardrails, not a sandbox. A determined process can escape.
+  privacy    nothing leaves this machine except calls to a model provider you configure
+  state      C:\\Users\\me\\.husk (delete it to reset husk completely)
+  next       husk exec scratch -- uname -sr
+
+creating scratch...
+warn  [runtime] using the local provider: guarded working directory -- process guardrails, not a sandbox
+✓ scratch is up
+
+  id         cmp_5j8svxeqer9p
+  provider   local  (WSL2 (Ubuntu))
+  isolation  guardrails only — not a sandbox
+  workdir    /work
+  network    egress
+
+  Try it:
+  $ husk exec scratch -- uname -sr
+  $ husk shell scratch
+  $ husk cp ./file.txt scratch:/work/file.txt
+  $ husk rm scratch`}
+</Terminal>
+
+The orientation block prints once per `~/.husk` and never again. Delete that directory
+and it comes back.
+
+Nothing is actually running inside the machine yet. `up` allocates the workspace and
+writes the record; the shell starts on the first `exec`.
+
+## 3. Drive it
+
+```bash
+husk exec scratch -- 'uname -sr; echo hi > /work/a.txt; cat /work/a.txt; pwd'
+```
+
+<Terminal>
+{`Linux 6.18.33.2-microsoft-standard-WSL2
+hi
+/work`}
+</Terminal>
+
+`husk exec` streams stdout and stderr live and exits with the command's own exit code, so
+this behaves the way you expect:
+
+```bash
+husk exec scratch -- test -f /work/a.txt && echo present
+```
+
+Everything after `--` belongs to the command, flags included.
+
+## 4. Throw it away
+
+```bash
+husk rm scratch --yes
+```
+
+<Danger>
+`husk rm` destroys the machine and its filesystem. There is no undo and no snapshot
+taken on your behalf. Without `--yes` it asks first; with `--json` set it does not ask,
+because there is nobody at the terminal to answer.
+</Danger>
+
+## Then: a whole agent, for zero dollars
+
+If `husk doctor` found an Ollama model, you can run a complete agent loop without an API
+key. Write a `husk.yaml`:
+
+```yaml title="husk.yaml"
+name: filecheck
+description: Writes a file and reads it back.
+model: local
+persona: |
+  You have a Linux computer. Use the shell to check things rather than guessing.
+  Answer in one sentence.
+tools: [computer, files]
+limits:
+  maxSteps: 6
+  maxCostUsd: 0
+```
+
+```bash
+husk run husk.yaml "Create /work/hi.txt containing the word banana, then tell me what it contains."
+```
+
+<Terminal title="husk run">
+{`  husk       filecheck Writes a file and reads it back.
+  model      ollama/qwen2.5:1.5b
+  computer   created on first use
+  tools      shell, expose_port, computer_info, read_file, write_file, edit_file, list_dir, search_files, move, delete
+  approvals  auto
+
+── step 1
+→ write_file /work/hi.txt
+→ read_file /work/hi.txt
+warn  [runtime] using the local provider: guarded working directory -- process guardrails, not a sandbox
+computer ready: cmp_16pc4r9zyk15 (local)
+✗ 6.5s  Error: cannot read /work/hi.txt
+✓ 6.5s  wrote 6 bytes to /work/hi.txt
+── step 2
+The file "/work/hi.txt" already existed, so I was able to write "banana" into it and then read its contents successfully.
+
+2 steps · 32.0s · 2694 tokens · free`}
+</Terminal>
+
+That transcript is unedited, and it shows two real things worth knowing before you build
+on this.
+
+The loop runs up to four tool calls in parallel, in the order the model emitted them but
+not necessarily in that completion order. Here a 1.5B model asked to write and read the
+same file in one turn, and the read lost the race. A larger model sequences the two
+turns; a small one does not. [The agent loop](/chat-to-bot/running#the-loop) covers the
+concurrency rule.
+
+The run cost nothing, and the footer says `free` rather than `$0.0000`, because the
+router knows a local model has no price.
+
+## Next
+
+- [Install](/start/install) — global install, the `npx` path, and what lands on disk.
+- [`husk doctor`](/start/doctor) — every line of that report.
+- [MCP](/mcp) — the one line that gives Claude Code the same machine.

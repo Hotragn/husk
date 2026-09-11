@@ -1,0 +1,301 @@
+---
+title: Running on a local model
+navTitle: Local models
+description: Ollama and LM Studio end to end — install, pull, point a husk at it, and an honest account of what a 7B model can and cannot do as an agent.
+order: 3
+---
+
+The free path is the default path. With no API key, no Docker and no account, Husk still
+runs: a `local` computer and an Ollama model. This page is that path, start to finish,
+and then the part most local-model documentation leaves out — what actually happens when
+you give a 7B model tools.
+
+## Ollama
+
+### Install
+
+Download from [ollama.com](https://ollama.com). On Linux the one-liner in their docs
+installs a systemd service; on macOS and Windows the app runs a background daemon.
+
+Ollama listens on `http://127.0.0.1:11434`. Husk needs nothing else — no key, no config
+file, no `husk` command to run first.
+
+### Pull a model
+
+```bash
+ollama pull qwen2.5:7b      # ~4.7 GB, the model husk's hints suggest
+ollama pull llama3.2        # ~2.0 GB, lighter, still calls tools
+ollama pull qwen2.5:1.5b    # ~1 GB, fast, and it will disappoint you with tools
+```
+
+<Warning>
+**Not every local model can call tools.**
+
+A husk with tools needs a model that supports them, and plenty of good models do
+not. `gemma3` is the trap: it is excellent and widely recommended, and Ollama
+reports its capabilities as `vision` only — **no tools**. Point a husk with a
+shell at it and the model will describe what it would have done without ever
+calling anything.
+
+Husk refuses that combination before the first token rather than letting you
+find out several minutes into a run:
+
+```
+error ollama/gemma3 cannot call tools, and this husk declares 7
+hint:  pull a tools-capable model (`ollama pull qwen2.5:7b`), or set tools: [] for a chat-only husk
+```
+
+Check before you pull — the model's page on ollama.com lists a **tools** badge,
+and `husk models` shows the same thing for anything already on disk.
+</Warning>
+
+<Terminal title="ollama list">
+{`$ ollama list
+NAME               ID              SIZE      MODIFIED
+qwen2.5:1.5b       65ec06548149    986 MB    2 weeks ago
+qwen2.5:7b         845dbda0ea48    4.7 GB    3 weeks ago
+llama3.2:latest    a80c4f17acd5    2.0 GB    2 months ago`}
+</Terminal>
+
+Husk lists **what is actually pulled**, never a catalogue of things you would have to
+download first. It also asks `/api/show` for each model and takes the real context
+length and the real capability list from it, so `supportsTools` is what Ollama reports
+rather than an assumption:
+
+<Terminal title="husk models">
+{`$ husk models
+id                      context  tools  cost /Mtok
+ollama/qwen2.5:1.5b     33k      yes    free
+ollama/qwen2.5:7b       33k      yes    free
+ollama/llama3.2:latest  131k     yes    free`}
+</Terminal>
+
+### Point a husk at it
+
+Three ways, in increasing order of permanence.
+
+```bash
+husk run husk.yaml "hello" --model ollama/qwen2.5:7b   # this run only
+```
+
+```yaml title="husk.yaml"
+model: ollama/qwen2.5:7b
+```
+
+```yaml title="husk.yaml"
+model: local        # first available Ollama or LM Studio model
+```
+
+```json title="~/.husk/config.json"
+{ "modelAliases": { "auto": "ollama/qwen2.5:7b" } }
+```
+
+The canonical aliases `gemma`, `llama` and `qwen` point at `ollama/gemma3`,
+`ollama/llama3.2` and `ollama/qwen2.5-coder`. They only resolve if you have pulled that
+exact tag — and `gemma` is chat-only, per the warning above.
+
+### A remote Ollama
+
+```bash
+export OLLAMA_HOST=http://192.168.1.20:11434
+```
+
+Ollama binds loopback by default; serving it on a LAN address means setting
+`OLLAMA_HOST` on the *server* too, and it has no authentication of its own. Treat the
+port as trusted-network-only.
+
+## LM Studio
+
+LM Studio serves an OpenAI-compatible API rather than Ollama's, so Husk talks to it
+through the compatible provider instead.
+
+1. Install LM Studio and download a model from its **Discover** tab.
+2. Open the **Developer** tab and start the local server.
+3. Load a model into the server. A running server with nothing loaded reports zero
+   models and Husk treats the provider as unavailable.
+
+The default endpoint is `http://127.0.0.1:1234/v1`; `LMSTUDIO_HOST` moves it. Everything
+LM Studio serves is treated as free.
+
+```text
+✗ lmstudio
+    http://127.0.0.1:1234/v1 is not listening
+    fix: Start the LM Studio local server (Developer tab) and load a model.
+```
+
+LM Studio rejects unknown top-level stream options, so Husk does not send
+`stream_options.include_usage`. Token counts on a streamed call are Husk's own estimate.
+
+## What a 7B model can actually do as an agent
+
+This is the honest part. A local 7B is a real model and it is not a frontier model, and
+the gap shows up in specific, predictable places.
+
+Here is a complete, unedited run. The husk is the one `husk init` scaffolds, with the
+`computer` and `files` bundles, on `qwen2.5:7b`:
+
+<Terminal title="husk run, qwen2.5:7b">
+{`$ husk run husk.yaml "Write the text hello to /work/hello.txt, then read it back and tell me what it says." --model ollama/qwen2.5:7b
+
+  husk       demo-bot A husk.
+  model      ollama/qwen2.5:7b
+  computer   created on first use
+  tools      shell, expose_port, computer_info, read_file, write_file, edit_file, list_dir, search_files, move, delete
+  approvals  auto
+
+── step 1
+→ write_file /work/hello.txt
+→ read_file /work/hello.txt
+computer ready: cmp_heqzta6yq72s (local)
+✗ 8.0s  Error: cannot read /work/hello.txt
+✓ 8.0s  wrote 5 bytes to /work/hello.txt
+── step 2
+It seems there was an issue reading the file at /work/hello.txt. Let's first verify that the file was written correctly by listing the contents again.
+
+→ read_file /work/hello.txt
+✓ 325ms  /work/hello.txt (1 lines)
+── step 3
+The file \`/work/hello.txt\` has been correctly written with the text "hello". When I read it back, it contains:
+
+\`\`\`
+hello
+\`\`\`
+
+This confirms that the write operation was successful.
+
+3 steps · 1m07s · 4162 tokens · free`}
+</Terminal>
+
+Read what happened. The model emitted `write_file` and `read_file` **in the same turn**,
+so the read raced the write and failed. It then recovered correctly, re-read the file,
+and answered. Three steps and 67 seconds for a task a frontier model does in one step
+and four seconds.
+
+That is the shape of it. A 7B is not incapable — it is *imprecise about sequencing*, and
+an agent loop is nothing but sequencing.
+
+### What works
+
+- **One tool at a time, obvious next step.** Read a file, run a command, summarise
+  output, answer a question about something already in context.
+- **Recovery from a tool error**, when the error message says what went wrong. Husk's
+  errors carry a `hint` for exactly this reason, and small models use it.
+- **Shell commands.** `shell` is a single string; there is no schema to get subtly
+  wrong.
+- **The distiller's heuristic path**, which needs no model at all — `husk distill
+  --no-model` is free and deterministic.
+
+### What does not
+
+- **Ordering dependent calls.** As above. A model that cannot reliably wait for a write
+  before reading will also not reliably `list_dir` before `edit_file`.
+- **Long tool schemas.** `edit_file` and `search_files` take several parameters; a 7B
+  fills them plausibly rather than correctly, and a wrong `oldText` is a silent no-op
+  from the model's point of view.
+- **Ten tools at once.** The default `computer` + `files` bundles put ten tool schemas
+  in the prompt. Cutting `tools:` to the two or three the job needs measurably improves
+  a small model.
+- **Knowing when to stop.** Small models narrate. Budget `maxSteps` accordingly, and
+  expect the wall-clock cost of a step to be seconds, not milliseconds.
+- **Silence.** A local model with tools attached sometimes answers with nothing at all.
+  Husk says so rather than leaving you staring at an empty terminal:
+
+  ```text
+  warning ollama/qwen2.5:1.5b finished without saying anything and without calling a tool
+  hint:  small local models often do this with tools attached — try a larger model, or
+         --approve readonly to see its plan
+  ```
+
+### It fabricates rather than admitting it is stuck
+
+This is the failure mode to design against, and no amount of persona text has
+suppressed it.
+
+While dogfooding, `examples/sprout.yaml` — a news bot on `qwen2.5:7b` — had its
+computer destroyed underneath it mid-run by an unrelated process. Every
+subsequent tool call failed. The model narrated the problem honestly in prose,
+*"It appears there is a persistent issue with reading the file"*, and then
+invented two of its five news stories, with plausible headlines and plausible
+URLs that had never existed:
+
+```text
+3. Arthritis Drug Demonstrates ... Alopecia                      <- real
+4. Conservationists Successfully Restore Rare Species in ...     <- invented
+5. Local Community Helps Homeless Man Find Permanent Housing     <- invented
+```
+
+Its persona said *"You never invent a headline, a summary or a URL"* and
+included a self-check step instructing it to delete the file and start again if
+any URL was not in its source list. The self-check did not fire. The three real
+items were real only because they were the three lines the model had managed to
+read before the failures began.
+
+Two things follow, and both are architectural rather than promptable:
+
+**Make the deterministic parts deterministic.** Fetching and parsing are not
+judgement calls. Sprout now lays a script down in `computer.setup` at boot, and
+the model's entire job is choosing five entries from a short pre-built list. The
+first version handed it ten tools, a 1.6 KB persona and 90 KB of raw RSS, and it
+fabricated the whole output.
+
+**Verify off disk, not from the transcript.** A model claiming it wrote a file
+is not evidence that it did. Read the artefact back:
+
+```bash
+husk exec my-bot -- cat /work/output.txt
+```
+
+If provenance matters, have the husk write its sources to a file first and check
+the output against it — a grep is cheaper than trusting a 7B's memory.
+
+### Getting more out of a small model
+
+```yaml title="husk.yaml"
+model: ollama/qwen2.5:7b
+
+# Two tools, not ten.
+tools: [files]
+
+persona: |
+  You have a Linux computer. Do exactly one thing per turn and wait for the
+  result before deciding the next one. Never call two tools in the same turn.
+
+limits:
+  maxSteps: 12
+  timeoutSec: 600      # a local step is seconds, not milliseconds
+  maxCostUsd: 0        # local is free; this makes a paid fallback impossible
+```
+
+Below about 7B, treat tool calling as unreliable rather than merely imprecise.
+`qwen2.5:1.5b` will answer a question well and will not drive a computer.
+
+## Mixing local and hosted
+
+The most useful configuration is not "local only" — it is a good hosted model with a
+local floor, so a rate limit or a spend cap does not stop a run. `husk doctor` suggests
+exactly this when every configured provider bills:
+
+```text
+Every configured provider bills per token. `ollama pull qwen2.5:7b` adds a free local
+fallback so a rate limit or a spend cap does not stop a run.
+```
+
+```yaml title="husk.yaml"
+model: sonnet
+fallbackModels: [flash, qwen]
+```
+
+<NotYet>
+`fallbackModels` is only honoured on the control-plane path
+(`POST /v1/husks/:name/run`, which builds a real `ModelRouter`). `husk run` pins one
+model up front and never falls back. See
+[the note on the router page](/models#cost).
+</NotYet>
+
+## Cost
+
+Zero, genuinely. The catalog prices every Ollama and LM Studio model at
+`{ inputPerMTok: 0, outputPerMTok: 0 }`, so `costUsd` on a local run is `0` rather than
+a rounded-down estimate, and `husk run` prints `free` instead of a dollar figure.
+
+The cost is electricity and wall-clock time. Both are real; neither is in `usage`.

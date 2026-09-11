@@ -1,0 +1,187 @@
+---
+title: The model router
+navTitle: The router
+description: One surface over eleven providers — how an alias becomes a model, what happens when that model says no, and which code path your command actually takes.
+order: 1
+---
+
+Husk talks to eleven model providers through one interface. `ModelRouter` in
+`@husk/models` answers four questions and nothing else:
+
+1. **What is reachable right now?** — `detect()`
+2. **Which model does this alias mean?** — `resolve()`
+3. **Can we afford it?** — the budget check
+4. **What do we do when the provider says no?** — the fallback chain
+
+<Terminal title="husk models">
+{`$ husk models
+id                      context  tools  cost /Mtok
+ollama/qwen2.5:1.5b     33k      yes    free
+ollama/qwen2.5:7b       33k      yes    free
+ollama/llama3.2:latest  131k     yes    free
+
+not shown: anthropic (ANTHROPIC_API_KEY is not set), openai (OPENAI_API_KEY is not
+set), google (GOOGLE_API_KEY is not set), groq (GROQ_API_KEY is not set), deepseek
+(DEEPSEEK_API_KEY is not set), cerebras (CEREBRAS_API_KEY is not set), openrouter
+(OPENROUTER_API_KEY is not set), mistral (MISTRAL_API_KEY is not set), together
+(TOGETHER_API_KEY is not set), lmstudio (http://127.0.0.1:1234/v1 is not listening)
+— use --all`}
+</Terminal>
+
+A provider is only listed once it is reachable *and* reports at least one model.
+[Providers](/models/providers) has the environment variable and the sign-up path for
+each one.
+
+## Aliases
+
+Nine aliases resolve to a fixed model id. Three resolve to a strategy, because their
+honest answer depends on what is running on this machine right now.
+
+| Alias | Resolves to |
+| --- | --- |
+| `opus` | `anthropic/claude-opus-5` |
+| `sonnet` | `anthropic/claude-sonnet-5` |
+| `haiku` | `anthropic/claude-haiku-4-5-20251001` |
+| `gpt` | `openai/gpt-4.1` |
+| `gemini` | `google/gemini-2.5-pro` |
+| `flash` | `google/gemini-2.5-flash` |
+| `gemma` | `ollama/gemma3` |
+| `llama` | `ollama/llama3.2` |
+| `qwen` | `ollama/qwen2.5-coder` |
+| `local` | *strategy:* first available Ollama or LM Studio model |
+| `free` | *strategy:* best free model that is actually reachable |
+| `auto` | *strategy:* best available, preferring quality then cost |
+
+`resolveAlias` tries five things, in this order, and stops at the first that answers:
+
+1. A user override from `modelAliases` in `~/.husk/config.json`.
+2. A dynamic alias — `local`, `free`, `auto`.
+3. A canonical alias from the table above.
+4. An explicit `provider/model` id. Split at the **first** slash, so
+   `together/meta-llama/Llama-3.3-70B-Instruct-Turbo` is one model, not two.
+5. A bare model name, but only when exactly one provider in the catalog offers it.
+
+Anything else throws `E_MODEL_UNAVAILABLE` and lists the aliases it does know.
+
+### Pinning your own
+
+```json title="~/.husk/config.json"
+{
+  "modelAliases": {
+    "fast": "groq/llama-3.3-70b-versatile",
+    "sonnet": "anthropic/claude-sonnet-5"
+  }
+}
+```
+
+An override may point at another alias. The resolver follows up to eight hops and
+refuses a cycle rather than hanging:
+
+```text
+error Model alias "a" loops back on itself
+hint:  Fix the modelAliases entry for "a" in ~/.husk/config.json.
+```
+
+## What `auto`, `free` and `local` actually pick
+
+Every reachable model is pooled, filtered by affordability, then sorted:
+
+| Strategy | Pool | Sort |
+| --- | --- | --- |
+| `auto` | every reachable model | quality descending, then input price ascending |
+| `free` | every reachable model | free models first, then input price, then quality |
+| `local` | **only** `ollama` and `lmstudio` | free first, then input price, then quality |
+
+"Quality" is a maintainer's judgement number in the catalog, 0–100, used only to break
+ties. It is not a benchmark score. A model nobody has catalogued — a fresh `ollama pull`
+— scores 40 if it is free and 50 if it is not.
+
+<Note>
+`local` will not leave Ollama or LM Studio: if neither is running, the pool is empty and
+the call fails. `free` is different — it *prefers* free models but will fall back to a
+paid one when no free model is reachable, and it does that without a warning. If a run
+must never bill you, set `limits.maxCostUsd: 0` as well as `model: free`.
+</Note>
+
+## Detection
+
+`detect()` probes every registered provider in parallel and caches the answer for
+30 seconds. Each probe is capped at 3 seconds; a provider that hangs is reported as
+unavailable with the reason rather than stalling the report. Nothing here throws — the
+entire purpose of the call is to render [`husk doctor`](/start/doctor).
+
+Providers with a key requirement answer instantly from the environment. Keyless local
+servers — Ollama, LM Studio — are probed over the network with their own 2-second
+timeout.
+
+<Warning>
+That 2-second timeout is short enough to bite. An Ollama daemon that is busy loading a
+large model into memory can take longer than 2 s to answer `/api/tags`, and Husk then
+reports it as unreachable:
+
+```text
+error no model provider is reachable
+hint:  set ANTHROPIC_API_KEY or OPENAI_API_KEY, or run `ollama serve` for a free local model
+```
+
+Wait for the load to finish and run it again. [Troubleshooting](/troubleshooting#ollama-is-running-but-husk-says-no-model-provider-is-reachable)
+has the longer version.
+</Warning>
+
+## Fallback
+
+`RouterRequest.fallbacks` and a husk's `fallbackModels` build an ordered candidate list:
+the requested model first, then each declared fallback, then whatever the strategy
+ordering turns up. Each candidate is tried in turn.
+
+Two rules shape the behaviour:
+
+- **A downgrade is never silent.** The caller gets a `warning` event naming what failed
+  and what replaced it. A run that quietly finished on an 8B local model when it asked
+  for Opus is worse than a run that failed.
+- **A 400 is never retried, anywhere.** The request is malformed; shopping a malformed
+  request around six providers wastes six round trips.
+
+Within one candidate, the router retries up to 3 times total with exponential backoff
+and full jitter, 400 ms base and an 8 s ceiling. It does not retry an abort, a
+malformed-request error, `E_NO_CREDENTIALS`, or `E_BUDGET_EXCEEDED`.
+
+On a stream, a candidate can only be abandoned **before it has produced content**. Once
+a token has reached the caller there is nothing honest to do with a mid-stream failure
+except report it, so that case ends in an `error` event rather than a silent restart on
+a different model.
+
+<NotYet>
+`husk run` does not use `ModelRouter`, and therefore does not use `fallbackModels`.
+
+The CLI resolves the model once through its own `resolveModel()` in
+`packages/cli/src/lib/models.ts`, wraps the result in a `pinned()` provider, and hands
+the agent a two-method adapter. One model, no candidate list, no fallback, no
+cross-provider retry. A `fallbackModels:` block in a `husk.yaml` validates, is stored,
+and is never read on this path.
+
+The CLI keeps its own alias table too, with legacy candidates the canonical one does not
+have — `sonnet` there tries `anthropic/claude-sonnet-5`, then
+`anthropic/claude-3-7-sonnet-20250219`, then `anthropic/claude-3-5-sonnet-20241022`. The
+two tables agree on every alias that matters, but they are two tables.
+
+`husk serve` is the path that does use the router: `POST /v1/husks/:name/run` constructs
+a real `ModelRouter`.
+</NotYet>
+
+## Cost
+
+Every response comes back with a `costUsd`. When the provider reports one, Husk uses it;
+when it does not, Husk computes it from the catalog price and the reported token counts.
+A local model is genuinely `$0.00`, not a rounded-down estimate.
+
+[Cost and budgets](/models/cost) covers the estimate, the `maxCostUsd` ceiling, and which
+prices in the catalog are published figures rather than conservative guesses.
+
+## Where to go next
+
+- [Providers](/models/providers) — every provider, its environment variable, and how to
+  get a key. Four have a real free tier.
+- [Local models](/models/local) — Ollama and LM Studio end to end, and an honest account
+  of what a 7B model can and cannot do as an agent.
+- [Cost and budgets](/models/cost) — estimation, the ceiling, and why local is zero.

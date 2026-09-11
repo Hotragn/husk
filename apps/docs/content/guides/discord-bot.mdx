@@ -1,0 +1,457 @@
+---
+title: "Chat transcript to Discord bot"
+navTitle: Discord bot
+description: A conversation you already had, distilled into a husk.yaml, served by husk serve, and fronted by a Discord bot — with the 40 lines of glue the server does not ship yet.
+order: 3
+---
+
+**What you will build:** a Discord bot that answers in your channel, backed by a
+`husk.yaml` distilled from a real conversation you already had.
+
+**What you will learn:** how `husk import` and `husk distill` turn a chat into a spec,
+how the control plane runs it, and how `@husk/adapters` connects the two.
+
+**Prerequisites**
+
+- [ ] Husk installed (`npm install -g @husk/cli`) and `husk doctor` showing a reachable
+      model.
+- [ ] A transcript worth distilling — a Claude Code session, a ChatGPT export, a Cursor
+      chat, or a markdown file.
+- [ ] A Discord server you can add a bot to.
+
+<Warning>
+The `discord` trigger type validates, saves, and does nothing. `TriggerHost.sync()` has
+branches for `http`, `webhook` and `cron` only, so a husk declaring
+`triggers: [{ type: discord }]` mounts nothing and appears nowhere in
+`GET /v1/triggers`.
+
+The Discord *adapter* is complete and tested — a raw gateway client with resume,
+heartbeat tracking, rate limiting and idempotency. It is simply not wired into
+`@husk/server`. Step 5 is the glue that connects them, and it is about 40 lines.
+</Warning>
+
+---
+
+## Step 1: Find a transcript
+
+```bash
+husk import
+```
+
+With no path, Husk searches four places and lists what it found:
+
+```text
+husk looked in:
+  ~/.claude/projects   Claude Code sessions
+  ~/Downloads          ChatGPT and Gemini exports
+  ~/.cursor            Cursor chat history
+  ./                   markdown and jsonl
+```
+
+Pick one by number, or skip the picker:
+
+```bash
+husk import --pick 1
+husk import ./support-chat.md --source markdown
+```
+
+<Terminal title="husk import">
+{`✓ imported Users/me/support  0f3a1b2c
+
+  id        tr_01hxyzabcd
+  source    claude-code
+  messages  214  (96 user, 88 assistant, 30 tool)
+  size      412KB
+
+  Next:
+  $ husk distill tr_01hxyzabcd --no-model`}
+</Terminal>
+
+Every transcript in the file is written to `~/.husk/transcripts/<id>.json`.
+
+<Warning>
+Those files are stored **unredacted**, exactly as parsed. If the conversation contains
+a credential, it is on disk in clear text. See
+[Secrets](/security/secrets#the-distiller-redacts-more).
+</Warning>
+
+## Step 2: Distill it
+
+```bash
+husk distill tr_01hxyzabcd --no-model --out support-bot.yaml
+```
+
+`--no-model` forces the heuristic path: free, deterministic, offline, and it needs no
+API key. It mines standing instructions by how often they recur, pulls durable facts
+out of long user turns, samples clean question-and-answer pairs as examples, and reads
+the tool list off what actually got called.
+
+Drop `--no-model` to have a model do the extraction instead. It reads the whole
+transcript in overlapping windows, extracts a candidate agent from each, and merges
+them. It is better at persona and worse at nothing, and it costs a few cents.
+
+<Terminal title="husk distill">
+{`source Users/me/support · 214 messages · claude-code
+using  heuristics only · --no-model, free heuristic path
+
+✓ wrote /home/me/support-bot.yaml
+
+EXTRACTED
+  name         users-me-support
+  description  Support triage for the billing API
+  persona      14 lines, 612 chars
+  knowledge    3 item(s)
+  examples     4 pair(s)
+  tools        files
+  computer     no
+  confidence   ██████░░░░ 58%
+
+THE DISTILLER COULD NOT DETERMINE
+  · No durable user-supplied facts found worth carrying as knowledge.
+  · Heuristic distillation: no model was used. Review the persona before shipping.`}
+</Terminal>
+
+The confidence bar is not decoration. On the heuristic path it is capped at **0.75** by
+construction, and below 0.5 Husk warns you outright:
+
+```text
+warning low confidence — 12 user turns is thin signal. Read the persona before serving
+        this, and consider distilling a longer conversation.
+```
+
+<Note>
+`--model` selects the model that does the distilling, not the model the bot will use.
+The written spec's `model:` comes from the transcript's own metadata when Husk
+recognises it, and is `auto` otherwise. Set it yourself in the next step.
+</Note>
+
+## Step 3: Read the file, then fix it
+
+Distillation is a draft, not an oracle. The file says so in its own header:
+
+```yaml title="support-bot.yaml (as generated, abridged)"
+# Distilled by husk from tr_01hxyzabcd (claude-code).
+# 214 messages · confidence 0.58 · heuristic
+# Review the persona before you serve this. Distillation is a draft, not an oracle.
+
+apiVersion: husk/v1
+name: users-me-support
+displayName: users-me-support
+description: Support triage for the billing API
+model: auto
+persona: |-
+  You are an assistant distilled from a real working session about support triage.
+
+  How you work:
+  - Check the customer's plan before quoting a limit
+  - Never promise a refund; escalate to #billing instead
+tools:
+  - files
+computer:
+  enabled: false
+metadata:
+  distilledConfidence: 0.58
+  distillerNotes:
+    - Heuristic distillation: no model was used. Review the persona before shipping.
+```
+
+Three things to fix before this goes anywhere near a channel.
+
+**The name.** The distiller slugs the transcript's title, and transcript titles are
+usually a file path. Rename it — this is the URL segment and the CLI handle.
+
+**The model and the ceilings.** A chat bot answers in one turn and should be cheap and
+fast. The defaults (24 steps, $0.50, 300 s) are sized for an agent with a computer.
+
+**The persona's last line.** Discord is not a terminal. Tell it so.
+
+```yaml title="support-bot.yaml (edited)"
+apiVersion: husk/v1
+name: support-bot
+displayName: Support Bot
+description: Answers billing questions in #support.
+
+model: haiku
+fallbackModels: [flash]
+temperature: 0.3
+
+persona: |-
+  You answer billing questions for {{product}} in a Discord channel.
+
+  - Check the customer's plan before quoting a limit.
+  - Never promise a refund; tell them to open a ticket in #billing.
+  - Answer in at most three sentences. No preamble, no bullet lists.
+
+tools: [files]
+
+computer:
+  enabled: false          # a chat bot does not need a Linux machine
+
+limits:
+  maxSteps: 4
+  maxCostUsd: 0.02
+  timeoutSec: 60
+
+guardrails:
+  approvalMode: readonly  # nothing this bot does should change state
+  refuse:
+    - issuing refunds, credits, or account changes
+
+triggers:
+  # Not the Discord bot — that is step 6. This mounts a plain HTTP endpoint at
+  # /v1/t/support-bot, which is handy for testing without a Discord client.
+  - type: http
+```
+
+```bash
+husk validate support-bot.yaml
+```
+
+<Terminal>
+{`$ husk validate support-bot.yaml
+✓ support-bot is valid
+
+  model      haiku  → flash
+  tools      files
+  computer   disabled
+  approvals  readonly
+  limits     4 steps · $0.02 · 60s
+  triggers   http`}
+</Terminal>
+
+## Step 4: Test it before Discord sees it
+
+```bash
+husk run support-bot.yaml "what's the API rate limit on the starter plan?" --var product=Acme
+```
+
+Iterate on the persona here, where the feedback loop is two seconds and nobody is
+watching. When it answers the way you want, register it with the control plane and
+start serving:
+
+```bash
+husk serve &
+curl -s localhost:7377/v1/husks \
+  -H 'content-type: application/json' \
+  --data-binary "$(jq -Rs '{yaml: .}' < support-bot.yaml)"
+```
+
+Confirm it runs over HTTP — this is the exact call the adapter will make:
+
+```bash
+curl -s localhost:7377/v1/husks/support-bot/run \
+  -H 'content-type: application/json' \
+  -d '{"input":"what is the rate limit?","vars":{"product":"Acme"}}' | jq -r .text
+```
+
+<Terminal title="the real response shape">
+{`{
+  "runId": "run_0mtv7kg0843r4ms",
+  "text": "pong",
+  "messages": [ … ],
+  "steps": 1,
+  "usage": { "inputTokens": 388, "outputTokens": 2, "costUsd": 0 },
+  "durationMs": 7721,
+  "stopReason": "complete"
+}`}
+</Terminal>
+
+## Step 5: The Discord application
+
+1. [discord.com/developers/applications](https://discord.com/developers/applications) →
+   **New Application**.
+2. **Bot** → **Reset Token** → copy it. This is `DISCORD_BOT_TOKEN`.
+3. Still on **Bot**, scroll to *Privileged Gateway Intents* and enable
+   **MESSAGE CONTENT INTENT**.
+4. **OAuth2 → URL Generator**: scope `bot`, permissions *Send Messages*, *Read Message
+   History*, *View Channels*. Open the generated URL and add the bot to your server.
+
+<Danger>
+Without MESSAGE CONTENT INTENT every message arrives with an empty `content` and the
+bot looks broken for a reason nothing logs. Husk's adapter requests it as part of its
+intent bitmask — `GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT` — and
+Discord closes the gateway with code **4014** if it is not enabled in the portal. Husk
+translates that for you:
+
+```text
+a privileged intent is not enabled -- turn on MESSAGE CONTENT INTENT in the Developer Portal
+```
+</Danger>
+
+Get the channel id you want it to answer in: enable **Settings → Advanced → Developer
+Mode** in Discord, then right-click the channel → **Copy Channel ID**.
+
+## Step 6: The glue
+
+`@husk/adapters` needs an `AdapterContext` — a logger, an abort signal, an environment,
+and a `run(input, opts)` function. The server does not supply one, so here it is.
+
+```bash
+mkdir husk-discord && cd husk-discord
+npm init -y && npm pkg set type=module
+npm install @husk/adapters @husk/core
+```
+
+```js title="bot.mjs"
+import { DiscordAdapter } from '@husk/adapters';
+import { createLogger } from '@husk/core';
+
+const HUSK_URL = process.env.HUSK_URL ?? 'http://127.0.0.1:7377';
+const HUSK_NAME = process.env.HUSK_NAME ?? 'support-bot';
+const HUSK_TOKEN = process.env.HUSK_TOKEN;
+
+const controller = new AbortController();
+const log = createLogger({ scope: 'discord' });
+
+/** Ask the control plane to run the husk, and return the text it produced. */
+async function runHusk(input, opts) {
+  const res = await fetch(`${HUSK_URL}/v1/husks/${HUSK_NAME}/run`, {
+    method: 'POST',
+    signal: opts.signal,
+    headers: {
+      'content-type': 'application/json',
+      // A retried Discord delivery must not run the agent twice.
+      'idempotency-key': `discord:${opts.channelId}:${opts.userId}:${Date.now()}`,
+      ...(HUSK_TOKEN ? { authorization: `Bearer ${HUSK_TOKEN}` } : {}),
+    },
+    body: JSON.stringify({ input, vars: { product: 'Acme' } }),
+  });
+
+  const body = await res.json();
+  if (!res.ok) throw new Error(body?.error?.message ?? `control plane returned ${res.status}`);
+  if (body.stopReason !== 'complete') {
+    log.warn(`run ended as ${body.stopReason}`);
+  }
+  return body.text || '(the agent produced no text)';
+}
+
+const adapter = new DiscordAdapter({
+  // Empty means every channel the bot can see.
+  channels: process.env.DISCORD_CHANNELS?.split(',').filter(Boolean) ?? [],
+  mentionOnly: true,
+  rateLimit: { messages: 5, perMs: 60_000 },
+});
+
+await adapter.start({
+  husk: HUSK_NAME,
+  log,
+  signal: controller.signal,
+  env: process.env,
+  run: runHusk,
+});
+
+log.info(`fronting ${HUSK_NAME} at ${HUSK_URL}`);
+
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.once(sig, () => {
+    controller.abort();
+    void adapter.stop().then(() => process.exit(0));
+  });
+}
+```
+
+```bash
+export DISCORD_BOT_TOKEN='…'
+export DISCORD_CHANNELS='1234567890123456789'
+node bot.mjs
+```
+
+Mention the bot in that channel and it answers.
+
+### What the adapter does for you
+
+None of this is in the 40 lines above, and all of it is behaviour you would otherwise
+have to write:
+
+| | |
+| --- | --- |
+| Gateway lifecycle | Jittered first heartbeat, ack tracking, `RESUME` with the right sequence, exponential backoff from 1 s to 60 s |
+| Fatal closes | 4004, 4010–4014 are never retried. Reconnecting on a bad token just burns the rate limit |
+| Idempotency | A gateway that redelivers on reconnect does not run the agent twice |
+| Rate limiting | Per user, 5 messages a minute by default. Over it, the bot replies `Rate limited. Try again in 42s.` |
+| Filtering | Skips bots, skips itself, honours the channel allowlist, and with `mentionOnly` answers only mentions, replies and DMs |
+| Mention stripping | The bot's own `<@id>` is removed before the text reaches the agent |
+| Typing indicator | Kept alive for the whole run, stopped when the answer lands |
+| Chunking | Answers are split at Discord's 2,000-character limit |
+| Discord's own 429 | Honoured: it waits `retry_after` and sends once more |
+
+A missing `DISCORD_BOT_TOKEN` is a one-line note, not a crash:
+
+```text
+info  discord adapter idle -- DISCORD_BOT_TOKEN is not set
+```
+
+### Keeping it up
+
+Two processes, two units. `husk serve` from
+[Self-hosting](/guides/self-hosting#step-5-the-systemd-unit), and:
+
+```ini title="/etc/systemd/system/husk-discord.service"
+[Unit]
+Description=Husk Discord bot
+After=husk.service
+Requires=husk.service
+
+[Service]
+Type=simple
+User=husk
+WorkingDirectory=/home/husk/husk-discord
+EnvironmentFile=/etc/husk/discord.env
+ExecStart=/usr/bin/node bot.mjs
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## Slack and Telegram
+
+The same shape. `createAdapter(kind, options)` builds any of the four, and they all take
+the same `AdapterContext`:
+
+```js
+import { createAdapter } from '@husk/adapters';
+const adapter = createAdapter('telegram', { });   // reads TELEGRAM_BOT_TOKEN
+```
+
+| Adapter | Token variable | Transport |
+| --- | --- | --- |
+| `discord` | `DISCORD_BOT_TOKEN` | Gateway WebSocket |
+| `slack` | `SLACK_BOT_TOKEN` | Socket Mode, or a signature-verified Events API endpoint |
+| `telegram` | `TELEGRAM_BOT_TOKEN` | Long polling |
+| `webhook` | — | An inbound HTTP route |
+
+<Warning>
+Slack's Events API mode and the whole `webhook` adapter need `ctx.mountHttp` — a way to
+register an inbound route. Nothing outside the test harness implements it, so those two
+paths need you to supply your own HTTP server as well. Slack Socket Mode and Telegram
+long polling are outbound-only and work with the context above.
+</Warning>
+
+## Troubleshooting
+
+**The bot is online and ignores everything.** MESSAGE CONTENT INTENT is off, so every
+`content` is empty and `shouldHandle` returns `empty content`. Turn it on in the
+portal, then restart the bot.
+
+**It answers in DMs and not in the channel.** `mentionOnly` defaults to `true`, and a
+DM always counts as a mention. Mention the bot, reply to one of its messages, or set
+`mentionOnly: false`.
+
+**It answers in the wrong channels.** Set `channels` to the ids you want. An empty
+array means every channel it can see.
+
+**`Something went wrong: …`** is the adapter relaying an exception from `run()`.
+`cannot reach the husk control plane` means `husk serve` is not up; a 401 means
+`HUSK_TOKEN` is set on the server and not on the bot.
+
+**Answers are truncated at three sentences and you did not ask for that.** You did —
+it is in the persona. Discord bots are better short, but the file is where the decision
+lives.
+
+## Next
+
+- [Triggers](/chat-to-bot/triggers) — what the server does mount, and how.
+- [The distiller](/chat-to-bot/distiller) — what it extracts and how it decides.
+- [Self-hosting](/guides/self-hosting) — putting both processes on a box you own.

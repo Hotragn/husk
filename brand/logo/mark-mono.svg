@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" fill="currentColor" role="img" aria-labelledby="husk-mark-mono-title">
+  <title id="husk-mark-mono-title">Husk</title>
+  <!-- Identical geometry to mark.svg with the colour split removed. The three
+       shapes are separated by 2.7-3.5 unit gaps, which survive one-colour
+       reproduction down to about 20px. Below that, use favicon.svg. -->
+  <path d="M13 1.5 L3.5 9 L1.5 19 L9 30.5 L17 28 L13.5 22 L12.5 15.5 L15.5 8.5 L20 4 Z"/>
+  <path d="M23.5 3 L30 10 L30.5 20 L26 27.5 L23.5 20 L23.8 11 Z"/>
+  <path d="M18.2 9.5 L21 15 L18.8 26.5 L15.5 15.5 Z"/>
+</svg>

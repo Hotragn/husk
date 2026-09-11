@@ -1,0 +1,17 @@
+/*
+ * Two imports, in this order and no others.
+ *
+ * `tokens.css` is a byte-identical copy of `brand/tokens.css` — it is the
+ * source of every colour, space, size, duration and easing in this app, and it
+ * also supplies the base layer (focus ring, reduced motion, forced colors).
+ * `app.css` is the component layer built on top of it.
+ *
+ * Fonts are referenced by the token stacks and are not fetched from a CDN: a
+ * product whose pitch is that nothing leaves your machine should not open a
+ * connection to fonts.gstatic.com to render its own dashboard. Where the
+ * Bricolage / Instrument Sans / JetBrains Mono faces are not installed, the
+ * token stacks fall back to the platform's system, sans and mono faces.
+ */
+
+@import './styles/tokens.css';
+@import './styles/app.css';

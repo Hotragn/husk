@@ -1,0 +1,691 @@
+/* =============================================================================
+   Husk design tokens
+   -----------------------------------------------------------------------------
+   Dark is the primary theme and lives on :root. Light is a genuinely separate
+   tuning under [data-theme="light"] -- it is not an inversion: the surface
+   stack reverses direction (light stacks *up* toward white, dark stacks *up*
+   away from black), the brand foregrounds swap from the 300 step to the 700
+   step, and the status hues change lightness rather than just flipping.
+
+   Every text/background and control/background pairing below carries its
+   measured WCAG 2.x contrast ratio in a comment. Ratios were computed from the
+   sRGB relative-luminance formula on the exact hex values in this file, not
+   estimated. 96 pairings are checked; all meet AA (>=4.5:1 for body text,
+   >=3:1 for large text and non-text UI).
+
+   The ramps are generated in OKLCH for perceptually even steps, then clipped
+   into sRGB gamut. Hues: neutral 74 (warm), primary 72 (husk gold),
+   accent 194 (core teal).
+
+   Machine-readable twin: tokens.json (same values, plus the full contrast
+   audit under `contrast`).
+   ========================================================================== */
+
+/* -----------------------------------------------------------------------------
+   FONTS
+
+   All three faces are SIL Open Font License 1.1 and available on Google Fonts.
+   Self-hosting woff2 is strongly preferred: it removes a third-party origin
+   from a product whose whole pitch is that nothing leaves your machine.
+
+   If you must use the CDN during development:
+
+   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght,GRAD@12..96,75..100,200..800,-50..100&family=Instrument+Sans:ital,wdth,wght@0,75..100,400..700;1,75..100,400..700&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap">
+
+   Self-hosted, preload only the two faces above the fold:
+
+   <link rel="preload" as="font" type="font/woff2" href="/fonts/InstrumentSans[wdth,wght].woff2" crossorigin>
+   <link rel="preload" as="font" type="font/woff2" href="/fonts/BricolageGrotesque[opsz,wdth,wght,GRAD].woff2" crossorigin>
+
+   Use font-display: swap. The fallback stacks below are metric-adjacent enough
+   that swap does not cause a visible reflow at body sizes.
+-------------------------------------------------------------------------------- */
+
+:root {
+  color-scheme: dark;
+
+  /* ===========================================================================
+     1. COLOUR RAMPS  (theme-independent; semantic tokens below reference them)
+     ======================================================================== */
+
+  /* -- neutral "chaff": warm grey, OKLCH hue 74. Never a cold grey; a cold grey
+        next to husk gold reads as a rendering bug. ---------------------------- */
+  --color-neutral-50:   #f8f5f1;
+  --color-neutral-100:  #ede9e4;
+  --color-neutral-200:  #dad5cf;
+  --color-neutral-300:  #bdb8b1;
+  --color-neutral-400:  #9e9992;
+  --color-neutral-500:  #817b73;
+  --color-neutral-600:  #655f58;
+  --color-neutral-700:  #4b453e;
+  --color-neutral-800:  #332e27;
+  --color-neutral-900:  #1f1b15;
+  --color-neutral-950:  #100d08;
+
+  /* -- primary "husk gold": the dry outer layer. OKLCH hue 72, chroma capped at
+        0.118 so it reads as dried husk, not neon amber. ---------------------- */
+  --color-primary-50:   #fff4e8;
+  --color-primary-100:  #fde5c9;
+  --color-primary-200:  #f4cfa2;
+  --color-primary-300:  #deb076;
+  --color-primary-400:  #c38e48;
+  --color-primary-500:  #a66e16;
+  --color-primary-600:  #855500;
+  --color-primary-700:  #623d00;
+  --color-primary-800:  #432800;
+  --color-primary-900:  #2a1700;
+  --color-primary-950:  #180a00;
+
+  /* -- accent "core teal": the cold electric inner core. OKLCH hue 194, chroma
+        pushed to the sRGB gamut boundary at the 300-500 steps. --------------- */
+  --color-accent-50:    #e1fcfb;
+  --color-accent-100:   #c0f6f4;
+  --color-accent-200:   #8be9e7;
+  --color-accent-300:   #42d0cf;
+  --color-accent-400:   #00b0af;
+  --color-accent-500:   #008e8d;
+  --color-accent-600:   #006f6e;
+  --color-accent-700:   #005251;
+  --color-accent-800:   #003737;
+  --color-accent-900:   #002121;
+  --color-accent-950:   #001111;
+
+  /* ===========================================================================
+     2. SEMANTIC COLOUR  --  DARK (primary theme)
+     ======================================================================== */
+
+  /* -- surfaces --------------------------------------------------------- */
+  --color-bg:               #0f0b07;
+  --color-surface:          #1b1611;
+  --color-raised:           #27221b;
+  --color-sunken:           #070503;
+
+  /* -- borders ---------------------------------------------------------- */
+  --color-border:           #36312a;  /* hairline rules between text blocks only, never a control edge: 1.39:1 vs surface */
+  --color-border-strong:    #746e66;  /* every interactive edge: 3.89:1 bg | 3.56:1 surface | 3.12:1 raised -- AA non-text >=3:1 */
+  --color-border-focus:     #00b0af;  /* focus ring: 7.31:1 bg | 6.69:1 surface | 5.88:1 raised -- AA non-text >=3:1 */
+
+  /* -- text ------------------------------------------------------------- */
+  --color-text:             #f8f5f1;  /* 18.04:1 bg | 16.52:1 surface | 14.52:1 raised | 18.72:1 sunken -- AA body */
+  --color-text-muted:       #bdb8b1;  /* 9.95:1 bg | 9.11:1 surface | 8.01:1 raised | 10.32:1 sunken -- AA body */
+  --color-text-subtle:      #9e9992;  /* 6.93:1 bg | 6.35:1 surface | 5.58:1 raised | 7.19:1 sunken -- AA body, floor of the scale */
+  --color-text-inverse:     #100d08;  /* for use on --color-text as a background */
+
+  /* -- brand as foreground ----------------------------------------------- */
+  --color-text-accent:      #42d0cf;  /* 10.41:1 bg | 9.54:1 surface | 8.38:1 raised | 10.81:1 sunken -- AA body */
+  --color-text-primary:     #deb076;  /* 9.87:1 bg | 9.04:1 surface | 7.95:1 raised | 10.25:1 sunken -- AA body */
+
+  /* -- brand as fill ------------------------------------------------------ */
+  --color-primary-fill:     #deb076;
+  --color-primary-on-fill:  #0f0b07;  /* 9.87:1 on primary fill -- AA body */
+  --color-accent-fill:      #42d0cf;
+  --color-accent-on-fill:   #0f0b07;  /* 10.41:1 on accent fill -- AA body */
+
+  /* -- status -------------------------------------------------------------- */
+  --color-success:          #5ed78a;  /* 10.79:1 bg | 9.89:1 surface | 8.80:1 on success-subtle -- AA body */
+  --color-success-subtle:   #0a2715;  /* body text on it: 14.71:1 -- AA body */
+  --color-success-border:   #2f8851;  /* 4.07:1 vs surface -- AA non-text >=3:1 */
+  --color-warn:             #ffa063;  /* 9.76:1 bg | 8.94:1 surface | 8.18:1 on warn-subtle -- AA body */
+  --color-warn-subtle:      #341804;  /* body text on it: 15.11:1 -- AA body */
+  --color-warn-border:      #ae5b1d;  /* 3.69:1 vs surface -- AA non-text >=3:1 */
+  --color-danger:           #fc6661;  /* 6.73:1 bg | 6.17:1 surface | 5.69:1 on danger-subtle -- AA body */
+  --color-danger-subtle:    #3a1110;  /* body text on it: 15.24:1 -- AA body */
+  --color-danger-border:    #c04442;  /* 3.55:1 vs surface -- AA non-text >=3:1 */
+  --color-info:             #65c7f8;  /* 10.34:1 bg | 9.47:1 surface | 8.50:1 on info-subtle -- AA body */
+  --color-info-subtle:      #042432;  /* body text on it: 14.82:1 -- AA body */
+  --color-info-border:      #007fac;  /* 3.96:1 vs surface -- AA non-text >=3:1 */
+
+  /* -- incidental ---------------------------------------------------------- */
+  --color-selection-bg:     #005251;  /* accent-700; text on it: 8.31:1 -- AA body */
+  --color-selection-text:   #f8f5f1;
+  --color-scrim:            rgba(7, 5, 3, 0.72);
+  --color-shadow-rgb:       0, 0, 0;
+  --color-hairline-light:   rgba(248, 245, 241, 0.06);
+
+  /* ===========================================================================
+     3. TYPOGRAPHY
+     ======================================================================== */
+
+  /* -- families -----------------------------------------------------------
+     Display: Bricolage Grotesque (Mathieu Triay, OFL 1.1). A grotesque with the
+       tool marks left in -- flat-sided bowls, a chopped `g`, uneven joins. It is
+       the only place Husk allows visible personality, and it has real optical
+       machinery: opsz 12-96, wdth 75-100, wght 200-800, GRAD -50-100.
+     UI: Instrument Sans (Rodrigo Fuenzalida & Jordan Egstad, OFL 1.1). High
+       x-height, open apertures, unambiguous 1/l/I. Variable: wght 400-700,
+       wdth 75-100. Note there is no weight below 400 -- do not ask for 300.
+     Mono: JetBrains Mono (OFL 1.1). Slashed zero by default, no OpenType feature
+       required. Every fallback in the stack also has a slashed or dotted zero
+       (Menlo, Consolas, DejaVu Sans Mono), so the disambiguation survives a
+       failed font load. Ligatures live in `calt` and are ON by default in
+       browsers -- turn them off in terminal output (see --font-mono-terminal).
+  --------------------------------------------------------------------------- */
+  --font-display: "Bricolage Grotesque", "Archivo", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-ui: "Instrument Sans", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+
+  /* -- weights --------------------------------------------------------- */
+  --font-weight-regular:   400;
+  --font-weight-medium:    500;
+  --font-weight-semibold:  600;
+  --font-weight-bold:      700;
+  --font-weight-display:   620;  /* Bricolage's sweet spot; variable, so 620 is real */
+
+  /* -- size scale ---------------------------------------------------------
+     Modular scale, ratio 1.200 (minor third, 6:5), base 1rem = 16px.
+     Values are NOT rounded to whole pixels: rounding breaks the ratio, and every
+     engine rasterises fractional font sizes correctly. Rendered px assumes a
+     16px root.
+  --------------------------------------------------------------------------- */
+  --font-size-2xs:  0.5787rem;  /* 1 / 1.2^3   =  9.26px  -- legal/meta only, never a full sentence */
+  --font-size-xs:   0.6944rem;  /* 1 / 1.2^2   = 11.11px  -- table labels, badges, axis ticks */
+  --font-size-sm:   0.8333rem;  /* 1 / 1.2     = 13.33px  -- captions, help text, dense tables */
+  --font-size-md:   1rem;       /* 1           = 16.00px  -- body. The default. */
+  --font-size-lg:   1.2rem;     /* 1.2^1       = 19.20px  -- lead paragraphs, h4 */
+  --font-size-xl:   1.44rem;    /* 1.2^2       = 23.04px  -- h3 */
+  --font-size-2xl:  1.728rem;   /* 1.2^3       = 27.65px  -- h2 */
+  --font-size-3xl:  2.0736rem;  /* 1.2^4       = 33.18px  -- h1 on mobile */
+  --font-size-4xl:  2.4883rem;  /* 1.2^5       = 39.81px  -- h1 */
+  --font-size-5xl:  2.986rem;   /* 1.2^6       = 47.78px  -- section display */
+  --font-size-6xl:  3.5832rem;  /* 1.2^7       = 57.33px  -- hero, small viewports */
+  --font-size-7xl:  4.2998rem;  /* 1.2^8       = 68.80px  -- hero */
+  --font-size-8xl:  5.1598rem;  /* 1.2^9       = 82.56px  -- hero, wide viewports only */
+
+  /* -- fluid hero -------------------------------------------------------- */
+  --font-size-hero: clamp(2.4883rem, 1.4rem + 5.2vw, 5.1598rem);  /* 4xl -> 8xl across 360-1440px */
+
+  /* -- line heights ---------------------------------------------------------
+     Unitless. Larger type gets tighter leading; the display face needs less air
+     than the UI face at the same size because its x-height is lower.
+  --------------------------------------------------------------------------- */
+  --leading-flat:     1;      /* single-line buttons, badges, numeric cells */
+  --leading-tight:    1.04;   /* 6xl-8xl display */
+  --leading-snug:     1.14;   /* 3xl-5xl headings */
+  --leading-heading:  1.26;   /* lg-2xl headings */
+  --leading-normal:   1.5;    /* body, UI copy */
+  --leading-relaxed:  1.62;   /* long-form prose, docs */
+  --leading-code:     1.55;   /* code blocks -- tight enough to scan a stack trace */
+
+  /* -- letter-spacing, per size --------------------------------------------
+     Positive tracking rescues small text; negative tracking is mandatory above
+     ~28px or the display face looks like it is falling apart.
+  --------------------------------------------------------------------------- */
+  --tracking-2xs:   0.028em;
+  --tracking-xs:    0.018em;
+  --tracking-sm:    0.008em;
+  --tracking-md:    0;
+  --tracking-lg:   -0.005em;
+  --tracking-xl:   -0.009em;
+  --tracking-2xl:  -0.013em;
+  --tracking-3xl:  -0.017em;
+  --tracking-4xl:  -0.020em;
+  --tracking-5xl:  -0.023em;
+  --tracking-6xl:  -0.026em;
+  --tracking-7xl:  -0.029em;
+  --tracking-8xl:  -0.032em;
+  --tracking-caps:  0.075em;  /* the ONLY place all-caps is allowed: eyebrow labels, <=xs */
+  --tracking-mono:  0;        /* never track monospace; it stops being monospace */
+
+  /* -- optical adjustments for the display face -----------------------------
+     Bricolage Grotesque carries an `opsz` axis (12-96). Set it to the RENDERED
+     pixel size, clamped to the axis range -- the browser does not do this for
+     you unless you opt into `font-optical-sizing: auto`, which cannot see a
+     clamp() result reliably. Set it explicitly at each display step.
+
+     GRAD compensates for the optical bolding of light-on-dark text: at 48px+ on
+     --color-bg, Bricolage at wght 620 reads about half a weight heavier than it
+     does on white. GRAD -30 removes that without changing metrics (GRAD is a
+     grade axis: it changes weight without changing advance widths, so line
+     breaks do not move between themes).
+  --------------------------------------------------------------------------- */
+  --font-display-opsz-body:    "opsz" 16;
+  --font-display-opsz-h3:      "opsz" 23;
+  --font-display-opsz-h2:      "opsz" 28;
+  --font-display-opsz-h1:      "opsz" 40;
+  --font-display-opsz-section: "opsz" 48;
+  --font-display-opsz-hero:    "opsz" 83;
+  --font-display-grad-dark:    "GRAD" -30;
+  --font-display-grad-light:   "GRAD" 0;
+  --font-display-wdth-tight:   "wdth" 92;   /* hero only; below 90 it stops being the same typeface */
+
+  /* Composite: drop straight onto a hero element. */
+  --font-variation-hero: "opsz" 83, "wdth" 92, "wght" 620, "GRAD" -30;
+  --font-variation-h1:   "opsz" 40, "wdth" 100, "wght" 620, "GRAD" -30;
+  --font-variation-h2:   "opsz" 28, "wdth" 100, "wght" 600, "GRAD" -20;
+  --font-variation-h3:   "opsz" 23, "wdth" 100, "wght" 600, "GRAD" -10;
+
+  /* -- OpenType feature sets ------------------------------------------------ */
+  --font-features-ui:       "kern" 1, "liga" 1, "calt" 1;
+  --font-features-tabular:  "kern" 1, "tnum" 1, "lnum" 1;  /* every column of numbers, always */
+  --font-features-mono:     "kern" 0, "liga" 1, "calt" 1;  /* prose-adjacent code: ligatures fine */
+  --font-mono-terminal:     "kern" 0, "liga" 0, "calt" 0;  /* real terminal output: never fuse != into a glyph */
+
+  /* -- paragraph measure ---------------------------------------------------- */
+  --measure-prose:  68ch;   /* docs body */
+  --measure-lead:   48ch;   /* hero subhead */
+  --measure-narrow: 34ch;   /* card body, sidebar */
+
+  /* ===========================================================================
+     4. SPACE  --  4px base, no arbitrary values anywhere downstream
+     ======================================================================== */
+  --space-0:     0;
+  --space-px:    1px;
+  --space-0-5:   0.125rem;  /*   2px */
+  --space-1:     0.25rem;   /*   4px */
+  --space-1-5:   0.375rem;  /*   6px */
+  --space-2:     0.5rem;    /*   8px */
+  --space-3:     0.75rem;   /*  12px */
+  --space-4:     1rem;      /*  16px */
+  --space-5:     1.25rem;   /*  20px */
+  --space-6:     1.5rem;    /*  24px */
+  --space-8:     2rem;      /*  32px */
+  --space-10:    2.5rem;    /*  40px */
+  --space-12:    3rem;      /*  48px */
+  --space-16:    4rem;      /*  64px */
+  --space-20:    5rem;      /*  80px */
+  --space-24:    6rem;      /*  96px */
+  --space-32:    8rem;      /* 128px */
+  --space-40:    10rem;     /* 160px */
+  --space-48:    12rem;     /* 192px */
+
+  /* Section rhythm -- the vertical gaps that set the page's pace. */
+  --space-section:       var(--space-24);
+  --space-section-tight: var(--space-16);
+  --space-section-wide:  var(--space-40);
+
+  /* ===========================================================================
+     5. RADIUS  --  deliberately tight. The mark is faceted; the UI is chiselled.
+        Nothing above --radius-lg exists except pills and avatars.
+     ======================================================================== */
+  --radius-none:  0;
+  --radius-xs:    2px;   /* inputs, checkboxes, code chips */
+  --radius-sm:    3px;   /* buttons, tags */
+  --radius-md:    5px;   /* cards, popovers */
+  --radius-lg:    8px;   /* modals, terminal frames */
+  --radius-xl:    12px;  /* the single largest surface on a page, at most one */
+  --radius-full:  999px; /* pills and avatars only */
+
+  /* ===========================================================================
+     6. BORDER WIDTH
+     ======================================================================== */
+  --border-width-hairline: 1px;
+  --border-width-thin:     1.5px;
+  --border-width-thick:    2px;   /* focus ring, selected state */
+  --border-width-heavy:    3px;   /* the left rule on a callout */
+
+  /* ===========================================================================
+     7. SHADOW
+        On a warm near-black background a drop shadow is almost invisible, so
+        elevation in dark mode is carried by --color-surface/--color-raised plus
+        a 1px top hairline. Shadows are for things that genuinely float.
+     ======================================================================== */
+  --shadow-none:  none;
+  --shadow-sm:    0 1px 2px rgba(var(--color-shadow-rgb), 0.40);
+  --shadow-md:    0 2px 4px -1px rgba(var(--color-shadow-rgb), 0.45),
+                  0 4px 12px -2px rgba(var(--color-shadow-rgb), 0.34);
+  --shadow-lg:    0 8px 24px -6px rgba(var(--color-shadow-rgb), 0.50),
+                  0 2px 6px -2px rgba(var(--color-shadow-rgb), 0.40);
+  --shadow-xl:    0 24px 60px -12px rgba(var(--color-shadow-rgb), 0.58),
+                  0 4px 12px -4px rgba(var(--color-shadow-rgb), 0.44);
+  --shadow-hairline: inset 0 1px 0 var(--color-hairline-light);
+  --shadow-focus: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-border-focus);
+  --shadow-focus-inset: inset 0 0 0 2px var(--color-border-focus);
+
+  /* ===========================================================================
+     8. BLUR  --  backdrop only. Never blur content the user is reading.
+     ======================================================================== */
+  --blur-none: 0;
+  --blur-sm:   4px;
+  --blur-md:   8px;    /* sticky header over scrolling content */
+  --blur-lg:   16px;
+  --blur-xl:   32px;   /* modal scrim, at most */
+
+  /* ===========================================================================
+     9. MOTION
+        Durations are short because the audience is impatient and because every
+        animation here is confirming something the user just did. Nothing on
+        this brand animates on its own -- see UI-PRINCIPLES.md.
+     ======================================================================== */
+  --duration-0:     0ms;
+  --duration-1:    80ms;   /* colour/opacity on hover -- below this it looks broken */
+  --duration-2:   120ms;   /* press, focus ring, checkbox */
+  --duration-3:   180ms;   /* dropdown, tooltip, tab underline */
+  --duration-4:   240ms;   /* popover, drawer, accordion */
+  --duration-5:   320ms;   /* modal, page-level transition */
+  --duration-6:   480ms;   /* the longest thing allowed on screen */
+  --duration-7:   700ms;   /* streamed-output typewriter reveal ONLY */
+
+  /* Named curves. Nothing in this system uses `ease-in-out`: it is symmetric,
+     which is exactly wrong for interface motion -- things should leave faster
+     than they arrive. */
+  --ease-linear:  linear;                             /* determinate progress only */
+  --ease-enter:   cubic-bezier(0.22, 1, 0.36, 1);     /* out-quint. Arrivals: fast in, long settle. */
+  --ease-exit:    cubic-bezier(0.64, 0, 0.78, 0);     /* in-quint. Departures: slow start, snatched away. */
+  --ease-move:    cubic-bezier(0.32, 0.08, 0.24, 1);  /* position/size changes on something already visible */
+  --ease-toggle:  cubic-bezier(0.20, 0.90, 0.30, 1.15); /* 15% overshoot. Switches and checkboxes ONLY. */
+  --ease-cut:     cubic-bezier(0.90, 0.00, 1.00, 1);  /* dismissals: accelerate off-screen, no settle */
+
+  /* Ready-made transitions. */
+  --transition-colors: color var(--duration-1) var(--ease-move),
+                       background-color var(--duration-1) var(--ease-move),
+                       border-color var(--duration-1) var(--ease-move),
+                       fill var(--duration-1) var(--ease-move);
+  --transition-enter:  opacity var(--duration-3) var(--ease-enter),
+                       transform var(--duration-3) var(--ease-enter);
+  --transition-exit:   opacity var(--duration-2) var(--ease-exit),
+                       transform var(--duration-2) var(--ease-exit);
+  --transition-focus:  box-shadow var(--duration-2) var(--ease-move);
+
+  /* ===========================================================================
+     10. Z-INDEX  --  eleven layers, no ad-hoc integers, ever.
+     ======================================================================== */
+  --z-below:     -1;
+  --z-base:       0;
+  --z-raised:     10;
+  --z-sticky:     100;
+  --z-header:     200;
+  --z-dropdown:   300;
+  --z-overlay:    400;   /* scrim */
+  --z-modal:      500;
+  --z-popover:    600;
+  --z-toast:      700;
+  --z-tooltip:    800;
+  --z-max:        9999;  /* skip-link and nothing else */
+
+  /* ===========================================================================
+     11. LAYOUT
+     ======================================================================== */
+  --container-xs:    30rem;   /*  480px -- auth-style single column */
+  --container-sm:    40rem;   /*  640px */
+  --container-md:    48rem;   /*  768px -- docs body column */
+  --container-lg:    64rem;   /* 1024px -- default page container */
+  --container-xl:    75rem;   /* 1200px -- marketing wide */
+  --container-2xl:   90rem;   /* 1440px -- console / full-bleed max */
+  --container-prose: var(--measure-prose);
+  --container-code:  92ch;    /* widest code block before horizontal scroll is kinder */
+
+  --gutter-inline:      var(--space-5);  /* 20px, viewport < 768 */
+  --gutter-inline-wide: var(--space-8);  /* 32px, viewport >= 768 */
+  --grid-columns:       12;
+  --grid-gap:           var(--space-6);
+
+  /* Control sizing. WCAG 2.2 AA (2.5.8) sets a 24x24 CSS px floor; 44px is the
+     comfortable target and the default for anything a thumb will hit. */
+  --control-height-sm:  1.75rem;  /* 28px -- dense table row actions, desktop only */
+  --control-height-md:  2.25rem;  /* 36px -- default */
+  --control-height-lg:  2.75rem;  /* 44px -- primary CTA, all touch targets */
+  --target-min:         1.5rem;   /* 24px -- absolute WCAG 2.2 AA floor */
+  --target-comfortable: 2.75rem;  /* 44px */
+
+  /* Breakpoints. NOTE: CSS custom properties cannot be used inside a media
+     query condition -- `@media (min-width: var(--bp-md))` does not work. These
+     exist so JS and documentation stay in sync with the hard-coded values in
+     your stylesheets. The literals are duplicated in tokens.json. */
+  --bp-sm:  40rem;  /*  640px */
+  --bp-md:  48rem;  /*  768px */
+  --bp-lg:  64rem;  /* 1024px */
+  --bp-xl:  80rem;  /* 1280px */
+  --bp-2xl: 96rem;  /* 1536px */
+
+  /* ===========================================================================
+     12. OPACITY
+     ======================================================================== */
+  --opacity-disabled: 0.45;
+  --opacity-muted:    0.70;
+  --opacity-scrim:    0.72;
+}
+
+/* =============================================================================
+   LIGHT THEME
+   -----------------------------------------------------------------------------
+   Not an inversion. Three things are deliberately different:
+
+   1. The surface stack runs the other way. In dark, elevation moves AWAY from
+      black (bg -> surface -> raised gets lighter). In light, elevation moves
+      TOWARD white and the page background is the warm paper, not the card. So
+      --color-bg is the darkest light surface and --color-raised is pure white.
+   2. Brand foregrounds move from the 300 step to the 700 step. #deb076 on white
+      is 1.9:1 and unreadable; #623d00 on white is 9.60:1. The gold you see in
+      light mode is a different colour that means the same thing.
+   3. Status colours change lightness AND chroma, not just direction -- a light
+      theme needs more chroma to hold the same perceived saturation against
+      white than a dark theme needs against black.
+
+   The one thing that does NOT change: --color-primary-fill and
+   --color-accent-fill stay at the 300 step in both themes, with dark text on
+   them. A gold button is gold in both themes. That is the point of a brand.
+   ========================================================================== */
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* -- surfaces --------------------------------------------------------- */
+  --color-bg:               #f6f3ed;
+  --color-surface:          #fbf9f5;
+  --color-raised:           #ffffff;
+  --color-sunken:           #eeeae2;
+
+  /* -- borders ---------------------------------------------------------- */
+  --color-border:           #ded8d1;  /* hairline rules between text blocks only, never a control edge: 1.34:1 vs surface */
+  --color-border-strong:    #8e8880;  /* every interactive edge: 3.17:1 bg | 3.34:1 surface | 3.51:1 raised -- AA non-text >=3:1 */
+  --color-border-focus:     #006f6e;  /* focus ring: 5.42:1 bg | 5.71:1 surface | 6.00:1 raised -- AA non-text >=3:1 */
+
+  /* -- text ------------------------------------------------------------- */
+  --color-text:             #252019;  /* 14.59:1 bg | 15.37:1 surface | 16.16:1 raised | 13.47:1 sunken -- AA body */
+  --color-text-muted:       #5b564e;  /* 6.57:1 bg | 6.92:1 surface | 7.28:1 raised | 6.06:1 sunken -- AA body */
+  --color-text-subtle:      #6c675f;  /* 5.07:1 bg | 5.34:1 surface | 5.61:1 raised | 4.68:1 sunken -- AA body, floor of the scale */
+  --color-text-inverse:     #f8f5f1;  /* for use on --color-text as a background */
+
+  /* -- brand as foreground ----------------------------------------------- */
+  --color-text-accent:      #005251;  /* 8.15:1 bg | 8.59:1 surface | 9.03:1 raised | 7.53:1 sunken -- AA body */
+  --color-text-primary:     #623d00;  /* 8.67:1 bg | 9.13:1 surface | 9.60:1 raised | 8.00:1 sunken -- AA body */
+
+  /* -- brand as fill ------------------------------------------------------ */
+  --color-primary-fill:     #deb076;
+  --color-primary-on-fill:  #252019;  /* 8.14:1 on primary fill -- AA body */
+  --color-accent-fill:      #42d0cf;
+  --color-accent-on-fill:   #252019;  /* 8.59:1 on accent fill -- AA body */
+
+  /* -- status -------------------------------------------------------------- */
+  --color-success:          #006d38;  /* 5.84:1 bg | 6.16:1 surface | 5.89:1 on success-subtle -- AA body */
+  --color-success-subtle:   #e9f8ed;  /* body text on it: 14.71:1 -- AA body */
+  --color-success-border:   #339659;  /* 3.54:1 vs surface -- AA non-text >=3:1 */
+  --color-warn:             #8e4200;  /* 6.47:1 bg | 6.82:1 surface | 6.45:1 on warn-subtle -- AA body */
+  --color-warn-subtle:      #fff0e8;  /* body text on it: 14.53:1 -- AA body */
+  --color-warn-border:      #bf6420;  /* 3.95:1 vs surface -- AA non-text >=3:1 */
+  --color-danger:           #a20519;  /* 7.37:1 bg | 7.76:1 surface | 7.32:1 on danger-subtle -- AA body */
+  --color-danger-subtle:    #ffefee;  /* body text on it: 14.49:1 -- AA body */
+  --color-danger-border:    #ce514d;  /* 4.07:1 vs surface -- AA non-text >=3:1 */
+  --color-info:             #006083;  /* 6.32:1 bg | 6.65:1 surface | 6.34:1 on info-subtle -- AA body */
+  --color-info-subtle:      #e7f6ff;  /* body text on it: 14.64:1 -- AA body */
+  --color-info-border:      #008cbc;  /* 3.65:1 vs surface -- AA non-text >=3:1 */
+
+  /* -- incidental ---------------------------------------------------------- */
+  --color-selection-bg:     #c0f6f4;  /* accent-100; text on it: 12.35:1 -- AA body */
+  --color-selection-text:   #252019;
+  --color-scrim:            rgba(37, 32, 25, 0.42);
+  --color-shadow-rgb:       37, 32, 25;   /* warm shadow. A neutral-black shadow on warm paper looks dirty. */
+  --color-hairline-light:   rgba(255, 255, 255, 0.90);
+
+  /* Light-mode shadows are lower-alpha and higher-spread: on white, the same
+     alpha reads roughly twice as heavy as it does on near-black. */
+  --shadow-sm:    0 1px 2px rgba(var(--color-shadow-rgb), 0.07);
+  --shadow-md:    0 1px 2px rgba(var(--color-shadow-rgb), 0.06),
+                  0 4px 10px -2px rgba(var(--color-shadow-rgb), 0.08);
+  --shadow-lg:    0 2px 4px -1px rgba(var(--color-shadow-rgb), 0.06),
+                  0 10px 28px -6px rgba(var(--color-shadow-rgb), 0.12);
+  --shadow-xl:    0 4px 8px -2px rgba(var(--color-shadow-rgb), 0.07),
+                  0 28px 64px -12px rgba(var(--color-shadow-rgb), 0.16);
+
+  /* Light backgrounds do not optically bold the display face, so no grade
+     compensation. Line breaks are unchanged because GRAD is metric-neutral. */
+  --font-variation-hero: "opsz" 83, "wdth" 92, "wght" 620, "GRAD" 0;
+  --font-variation-h1:   "opsz" 40, "wdth" 100, "wght" 620, "GRAD" 0;
+  --font-variation-h2:   "opsz" 28, "wdth" 100, "wght" 600, "GRAD" 0;
+  --font-variation-h3:   "opsz" 23, "wdth" 100, "wght" 600, "GRAD" 0;
+}
+
+/* Respect the OS only when the user has not chosen. Once [data-theme] is set on
+   <html>, it wins -- an explicit choice beats an inferred one. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+
+    --color-bg:               #f6f3ed;
+    --color-surface:          #fbf9f5;
+    --color-raised:           #ffffff;
+    --color-sunken:           #eeeae2;
+
+    --color-border:           #ded8d1;
+    --color-border-strong:    #8e8880;
+    --color-border-focus:     #006f6e;
+
+    --color-text:             #252019;
+    --color-text-muted:       #5b564e;
+    --color-text-subtle:      #6c675f;
+    --color-text-inverse:     #f8f5f1;
+
+    --color-text-accent:      #005251;
+    --color-text-primary:     #623d00;
+
+    --color-primary-fill:     #deb076;
+    --color-primary-on-fill:  #252019;
+    --color-accent-fill:      #42d0cf;
+    --color-accent-on-fill:   #252019;
+
+    --color-success:          #006d38;
+    --color-success-subtle:   #e9f8ed;
+    --color-success-border:   #339659;
+    --color-warn:             #8e4200;
+    --color-warn-subtle:      #fff0e8;
+    --color-warn-border:      #bf6420;
+    --color-danger:           #a20519;
+    --color-danger-subtle:    #ffefee;
+    --color-danger-border:    #ce514d;
+    --color-info:             #006083;
+    --color-info-subtle:      #e7f6ff;
+    --color-info-border:      #008cbc;
+
+    --color-selection-bg:     #c0f6f4;
+    --color-selection-text:   #252019;
+    --color-scrim:            rgba(37, 32, 25, 0.42);
+    --color-shadow-rgb:       37, 32, 25;
+    --color-hairline-light:   rgba(255, 255, 255, 0.90);
+
+    --shadow-sm:    0 1px 2px rgba(var(--color-shadow-rgb), 0.07);
+    --shadow-md:    0 1px 2px rgba(var(--color-shadow-rgb), 0.06),
+                    0 4px 10px -2px rgba(var(--color-shadow-rgb), 0.08);
+    --shadow-lg:    0 2px 4px -1px rgba(var(--color-shadow-rgb), 0.06),
+                    0 10px 28px -6px rgba(var(--color-shadow-rgb), 0.12);
+    --shadow-xl:    0 4px 8px -2px rgba(var(--color-shadow-rgb), 0.07),
+                    0 28px 64px -12px rgba(var(--color-shadow-rgb), 0.16);
+
+    --font-variation-hero: "opsz" 83, "wdth" 92, "wght" 620, "GRAD" 0;
+    --font-variation-h1:   "opsz" 40, "wdth" 100, "wght" 620, "GRAD" 0;
+    --font-variation-h2:   "opsz" 28, "wdth" 100, "wght" 600, "GRAD" 0;
+    --font-variation-h3:   "opsz" 23, "wdth" 100, "wght" 600, "GRAD" 0;
+  }
+}
+
+/* =============================================================================
+   MINIMAL BASE
+   Not a reset and not a component library -- only the things that are wrong by
+   default and that every Husk surface needs identically.
+   ========================================================================== */
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-md);
+  line-height: var(--leading-normal);
+  letter-spacing: var(--tracking-md);
+  font-feature-settings: var(--font-features-ui);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background-color: var(--color-selection-bg);
+  color: var(--color-selection-text);
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+  font-feature-settings: var(--font-features-mono);
+  font-size: 0.925em;  /* JetBrains Mono runs large next to Instrument Sans */
+}
+
+pre {
+  line-height: var(--leading-code);
+  tab-size: 2;
+}
+
+/* Terminal output is quoted machine speech: no ligatures, no kerning, and the
+   slashed zero must survive. */
+.husk-terminal {
+  font-family: var(--font-mono);
+  font-feature-settings: var(--font-mono-terminal);
+  font-variant-ligatures: none;
+  line-height: var(--leading-code);
+  background-color: var(--color-sunken);
+  color: var(--color-text-muted);
+}
+
+/* One focus treatment, everywhere. Never remove it; never replace it with a
+   glow. See UI-PRINCIPLES.md section 6. */
+:focus-visible {
+  outline: var(--border-width-thick) solid var(--color-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+:focus:not(:focus-visible) { outline: none; }
+
+/* Reduced motion is not a degraded experience -- it is the same interface with
+   the transitions collapsed. State changes still happen instantly and visibly;
+   nothing becomes unreachable. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-1: 0ms;
+    --duration-2: 0ms;
+    --duration-3: 0ms;
+    --duration-4: 0ms;
+    --duration-5: 0ms;
+    --duration-6: 0ms;
+    --duration-7: 0ms;
+  }
+
+  html { scroll-behavior: auto; }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* In forced-colors mode the palette is the user's, not ours. Keep the shapes,
+   drop the decoration, and make sure the focus ring still exists. */
+@media (forced-colors: active) {
+  :focus-visible { outline: 2px solid CanvasText; }
+  .husk-terminal { border: 1px solid CanvasText; }
+}

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-labelledby="husk-favicon-title">
+  <title id="husk-favicon-title">Husk</title>
+  <!-- Not the same geometry as mark.svg. The ink is pulled in from the edges,
+       the facets are shortened and the three shapes are pushed apart to 2.7-3.2
+       unit gaps (>=1.35 CSS px at 16 px) so they stay separate in a tab strip.
+       Ships its own background because a tab strip is not a surface we control. -->
+  <rect width="32" height="32" rx="6" fill="#0f0b07"/>
+  <g fill="#deb076">
+    <path d="M13 3 L4 10 L2.5 19 L9.5 29 L16.5 27 L13.5 21.5 L12.5 15.5 L15.5 9 L19.5 5 Z"/>
+    <path d="M24 5 L29.5 11 L29.5 20 L25.5 26.5 L23.5 20 L23.8 11.5 Z"/>
+  </g>
+  <path fill="#42d0cf" d="M18.2 10 L21 15.5 L18.8 25.5 L15.5 16 Z"/>
+</svg>

@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.next/
+out/
+build/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.husk/
+.DS_Store
+Thumbs.db
+*.log
+.turbo/
+.vite/
+.vercel
