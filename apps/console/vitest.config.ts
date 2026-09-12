@@ -16,6 +16,9 @@ export default mergeConfig(
     esbuild: { jsx: 'automatic', jsxImportSource: 'react' },
     test: {
       environment: 'jsdom',
+      // jsdom has no canvas and xterm wants one; see the file for what it stubs
+      // and what it deliberately does not.
+      setupFiles: ['./src/test-setup.ts'],
       include: ['src/**/*.test.{ts,tsx}'],
       // These poll React until the promise chains settle. The default 5s is
       // enough on an idle machine and not enough when the whole repo suite is

@@ -93,7 +93,12 @@ describe('husk persistence', () => {
  * count well below N because they all read the same starting value.
  */
 describe('the write queue', () => {
-  it('serialises concurrent read-modify-write on one file', async () => {
+  // These two are I/O bound on purpose: the whole point is 50 real, serialised
+  // disk round-trips. On a loaded machine -- a full parallel test run -- that
+  // legitimately passes vitest's 5s default and the suite fails for contention
+  // rather than for a broken queue. The longer budget is not hiding a bug; it
+  // is the honest cost of what is being asserted.
+  it('serialises concurrent read-modify-write on one file', { timeout: 30_000 }, async () => {
     const { store, root } = await fresh();
     await store.writeHusk(defaultSpec('busy'));
 
@@ -103,7 +108,7 @@ describe('the write queue', () => {
     expect(meta.runCount).toBe(50);
   });
 
-  it('does not serialise across unrelated files', async () => {
+  it('does not serialise across unrelated files', { timeout: 30_000 }, async () => {
     const { store } = await fresh();
     await Promise.all(
       Array.from({ length: 20 }, (_, i) => store.writeHusk(defaultSpec(`h${String(i).padStart(2, '0')}`))),

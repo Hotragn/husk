@@ -180,7 +180,11 @@ describe('CronBindings', () => {
   });
 });
 
-describe('mounted triggers', () => {
+// Every test here stands a real Fastify app up and writes a husk to disk. That
+// is several hundred ms on an idle machine and multiples of it in a full
+// parallel run, which is how this suite started failing on vitest's 5s default
+// for reasons unrelated to triggers. The budget matches what the tests do.
+describe('mounted triggers', { timeout: 30_000 }, () => {
   it('serves an http trigger at its declared path', async () => {
     harness = await buildTestApp({ triggers: true });
     await harness.app.inject({

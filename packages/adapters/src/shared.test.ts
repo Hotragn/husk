@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Backoff, IdempotencyCache, RateLimiter, chunkMessage, keepTyping, stripMention } from './shared.js';
 
 describe('chunkMessage', () => {
@@ -185,26 +185,52 @@ describe('stripMention', () => {
   });
 });
 
+/**
+ * Fake timers, because the real ones lie under load.
+ *
+ * This used to poke on a 5ms interval, sleep 26ms of wall clock and assert
+ * "more than 2 calls". On an idle machine that is 5 calls; in a full parallel
+ * test run the event loop starves and it is 1 or 2, so the suite failed for
+ * reasons that had nothing to do with `keepTyping`. A controlled clock also
+ * lets the assertions be exact rather than `toBeGreaterThan`.
+ */
 describe('keepTyping', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('pokes immediately and then on an interval, and stops on demand', async () => {
     let calls = 0;
     const stop = keepTyping(async () => {
       calls++;
     }, 5);
+
     expect(calls).toBe(1);
-    await new Promise((r) => setTimeout(r, 26));
-    expect(calls).toBeGreaterThan(2);
-    const atStop = calls;
+
+    await vi.advanceTimersByTimeAsync(5);
+    expect(calls).toBe(2);
+    await vi.advanceTimersByTimeAsync(15);
+    expect(calls).toBe(5);
+
     stop();
-    await new Promise((r) => setTimeout(r, 20));
-    expect(calls).toBe(atStop);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(calls).toBe(5);
   });
 
   it('swallows a failing poke rather than crashing the adapter', async () => {
+    let pokes = 0;
     const stop = keepTyping(async () => {
+      pokes++;
       throw new Error('typing api down');
     }, 5);
-    await new Promise((r) => setTimeout(r, 15));
+
+    // The point is that it keeps going: a typing indicator is decoration, and
+    // losing it must never take the reply down with it.
+    await vi.advanceTimersByTimeAsync(15);
+    expect(pokes).toBeGreaterThan(1);
     stop();
   });
 });
