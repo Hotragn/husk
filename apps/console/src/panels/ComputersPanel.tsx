@@ -8,6 +8,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { useConnection } from '../state/connection';
+import { useComputers } from '../state/computers';
 import { useResource } from '../state/useResource';
 import { toDisplayError } from '../api/client';
 import type { DisplayError } from '../api/client';
@@ -78,7 +79,10 @@ export function ComputersPanel({
 }) {
   const { api, revision, invalidate } = useConnection();
 
-  const computers = useResource<ComputerInfo[]>((signal) => api.listComputers(signal), [api, revision]);
+  // The shared list — the one `GET /v1/computers` in the app. This panel used
+  // to make its own identical call; two sources of the same fact is how the
+  // list could be populated here and empty everywhere else at the same moment.
+  const computers = useComputers();
   const doctor = useResource<DoctorReport>((signal) => api.doctor(signal), [api, revision]);
 
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -119,7 +123,7 @@ export function ComputersPanel({
     [act, api],
   );
 
-  const rows = computers.data ?? [];
+  const rows = computers.list;
 
   return (
     <section className="panel" aria-labelledby="computers-title">
@@ -135,12 +139,12 @@ export function ComputersPanel({
       {actionError ? <ErrorBlock error={actionError} /> : null}
       {computers.error ? <ErrorBlock error={computers.error} retry={computers.reload} /> : null}
 
-      {!computers.data && computers.loading && computers.slow ? (
+      {!computers.loaded && computers.loading && computers.slow ? (
         <StatusLine text="Listing computers from the provider…" />
       ) : null}
-      {!computers.data && computers.showSkeleton && !computers.slow ? <Skeleton rows={5} /> : null}
+      {!computers.loaded && computers.showSkeleton && !computers.slow ? <Skeleton rows={5} /> : null}
 
-      {computers.data && rows.length === 0 ? (
+      {computers.loaded && rows.length === 0 ? (
         <EmptyState
           title="No computers running."
           body="A computer starts the first time an agent needs one — nothing is spun up in advance. Create one below, or let a husk do it."

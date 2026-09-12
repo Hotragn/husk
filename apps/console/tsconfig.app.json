@@ -32,5 +32,10 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  /* The app build is a browser bundle; the tests are not part of it. They pull
+     vitest, and through it Node's `process` types, which collide with the
+     browser shim in `src/shims/process.ts` — an upstream mismatch this config
+     has no business adopting. Vitest transforms and runs them either way. */
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

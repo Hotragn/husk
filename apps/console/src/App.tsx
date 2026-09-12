@@ -7,11 +7,10 @@
  * behind it.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ConnectionProvider, useConnection } from './state/connection';
+import { ComputersProvider, useComputers } from './state/computers';
 import { useTheme } from './state/theme';
-import { useResource } from './state/useResource';
-import type { ComputerInfo } from './api/wire';
 import { Button, StatusDot } from './components/primitives';
 import { ComputersPanel } from './panels/ComputersPanel';
 import { TerminalPanel } from './panels/TerminalPanel';
@@ -43,13 +42,16 @@ function panelFromHash(): PanelId {
 export default function App() {
   return (
     <ConnectionProvider>
-      <Shell />
+      <ComputersProvider>
+        <Shell />
+      </ComputersProvider>
     </ConnectionProvider>
   );
 }
 
 function Shell() {
-  const { status, health, api, revision, baseUrl } = useConnection();
+  const { status, health, baseUrl } = useConnection();
+  const { list: rows } = useComputers();
   const { theme, toggle } = useTheme();
 
   const [panel, setPanel] = useState<PanelId>(() => panelFromHash());
@@ -65,16 +67,6 @@ function Shell() {
     window.location.hash = `#/${next}`;
     setPanel(next);
   }, []);
-
-  // One list, shared by the panels that need a machine to point at. Fetched
-  // here so switching panels does not refetch it, and refreshed by the event
-  // bus rather than by polling.
-  const computers = useResource<ComputerInfo[]>(
-    (signal) => api.listComputers(signal),
-    [api, revision],
-    status === 'connected',
-  );
-  const rows = useMemo(() => computers.data ?? [], [computers.data]);
 
   useEffect(() => {
     if (rows.length === 0) {
@@ -149,14 +141,10 @@ function Shell() {
               <ComputersPanel activeId={activeComputer} onSelect={setActiveComputer} />
             ) : null}
             {panel === 'terminal' ? (
-              <TerminalPanel computers={rows} activeId={activeComputer} onSelect={setActiveComputer} theme={theme} />
+              <TerminalPanel activeId={activeComputer} onSelect={setActiveComputer} theme={theme} />
             ) : null}
-            {panel === 'files' ? (
-              <FilesPanel computers={rows} activeId={activeComputer} onSelect={setActiveComputer} />
-            ) : null}
-            {panel === 'browser' ? (
-              <BrowserPanel computers={rows} activeId={activeComputer} onSelect={setActiveComputer} />
-            ) : null}
+            {panel === 'files' ? <FilesPanel activeId={activeComputer} onSelect={setActiveComputer} /> : null}
+            {panel === 'browser' ? <BrowserPanel activeId={activeComputer} onSelect={setActiveComputer} /> : null}
             {panel === 'husks' ? <HusksPanel /> : null}
             {panel === 'doctor' ? <DoctorPanel /> : null}
             {panel === 'events' ? <EventsPanel /> : null}

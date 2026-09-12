@@ -79,6 +79,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const tickRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const probeRef = useRef<(() => void) | null>(null);
+  /**
+   * Set the moment the daemon is seen to be down, cleared when it comes back.
+   * Only that round trip — away and back — can have changed the state behind
+   * our resources, so only that round trip is worth an `invalidate()`.
+   */
+  const staleRef = useRef(false);
 
   const invalidate = useCallback(() => setRevision((r) => r + 1), []);
 
@@ -123,12 +129,20 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         attemptRef.current = 0;
         setHealth(report);
         setError(null);
+        // Only a *reconnect* invalidates. A liveness probe that finds the
+        // daemon still up has learned nothing, and bumping `revision` for it
+        // aborts whatever request is in flight — which is how the shared
+        // computer list used to starve and leave the panels claiming there was
+        // no machine. The first probe is not a reconnect either: resources
+        // fetch on mount, so there is nothing yet to invalidate.
+        if (staleRef.current) invalidate();
+        staleRef.current = false;
         setStatus('connected');
-        invalidate();
       } catch (err) {
         if (cancelled || isAbort(err)) return;
         setHealth(null);
         setError(toDisplayError(err));
+        staleRef.current = true;
         setStatus('disconnected');
         scheduleRetry();
       }

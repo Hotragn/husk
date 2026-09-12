@@ -28,9 +28,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useConnection } from '../state/connection';
+import { useComputers } from '../state/computers';
+import { computerGate } from './computerGate';
 import { isAbort, toDisplayError } from '../api/client';
 import type { DisplayError } from '../api/client';
-import type { BrowsePage, ComputerInfo } from '../api/wire';
+import type { BrowsePage } from '../api/wire';
 import {
   Badge,
   Button,
@@ -105,16 +107,15 @@ interface History {
 const NO_HISTORY: History = { entries: [], index: -1 };
 
 export function BrowserPanel({
-  computers,
   activeId,
   onSelect,
 }: {
-  computers: ComputerInfo[];
   activeId: string | null;
   onSelect: (id: string) => void;
 }) {
   const { api } = useConnection();
-  const active = computers.find((c) => c.id === activeId) ?? null;
+  const computers = useComputers();
+  const active = computers.list.find((c) => c.id === activeId) ?? null;
 
   const [draft, setDraft] = useState('');
   const [history, setHistory] = useState<History>(NO_HISTORY);
@@ -229,18 +230,15 @@ export function BrowserPanel({
   const canBack = history.index > 0;
   const canForward = history.index >= 0 && history.index < history.entries.length - 1;
 
-  if (computers.length === 0) {
-    return (
-      <section className="panel">
-        <PanelHeader title="Browser" lede="POST /v1/computers/:id/browse" />
-        <EmptyState
-          title="No computer to browse from."
-          body="The fetch happens inside a machine, on that machine's network — so there has to be a machine first. Create one on the Computers panel."
-          command={'husk run "echo hello"'}
-        />
-      </section>
-    );
-  }
+  const gate = computerGate({
+    computers,
+    title: 'Browser',
+    lede: 'POST /v1/computers/:id/browse',
+    emptyTitle: 'No computer to browse from.',
+    emptyBody:
+      "The fetch happens inside a machine, on that machine's network — so there has to be a machine first. Create one on the Computers panel.",
+  });
+  if (gate) return <>{gate}</>;
 
   const links = page?.links ?? [];
   const shown = allLinks ? links : links.slice(0, LINKS_SHOWN);
@@ -265,7 +263,7 @@ export function BrowserPanel({
               value={activeId ?? ''}
               onChange={(e) => onSelect(e.target.value)}
             >
-              {computers.map((c) => (
+              {computers.list.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.id} · {c.provider} · {c.state}
                 </option>

@@ -416,3 +416,82 @@ expected default.
 
 The fabrication findings in sections 2 and 3 stand unchanged, and are the more
 important result.
+
+---
+
+## 10. Retest of sprout v0.2.0 (11 September 2026)
+
+`examples/sprout.yaml` was redesigned in response to this report: three tools
+instead of ten, a persona cut from 1.6 KB to a few lines, `digest.py` laid down
+by `computer.setup` so fetching is deterministic, `temperature` 0.1, `maxSteps`
+20. Retested with the task from the original brief — five stories, **each with
+one to two lines of summary** plus the source link.
+
+**Run:** 7 steps, 11m13s, 21,200 tokens, free.
+
+### What the redesign fixed
+
+| | v0.1.0 | v0.2.0 |
+|---|---|---|
+| Wall clock | 18–35 min | **11m13s** |
+| `read_file` on the candidate list | 4–6 lines per call, 20+ calls | **91 lines in one call** |
+| Empty-turn failures | 2 of 6 runs | none |
+| Fabricated URLs | present in 2 runs | **none** |
+
+The one-judgement-call design works. This is a real improvement and the
+attention-budget diagnosis in section 4 is confirmed by it.
+
+### Provenance — verified, clean
+
+All five URLs present in `candidates.txt` and all five live, checked with
+`curl -I` from inside the computer:
+
+```
+in_candidates=1  .../first-permit-to-clean-up-old-mine-waste-issued-for-wa-state-under-2024-good-samaritan-act/
+in_candidates=1  .../humanitys-3rd-visit-to-mercury-kicks-off-with-the-successful-arrival-of-bepicolombo-mission/
+in_candidates=1  .../beavers-big-moment/
+in_candidates=1  .../the-spark-laundromat-libraries/
+in_candidates=1  .../former-poachers-protecting-forest-nigeria/
+
+HTTP 200  (all five)
+```
+
+### What is still broken: the model will not write the summaries
+
+The file on disk:
+
+```
+GOOD NEWS - 10 September 2026
+
+1. First Permit to Clean Up Old Mine Waste Issued for WA State Under 2024 ‘Good Samaritan Act’
+   Source: https://www.goodnewsnetwork.org/first-permit-to-clean-up-old-mine-waste-issued-for-wa-state-under-2024-good-samaritan-act/
+
+2. Humanity’s 3rd Visit to Mercury Kicks Off with the Successful Arrival of BepiColombo Mission
+   Source: https://www.goodnewsnetwork.org/humanitys-3rd-visit-to-mercury-kicks-off-with-the-successful-arrival-of-bepicolombo-mission/
+...
+```
+
+Title and `Source:` only. **No summaries — the third line of each item is simply
+absent.** This is now **3 runs out of 3**, across both versions, including one
+where the required shape was spelled out literally in the prompt with the
+explicit note "each with its own summary lines". It is a reproducible ceiling,
+not variance.
+
+Worth being precise about what fails: the model reliably *copies* (titles and
+URLs are character-exact and never invented, now that it can see the list) and
+reliably *fails to generate* — the one part of the task that requires producing
+new prose is the part it silently drops. Earlier runs that did emit summaries
+produced filler of no value ("A fascinating scientific achievement.").
+
+**Recency instruction also ignored.** The task said prefer the newest dates. The
+chosen stories are dated 11, 10, 7, 4 and 3 September — only one from the
+requested day, with 3 September selected over available newer items.
+
+### Conclusion
+
+v0.2.0 closes the fabrication class, which was the serious defect. What remains
+is a generation ceiling: on a 7B, husk can be designed to make the model's
+*selection* trustworthy, but not to make it *write*. For a digest bot that is
+the difference between a verified link list and a usable product. Anything
+needing original prose per item needs a larger model — and the runtime is now
+good enough that the model is unambiguously the limiting factor.

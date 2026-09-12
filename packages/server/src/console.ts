@@ -83,7 +83,13 @@ export async function installConsole(app: FastifyInstance, explicitDir?: string)
   }
 
   const staticPlugin = (await import('@fastify/static')).default;
-  await app.register(staticPlugin, { root: dir, prefix: '/', index: ['index.html'], wildcard: false });
+  // `wildcard: true` resolves each request against the directory when it
+  // arrives. With `false`, the plugin enumerates the directory once at boot and
+  // registers a route per file -- so rebuilding the console under a running
+  // server 404s every new content-hashed asset and the page renders blank, with
+  // nothing in the UI to say why. A silent white screen is not an acceptable
+  // outcome for `npm run build` in another terminal.
+  await app.register(staticPlugin, { root: dir, prefix: '/', index: ['index.html'], wildcard: true });
 
   // A single-page app owns its own routing: anything that is not an API path and
   // not a real file has to fall through to index.html or a deep link 404s.

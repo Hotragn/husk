@@ -24,11 +24,13 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { useConnection } from '../state/connection';
+import { useComputers } from '../state/computers';
+import { computerGate } from './computerGate';
 import { openManagedSocket } from '../api/sockets';
 import type { ManagedSocket, SocketState } from '../api/sockets';
 import { isTerminalFrame } from '../api/wire';
-import type { ComputerInfo, TerminalResizeFrame } from '../api/wire';
-import { Button, EmptyState, PanelHeader, StatusDot } from '../components/primitives';
+import type { TerminalResizeFrame } from '../api/wire';
+import { Button, PanelHeader, StatusDot } from '../components/primitives';
 import type { Theme } from '../state/theme';
 
 // Control bytes, spelled out. Literal control characters in a source file
@@ -76,18 +78,17 @@ function themeFromTokens(): Record<string, string> {
 }
 
 export function TerminalPanel({
-  computers,
   activeId,
   onSelect,
   theme,
 }: {
-  computers: ComputerInfo[];
   activeId: string | null;
   onSelect: (id: string) => void;
   theme: Theme;
 }) {
   const { api } = useConnection();
-  const active = computers.find((c) => c.id === activeId) ?? null;
+  const computers = useComputers();
+  const active = computers.list.find((c) => c.id === activeId) ?? null;
 
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -310,18 +311,15 @@ export function TerminalPanel({
 
   const reconnect = useCallback(() => socketRef.current?.retryNow(), []);
 
-  if (computers.length === 0) {
-    return (
-      <section className="panel">
-        <PanelHeader title="Terminal" lede="WS /v1/computers/:id/terminal" />
-        <EmptyState
-          title="No computer to attach to."
-          body="The terminal socket is per-machine, so there has to be a machine first. Create one on the Computers panel."
-          command={'husk run "echo hello"'}
-        />
-      </section>
-    );
-  }
+  const gate = computerGate({
+    computers,
+    title: 'Terminal',
+    lede: 'WS /v1/computers/:id/terminal',
+    emptyTitle: 'No computer to attach to.',
+    emptyBody:
+      "The terminal socket is per-machine, so there has to be a machine first. Create one on the Computers panel.",
+  });
+  if (gate) return <>{gate}</>;
 
   const socketTone = socketState === 'open' ? (ready ? 'success' : 'info') : socketState === 'connecting' ? 'info' : 'danger';
   const socketLabel =
@@ -344,7 +342,7 @@ export function TerminalPanel({
               value={activeId ?? ''}
               onChange={(e) => onSelect(e.target.value)}
             >
-              {computers.map((c) => (
+              {computers.list.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.id} · {c.provider} · {c.state}
                 </option>

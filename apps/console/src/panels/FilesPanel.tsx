@@ -16,10 +16,12 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useConnection } from '../state/connection';
+import { useComputers } from '../state/computers';
+import { computerGate } from './computerGate';
 import { useResource } from '../state/useResource';
 import { toDisplayError } from '../api/client';
 import type { DisplayError } from '../api/client';
-import type { ComputerInfo, DirEntry } from '../api/wire';
+import type { DirEntry } from '../api/wire';
 import {
   Badge,
   Button,
@@ -55,16 +57,15 @@ interface OpenFile {
 }
 
 export function FilesPanel({
-  computers,
   activeId,
   onSelect,
 }: {
-  computers: ComputerInfo[];
   activeId: string | null;
   onSelect: (id: string) => void;
 }) {
   const { api, revision } = useConnection();
-  const active = computers.find((c) => c.id === activeId) ?? null;
+  const computers = useComputers();
+  const active = computers.list.find((c) => c.id === activeId) ?? null;
 
   const [path, setPath] = useState('/work');
   const [pathDraft, setPathDraft] = useState('/work');
@@ -83,10 +84,14 @@ export function FilesPanel({
     setNotice(null);
   }, [active?.id, active?.workdir]);
 
+  // Polled, because the agent writes to this directory and nothing tells us when.
+  // `exec` cannot report which files a command touched, so without this the panel
+  // keeps saying "/work is empty" while the agent fills it.
   const dir = useResource<DirEntry[]>(
     (signal) => api.listDir(activeId ?? '', path, signal),
     [api, activeId, path, revision],
     Boolean(activeId),
+    { refreshMs: 4000 },
   );
 
   const openFile = useCallback(
@@ -171,18 +176,15 @@ export function FilesPanel({
     [api, activeId, dir, path],
   );
 
-  if (computers.length === 0) {
-    return (
-      <section className="panel">
-        <PanelHeader title="Files" lede="GET /v1/computers/:id/fs" />
-        <EmptyState
-          title="No computer to browse."
-          body="A filesystem belongs to a machine, and there is no machine yet. Create one on the Computers panel."
-          command={'husk run "echo hello"'}
-        />
-      </section>
-    );
-  }
+  const gate = computerGate({
+    computers,
+    title: 'Files',
+    lede: 'GET /v1/computers/:id/fs',
+    emptyTitle: 'No computer to browse.',
+    emptyBody:
+      "A filesystem belongs to a machine, and there is no machine yet. Create one on the Computers panel.",
+  });
+  if (gate) return <>{gate}</>;
 
   const entries = dir.data ?? [];
   const dirty = open !== null && open.text !== open.original;
@@ -204,7 +206,7 @@ export function FilesPanel({
               value={activeId ?? ''}
               onChange={(e) => onSelect(e.target.value)}
             >
-              {computers.map((c) => (
+              {computers.list.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.id} · {c.provider} · {c.state}
                 </option>

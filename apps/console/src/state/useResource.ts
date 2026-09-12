@@ -24,10 +24,27 @@ export interface Resource<T> {
   reload(): void;
 }
 
+export interface ResourceOptions {
+  /**
+   * Re-fetch on this interval while the tab is visible.
+   *
+   * For anything the *agent* changes behind our back. A directory listing has
+   * no change event to subscribe to -- `exec` cannot know which files a command
+   * touched -- so a Files panel left open reports "/work is empty" forever
+   * while the agent fills it. Saying "empty" when it is not is worse than
+   * saying nothing.
+   *
+   * Paused when the document is hidden, so a console left open in a background
+   * tab is not polling a machine nobody is looking at.
+   */
+  refreshMs?: number;
+}
+
 export function useResource<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
   deps: readonly unknown[],
   enabled = true,
+  options: ResourceOptions = {},
 ): Resource<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<DisplayError | null>(null);
@@ -95,6 +112,37 @@ export function useResource<T>(
   }, [...deps, enabled, nonce]);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
+
+  const { refreshMs } = options;
+  useEffect(() => {
+    if (!enabled || !refreshMs) return;
+
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const start = () => {
+      timer ??= setInterval(reload, refreshMs);
+    };
+    const stop = () => {
+      if (timer) clearInterval(timer);
+      timer = undefined;
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        // Catch up immediately rather than waiting out a full interval the tab
+        // spent hidden -- that is the moment someone is looking again.
+        reload();
+        start();
+      } else {
+        stop();
+      }
+    };
+
+    if (document.visibilityState === 'visible') start();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [enabled, refreshMs, reload]);
 
   return { data, error, loading, showSkeleton, slow, reload };
 }
