@@ -651,16 +651,77 @@ class LocalComputer implements Computer {
     await persist(this.info);
   }
 
+  /**
+   * Destroy the machine and free its disk.
+   *
+   * Every `rm` here used to be `.catch(() => {})`, which made the common failure
+   * invisible: a process the agent left running -- a provisioned Chromium is
+   * 325 MB of it -- still holds files open, Windows refuses the delete, and the
+   * registry entry gets removed anyway. The computer disappears from `husk ps`
+   * while its workspace stays on disk forever. I found 1.9 GB of those.
+   *
+   * So: retry, because the lock is usually a process on its way out; and when
+   * it still will not go, keep the registry entry and say so. A leaked
+   * workspace that is still listed can be cleaned up. One that is not is lost.
+   */
   async destroy(): Promise<void> {
     if (this.destroyed) return;
+    const workspace = this.info.spec.labels?.['husk.workspace'];
+    const targets = [this.jail.root, this.jail.tmp, ...(workspace ? [workspace] : [])];
+
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      lastErr = undefined;
+      for (const dir of targets) {
+        try {
+          await rm(dir, { recursive: true, force: true });
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      if (!lastErr) break;
+      // A file handle being released is a race, not a permanent state.
+      await new Promise((r) => setTimeout(r, attempt * 250));
+    }
+
+    if (lastErr) {
+      this.info.state = 'error';
+      this.info.error = `workspace could not be removed: ${(lastErr as Error).message}`;
+      await persist(this.info);
+      throw new HuskError('E_COMPUTER_FAILED', `destroyed ${this.info.id}, but its files are still on disk`, {
+        hint: 'something inside it still holds a file open -- close it and run `husk rm` again',
+        details: { workspace: workspace ?? this.jail.root },
+        cause: lastErr,
+      });
+    }
+
     this.destroyed = true;
     this.info.state = 'destroyed';
-    const workspace = this.info.spec.labels?.['husk.workspace'];
-    await rm(this.jail.root, { recursive: true, force: true }).catch(() => {});
-    await rm(this.jail.tmp, { recursive: true, force: true }).catch(() => {});
-    if (workspace) await rm(workspace, { recursive: true, force: true }).catch(() => {});
     await rm(join(paths().computers, `${this.info.id}.json`), { force: true }).catch(() => {});
   }
+}
+
+/**
+ * Workspace directories with no registry entry behind them.
+ *
+ * These are the ones a failed destroy left behind before it learned to report
+ * itself. Returned rather than deleted: reclaiming disk is the caller's call.
+ */
+export async function findOrphanedWorkspaces(): Promise<string[]> {
+  const p = ensurePaths();
+  let dirs: string[];
+  try {
+    dirs = await readdir(p.workspaces);
+  } catch {
+    return [];
+  }
+  const known = new Set(
+    (await loadInfos()).map((i: ComputerInfo) => i.spec.labels?.['husk.workspace'] ?? join(p.workspaces, i.id)),
+  );
+  return dirs
+    .filter((d) => d.startsWith('cmp_'))
+    .map((d) => join(p.workspaces, d))
+    .filter((dir) => !known.has(dir));
 }
 
 function splitList(v: string | undefined): string[] | undefined {
