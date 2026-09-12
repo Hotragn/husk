@@ -93,8 +93,9 @@ export async function browserRoutes(app: FastifyInstance): Promise<void> {
     const { id } = req.params as { id: string };
     const body = parseOr422(RefSchema, req.body);
     const page = await browserFor(await mustGet(app, id)).activePage();
-    await page.click(body.ref);
-    await page.waitForLoad(5000);
+    // Only pays for a load when the click started one. A click that opens a
+    // menu used to cost a flat 5s waiting for an event that was never coming.
+    await page.clickAndSettle(body.ref);
     return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }) };
   });
 

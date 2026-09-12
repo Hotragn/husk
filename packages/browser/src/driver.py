@@ -401,6 +401,19 @@ def run(req):
                     results.append({'skipped': True})
                     continue
 
+            # The inverse: run this step only if an earlier one succeeded.
+            # Needed because a driver invocation is a fresh process with a fresh
+            # connection, so a wait in a *later* invocation cannot see an event
+            # that already fired. Click-then-wait-for-load has to be one batch,
+            # and the load wait has to be dropped when nothing navigated.
+            only = step.get('skipUnless')
+            if only is not None:
+                index = int(only.get('step', -1))
+                prior = results[index] if -len(results) <= index < len(results) else None
+                if not (isinstance(prior, dict) and prior.get(only.get('key'))):
+                    results.append({'skipped': True})
+                    continue
+
             if op == 'send':
                 try:
                     results.append(conn.call(step['method'], step.get('params') or {}, routed, step_deadline))

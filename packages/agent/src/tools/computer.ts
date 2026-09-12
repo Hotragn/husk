@@ -69,7 +69,10 @@ export const shell = defineTool<
   },
 });
 
-export const expose_port = defineTool<{ port: number }, { port: number; url: string; publicUrl?: string }>({
+export const expose_port = defineTool<
+  { port: number },
+  { port: number; url: string; publicUrl?: string; reachable?: boolean }
+>({
   name: 'expose_port',
   description:
     'Publish a port from inside the computer to the host so a human can open it in a browser. ' +
@@ -82,12 +85,22 @@ export const expose_port = defineTool<{ port: number }, { port: number; url: str
   async handler(input, ctx) {
     const computer = await ctx.acquireComputer();
     const binding = await computer.exposePort(input.port);
-    return { port: input.port, url: binding.url, publicUrl: binding.publicUrl };
+    return {
+      port: input.port,
+      url: binding.url,
+      publicUrl: binding.publicUrl,
+      reachable: binding.reachable,
+    };
   },
   render(out) {
-    return out.publicUrl
-      ? `port ${out.port} is at ${out.url} (public: ${out.publicUrl})`
-      : `port ${out.port} is at ${out.url}`;
+    const where = out.publicUrl ? `${out.url} (public: ${out.publicUrl})` : out.url;
+    // Only providers that check say so. Silence means "not checked", which is
+    // different from "checked and nothing there" -- and the model should not
+    // start a debugging detour over a provider that simply does not report.
+    if (out.reachable === false) {
+      return `port ${out.port} is published at ${where}, but nothing is listening on it yet`;
+    }
+    return `port ${out.port} is at ${where}`;
   },
 });
 

@@ -53,6 +53,8 @@ export interface SendStep {
   /** Record a Chromium rejection as `{ error }` instead of failing the batch. A dead browser stays fatal. */
   soft?: boolean;
   skipIf?: SkipIf;
+  /** The inverse: run only if an earlier step set this key truthy. */
+  skipUnless?: SkipIf;
 }
 
 /**
@@ -71,6 +73,8 @@ export interface WaitStep {
   /** A timeout yields `{ fired: false }` instead of failing the request. */
   optional?: boolean;
   skipIf?: SkipIf;
+  /** The inverse: run only if an earlier step set this key truthy. */
+  skipUnless?: SkipIf;
 }
 
 export type DriverStep = SendStep | WaitStep;

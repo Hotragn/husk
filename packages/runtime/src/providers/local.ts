@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { connect } from 'node:net';
 import { createReadStream, createWriteStream, existsSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -630,11 +631,23 @@ class LocalComputer implements Computer {
     this.touch();
   }
 
+  /**
+   * Publish a port the agent is listening on.
+   *
+   * There is nothing to forward: a `local` process is on the host's own network
+   * stack, and WSL2's relay covers the WSL case. But "nothing to forward" was
+   * being used to justify handing back a URL nobody had ever connected to,
+   * which is a different claim. So it is checked, and the answer is reported.
+   *
+   * A port that is not up yet is not an error -- exposing before the server has
+   * finished binding is the ordinary sequence -- so this reports rather than
+   * throws, and gives the listener a moment to appear.
+   */
   async exposePort(port: number): Promise<PortBinding> {
     this.assertLive();
-    // A local process binds the host's own network stack, so a port the agent
-    // opened is already reachable. There is nothing to forward.
-    const binding: PortBinding = { hostPort: port, url: `http://127.0.0.1:${port}` };
+    const url = `http://127.0.0.1:${port}`;
+    const reachable = await portAnswers(port);
+    const binding: PortBinding = { hostPort: port, url, reachable };
     this.info.ports = { ...(this.info.ports ?? {}), [port]: binding };
     await persist(this.info);
     return binding;
@@ -878,4 +891,30 @@ export class LocalProvider implements ComputerProvider {
     }
     return removed;
   }
+}
+
+/**
+ * Can anything be connected to on this port?
+ *
+ * A bare TCP connect, not an HTTP request: the agent may have started something
+ * that does not speak HTTP, and the question here is only whether the port is
+ * live. Retried briefly, because a server that is still binding is the common
+ * case rather than a failure.
+ */
+export async function portAnswers(port: number, attempts = 3): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    const open = await new Promise<boolean>((resolve) => {
+      const socket = connect({ port, host: '127.0.0.1' });
+      const done = (result: boolean) => {
+        socket.destroy();
+        resolve(result);
+      };
+      socket.setTimeout(400, () => done(false));
+      socket.once('connect', () => done(true));
+      socket.once('error', () => done(false));
+    });
+    if (open) return true;
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, 150));
+  }
+  return false;
 }

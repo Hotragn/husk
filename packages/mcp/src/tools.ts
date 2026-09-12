@@ -263,7 +263,12 @@ async function exposePort(computer: Computer, args: Record<string, unknown>): Pr
   const port = Number(args.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return fail('port must be an integer 1-65535');
   const b = await computer.exposePort(port);
-  return ok(`port ${port} is reachable at ${b.publicUrl ?? b.url}`);
+  const where = b.publicUrl ?? b.url;
+  // "is reachable" was a guess. Say it only when the provider checked.
+  if (b.reachable === false) {
+    return ok(`port ${port} is published at ${where}, but nothing is listening on it yet`);
+  }
+  return ok(`port ${port} is published at ${where}`);
 }
 
 async function computerInfo(computer: Computer): Promise<ToolResult> {

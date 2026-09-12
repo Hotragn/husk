@@ -100,7 +100,27 @@ export function resolveTools(names: string[], opts: ResolveToolsOptions): Tool[]
   return asTools([...picked.values()]);
 }
 
-/** Everything resolveTools could ever return, for `husk doctor` and docs. */
+/**
+ * Everything `resolveTools` could ever return, for `husk doctor` and docs.
+ *
+ * The `browser` bundle was missing here while `resolveTools` registered it
+ * fine, so `browse` and the Chromium tools worked and were invisible to every
+ * surface that lists capabilities. The line above this one is the list that
+ * gets edited when a bundle is added; this is the one that gets forgotten --
+ * hence the test that asserts the two agree.
+ */
 export function listBuiltinTools(): AgentTool[] {
-  return [...computerTools, ...fileTools, ...webTools, ...httpTools];
+  return [
+    ...computerTools,
+    ...browserTools,
+    ...realBrowserTools,
+    ...fileTools,
+    ...webTools,
+    // `web_search` only registers when a search key is present, but this list
+    // answers "what can husk do", not "what is switched on right now" -- a
+    // capability nobody can discover is a capability nobody uses. The
+    // placeholder credentials are never called: nothing here invokes a handler.
+    makeWebSearch({ backend: 'tavily', key: '' }),
+    ...httpTools,
+  ];
 }

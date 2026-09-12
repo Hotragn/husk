@@ -276,6 +276,21 @@ export class Page {
    * connected, so a load that already finished is not sitting somewhere waiting
    * to be collected. This is for the navigation an action has just started.
    */
+  /**
+   * Wait for a load only if the click actually started one.
+   *
+   * Most clicks navigate nothing -- they open a menu, tick a box, run some
+   * JavaScript. `Page.loadEventFired` never arrives for those, so waiting on it
+   * unconditionally spent the full timeout on the common case and made every
+   * interaction feel broken. Watch for navigation *starting* in a short window
+   * instead, and only then wait for it to finish.
+   */
+  /** `click`, named for what a caller cares about: did the page move. */
+  async clickAndSettle(ref: string, loadTimeoutMs = 5000): Promise<{ navigated: boolean }> {
+    const { navigationStarted } = await this.click(ref, loadTimeoutMs);
+    return { navigated: navigationStarted };
+  }
+
   async waitForLoad(timeoutMs = 30_000): Promise<boolean> {
     const [load] = await this.run(
       [{ op: 'wait', event: 'Page.loadEventFired', session: true, timeoutMs, optional: true }],
@@ -385,10 +400,20 @@ export class Page {
     };
   }
 
-  async click(ref: string): Promise<void> {
+  /**
+   * Click, and report whether that started a navigation.
+   *
+   * The watch is part of the *same* driver invocation as the click, not a call
+   * after it. The driver buffers events as they arrive and `wait` checks that
+   * buffer first, so a navigation that completes before the listener would
+   * otherwise have attached is still seen. Watching from a second invocation
+   * loses exactly the fast local navigations this is for -- measured: the URL
+   * had already changed and the watcher reported nothing.
+   */
+  async click(ref: string, loadTimeoutMs = 5000): Promise<{ navigationStarted: boolean }> {
     const { x, y } = await this.centreOf(ref);
     const base = { x, y, button: 'left', clickCount: 1, buttons: 1 };
-    await this.run([
+    const results = await this.run([
       { op: 'send', method: 'Input.dispatchMouseEvent', params: { ...base, type: 'mousePressed' }, session: true },
       {
         op: 'send',
@@ -396,7 +421,21 @@ export class Page {
         params: { ...base, type: 'mouseReleased', buttons: 0 },
         session: true,
       },
+      { op: 'wait', event: 'Page.frameStartedLoading', session: true, timeoutMs: 250, optional: true },
+      // Same batch, and skipped entirely when nothing navigated. It has to be
+      // here rather than in a follow-up call: each driver invocation is a fresh
+      // process on a fresh connection, so a load event that fired during the
+      // click is simply gone by the time a second invocation starts listening.
+      {
+        op: 'wait',
+        event: 'Page.loadEventFired',
+        session: true,
+        timeoutMs: loadTimeoutMs,
+        optional: true,
+        skipUnless: { step: 2, key: 'fired' },
+      },
     ]);
+    return { navigationStarted: waitResultOf(results[2]).fired };
   }
 
   async type(ref: string, text: string, opts: { clear?: boolean } = {}): Promise<void> {

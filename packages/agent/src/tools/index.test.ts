@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { specFor } from '../test-support.js';
-import { resolveTools } from './index.js';
+import { BUNDLES, listBuiltinTools, resolveTools } from './index.js';
+import type { BundleName } from './index.js';
 
 const spec = specFor();
 const noKeys: NodeJS.ProcessEnv = {};
@@ -88,5 +89,27 @@ describe('resolveTools', () => {
       expect(tool.parameters.properties, tool.name).toBeTypeOf('object');
       expect(tool.description.length, tool.name).toBeGreaterThan(20);
     }
+  });
+});
+
+describe('listBuiltinTools agrees with the bundles', () => {
+  it('lists every tool any bundle can hand out', () => {
+    // The bug: `browser` was registered by `resolveTools` and missing from
+    // `listBuiltinTools`, so those tools worked and were invisible to
+    // `husk doctor` and the docs. Two lists that must agree, one of which is
+    // easy to forget, is exactly what a test is for.
+    const listed = new Set(listBuiltinTools().map((t) => t.name));
+    const everyBundle = Object.keys(BUNDLES) as BundleName[];
+    const fromBundles = new Set(
+      everyBundle.flatMap((name) =>
+        resolveTools([name], {
+          spec,
+          hasComputer: true,
+          env: { TAVILY_API_KEY: 'x', BRAVE_API_KEY: 'x' },
+        }).map((t) => t.name),
+      ),
+    );
+    const missing = [...fromBundles].filter((n) => !listed.has(n));
+    expect(missing, `listBuiltinTools is missing: ${missing.join(', ')}`).toEqual([]);
   });
 });

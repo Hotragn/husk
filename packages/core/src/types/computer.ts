@@ -83,6 +83,15 @@ export interface PortBinding {
   url: string;
   /** Set when the provider can offer a public tunnel. */
   publicUrl?: string;
+  /**
+   * Whether anything actually answered on `url` when the binding was made.
+   *
+   * `false` is not necessarily an error -- an agent that exposes a port before
+   * its server finishes starting is the ordinary case -- but a URL nobody has
+   * ever connected to should not be handed back as though it were known good.
+   * Undefined means the provider did not check.
+   */
+  reachable?: boolean;
 }
 
 export interface ExecRequest {
