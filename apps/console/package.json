@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@husk/browser": "0.1.0",
     "@husk/core": "0.1.0",
     "@husk/sdk": "0.1.0",
     "@xterm/addon-fit": "^0.10.0",

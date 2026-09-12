@@ -1,29 +1,40 @@
 /**
- * The browser: `POST /v1/computers/:id/browse`.
+ * Two browsers, one panel, and a label on each saying which one you are looking at.
  *
- * What this is, so the panel does not lie about it: there is no browser engine
- * anywhere in this stack. The server writes a small python script into the
- * computer, runs it there, and the script fetches the URL, strips the markup
- * and prints the text plus the first 300 links as JSON. No scripts run, no CSS
- * is applied, no subresource is fetched. `packages/core/src/browse.ts` says why
- * it works that way rather than with a host `fetch()`: the console has to show
- * the page the *agent* would get — same IP, same DNS, same egress — or the two
- * are looking at different machines.
+ * **Rendered** drives a real Chromium inside the computer over CDP:
+ * `POST /v1/computers/:id/browser/{goto,snapshot,click,type}` and
+ * `GET .../browser/screenshot`. Scripts run, CSS applies, subresources load —
+ * so a page whose body is written by a `<script>` is visible here and nowhere
+ * else in this console. What you see is a PNG the machine took, refreshed after
+ * anything that changes the page, and a list of the page's interactive nodes
+ * you can click and type into by `ref`.
  *
- * So the reader view below is extracted text, and it says so on screen rather
- * than leaving a user to work out why example.com has no serif heading.
+ * **Text** is the old `POST /v1/computers/:id/browse`: the server writes a small
+ * python script into the computer, runs it there, and it fetches the URL, strips
+ * the markup and returns the text plus the first 300 links. It renders nothing
+ * and it needs nothing installed, which is exactly why it stays — it answers in
+ * about 200ms where the real browser wants a 111 MB download the first time.
  *
- * The refusal path is the interesting one. An `egress` policy with an allow
- * list is the normal way to run a computer, so `E_EXEC_DENIED` is not a bug —
- * it is the policy working. It gets the server's own message and hint verbatim,
- * plus the machine's declared policy read back off `ComputerInfo.spec.network`
- * and the yaml that would change it. The console does not re-derive the
- * decision: `assertUrlAllowed` in `@husk/core` owns that, and duplicating it
- * here would be a second contract.
+ * Three things this file refuses to fake:
  *
- * There is no iframe and no `dangerouslySetInnerHTML`. Everything below renders
- * through React's text nodes, because every byte of it came off a page the
- * machine was pointed at and none of it is trusted.
+ * 1. **The screenshot is a still.** Each frame is one `GET`. There is no video
+ *    stream behind it and no "live" badge above it; the bar says when the frame
+ *    was taken, and every action that could change the page takes a new one.
+ * 2. **The first launch is slow and large.** It is announced before it starts,
+ *    with the size, and while it runs the panel counts the seconds. The server
+ *    does not stream the download's byte progress to the console — `browserFor`
+ *    in `routes/browser.ts` passes no `onProgress` — so the panel says where the
+ *    real progress is instead of drawing a fake bar over it.
+ * 3. **The debug port.** On `local` and `ssh` the computer shares a network
+ *    stack with the host, so Chromium's CDP port may be reachable by other
+ *    local processes, and CDP has no authentication. `@husk/browser` says this
+ *    at launch into the server's log, where nobody using the console will see
+ *    it. It is said here too, once, as a property of the provider — not as an
+ *    alarm, because nothing has gone wrong.
+ *
+ * There is still no iframe and no `dangerouslySetInnerHTML`. The rendered view
+ * is an `<img>` of a PNG and a list of strings in React text nodes; every byte
+ * of both came off a page the machine was pointed at, and none of it is trusted.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -32,7 +43,17 @@ import { useComputers } from '../state/computers';
 import { computerGate } from './computerGate';
 import { isAbort, toDisplayError } from '../api/client';
 import type { DisplayError } from '../api/client';
-import type { BrowsePage } from '../api/wire';
+import type { BrowsePage, SnapshotNode } from '../api/wire';
+import {
+  actionableNodes,
+  classifyBrowserError,
+  debugPortIsShared,
+  followUps,
+  isTextInput,
+  nodeLabel,
+  normaliseUrl,
+} from './browserModel';
+import type { PageAction } from './browserModel';
 import {
   Badge,
   Button,
@@ -55,16 +76,24 @@ const STATUS_LINE_AFTER_MS = 2000;
 /** Enough links to scan. The fetcher caps at 300; the rest are one click away. */
 const LINKS_SHOWN = 60;
 
+/** What the snapshot route defaults to, stated rather than left implicit. */
+const SNAPSHOT_LIMIT = 400;
+
+/** `downloadPlanFor` in `@husk/browser`: 111 MB on arm64, and about that on x64. */
+const DOWNLOAD_MB = 111;
+
 /**
- * `example.com` is what a person types; `https://example.com` is what the route
- * needs. Anything that already carries a scheme is left exactly as typed —
- * including `http://`, because a user asking for cleartext usually means it.
+ * Which computers have answered a `/browser/*` call in this console session.
+ *
+ * Module-level, not state: the point of it is to survive switching panels and
+ * switching machines, because the expensive thing it gates — the ~111 MB
+ * download — survives both too. It is a cache of "we have seen this work", so
+ * being wrong after a server restart costs one extra pre-flight card, not a bug.
  */
-function normalise(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (trimmed === '') return null;
-  return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-}
+const launched = new Set<string>();
+
+/** Computers whose debug-port note the user has already read and closed. */
+const noteRead = new Set<string>();
 
 /** The hostname, for the refusal explanation. Null when the URL will not parse. */
 function hostOf(url: string): string | null {
@@ -97,6 +126,10 @@ function statusTone(status: number): Tone {
   return 'muted';
 }
 
+function clockOf(ms: number): string {
+  return new Date(ms).toLocaleTimeString();
+}
+
 interface History {
   /** Requested URLs, oldest first. */
   entries: string[];
@@ -105,6 +138,14 @@ interface History {
 }
 
 const NO_HISTORY: History = { entries: [], index: -1 };
+
+/** A captured frame and when it was captured. The object URL is ours to revoke. */
+interface Still {
+  src: string;
+  at: number;
+}
+
+type Mode = 'render' | 'text';
 
 export function BrowserPanel({
   activeId,
@@ -117,21 +158,50 @@ export function BrowserPanel({
   const computers = useComputers();
   const active = computers.list.find((c) => c.id === activeId) ?? null;
 
+  // Text is the default because it is the cheap one: nothing to install, no
+  // 111 MB, an answer in about 200ms. Rendered is one click away and says what
+  // it costs before it spends it.
+  const [mode, setMode] = useState<Mode>('text');
+
   const [draft, setDraft] = useState('');
   const [history, setHistory] = useState<History>(NO_HISTORY);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [cancelled, setCancelled] = useState(false);
+
+  // -- text view ------------------------------------------------------------
   const [page, setPage] = useState<BrowsePage | null>(null);
   const [error, setError] = useState<DisplayError | null>(null);
   const [loading, setLoading] = useState(false);
   const [showSkeleton, setShowSkeleton] = useState(false);
   const [slow, setSlow] = useState(false);
-  const [cancelled, setCancelled] = useState(false);
   const [allLinks, setAllLinks] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+
+  // -- rendered view --------------------------------------------------------
+  const [still, setStill] = useState<Still | null>(null);
+  const [nodes, setNodes] = useState<SnapshotNode[]>([]);
+  const [pageUrl, setPageUrl] = useState<string | null>(null);
+  const [pageTitle, setPageTitle] = useState<string | null>(null);
+  const [partial, setPartial] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [rError, setRError] = useState<DisplayError | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [ready, setReady] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
+  const stillRef = useRef<Still | null>(null);
+
+  /** One place owns the object URL, so there is exactly one revoke per frame. */
+  const putStill = useCallback((next: Still | null) => {
+    if (stillRef.current) URL.revokeObjectURL(stillRef.current.src);
+    stillRef.current = next;
+    setStill(next);
+  }, []);
 
   // A history stack belongs to a machine. Switching machines is a new session,
-  // not a continuation of the old one — the allow-list is different too.
+  // not a continuation of the old one — the allow-list is different too, and so
+  // is the browser: `browserFor` keys its sessions by computer id.
   useEffect(() => {
     setDraft('');
     setHistory(NO_HISTORY);
@@ -140,11 +210,44 @@ export function BrowserPanel({
     setCancelled(false);
     setNotice(null);
     setAllLinks(false);
-  }, [active?.id]);
+    setNodes([]);
+    setPageUrl(null);
+    setPageTitle(null);
+    setPartial(false);
+    setRError(null);
+    setDrafts({});
+    putStill(null);
+    setReady(activeId !== null && launched.has(activeId));
+    setNoteOpen(activeId !== null && !noteRead.has(activeId));
+  }, [activeId, putStill]);
 
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+      if (stillRef.current) URL.revokeObjectURL(stillRef.current.src);
+    },
+    [],
+  );
 
-  const load = useCallback(
+  /**
+   * The seconds counter under a running browser call.
+   *
+   * A number that is actually measured, which §6 prefers to any animation. It
+   * is not the download's byte progress — the console is not sent that — and
+   * the copy next to it says so rather than implying otherwise.
+   */
+  useEffect(() => {
+    if (busy === null) return;
+    // The zeroing happens in `drive`, where the wait actually begins; doing it
+    // here would be a setState inside an effect for no reason.
+    const startedAt = Date.now();
+    const timer = setInterval(() => setElapsed(Math.round((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [busy]);
+
+  // -- the text view's loader ----------------------------------------------
+
+  const loadText = useCallback(
     async (url: string) => {
       if (!activeId) return;
       abortRef.current?.abort();
@@ -167,7 +270,7 @@ export function BrowserPanel({
         if (controller.signal.aborted) return;
         setPage(next);
         setNotice(
-          `Loaded ${next.title || next.url} — HTTP ${next.status}, ${next.links.length} link${
+          `Loaded ${next.title || next.url} as text — HTTP ${next.status}, ${next.links.length} link${
             next.links.length === 1 ? '' : 's'
           }, ${next.elapsedMs} ms.`,
         );
@@ -192,16 +295,132 @@ export function BrowserPanel({
     [api, activeId],
   );
 
+  // -- the rendered view's driver ------------------------------------------
+
+  /**
+   * Run one browser action, then everything `followUps` says must follow it.
+   *
+   * The rule lives in `browserModel.ts` and is unit-tested there, because "the
+   * screenshot is refreshed after anything that changes the page" is precisely
+   * the kind of invariant that survives review and then dies in a later edit.
+   */
+  const drive = useCallback(
+    async (
+      action: PageAction,
+      label: string,
+      call: (id: string, signal: AbortSignal) => Promise<void>,
+    ): Promise<void> => {
+      if (!activeId) return;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      setRError(null);
+      setCancelled(false);
+      setNotice(null);
+      setElapsed(0);
+      setBusy(label);
+
+      try {
+        await call(activeId, controller.signal);
+        if (controller.signal.aborted) return;
+        launched.add(activeId);
+        setReady(true);
+
+        for (const stepName of followUps(action)) {
+          if (stepName === 'snapshot') {
+            const snap = await api.browserSnapshot(activeId, SNAPSHOT_LIMIT, controller.signal);
+            if (controller.signal.aborted) return;
+            setNodes(snap.nodes);
+            setPageUrl(snap.url);
+          } else {
+            const bytes = await api.browserScreenshot(activeId, false, controller.signal);
+            if (controller.signal.aborted) return;
+            putStill({ src: URL.createObjectURL(pngBlob(bytes)), at: Date.now() });
+          }
+        }
+        setNotice(`${label} finished. The screenshot below was taken after it.`);
+      } catch (err) {
+        if (controller.signal.aborted || isAbort(err)) return;
+        setRError(toDisplayError(err));
+      } finally {
+        if (!controller.signal.aborted) setBusy(null);
+        if (abortRef.current === controller) abortRef.current = null;
+      }
+    },
+    [api, activeId, putStill],
+  );
+
+  const gotoRendered = useCallback(
+    (url: string) =>
+      void drive('goto', `Opening ${url}`, async (id, signal) => {
+        const res = await api.browserGoto(id, { url }, signal);
+        setPageUrl(res.url);
+        setPageTitle(res.title);
+        setPartial(!res.loaded);
+      }),
+    [api, drive],
+  );
+
+  const clickRef = useCallback(
+    (node: SnapshotNode) =>
+      void drive('click', `Clicking ${nodeLabel(node)}`, async (id, signal) => {
+        const res = await api.browserClick(id, node.ref, signal);
+        setNodes(res.nodes);
+        setPageUrl(res.url);
+      }),
+    [api, drive],
+  );
+
+  const typeInto = useCallback(
+    (node: SnapshotNode, text: string, submit: boolean) =>
+      void drive('type', `Typing into ${nodeLabel(node)}`, async (id, signal) => {
+        const res = await api.browserType(id, node.ref, text, submit, signal);
+        setNodes(res.nodes);
+        setPageUrl(res.url);
+      }),
+    [api, drive],
+  );
+
+  const resnapshot = useCallback(
+    () =>
+      void drive('snapshot', 'Taking a snapshot', async (id, signal) => {
+        const snap = await api.browserSnapshot(id, SNAPSHOT_LIMIT, signal);
+        setNodes(snap.nodes);
+        setPageUrl(snap.url);
+      }),
+    [api, drive],
+  );
+
+  const recapture = useCallback(
+    () =>
+      void drive('screenshot', 'Taking a screenshot', async (id, signal) => {
+        const bytes = await api.browserScreenshot(id, false, signal);
+        putStill({ src: URL.createObjectURL(pngBlob(bytes)), at: Date.now() });
+      }),
+    [api, drive, putStill],
+  );
+
+  // -- shared navigation ----------------------------------------------------
+
+  const go = useCallback(
+    (url: string) => {
+      if (mode === 'render') gotoRendered(url);
+      else void loadText(url);
+    },
+    [mode, gotoRendered, loadText],
+  );
+
   /** A new destination: truncate anything ahead of the cursor, then push. */
   const navigate = useCallback(
     (raw: string) => {
-      const url = normalise(raw);
+      const url = normaliseUrl(raw);
       if (url === null) return;
       setDraft(url);
       setHistory((h) => ({ entries: [...h.entries.slice(0, h.index + 1), url], index: h.index + 1 }));
-      void load(url);
+      go(url);
     },
-    [load],
+    [go],
   );
 
   /** Back and forward move the cursor. Neither one rewrites the stack. */
@@ -212,9 +431,9 @@ export function BrowserPanel({
       if (url === undefined) return;
       setHistory({ entries: history.entries, index: next });
       setDraft(url);
-      void load(url);
+      go(url);
     },
-    [history, load],
+    [history, go],
   );
 
   const stop = useCallback(() => {
@@ -223,6 +442,7 @@ export function BrowserPanel({
     setLoading(false);
     setShowSkeleton(false);
     setSlow(false);
+    setBusy(null);
     setCancelled(true);
   }, []);
 
@@ -233,10 +453,10 @@ export function BrowserPanel({
   const gate = computerGate({
     computers,
     title: 'Browser',
-    lede: 'POST /v1/computers/:id/browse',
+    lede: 'POST /v1/computers/:id/browser/* — a real Chromium in the machine, or the text fallback',
     emptyTitle: 'No computer to browse from.',
     emptyBody:
-      "The fetch happens inside a machine, on that machine's network — so there has to be a machine first. Create one on the Computers panel.",
+      "The browser runs inside a machine, on that machine's network — so there has to be a machine first. Create one on the Computers panel.",
   });
   if (gate) return <>{gate}</>;
 
@@ -244,13 +464,22 @@ export function BrowserPanel({
   const shown = allLinks ? links : links.slice(0, LINKS_SHOWN);
   const body = page ? paragraphs(page.text) : [];
   const policy = active?.spec.network;
-  const deniedHost = error?.code === 'E_EXEC_DENIED' && current ? hostOf(current) : null;
+  const shownError = mode === 'render' ? rError : error;
+  const deniedHost = shownError?.code === 'E_EXEC_DENIED' && current ? hostOf(current) : null;
+  const failure = shownError ? classifyBrowserError(shownError) : null;
+  const controls = actionableNodes(nodes);
+  const working = mode === 'render' ? busy !== null : loading;
+  const provisioning = mode === 'render' && busy !== null && !ready;
 
   return (
     <section className="panel" aria-labelledby="browser-title">
       <PanelHeader
         title="Browser"
-        lede="A page fetched from inside the machine and shown as extracted text. There is no browser engine here, and no iframe."
+        lede={
+          mode === 'render'
+            ? 'A real Chromium running inside the machine. Scripts run; the view is a screenshot it took, and the page is driven by accessibility ref, not by coordinate.'
+            : 'A page fetched from inside the machine and shown as extracted text. No browser engine, no iframe — and nothing to install.'
+        }
         actions={
           <>
             <label className="visually-hidden" htmlFor="browse-computer">
@@ -276,13 +505,43 @@ export function BrowserPanel({
         Browser
       </span>
 
+      {/* Two views of the same URL, named by what they actually are. §4's tab
+          states: the selected one carries a border and `aria-selected`, never
+          colour alone. */}
+      <div className="view-switch" role="tablist" aria-label="How to show the page">
+        <button
+          type="button"
+          role="tab"
+          id="browser-tab-render"
+          className="view-tab"
+          aria-selected={mode === 'render'}
+          aria-controls="browser-view"
+          onClick={() => setMode('render')}
+        >
+          Rendered
+          <span className="view-tab-note">real Chromium · screenshot · clickable</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="browser-tab-text"
+          className="view-tab"
+          aria-selected={mode === 'text'}
+          aria-controls="browser-view"
+          onClick={() => setMode('text')}
+        >
+          Text
+          <span className="view-tab-note">fetch and strip · ~200 ms · nothing to install</span>
+        </button>
+      </div>
+
       {active && active.state !== 'running' ? (
         <div className="card warn-card" role="note" style={{ marginBottom: 'var(--space-4)' }}>
           <p>
             <strong>
               {active.id} is {active.state}.
             </strong>{' '}
-            The fetch runs as a command inside it, so every load will fail until it is started again.
+            Both views run as commands inside it, so every load will fail until it is started again.
           </p>
         </div>
       ) : null}
@@ -317,10 +576,10 @@ export function BrowserPanel({
           spellCheck={false}
           autoComplete="off"
         />
-        <Button type="submit" variant="primary" disabled={normalise(draft) === null}>
-          Load
+        <Button type="submit" variant="primary" disabled={normaliseUrl(draft) === null}>
+          {mode === 'render' ? 'Open' : 'Load'}
         </Button>
-        {loading ? (
+        {working ? (
           <Button variant="ghost" onClick={stop}>
             Stop
           </Button>
@@ -328,7 +587,7 @@ export function BrowserPanel({
           <Button
             variant="ghost"
             onClick={() => {
-              if (current !== null) void load(current);
+              if (current !== null) go(current);
             }}
             disabled={current === null}
           >
@@ -337,24 +596,52 @@ export function BrowserPanel({
         )}
       </form>
       <p className="field-note" id="browse-url-note">
-        A bare host gets <code>https://</code> in front of it. Type the scheme yourself to override that.
+        A bare host gets <code>https://</code> in front of it. Type the scheme yourself to override that.{' '}
+        {mode === 'render'
+          ? 'The URL is checked against this computer’s network policy before Chromium navigates to it.'
+          : 'The same network policy applies to this fetch.'}
       </p>
 
       {/* §6, with one deliberate reading of it. A skeleton is for content that
           is not on screen yet — it holds the shape so nothing reflows on
           arrival. When a page is already rendered, a skeleton stacked above it
-          says less than a line naming the URL being fetched, so the status line
-          takes over at 400ms rather than waiting for the 2s threshold. */}
-      {loading && (slow || (showSkeleton && page !== null)) ? (
+          says less than a line naming the URL being fetched. */}
+      {mode === 'text' && loading && (slow || (showSkeleton && page !== null)) ? (
         <StatusLine text={`Fetching ${current ?? draft} from inside ${activeId ?? ''}…`} />
       ) : null}
-      {loading && showSkeleton && !slow && page === null ? <Skeleton rows={6} height={24} /> : null}
+      {mode === 'text' && loading && showSkeleton && !slow && page === null ? <Skeleton rows={6} height={24} /> : null}
+
+      {mode === 'render' && busy !== null ? (
+        <StatusLine
+          text={
+            provisioning
+              ? `${busy} — ${elapsed}s. First use installs Chromium inside ${activeId ?? ''} (~${DOWNLOAD_MB} MB).`
+              : `${busy} — ${elapsed}s.`
+          }
+        />
+      ) : null}
+
+      {provisioning && elapsed >= 5 ? (
+        <div className="card" role="note" style={{ marginTop: 'var(--space-3)' }}>
+          <p>
+            <strong>Installing Chromium in {activeId}.</strong> It is downloaded from inside the computer, over that
+            computer&apos;s own egress path, into <code>/work/.husk-browser</code> — so on a persistent machine it is
+            kept, and this wait happens once.
+          </p>
+          <p className="hint" style={{ marginTop: 'var(--space-2)' }}>
+            The {elapsed}s above is measured. A byte count is not shown because the console is not sent one: the
+            download reports its progress into the server&apos;s own log and no further. To watch the real thing:
+          </p>
+          <pre className="code" style={{ marginTop: 'var(--space-2)' }}>
+            {`husk exec ${activeId ?? '<id>'} -- du -sh /work/.husk-browser`}
+          </pre>
+        </div>
+      ) : null}
 
       {cancelled ? (
         <p className="hint" role="status">
-          Load cancelled, so nothing new was rendered. Anything below is still the previous page and still carries its
-          own URL; the URL bar holds the one you cancelled, and <strong>Reload</strong> retries it. The request was
-          aborted here rather than on the machine, so the command may still be finishing there.
+          Cancelled here, not in the machine — the command may still be finishing there, and a Chromium download that
+          had already started will still land. Anything below is the previous state.
         </p>
       ) : null}
 
@@ -362,17 +649,51 @@ export function BrowserPanel({
         {notice ?? ''}
       </p>
 
-      {error ? (
+      {shownError && failure ? (
         <div className="row-gap-4">
           {/* `exactOptionalPropertyTypes`: an absent retry is not `retry: undefined`. */}
           <ErrorBlock
-            error={error}
-            {...(current !== null ? { retry: () => void load(current) } : {})}
-            retryLabel="Load again"
+            error={shownError}
+            {...(current !== null ? { retry: () => go(current) } : {})}
+            retryLabel={mode === 'render' ? 'Open again' : 'Load again'}
           />
-          {error.code === 'E_EXEC_DENIED' ? (
+          <div className="card">
+            <h3>
+              {failure.kind === 'denied'
+                ? 'This is the network policy, not a failure.'
+                : failure.kind === 'unavailable'
+                  ? 'The real browser is not available on this machine.'
+                  : failure.kind === 'launch'
+                    ? 'The browser did not answer.'
+                    : failure.kind === 'stale-ref'
+                      ? 'The page moved under that ref.'
+                      : 'What state things are in now.'}
+            </h3>
+            <p className="hint" style={{ marginTop: 'var(--space-2)' }}>
+              {failure.body}
+            </p>
+            {failure.suggestTextView || failure.suggestSnapshot ? (
+              <div className="btn-row" style={{ marginTop: 'var(--space-3)' }}>
+                {failure.suggestTextView ? (
+                  <Button
+                    onClick={() => {
+                      setMode('text');
+                      if (current !== null) void loadText(current);
+                    }}
+                  >
+                    Show the text view instead
+                  </Button>
+                ) : null}
+                {failure.suggestSnapshot && mode === 'render' ? (
+                  <Button onClick={resnapshot}>Take a new snapshot</Button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          {shownError.code === 'E_EXEC_DENIED' ? (
             <div className="card">
-              <h3>This is the network policy, not a failure.</h3>
+              <h3>The policy that refused it</h3>
               <p className="hint" style={{ marginTop: 'var(--space-2)' }}>
                 {policy ? (
                   <>
@@ -383,7 +704,10 @@ export function BrowserPanel({
                         and an allow list of <code>{policy.allow.join(', ')}</code>
                       </>
                     ) : (
-                      <> and no allow list, which under <code>egress</code> permits nothing</>
+                      <>
+                        {' '}
+                        and no allow list, which under <code>egress</code> permits nothing
+                      </>
                     )}
                     {policy.deny && policy.deny.length > 0 ? (
                       <>
@@ -425,7 +749,312 @@ export function BrowserPanel({
         </div>
       ) : null}
 
-      {!page && !error && !loading && !cancelled ? (
+      <div id="browser-view" role="tabpanel" aria-labelledby={`browser-tab-${mode}`}>
+        {mode === 'render' ? (
+          <RenderedView
+            activeId={activeId}
+            provider={active?.provider ?? ''}
+            sharedPort={active ? debugPortIsShared(active.provider) : false}
+            noteOpen={noteOpen}
+            onCloseNote={() => {
+              if (activeId) noteRead.add(activeId);
+              setNoteOpen(false);
+            }}
+            ready={ready}
+            busy={busy}
+            still={still}
+            pageUrl={pageUrl}
+            pageTitle={pageTitle}
+            partial={partial}
+            nodes={nodes}
+            controls={controls}
+            drafts={drafts}
+            onDraft={(ref, value) => setDrafts((d) => ({ ...d, [ref]: value }))}
+            hasError={rError !== null}
+            onOpen={() => {
+              const url = normaliseUrl(draft) ?? current;
+              if (url !== null) navigate(url);
+            }}
+            onClickNode={clickRef}
+            onTypeNode={typeInto}
+            onSnapshot={resnapshot}
+            onRecapture={recapture}
+          />
+        ) : (
+          <TextView
+            activeId={activeId}
+            page={page}
+            body={body}
+            links={links}
+            shown={shown}
+            allLinks={allLinks}
+            onShowAll={() => setAllLinks(true)}
+            onNavigate={navigate}
+            loading={loading}
+            idle={!page && error === null && !loading && !cancelled}
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** PNG bytes to something `URL.createObjectURL` will take, with no copy games. */
+function pngBlob(bytes: Uint8Array): Blob {
+  return new Blob([bytes.slice().buffer as ArrayBuffer], { type: 'image/png' });
+}
+
+/* -------------------------------------------------------------------------- */
+
+function RenderedView({
+  activeId,
+  provider,
+  sharedPort,
+  noteOpen,
+  onCloseNote,
+  ready,
+  busy,
+  still,
+  pageUrl,
+  pageTitle,
+  partial,
+  nodes,
+  controls,
+  drafts,
+  onDraft,
+  hasError,
+  onOpen,
+  onClickNode,
+  onTypeNode,
+  onSnapshot,
+  onRecapture,
+}: {
+  activeId: string | null;
+  provider: string;
+  sharedPort: boolean;
+  noteOpen: boolean;
+  onCloseNote: () => void;
+  ready: boolean;
+  busy: string | null;
+  still: Still | null;
+  pageUrl: string | null;
+  pageTitle: string | null;
+  partial: boolean;
+  nodes: SnapshotNode[];
+  controls: SnapshotNode[];
+  drafts: Record<string, string>;
+  onDraft: (ref: string, value: string) => void;
+  hasError: boolean;
+  onOpen: () => void;
+  onClickNode: (node: SnapshotNode) => void;
+  onTypeNode: (node: SnapshotNode, text: string, submit: boolean) => void;
+  onSnapshot: () => void;
+  onRecapture: () => void;
+}) {
+  return (
+    <div className="row-gap-4">
+      {/* Said once per machine, in the same words `warnIfDebugPortIsExposed`
+          uses, and closable — it is a property of the provider, not an event,
+          and an unclosable banner about a condition that will never change is
+          how people learn to ignore banners. */}
+      {sharedPort && noteOpen ? (
+        <div className="card" role="note">
+          <h3>Chromium’s debug port sits on a network stack this computer shares with the host.</h3>
+          <p className="hint" style={{ marginTop: 'var(--space-2)' }}>
+            Husk binds the port to the computer’s loopback and publishes nothing, but <code>{provider}</code> does not
+            own its own network namespace — under WSL2 the platform forwards loopback listeners to Windows by itself —
+            so another local process may be able to reach it. CDP has no authentication: anything that reaches it can
+            drive this browser, read what it reads, and run script in its pages. Use <code>docker</code>,{' '}
+            <code>podman</code> or <code>fly</code> for browsing you do not trust. Nothing has failed; this is what the
+            provider is.
+          </p>
+          <div className="btn-row" style={{ marginTop: 'var(--space-3)' }}>
+            <Button variant="ghost" onClick={onCloseNote}>
+              Understood
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {!ready && busy === null && !hasError ? (
+        <div className="card">
+          <h3>
+            First use downloads about {DOWNLOAD_MB} MB into {activeId ?? 'this computer'}.
+          </h3>
+          <p className="hint" style={{ marginTop: 'var(--space-2)' }}>
+            There is no Chromium in the machine yet. Opening a page installs one: a headless build is fetched from
+            inside the computer, under that computer’s own network policy, and unpacked into{' '}
+            <code>/work/.husk-browser</code>. On a persistent machine it is kept, so this happens once. Expect a minute
+            or two on a normal connection — the panel counts the seconds while it runs.
+          </p>
+          <p className="hint">
+            If you only need the page&apos;s words, the <strong>Text</strong> view answers in about 200 ms and installs
+            nothing.
+          </p>
+          <div className="btn-row" style={{ marginTop: 'var(--space-3)' }}>
+            <Button variant="primary" onClick={onOpen}>
+              Install Chromium and open the page
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {still === null && ready && busy === null && !hasError ? (
+        <EmptyState
+          title="Chromium is running; nothing is on screen yet."
+          body="Type a URL above and open it. What appears below is a screenshot the machine took, with the page's interactive nodes listed beside it."
+          command={`husk exec ${activeId ?? '<id>'} -- ls /work/.husk-browser`}
+        />
+      ) : null}
+
+      {still !== null ? (
+        <div className="split split-wide">
+          <div className="browse-frame">
+            <div className="browse-bar">
+              <span className="inline-gap">
+                <StatusDot tone={partial ? 'warn' : 'success'} label={partial ? 'load timed out' : 'loaded'} />
+                <span>still · captured {clockOf(still.at)}</span>
+              </span>
+              <span className="inline-gap">
+                <Badge tone="muted">not a live stream</Badge>
+                <Button variant="ghost" onClick={onRecapture} disabled={busy !== null}>
+                  New screenshot
+                </Button>
+              </span>
+            </div>
+
+            <div className="shot">
+              {/* A PNG the machine took, fitted to the panel. The `alt` names
+                  what the image is rather than describing it: the description a
+                  screen reader can act on is the node list beside it. */}
+              <img
+                className="shot-img"
+                src={still.src}
+                alt={`Screenshot of ${pageUrl ?? 'the page'}, taken at ${clockOf(still.at)}`}
+                aria-busy={busy !== null || undefined}
+              />
+            </div>
+
+            <div className="shot-foot">
+              <h2 className="shot-title">{pageTitle ? pageTitle : 'No title'}</h2>
+              <p className="read-url mono">{pageUrl ?? ''}</p>
+              {partial ? (
+                <p className="hint">
+                  The load timed out before the page finished. What is above is the page as it stood at that moment —
+                  usable, just not final. <strong>New screenshot</strong> shows where it has got to since.
+                </p>
+              ) : null}
+              <p className="hint">
+                Each frame is one <code>GET .../browser/screenshot</code>. Nothing streams: this image is as current as
+                its timestamp and no more. It is retaken automatically after anything that changes the page.
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <h2>Interactive nodes</h2>
+            <p className="hint">
+              {nodes.length === 0
+                ? 'No snapshot yet.'
+                : `${controls.length} of ${nodes.length} nodes can be acted on. Each is addressed by its ref, taken from the accessibility tree — not by pixel, which is how both agents and people misclick when the layout shifts.`}
+            </p>
+            <div className="btn-row" style={{ marginTop: 'var(--space-3)' }}>
+              <Button onClick={onSnapshot} disabled={busy !== null}>
+                New snapshot
+              </Button>
+            </div>
+
+            {controls.length > 0 ? (
+              <ul className="node-list" style={{ marginTop: 'var(--space-3)' }}>
+                {controls.map((node) => (
+                  <li key={node.ref}>
+                    <div className="node-row">
+                      <span className="node-head">
+                        <Badge tone="info">{node.role}</Badge>
+                        <span className="node-name">{nodeLabel(node)}</span>
+                        <span className="node-ref mono">{node.ref}</span>
+                      </span>
+
+                      {isTextInput(node) ? (
+                        <form
+                          className="node-form"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            onTypeNode(node, drafts[node.ref] ?? '', true);
+                          }}
+                        >
+                          <label className="visually-hidden" htmlFor={`type-${node.ref}`}>
+                            Text to type into {nodeLabel(node)}
+                          </label>
+                          <input
+                            id={`type-${node.ref}`}
+                            className="input"
+                            type="text"
+                            value={drafts[node.ref] ?? ''}
+                            placeholder={node.value ? node.value : 'text to type'}
+                            onChange={(e) => onDraft(node.ref, e.target.value)}
+                            spellCheck={false}
+                            autoComplete="off"
+                            disabled={busy !== null}
+                          />
+                          <Button onClick={() => onTypeNode(node, drafts[node.ref] ?? '', false)} disabled={busy !== null}>
+                            Type
+                          </Button>
+                          <Button type="submit" variant="primary" disabled={busy !== null}>
+                            Type and Enter
+                          </Button>
+                        </form>
+                      ) : (
+                        <Button onClick={() => onClickNode(node)} disabled={busy !== null}>
+                          Click
+                        </Button>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : nodes.length > 0 ? (
+              <p className="hint" style={{ marginTop: 'var(--space-3)' }}>
+                The snapshot holds {nodes.length} nodes and none of them can be acted on — they are headings, text and
+                landmarks, or nodes the tree gave no resolvable handle for. A page can be entirely readable and have
+                nothing to click.
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+
+function TextView({
+  activeId,
+  page,
+  body,
+  links,
+  shown,
+  allLinks,
+  onShowAll,
+  onNavigate,
+  loading,
+  idle,
+}: {
+  activeId: string | null;
+  page: BrowsePage | null;
+  body: string[];
+  links: BrowsePage['links'];
+  shown: BrowsePage['links'];
+  allLinks: boolean;
+  onShowAll: () => void;
+  onNavigate: (url: string) => void;
+  loading: boolean;
+  idle: boolean;
+}) {
+  return (
+    <>
+      {idle ? (
         <EmptyState
           title="Nothing loaded yet."
           body="Type a URL above and the machine will fetch it. What comes back is the page's text and its links, not a rendered page — and only for hosts this computer's network policy allows."
@@ -492,7 +1121,8 @@ export function BrowserPanel({
                   <p className="hint">
                     No text came back. {page.bytes} bytes arrived with content type{' '}
                     <code>{page.contentType || 'unknown'}</code>, and nothing in it survived tag-stripping — an image, a
-                    binary, or a page that builds itself with JavaScript that never runs here.
+                    binary, or a page that builds itself with JavaScript. That last one is exactly what the{' '}
+                    <strong>Rendered</strong> view is for: it runs the script.
                   </p>
                 ) : (
                   body.map((para, i) => <p key={i}>{para}</p>)
@@ -514,7 +1144,7 @@ export function BrowserPanel({
                 <ul className="link-list" style={{ marginTop: 'var(--space-3)' }}>
                   {shown.map((link, i) => (
                     <li key={`${link.href}-${i}`}>
-                      <button type="button" className="link-item" onClick={() => navigate(link.href)}>
+                      <button type="button" className="link-item" onClick={() => onNavigate(link.href)}>
                         <span className="link-text">{link.text}</span>
                         <span className="link-href mono">{link.href}</span>
                       </button>
@@ -523,7 +1153,7 @@ export function BrowserPanel({
                 </ul>
                 {!allLinks && links.length > LINKS_SHOWN ? (
                   <div className="btn-row" style={{ marginTop: 'var(--space-3)' }}>
-                    <Button onClick={() => setAllLinks(true)}>Show all {links.length}</Button>
+                    <Button onClick={onShowAll}>Show all {links.length}</Button>
                   </div>
                 ) : null}
               </>
@@ -535,11 +1165,11 @@ export function BrowserPanel({
       <p className="hint">
         This is text, not a rendered page. The server writes a small python script into the computer and runs it there;
         it fetches the URL, strips the markup and returns the text and the links. Nothing renders: scripts do not
-        execute, stylesheets and images are never fetched, and a page that builds itself in the browser arrives empty.
-        That is deliberate — the fetch happens on the machine so that what you read is what the agent got, from the same
-        IP, the same DNS and the same egress path, under the same <code>network</code> policy. A host that policy
-        refuses returns <code>E_EXEC_DENIED</code> and is explained here rather than retried.
+        execute, stylesheets and images are never fetched, and a page that builds itself in the browser arrives empty —
+        switch to <strong>Rendered</strong> for that one. The fetch happens on the machine so that what you read is what
+        the agent got, from the same IP, the same DNS and the same egress path, under the same <code>network</code>{' '}
+        policy.
       </p>
-    </section>
+    </>
   );
 }

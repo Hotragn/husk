@@ -17,6 +17,7 @@
  * worse than depending on the package the server itself returns.
  */
 
+import type { SnapshotNode } from '@husk/browser';
 import type { BrowseRequest } from '@husk/core';
 import type {
   ComputerInfo,
@@ -104,6 +105,40 @@ export interface DirListResponse {
  */
 export type { BrowseLink, BrowsePage } from '@husk/core';
 export type BrowseRequestBody = Omit<BrowseRequest, 'signal'>;
+
+/**
+ * `POST /v1/computers/:id/browser/*` — the real Chromium.
+ *
+ * `SnapshotNode` is `@husk/browser`'s, for the same reason `BrowsePage` is
+ * `@husk/core`'s: the SDK models none of these routes, so the package the
+ * server returns the shape from is the only honest place to get it. The
+ * dependency is type-only and erases at build.
+ *
+ * The three envelopes below are restated because the handlers in
+ * `packages/server/src/routes/browser.ts` build their bodies inline and export
+ * no interface to import. Checked against that file on `@husk/server` 0.1.0:
+ * `goto` -> `{ url, loaded, title }`; `snapshot`, `click` and `type` all ->
+ * `{ url, nodes }`. `goto` returning no nodes is why the panel snapshots after
+ * it navigates and not after a click.
+ */
+export type { SnapshotNode };
+
+export interface BrowserGotoBody {
+  url: string;
+  timeoutSec?: number;
+}
+
+export interface BrowserGotoResult {
+  url: string;
+  /** False when the load timed out. The page is still usable, just not finished. */
+  loaded: boolean;
+  title: string;
+}
+
+export interface BrowserSnapshotResult {
+  url: string;
+  nodes: SnapshotNode[];
+}
 
 /**
  * `POST /v1/computers/:id/exec/stream`.

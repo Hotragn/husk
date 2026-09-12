@@ -16,8 +16,11 @@
 import { HuskClient, HuskError, errorFromResponse, isHuskError, transportError } from '@husk/sdk';
 import type {
   ApprovalAnswer,
-  BrowsePage,
   BrowseRequestBody,
+  BrowsePage,
+  BrowserGotoBody,
+  BrowserGotoResult,
+  BrowserSnapshotResult,
   ComputerInfo,
   ComputerListResponse,
   ComputerSpec,
@@ -36,6 +39,16 @@ import type {
 } from './wire';
 
 export { HuskError, isHuskError };
+
+/**
+ * How long a `/browser/*` call is allowed to take.
+ *
+ * Not a guess: the first call launches Chromium, and `provisionChromium` may
+ * download ~111 MB and unpack it inside the computer before anything answers.
+ * Measured on a warm session the same calls return in tens of milliseconds, so
+ * this budget only ever gets spent once per machine.
+ */
+const PROVISION_BUDGET_MS = 600_000;
 
 export interface HuskApiOptions {
   baseUrl: string;
@@ -225,6 +238,87 @@ export class HuskApi {
       ...(signal ? { signal } : {}),
       timeoutMs: (req.timeoutSec ?? 30) * 1000 + 30_000,
     });
+  }
+
+  /**
+   * `POST /v1/computers/:id/browser/goto` -> `{ url, loaded, title }`.
+   *
+   * The real Chromium, not the fetch-and-strip fallback above. The timeout is
+   * the reason this is not a one-liner: the *first* call into any of these
+   * endpoints may launch the browser, and launching it may first download and
+   * unpack ~111 MB inside the computer over the computer's own egress path. A
+   * 15s client timeout would abort a machine that was working honestly, and the
+   * user would see a transport error instead of a download. Ten minutes is the
+   * budget for that; the panel counts the seconds out loud while it runs.
+   */
+  browserGoto(id: string, body: BrowserGotoBody, signal?: AbortSignal): Promise<BrowserGotoResult> {
+    return this.client.http.request<BrowserGotoResult>('POST', `/v1/computers/${enc(id)}/browser/goto`, {
+      body,
+      ...(signal ? { signal } : {}),
+      timeoutMs: PROVISION_BUDGET_MS,
+    });
+  }
+
+  /**
+   * `POST /v1/computers/:id/browser/snapshot` -> `{ url, nodes }`.
+   *
+   * The accessibility tree, flattened. This is the interaction model: each node
+   * carries a `ref` that `click` and `type` resolve back to the exact DOM node
+   * that produced it. Coordinates are deliberately not on this surface.
+   */
+  browserSnapshot(id: string, limit?: number, signal?: AbortSignal): Promise<BrowserSnapshotResult> {
+    return this.client.http.request<BrowserSnapshotResult>('POST', `/v1/computers/${enc(id)}/browser/snapshot`, {
+      body: limit === undefined ? {} : { limit },
+      ...(signal ? { signal } : {}),
+      timeoutMs: PROVISION_BUDGET_MS,
+    });
+  }
+
+  /** `POST /v1/computers/:id/browser/click` -> the snapshot *after* the click. */
+  browserClick(id: string, ref: string, signal?: AbortSignal): Promise<BrowserSnapshotResult> {
+    return this.client.http.request<BrowserSnapshotResult>('POST', `/v1/computers/${enc(id)}/browser/click`, {
+      body: { ref },
+      ...(signal ? { signal } : {}),
+      timeoutMs: PROVISION_BUDGET_MS,
+    });
+  }
+
+  /** `POST /v1/computers/:id/browser/type` -> the snapshot after the keystrokes. */
+  browserType(
+    id: string,
+    ref: string,
+    text: string,
+    submit?: boolean,
+    signal?: AbortSignal,
+  ): Promise<BrowserSnapshotResult> {
+    return this.client.http.request<BrowserSnapshotResult>('POST', `/v1/computers/${enc(id)}/browser/type`, {
+      body: { ref, text, ...(submit ? { submit: true } : {}) },
+      ...(signal ? { signal } : {}),
+      timeoutMs: PROVISION_BUDGET_MS,
+    });
+  }
+
+  /**
+   * `GET /v1/computers/:id/browser/screenshot` -> PNG bytes.
+   *
+   * Bytes rather than a URL handed to `<img src>`: the console authenticates
+   * with a bearer token and an `<img>` cannot carry a header, so pointing one
+   * at the path would 401 on every token-protected server. The caller turns
+   * these into an object URL, which also makes each still a distinct resource —
+   * no cache-busting query string, and no chance of the browser re-showing the
+   * previous frame.
+   */
+  browserScreenshot(id: string, fullPage = false, signal?: AbortSignal): Promise<Uint8Array> {
+    return this.client.http.bytes('GET', `/v1/computers/${enc(id)}/browser/screenshot`, {
+      ...(fullPage ? { query: { fullPage: '1' } } : {}),
+      ...(signal ? { signal } : {}),
+      timeoutMs: 60_000,
+    });
+  }
+
+  /** `DELETE /v1/computers/:id/browser`. Closes Chromium; the profile survives. */
+  browserClose(id: string): Promise<void> {
+    return this.client.http.request<void>('DELETE', `/v1/computers/${enc(id)}/browser`, { timeoutMs: 30_000 });
   }
 
   // -- husks ----------------------------------------------------------------

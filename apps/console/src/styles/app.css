@@ -998,6 +998,148 @@ td.actions {
 }
 
 /* -----------------------------------------------------------------------------
+   Browser — the rendered view
+   -------------------------------------------------------------------------- */
+
+/* Two views of one URL. UI-PRINCIPLES §4: the selected tab carries a 2px
+   bottom border and its own text colour; the unselected one is subtle and moves
+   to full text colour on hover without previewing the underline. */
+.view-switch {
+  display: flex;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  border-bottom: var(--border-width-thin) solid var(--color-border);
+}
+
+.view-tab {
+  display: grid;
+  gap: var(--space-px);
+  padding: var(--space-2) var(--space-1);
+  min-height: var(--control-height-md);
+  border: 0;
+  border-bottom: var(--border-width-thick) solid transparent;
+  background-color: transparent;
+  font-family: inherit;
+  font-size: var(--font-size-md);
+  text-align: left;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  transition: color var(--duration-1) var(--ease-move);
+}
+
+.view-tab:hover {
+  color: var(--color-text);
+}
+
+.view-tab:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+.view-tab[aria-selected='true'] {
+  color: var(--color-text);
+  border-bottom-color: var(--color-border-focus);
+}
+
+.view-tab-note {
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-subtle);
+  letter-spacing: var(--tracking-2xs);
+}
+
+/* The screenshot. Fitted to the panel, never upscaled past its own pixels, and
+   capped in height so a tall page does not push the node list off the screen. */
+.shot {
+  background-color: var(--color-sunken);
+  max-height: 560px;
+  overflow: auto;
+}
+
+.shot-img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.shot-foot {
+  padding: var(--space-4) var(--space-5);
+  border-top: var(--border-width-thin) solid var(--color-border);
+}
+
+.shot-title {
+  margin: 0;
+}
+
+/* One row per interactive node. Same row states as .link-item — no transform
+   on press, inset focus ring on the controls inside. */
+.node-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 560px;
+  overflow-y: auto;
+  border: var(--border-width-thin) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.node-list li + li {
+  border-top: var(--border-width-thin) solid var(--color-border);
+}
+
+.node-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+}
+
+.node-row:hover,
+.node-row:focus-within {
+  background-color: var(--color-raised);
+}
+
+.node-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1 1 14rem;
+}
+
+.node-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+/* The ref never truncates: it is the handle the action is addressed by, and a
+   half-printed one is worse than none. */
+.node-ref {
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-subtle);
+}
+
+.node-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.node-form .input {
+  width: 12rem;
+  height: var(--control-height-sm);
+}
+
+/* -----------------------------------------------------------------------------
    Run stream
    -------------------------------------------------------------------------- */
 
