@@ -7,6 +7,7 @@
  */
 import { ComputerManager } from '@husk/runtime';
 import { TOOLS, callTool } from './tools.js';
+import type { ToolResult } from './tools.js';
 
 const out = (s: string) => process.stdout.write(s + '\n');
 
@@ -25,8 +26,12 @@ async function main(): Promise<void> {
   out(`\ncomputer ${computer.id} on ${computer.info.provider}`);
 
   let failures = 0;
-  const check = (label: string, result: { isError?: boolean; content: Array<{ text: string }> }) => {
-    const text = result.content.map((c) => c.text).join('\n');
+  const check = (label: string, result: ToolResult) => {
+    // Image blocks carry no text. Name them rather than printing several
+    // hundred kilobytes of base64 into a smoke log.
+    const text = result.content
+      .map((c) => (c.type === 'text' ? c.text : `[${c.mimeType}, ${c.data.length} base64 chars]`))
+      .join('\n');
     const status = result.isError ? 'FAIL' : 'ok';
     if (result.isError) failures++;
     out(`\n[${status}] ${label}\n${text.split('\n').slice(0, 8).join('\n')}`);

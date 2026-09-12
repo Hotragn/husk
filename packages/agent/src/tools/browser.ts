@@ -114,10 +114,10 @@ export const browserClick = defineTool<{ ref: string }, { url: string; nodes: Sn
 
   async handler(input, ctx) {
     const page = await sessionOf(ctx).activePage();
-    await page.click(input.ref);
-    // A click that navigates needs the load to finish before the snapshot is
-    // worth anything; a click that only mutates the DOM returns immediately.
-    await page.waitForLoad(5000);
+    // Waits for the load only when the click actually started one. Waiting
+    // unconditionally cost a flat 5s on every click that opened a menu, which
+    // is most of them.
+    await page.clickAndSettle(input.ref);
     return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }) };
   },
 

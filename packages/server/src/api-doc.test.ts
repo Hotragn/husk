@@ -95,12 +95,19 @@ describe('docs/API.md', () => {
     expect(missing.map((r) => `${r.verb} ${r.path}`)).toEqual([]);
   });
 
-  it('lists the two unimplemented fs routes instead of promising them', () => {
-    for (const route of ['/v1/computers/:id/fs/upload', '/v1/computers/:id/fs/download']) {
-      expect(markdown).toContain(route);
-      expect(harness.app.hasRoute({ method: 'POST', url: route })).toBe(false);
-      expect(harness.app.hasRoute({ method: 'GET', url: route })).toBe(false);
-    }
+  it('serves the archive routes it documents', () => {
+    // These were the "Not implemented yet" table for months. The test that
+    // guarded that claim now guards the opposite one, which is the point: the
+    // doc and the router have to agree whichever way the answer goes.
+    expect(harness.app.hasRoute({ method: 'GET', url: '/v1/computers/:id/fs/download' })).toBe(true);
+    expect(harness.app.hasRoute({ method: 'POST', url: '/v1/computers/:id/fs/upload' })).toBe(true);
+    expect(markdown).toContain('/v1/computers/:id/fs/download');
+    expect(markdown).toContain('/v1/computers/:id/fs/upload');
+  });
+
+  it('still has a place to record what is missing', () => {
+    // Empty today. The section stays, because the next gap needs somewhere to
+    // be written down where a client author will see it.
     expect(markdown).toContain('## Not implemented yet');
   });
 

@@ -134,10 +134,16 @@ GET    /v1/computers/:id/fs?path=/work                  -> { "entries": DirEntry
 GET    /v1/computers/:id/fs/read?path=/work/a.txt       -> raw bytes
 PUT    /v1/computers/:id/fs/write?path=/work/a.txt      body: raw bytes -> 204
 DELETE /v1/computers/:id/fs?path=/work/a.txt&recursive=true -> 204
+
+GET    /v1/computers/:id/fs/download?path=/work         -> application/gzip (a tar.gz)
+POST   /v1/computers/:id/fs/upload?path=/work           body: a tar.gz -> { path, bytes, entries }
 ```
 
-One file at a time, by design for now. Whole-directory transfer is listed under
-[Not implemented yet](#not-implemented-yet).
+The archive is made and unmade by the computer's own `tar` and `gzip`; only bytes
+cross the boundary, over the same path `fs/read` and `fs/write` use. That is also
+why there is no multipart parser: the body *is* the archive, not a form wrapping
+one. Paths inside a downloaded archive are relative to the directory asked for,
+so it can be unpacked anywhere. Download refuses anything over 256 MB compressed.
 
 ### Browser
 
@@ -339,19 +345,17 @@ client stops reading for 60 s is closed and its run aborted.
 
 ## Not implemented yet
 
-This document is the contract, so what is *missing* from the server belongs in it
-too. A client must feature-detect nothing here — these routes are not registered
-and return 404 `E_ROUTE_NOT_FOUND`.
+Nothing, currently. This document is the contract, so what is *missing* from the
+server belongs in it too -- and right now nothing named here is.
 
-| Route | Why not |
-| --- | --- |
-| `POST /v1/computers/:id/fs/upload` | Needs a multipart parser the server does not have. Use `PUT /v1/computers/:id/fs/write?path=` with the raw bytes. |
-| `GET /v1/computers/:id/fs/download` | Would stream `tar.gz`. Every usable tar implementation on npm is either a native module or a large dependency, and the build contract forbids both. Read files one at a time, or `exec` a `tar` inside the machine and read the result. |
+Three entries lived here and have since been built. Worth recording, because in
+each case the stated reason was wrong rather than merely outdated:
 
-One accepted-but-ignored field, listed here for the same reason:
-
-- `computerId` on the run body. It was documented, and the server never read it.
-  The agent's `ComputerSource` addresses machines by a stable *key*, not by id,
-  so honouring it would mean widening a `@husk/agent` contract — out of scope.
-  The field is still accepted so an older client is not rejected, but **it has no
-  effect**: a run gets the machine its husk describes. Do not send it.
+- `GET /fs/download` and `POST /fs/upload` were blocked on "every usable tar on
+  npm is a native module or a large dependency". True, and answering the wrong
+  question -- the tar is already inside the machine. See [Files](#files).
+- `computerId` on the run body was accepted and ignored, on the reasoning that
+  honouring it meant widening a `@husk/agent` contract. `ComputerSource` has one
+  method, and a source that answers every key with the same machine satisfies it
+  exactly. It now pins the run, and an id that does not exist is a `404` raised
+  before the model is called rather than a field that quietly does nothing.

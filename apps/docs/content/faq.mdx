@@ -111,10 +111,13 @@ On the container providers `/work` becomes a named volume instead of a tmpfs. On
 
 ### Can two husks share one machine?
 
-Not directly. `ComputerManager.ensure(key, spec)` maps a stable key to a machine, and
-the agent's key is `husk:<name>`. Two husks are two keys and therefore two machines. The
-control plane accepts a `computerId` in a run body and
-[never reads it](/reference/api#running-a-husk).
+Yes, if you say so explicitly. By default they do not: `ComputerManager.ensure(key,
+spec)` maps a stable key to a machine and the agent's key is `husk:<name>`, so two husks
+are two keys and therefore two machines -- which is usually what you want, since one
+husk's `rm -rf` should not be another's problem.
+
+To share one deliberately, pass `computerId` in the run body and both runs land on that
+machine. See [running a husk](/reference/api#running-a-husk).
 
 ---
 

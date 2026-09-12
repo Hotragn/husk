@@ -21,11 +21,12 @@
  *    stream behind it and no "live" badge above it; the bar says when the frame
  *    was taken, and every action that could change the page takes a new one.
  * 2. **The first launch is slow and large.** It is announced before it starts,
- *    with the size; while it runs the panel counts the seconds and shows the
- *    machine's own last word on what it is doing — `routes/browser.ts` puts the
- *    provisioner's stages on the event bus as `computers/browser_progress`.
- *    Stages, not bytes: the download is a curl inside the computer and no byte
- *    count crosses back, so no bar is drawn over one that does not exist.
+ *    with the size; while it runs the panel counts the seconds and reports the
+ *    machine's own progress — `routes/browser.ts` puts the provisioner's
+ *    messages on the event bus as `computers/browser_progress`. That includes
+ *    megabytes downloaded, which is not curl's progress meter (that is on a
+ *    stderr inside the computer) but the size of the file curl is writing,
+ *    measured from inside every few seconds.
  * 3. **The debug port.** On `local` and `ssh` the computer shares a network
  *    stack with the host, so Chromium's CDP port may be reachable by other
  *    local processes, and CDP has no authentication. `@husk/browser` says this
@@ -667,9 +668,10 @@ export function BrowserPanel({
             </p>
           ) : null}
           <p className="hint" style={{ marginTop: 'var(--space-2)' }}>
-            The {elapsed}s above is measured, and the line above it is the machine&apos;s own last word on what it is
-            doing. There is no byte count because the download runs inside the computer and none crosses back — a
-            progress bar here would be drawn from nothing. To watch the bytes themselves:
+            Everything above is measured, not estimated. The byte count is the size of the file curl is writing inside
+            the machine, read every few seconds — so it moves when the download moves and stops when it stalls. The
+            total is approximate because it is the published archive size, not a <code>Content-Length</code> we were
+            given. To watch the same file yourself:
           </p>
           <pre className="code" style={{ marginTop: 'var(--space-2)' }}>
             {`husk exec ${activeId ?? '<id>'} -- du -sh /work/.husk-browser`}

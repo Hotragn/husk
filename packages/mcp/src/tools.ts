@@ -1,6 +1,7 @@
 import type { Computer } from '@husk/core';
 import { HuskError, clampText, formatBytes, redact } from '@husk/core';
 import { browseInComputer } from '@husk/core';
+import { BROWSER_TOOLS, BROWSER_TOOL_NAMES, callBrowserTool } from './browser-tools.js';
 import { workspaceNote } from './workspace.js';
 
 /**
@@ -125,10 +126,23 @@ export const TOOLS: ToolDef[] = [
       'instead of probing with several shell commands.',
     inputSchema: { type: 'object', properties: {} },
   },
+  ...BROWSER_TOOLS,
 ];
 
+/**
+ * One content block in an MCP tool result.
+ *
+ * Images are here for `browser_screenshot` alone. Everything else is text,
+ * because a model reasons better about a page from a snapshot than from pixels
+ * -- but "show me what you are looking at" is a real request and a picture is
+ * the only answer to it.
+ */
+export type ToolContent =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string };
+
 export interface ToolResult {
-  content: Array<{ type: 'text'; text: string }>;
+  content: ToolContent[];
   isError?: boolean;
 }
 
@@ -167,6 +181,9 @@ export async function callTool(
       case 'browse':
         return await browse(computer, args);
       default:
+        if (BROWSER_TOOL_NAMES.has(name)) {
+          return await callBrowserTool(computer, name, args, MAX_TOOL_OUTPUT);
+        }
         return fail(`unknown tool: ${name}`);
     }
   } catch (err) {

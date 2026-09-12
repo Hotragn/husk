@@ -248,10 +248,11 @@ export async function provisionChromium(
   );
 
   await sh(computer, `mkdir -p ${CACHE_ROOT}`, { signal, timeoutSec: 30 });
+  const stopWatching = watchDownload(computer, zip, plan.approxMb, say, signal);
   const dl = await download(computer, plan.url, zip, {
     timeoutSec: opts.downloadTimeoutSec ?? 600,
     ...(signal ? { signal } : {}),
-  });
+  }).finally(stopWatching);
   if (!dl.ok) {
     throw new HuskError('E_PROVIDER_UNAVAILABLE', `could not download Chromium for ${plan.arch}`, {
       hint:
@@ -349,6 +350,55 @@ async function resolveX64Plan(
   }
   const { url, version } = pickChromeForTestingAsset(manifest);
   return downloadPlanFor('x64', { url, version });
+}
+
+/**
+ * Report how much of the download has landed, by asking the machine.
+ *
+ * curl is running *inside* the computer, so its progress meter is on a stderr
+ * we do not read and could not stream if we did. The file it is writing is
+ * visible though, and its size is the honest number -- so the size is what gets
+ * reported, on a slow timer, and the caller decides what to do with it.
+ *
+ * Deliberately cheap and deliberately quiet: one `wc -c` every few seconds, and
+ * nothing at all until the first bytes appear, so a machine that cannot reach
+ * the CDN does not emit a stream of confident-sounding zeroes.
+ */
+function watchDownload(
+  computer: Computer,
+  path: string,
+  approxMb: number,
+  say: (m: string) => void,
+  signal?: AbortSignal,
+): () => void {
+  const expected = approxMb * 1024 * 1024;
+  let stopped = false;
+  let lastMb = -1;
+
+  const tick = async (): Promise<void> => {
+    if (stopped || signal?.aborted) return;
+    const r = await sh(computer, `wc -c < ${path} 2>/dev/null || echo 0`, { timeoutSec: 15 }).catch(() => null);
+    if (stopped || !r) return;
+
+    const bytes = Number(r.out.trim());
+    if (!Number.isFinite(bytes) || bytes <= 0) return;
+
+    // Only speak when the number a human would read has changed. A percentage
+    // that reprints every 3 seconds without moving reads as a stuck download.
+    const mb = Math.floor(bytes / (1024 * 1024));
+    if (mb === lastMb) return;
+    lastMb = mb;
+    const pct = expected > 0 ? Math.min(99, Math.floor((bytes / expected) * 100)) : 0;
+    say(`downloading Chromium: ${mb} of about ${approxMb} MB (${pct}%)`);
+  };
+
+  const timer = setInterval(() => void tick(), 3000);
+  // Never hold the process open for a progress report.
+  timer.unref?.();
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
 }
 
 async function download(

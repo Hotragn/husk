@@ -172,6 +172,44 @@ class ComputersApi {
     });
   }
 
+  /**
+   * A whole directory, as a gzipped tar.
+   *
+   * The archive is built by the computer's own `tar`, so this works on every
+   * provider including the ones whose filesystem the host cannot see. Paths
+   * inside it are relative to `path`, so it can be unpacked anywhere.
+   *
+   * The default timeout is generous: tarring a source tree on a cold machine
+   * takes longer than the client's usual 15s, and aborting mid-archive leaves
+   * work the machine was still doing.
+   */
+  download(id: string, path: string, opts: CallOptions = {}): Promise<Uint8Array> {
+    return this.http.bytes('GET', `/v1/computers/${enc(id)}/fs/download`, {
+      timeoutMs: 300_000,
+      ...opts,
+      query: { path },
+    });
+  }
+
+  /**
+   * Unpack a gzipped tar into the computer, creating `path` if it is missing.
+   *
+   * The body is the archive itself rather than a multipart form: there is one
+   * part, and a parser to unwrap it would exist for no other reason.
+   */
+  upload(
+    id: string,
+    path: string,
+    archive: Uint8Array,
+    opts: CallOptions = {},
+  ): Promise<{ path: string; bytes: number; entries: number }> {
+    return this.http.request<{ path: string; bytes: number; entries: number }>(
+      'POST',
+      `/v1/computers/${enc(id)}/fs/upload`,
+      { timeoutMs: 300_000, ...opts, query: { path }, raw: archive, contentType: 'application/gzip' },
+    );
+  }
+
   remove(id: string, path: string, opts: CallOptions & { recursive?: boolean } = {}): Promise<void> {
     const { recursive, ...rest } = opts;
     return this.http.request<void>('DELETE', `/v1/computers/${enc(id)}/fs`, {

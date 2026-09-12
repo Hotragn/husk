@@ -224,20 +224,27 @@ DELETE /v1/computers/:id/fs?path=/work/a.txt&recursive=true  -> 204
 send `content-type: application/octet-stream` and the bytes; a JSON body would be
 written as its serialised form. A missing `path` is a 422 naming the parameter.
 
-<NotYet>
-Two file routes are named in `docs/API.md` under "Not implemented yet", and are not
-registered:
-
 ```text
-POST /v1/computers/:id/fs/upload    multipart field `file`, ?path=
-GET  /v1/computers/:id/fs/download?path=/work   -> tar.gz stream
+POST /v1/computers/:id/fs/upload?path=/work    body: a tar.gz -> { path, bytes, entries }
+GET  /v1/computers/:id/fs/download?path=/work  -> application/gzip
 ```
 
-There is no multipart parser in the server and no tar implementation anywhere in the
-repo — every usable one on npm is a native module or a large dependency, and the build
-contract forbids both. `husk cp` does directory copies through the provider's own
-mechanism (`docker cp`, `scp`, a recursive filesystem copy), not through the HTTP API.
-</NotYet>
+Both were listed as not implemented for months, on the grounds that the server has no
+multipart parser and the repo ships no tar. Both reasons turned out to be answering the
+wrong question. The tar we need is not on npm — it is already inside the machine, along
+with gzip, on every image husk supports and on a stock WSL. The archive is made and
+unmade *there*; only bytes cross the boundary. That is also the more correct design,
+since on docker, podman, fly and ssh the host cannot see the directory at all.
+
+No multipart parser either: the body **is** the archive, not a form containing one.
+
+Download refuses anything over 256 MB compressed, and the size is checked inside the
+machine before a byte is read, so an accidental `path=/` fails fast instead of pulling a
+root filesystem into the server's memory to be rejected afterwards.
+
+`husk cp` still does directory copies through the provider's own mechanism (`docker cp`,
+`scp`, a recursive filesystem copy), which stays the faster path when you are at a
+terminal on the same host.
 
 ### Ports and terminal
 
@@ -313,9 +320,10 @@ body: { input, history?, model?, vars?, maxSteps?, maxCostUsd?, approvalMode?, c
 always come from the spec and are not accepted from the body.
 
 <Note>
-`computerId` is declared on `RunRequestBody` and is **never read**. There is no way to
-attach a run to a specific existing machine over HTTP today; the agent calls
-`manager.ensure()` with its own key.
+`computerId` pins the run to a machine that already exists -- a checkout you set up by
+hand, a dataset, a logged-in browser profile -- instead of letting the husk bring up its
+own. An id that does not exist is a `404`, checked before the model is called. Omit it
+and nothing changes: the agent asks for a computer by its own key, as before.
 </Note>
 
 The streaming variant emits `RunEvent` objects verbatim from `@husk/core`:

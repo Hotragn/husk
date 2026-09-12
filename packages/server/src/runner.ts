@@ -1,6 +1,8 @@
 import { HuskError, isHuskError } from '@husk/core';
 import type {
   ApprovalRequest,
+  Computer,
+  ComputerSpec,
   HuskSpec,
   ModelMessage,
   RunEvent,
@@ -9,7 +11,7 @@ import type {
 } from '@husk/core';
 import { ApprovalRegistry } from './approvals.js';
 import type { PendingApproval } from './approvals.js';
-import type { ResolvedDeps, ServerRunOptions } from './deps.js';
+import type { ComputerSourceLike, ManagerLike, ResolvedDeps, ServerRunOptions } from './deps.js';
 import { EventBus } from './events.js';
 import { huskError } from './errors.js';
 import type { RunSummary } from './store.js';
@@ -24,15 +26,36 @@ export interface RunRequestBody {
   maxCostUsd?: number;
   approvalMode?: 'auto' | 'ask' | 'readonly';
   /**
-   * Accepted and ignored. See "Not implemented yet" in docs/API.md.
+   * Pin this run to a computer that already exists.
    *
-   * The agent reaches its machine through `ComputerSource.ensure(key, spec)`,
-   * which addresses by a stable key rather than by id, so pinning a run to one
-   * existing computer would mean widening a `@husk/agent` contract. The field
-   * stays declared so an older client's body is not a surprise, and so this
-   * comment has somewhere to live -- not because anything reads it.
+   * This was documented for months as accepted-and-ignored, on the reasoning
+   * that the agent addresses machines by a stable *key* rather than by id, so
+   * honouring it would mean widening a `@husk/agent` contract. It does not:
+   * `ComputerSource` is an interface with one method, and a source that answers
+   * every key with one particular machine satisfies it exactly. See
+   * {@link pinnedSource}.
+   *
+   * What it is for: a machine you set up by hand -- a checkout, a dataset, a
+   * logged-in browser profile -- and want a run to land in rather than getting
+   * a fresh one.
    */
   computerId?: string;
+}
+
+/**
+ * A `ComputerSource` that always hands back the same machine.
+ *
+ * The agent asks for a computer by key so one conversation keeps one machine
+ * across turns. When the caller has already named a machine by id, every key
+ * should resolve to it -- including the spec-derived key the agent would
+ * otherwise have used to create a second one.
+ *
+ * The spec the agent passes is deliberately dropped: the machine exists, its
+ * shape is already decided, and quietly re-creating it to match a spec would
+ * destroy the state that was the reason for pinning in the first place.
+ */
+function pinnedSource(computer: Computer): ComputerSourceLike {
+  return { ensure: async () => computer };
 }
 
 /**
@@ -210,7 +233,7 @@ export class Runner {
       const agent = await this.deps.agentFactory({
         spec,
         router: this.deps.router,
-        computers: this.deps.manager,
+        computers: await this.computerSource(body),
       });
       const opts = this.buildOptions(spec, body, runId, abort.signal, (e) =>
         collect(e.type === 'approval_required' ? e : this.normalise(e as RunEvent, runId)),
@@ -228,6 +251,24 @@ export class Runner {
     } finally {
       this.active.delete(runId);
     }
+  }
+
+
+  /**
+   * The `ComputerSource` for this run: pinned, or the manager as usual.
+   *
+   * Resolved once per run rather than per `ensure` call, so a bad id fails
+   * before the model is billed for a single token.
+   */
+  private async computerSource(body: RunRequestBody): Promise<ManagerLike | ComputerSourceLike> {
+    if (!body.computerId) return this.deps.manager;
+    const computer = await this.deps.manager.get(body.computerId);
+    if (!computer) {
+      throw huskError('E_COMPUTER_NOT_FOUND', `no computer with id ${body.computerId}`, {
+        hint: 'list them with `GET /v1/computers`, or omit computerId to let the husk bring up its own',
+      });
+    }
+    return pinnedSource(computer);
   }
 
   /**
@@ -260,7 +301,7 @@ export class Runner {
       const agent = await this.deps.agentFactory({
         spec,
         router: this.deps.router,
-        computers: this.deps.manager,
+        computers: await this.computerSource(body),
       });
       const opts = this.buildOptions(spec, body, runId, abort.signal, (e) => {
         if (e.type === 'approval_required') sideChannel.push(e);

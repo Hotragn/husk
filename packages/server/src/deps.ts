@@ -42,6 +42,19 @@ export interface ManagerLike {
   stopReaper?(): void;
 }
 
+/**
+ * The one method the agent actually needs from a manager.
+ *
+ * `AgentInit.computers` asked for a whole `ManagerLike`, which is why pinning a
+ * run to an existing computer looked like it needed a contract change. It did
+ * not -- the agent calls `ensure` and nothing else, so anything that can answer
+ * `ensure` is a valid source, including one that always returns the same
+ * machine. See `pinnedSource` in runner.ts.
+ */
+export interface ComputerSourceLike {
+  ensure(key: string, spec?: ComputerSpec): Promise<Computer>;
+}
+
 export interface RouterLike {
   chat(req: ChatRequest): Promise<ChatResponse>;
   stream(req: ChatRequest): AsyncIterable<StreamEvent>;
@@ -65,7 +78,7 @@ export interface AgentLike {
 export interface AgentInit {
   spec: HuskSpec;
   router: RouterLike;
-  computers: ManagerLike;
+  computers: ManagerLike | ComputerSourceLike;
   tools?: Tool[];
 }
 

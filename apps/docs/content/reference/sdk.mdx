@@ -196,12 +196,8 @@ every `404` into `E_COMPUTER_NOT_FOUND`.
 
 ## Not here
 
-Two things are deliberately absent rather than stubbed:
+One thing is deliberately absent rather than stubbed:
 
-- **`fs/upload` and `fs/download`.** No route serves them: the server registers
-  no multipart parser and ships no tar implementation. A method that exists only
-  to throw still autocompletes and still reads as supported. Use `writeFile` and
-  `readFile`.
 - **A terminal client.** `WS /v1/computers/:id/terminal` exists, but it is one
   command per socket rather than a persistent shell, because there is no native
   pty module. Use `client.http.wsUrl(...)` if you want to drive it yourself.
