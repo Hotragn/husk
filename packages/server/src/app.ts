@@ -9,6 +9,7 @@ import { resolveDeps } from './deps.js';
 import type { ServerDeps } from './deps.js';
 import { installErrorHandling } from './errors.js';
 import { approvalRoutes } from './routes/approvals.js';
+import { browserRoutes } from './routes/browser.js';
 import { computerRoutes } from './routes/computers.js';
 import { doctorRoutes } from './routes/doctor.js';
 import { eventRoutes } from './routes/events.js';
@@ -85,6 +86,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
 
   await app.register(doctorRoutes);
   await app.register(computerRoutes);
+  await app.register(browserRoutes);
   // Registered before the resource routes so `/v1/husks/validate` is matched before
   // `/v1/husks/:name` would swallow it.
   await app.register(huskValidateRoute);

@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "build:packages": "npm run build --workspace=@husk/core --workspace=@husk/runtime --workspace=@husk/models --workspace=@husk/sessions --workspace=@husk/agent --workspace=@husk/adapters --workspace=@husk/mcp --workspace=@husk/server --workspace=@husk/sdk --workspace=@husk/cli",
+    "build:packages": "npm run build --workspace=@husk/core --workspace=@husk/runtime --workspace=@husk/models --workspace=@husk/sessions --workspace=@husk/agent --workspace=@husk/browser --workspace=@husk/adapters --workspace=@husk/mcp --workspace=@husk/server --workspace=@husk/sdk --workspace=@husk/cli",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "clean": "node scripts/clean.mjs",

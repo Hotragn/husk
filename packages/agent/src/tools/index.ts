@@ -2,12 +2,14 @@ import type { HuskSpec, Logger, Tool } from '@husk/core';
 import { asTools } from '../types.js';
 import type { AgentTool } from '../types.js';
 import { browserTools } from './browse.js';
+import { realBrowserTools } from './browser.js';
 import { computerTools } from './computer.js';
 import { fileTools } from './files.js';
 import { httpTools } from './http.js';
 import { makeWebSearch, searchBackend, webTools } from './web.js';
 
 export * from './browse.js';
+export * from './browser.js';
 export * from './computer.js';
 export * from './files.js';
 export * from './http.js';
@@ -15,7 +17,10 @@ export * from './web.js';
 
 export const BUNDLES = {
   computer: () => computerTools,
-  browser: () => browserTools,
+  // The zero-dependency `browse` and the real Chromium ship in the same bundle:
+  // the model picks per page, and the fallback still works on a machine where
+  // Chromium cannot be provisioned at all.
+  browser: () => [...browserTools, ...realBrowserTools],
   files: () => fileTools,
   web: () => webTools,
   http: () => httpTools,
@@ -46,7 +51,7 @@ export function resolveTools(names: string[], opts: ResolveToolsOptions): Tool[]
   const hasComputer = opts.hasComputer ?? true;
 
   const catalogue = new Map<string, AgentTool>();
-  for (const t of [...computerTools, ...browserTools, ...fileTools, ...webTools, ...httpTools])
+  for (const t of [...computerTools, ...browserTools, ...realBrowserTools, ...fileTools, ...webTools, ...httpTools])
     catalogue.set(t.name, t);
 
   const search = searchBackend(env);

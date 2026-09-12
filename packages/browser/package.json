@@ -1,7 +1,7 @@
 {
-  "name": "@husk/agent",
+  "name": "@husk/browser",
   "version": "0.1.0",
-  "description": "The Husk tool-calling loop and its built-in tools.",
+  "description": "A real Chromium inside a Husk computer, driven over CDP.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -13,15 +13,16 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "src/driver.py"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node scripts/embed-driver.mjs && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "embed-driver": "node scripts/embed-driver.mjs"
   },
   "dependencies": {
-    "@husk/browser": "0.1.0",
     "@husk/core": "0.1.0"
   }
 }
