@@ -1,5 +1,5 @@
 import { HuskError } from './errors.js';
-import { assertUrlAllowed } from './net.js';
+import { assertUrlAllowed, ownsLoopback } from './net.js';
 import type { Computer } from './types/computer.js';
 import type { NetworkPolicy } from './types/computer.js';
 
@@ -148,19 +148,6 @@ const SCRIPT_PATH = '/tmp/.husk-browse.py';
  * this is the only place the declared policy becomes real for a fetch husk
  * makes on the agent's behalf.
  */
-/**
- * Providers where the computer has its own network namespace.
- *
- * On these, `127.0.0.1` inside the computer is the computer -- so an agent can
- * start a server and look at it, which is the most common thing it will ever
- * want to do. On `local` that address is the host's own loopback, and on `ssh`
- * it belongs to a box the user may be running things on, so neither qualifies.
- */
-const OWNS_LOOPBACK: ReadonlySet<string> = new Set(['docker', 'podman', 'fly']);
-
-function ownsLoopback(provider: string): boolean {
-  return OWNS_LOOPBACK.has(provider);
-}
 
 export async function browseInComputer(
   computer: Computer,

@@ -187,6 +187,10 @@ export function BrowserPanel({
   const [rError, setRError] = useState<DisplayError | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [ready, setReady] = useState(false);
+  /** null while unknown. Gates the download prompt, which `ready` cannot: `ready`
+   *  only knows whether *this* session launched a browser, so a reload or a
+   *  previous session's install still showed a 111 MB offer for nothing. */
+  const [installed, setInstalled] = useState<boolean | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -218,8 +222,32 @@ export function BrowserPanel({
     setDrafts({});
     putStill(null);
     setReady(activeId !== null && launched.has(activeId));
+    setInstalled(null);
     setNoteOpen(activeId !== null && !noteRead.has(activeId));
   }, [activeId, putStill]);
+
+  // Ask the machine whether it already has a browser, so the download prompt is
+  // only shown to someone who would actually pay for it. Render mode only: the
+  // text view installs nothing and should not spend a round trip asking.
+  useEffect(() => {
+    if (!activeId || mode !== 'render') return;
+    let cancelled = false;
+    const ac = new AbortController();
+    void api
+      .browserStatus(activeId, ac.signal)
+      .then((s) => {
+        if (!cancelled) setInstalled(s.installed);
+      })
+      .catch(() => {
+        // A machine that cannot answer is treated as not installed: offering the
+        // download is recoverable, hiding it when it is needed is not.
+        if (!cancelled) setInstalled(false);
+      });
+    return () => {
+      cancelled = true;
+      ac.abort();
+    };
+  }, [api, activeId, mode]);
 
   useEffect(
     () => () => {
@@ -761,6 +789,7 @@ export function BrowserPanel({
               setNoteOpen(false);
             }}
             ready={ready}
+            installed={installed}
             busy={busy}
             still={still}
             pageUrl={pageUrl}
@@ -813,6 +842,7 @@ function RenderedView({
   noteOpen,
   onCloseNote,
   ready,
+  installed,
   busy,
   still,
   pageUrl,
@@ -835,6 +865,8 @@ function RenderedView({
   noteOpen: boolean;
   onCloseNote: () => void;
   ready: boolean;
+  /** null while unknown; gates the download prompt. */
+  installed: boolean | null;
   busy: string | null;
   still: Still | null;
   pageUrl: string | null;
@@ -876,7 +908,21 @@ function RenderedView({
         </div>
       ) : null}
 
-      {!ready && busy === null && !hasError ? (
+      {!ready && installed === true && busy === null && !hasError ? (
+        <div className="card">
+          <h3>Chromium is already in {activeId ?? 'this computer'}.</h3>
+          <p className="hint" style={{ marginTop: 'var(--space-2)' }}>
+            Nothing to download. Opening a page starts it and takes a few seconds.
+          </p>
+          <div className="btn-row" style={{ marginTop: 'var(--space-3)' }}>
+            <Button variant="primary" onClick={onOpen}>
+              Open the page
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {!ready && installed === false && busy === null && !hasError ? (
         <div className="card">
           <h3>
             First use downloads about {DOWNLOAD_MB} MB into {activeId ?? 'this computer'}.

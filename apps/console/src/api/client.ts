@@ -35,6 +35,7 @@ import type {
   ModelListResponse,
   RunRequestBody,
   RunStreamEvent,
+  BrowserStatus,
   ValidateResult,
 } from './wire';
 
@@ -251,6 +252,20 @@ export class HuskApi {
    * user would see a transport error instead of a download. Ten minutes is the
    * budget for that; the panel counts the seconds out loud while it runs.
    */
+  /**
+   * Is Chromium already in this computer?
+   *
+   * Asked before the download pre-flight is shown, so a machine that already
+   * has one is not offered 111 MB it does not need. Cheap and side-effect free
+   * -- the server looks, it does not install -- so the ordinary short timeout
+   * applies rather than the provisioning budget.
+   */
+  browserStatus(id: string, signal?: AbortSignal): Promise<BrowserStatus> {
+    return this.client.http.request<BrowserStatus>('GET', `/v1/computers/${enc(id)}/browser/status`, {
+      ...(signal ? { signal } : {}),
+    });
+  }
+
   browserGoto(id: string, body: BrowserGotoBody, signal?: AbortSignal): Promise<BrowserGotoResult> {
     return this.client.http.request<BrowserGotoResult>('POST', `/v1/computers/${enc(id)}/browser/goto`, {
       body,

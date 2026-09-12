@@ -63,6 +63,36 @@ export function isLoopbackHost(host: string): boolean {
   return v4 !== null && (Number(v4[1]) === 127 || Number(v4[1]) === 0);
 }
 
+/**
+ * Providers where the computer has its own network namespace.
+ *
+ * On these, `127.0.0.1` inside the computer is the computer, so an agent can
+ * start a server and look at it -- the most common thing it will ever want to
+ * do. On `local` that address is the host's own loopback, and on `ssh` it
+ * belongs to a box the user may be running things on, so neither qualifies.
+ *
+ * This lives here, beside `isHostAllowed`, because it is the same policy
+ * question and it had already been copied into three files. `net.ts` exists to
+ * be the one answer: the last time this rule had two copies, they disagreed
+ * about whether `mode: 'full'` could reach the cloud metadata endpoint.
+ */
+const OWNS_LOOPBACK: ReadonlySet<string> = new Set(['docker', 'podman', 'fly']);
+
+/** Whether this provider's loopback belongs to the computer rather than the host. */
+export function ownsLoopback(provider: string): boolean {
+  return OWNS_LOOPBACK.has(provider);
+}
+
+/**
+ * Whether the computer shares a network stack with whoever is running husk.
+ *
+ * The inverse of {@link ownsLoopback}, named for the thing a caller usually
+ * wants to warn about.
+ */
+export function sharesHostNetwork(provider: string): boolean {
+  return !OWNS_LOOPBACK.has(provider);
+}
+
 export interface HostPolicyContext {
   /**
    * True when this computer's loopback is its own, not the host's.

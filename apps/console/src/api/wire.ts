@@ -258,3 +258,15 @@ export function isWireEvent(value: unknown): value is HuskWireEvent {
   const v = value as { type?: unknown; at?: unknown };
   return typeof v.type === 'string' && typeof v.at === 'string';
 }
+
+/**
+ * `GET /v1/computers/:id/browser/status`.
+ *
+ * Restated rather than imported: the route builds this body inline and exports
+ * no interface for it.
+ */
+export interface BrowserStatus {
+  installed: boolean;
+  source?: 'system' | 'cached' | 'downloaded';
+  version?: string;
+}

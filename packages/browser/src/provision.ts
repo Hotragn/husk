@@ -187,6 +187,29 @@ async function sh(
 const UNZIP_SNIPPET = (zip: string, dest: string): string =>
   `python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" ${zip} ${dest}`;
 
+/**
+ * Is Chromium already here, without fetching anything?
+ *
+ * The console asks before offering the ~111 MB pre-flight. Offering to download
+ * something a computer already has is a small lie, and it is the second thing a
+ * returning user sees.
+ *
+ * Shares `findSystemChromium` and `findCached` with `provisionChromium`, so the
+ * two can never disagree about what counts as present.
+ */
+export async function findInstalledChromium(
+  computer: Computer,
+  opts: { signal?: AbortSignal; ignoreSystem?: boolean } = {},
+): Promise<ProvisionResult | null> {
+  const { signal } = opts;
+  if (!opts.ignoreSystem) {
+    const found = await findSystemChromium(computer, signal);
+    if (found) return found;
+  }
+  const unameRes = await sh(computer, 'uname -m', { signal, timeoutSec: 30 });
+  return await findCached(computer, normaliseArch(unameRes.out || unameRes.err), signal);
+}
+
 export async function provisionChromium(
   computer: Computer,
   opts: ProvisionOptions = {},

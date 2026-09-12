@@ -31,6 +31,7 @@ export {
   CHROME_FOR_TESTING_MANIFEST,
   PLAYWRIGHT_CHROMIUM_REVISION,
   downloadPlanFor,
+  findInstalledChromium,
   normaliseArch,
   parseMissingLibs,
   pickChromeForTestingAsset,

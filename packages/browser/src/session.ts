@@ -1,4 +1,4 @@
-import { HuskError, assertUrlAllowed } from '@husk/core';
+import { HuskError, assertUrlAllowed, ownsLoopback } from '@husk/core';
 import type { Computer, NetworkPolicy } from '@husk/core';
 import { CdpConnection, ComputerDriverTransport, createTarget } from './cdp.js';
 import type { CdpTransport } from './cdp.js';
@@ -31,15 +31,6 @@ import type { ProvisionResult } from './provision.js';
  * network namespace do contain it; that is the difference the warning names.
  */
 
-/**
- * Providers where the computer has its own network namespace.
- *
- * Copied from `browseInComputer`, which keeps this list private. Two copies of
- * a security-relevant list is exactly the drift `@husk/core`'s `net.ts` was
- * written to end -- see the report; this belongs in core next to
- * `isHostAllowed`.
- */
-const OWNS_LOOPBACK: ReadonlySet<string> = new Set(['docker', 'podman', 'fly']);
 
 export interface SessionOptions {
   /** Close the browser after this long with no calls. 0 disables. Defaults to 5 min. */
@@ -81,7 +72,7 @@ export function warnIfDebugPortIsExposed(
   port: number,
   say: (message: string) => void,
 ): void {
-  if (OWNS_LOOPBACK.has(computer.info.provider)) return;
+  if (ownsLoopback(computer.info.provider)) return;
   warnedComputers ??= new Set();
   if (warnedComputers.has(computer.id)) return;
   warnedComputers.add(computer.id);
@@ -139,7 +130,7 @@ export class BrowserSession {
   async goto(url: string, opts: { timeoutMs?: number } = {}): Promise<{ url: string; loaded: boolean }> {
     const policy = this.opts.network ?? this.computer.info.spec.network;
     const parsed = assertUrlAllowed(url, policy, {
-      loopbackIsOwn: OWNS_LOOPBACK.has(this.computer.info.provider),
+      loopbackIsOwn: ownsLoopback(this.computer.info.provider),
     });
     const page = await this.activePage();
     return await page.goto(parsed.toString(), opts);

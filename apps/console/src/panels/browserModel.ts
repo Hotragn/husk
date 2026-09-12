@@ -10,6 +10,7 @@
 
 import type { DisplayError } from '../api/client';
 import type { SnapshotNode } from '../api/wire';
+import { sharesHostNetwork } from '@husk/core';
 
 /**
  * Refs `click` and `type` can actually resolve.
@@ -178,15 +179,6 @@ export function classifyBrowserError(err: DisplayError): BrowserFailure {
   }
 }
 
-/**
- * Providers whose computer has its own network namespace.
- *
- * A third copy of the list `@husk/core`'s `browse.ts` and `@husk/browser`'s
- * `session.ts` each keep private. It belongs in core next to `isHostAllowed`
- * and neither package exports it, so the choice here is this comment or a
- * silent omission of the security note on the providers that need it.
- */
-const OWNS_LOOPBACK: ReadonlySet<string> = new Set(['docker', 'podman', 'fly']);
 
 /**
  * Whether Chromium's debug port is reachable by other processes on the host.
@@ -197,7 +189,7 @@ const OWNS_LOOPBACK: ReadonlySet<string> = new Set(['docker', 'podman', 'fly']);
  * authentication. Same condition as `warnIfDebugPortIsExposed`.
  */
 export function debugPortIsShared(provider: string): boolean {
-  return !OWNS_LOOPBACK.has(provider);
+  return sharesHostNetwork(provider);
 }
 
 /**

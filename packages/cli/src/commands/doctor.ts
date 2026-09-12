@@ -4,6 +4,8 @@ import type { ModelInfo, ModelProvider } from '@husk/core';
 import { parse } from '../args.js';
 import * as ui from '../ui.js';
 import { EXIT_OK } from '../exit.js';
+import { paths } from '@husk/core';
+import { findOrphanedWorkspaces } from '@husk/runtime';
 
 /**
  * The command people run when they are confused, so it must never be confusing.
@@ -116,6 +118,19 @@ export async function collect(force = false): Promise<DoctorReport> {
   if (process.platform === 'win32' && chosen?.name === 'local' && !/wsl/i.test(chosen.version ?? '')) {
     warnings.push(
       'On Windows without WSL, the local provider runs commands in the Windows shell — it is not a Linux computer. `wsl --install` fixes it.',
+    );
+  }
+
+  // Disk that a failed destroy left behind. This is the only place husk will
+  // ever mention it: the computer is already gone from `husk ps`, so without
+  // this the workspace is invisible and permanent. A provisioned Chromium is
+  // 325 MB apiece.
+  const orphans = await findOrphanedWorkspaces().catch(() => [] as string[]);
+  if (orphans.length > 0) {
+    warnings.push(
+      `${orphans.length} workspace${orphans.length === 1 ? '' : 's'} under ${paths().workspaces} ` +
+        `${orphans.length === 1 ? 'belongs' : 'belong'} to no computer — ` +
+        'left by a destroy that could not remove its files. Delete them to reclaim the space.',
     );
   }
 

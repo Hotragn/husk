@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { ENV_KEYS, HUSK_VERSION, mapLimit, paths } from '@husk/core';
 import type { FastifyInstance } from 'fastify';
 import { ctxOf } from '../context.js';
+import { findOrphanedWorkspaces } from '@husk/runtime';
 
 /**
  * `GET /v1/doctor`.
@@ -158,6 +159,19 @@ export async function doctorRoutes(app: FastifyInstance): Promise<void> {
     }
     if (!config.token) {
       warnings.push('HUSK_TOKEN is not set, so this server only accepts loopback connections');
+    }
+
+    // Disk a destroy failed to free. Worth surfacing here specifically because
+    // the failure used to be silent: the computer disappeared from `husk ps`
+    // while its workspace stayed behind, and a provisioned Chromium is 325 MB
+    // of that. Nothing else in husk would ever mention it.
+    const orphans = await findOrphanedWorkspaces().catch(() => [] as string[]);
+    if (orphans.length > 0) {
+      warnings.push(
+        `${orphans.length} workspace${orphans.length === 1 ? '' : 's'} in ${paths().workspaces} ` +
+          `${orphans.length === 1 ? 'belongs' : 'belong'} to no computer -- ` +
+          'left by a destroy that could not remove its files',
+      );
     }
 
     return {

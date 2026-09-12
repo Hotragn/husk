@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { browserFor, closeBrowserFor } from '@husk/browser';
+import { browserFor, closeBrowserFor, findInstalledChromium } from '@husk/browser';
 import type { Computer } from '@husk/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -50,6 +50,22 @@ async function mustGet(app: FastifyInstance, id: string): Promise<Computer> {
 
 export async function browserRoutes(app: FastifyInstance): Promise<void> {
   const ctx = ctxOf(app);
+
+  /**
+   * Is a browser already usable on this machine?
+   *
+   * Cheap and side-effect free: it looks, it does not install. The console asks
+   * before showing a download prompt, so a computer that already has Chromium is
+   * not offered 111 MB it does not need.
+   */
+  app.get('/v1/computers/:id/browser/status', async (req: FastifyRequest) => {
+    const { id } = req.params as { id: string };
+    const computer = await mustGet(app, id);
+    const found = await findInstalledChromium(computer).catch(() => null);
+    return found
+      ? { installed: true, source: found.source, ...(found.version ? { version: found.version } : {}) }
+      : { installed: false };
+  });
 
   app.post('/v1/computers/:id/browser/goto', async (req: FastifyRequest) => {
     const { id } = req.params as { id: string };
