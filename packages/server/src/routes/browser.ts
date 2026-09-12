@@ -48,6 +48,36 @@ async function mustGet(app: FastifyInstance, id: string): Promise<Computer> {
   return computer;
 }
 
+/** Computers whose session already reports onto the bus. */
+const wired = new Set<string>();
+
+/**
+ * The session for this computer, with its progress on the event bus.
+ *
+ * First use of the rendered browser downloads about 111 MB of Chromium inside
+ * the machine, and that took as long as it took with nothing on screen but a
+ * seconds counter -- the console said so, in as many words, because the server
+ * passed no `onProgress` and had nothing better to offer. The provisioner has
+ * always narrated itself ("downloading Chromium for arm64...", "unpacking 111
+ * MB into...", "Chromium ready: ..."); those messages went to the server log
+ * and stopped there.
+ *
+ * This is stages, not bytes. The download is a curl running inside the
+ * computer, so there is no byte counter on this side to forward, and inventing
+ * a progress bar over a stage list would be worse than showing the stages.
+ */
+function sessionFor(app: FastifyInstance, computer: Computer): ReturnType<typeof browserFor> {
+  const ctx = ctxOf(app);
+  const session = browserFor(computer);
+  if (!wired.has(computer.id)) {
+    wired.add(computer.id);
+    session.onProgress((message) => {
+      ctx.bus.emit('computers', 'browser_progress', { id: computer.id, message });
+    });
+  }
+  return session;
+}
+
 export async function browserRoutes(app: FastifyInstance): Promise<void> {
   const ctx = ctxOf(app);
 
@@ -72,7 +102,7 @@ export async function browserRoutes(app: FastifyInstance): Promise<void> {
     const body = parseOr422(GotoSchema, req.body);
     const computer = await mustGet(app, id);
 
-    const session = browserFor(computer);
+    const session = sessionFor(app, computer);
     // The policy check lives in the session, on the parsed URL it then navigates
     // to, so there is no gap between what was authorised and what was loaded.
     const result = await session.goto(body.url, { timeoutMs: (body.timeoutSec ?? 30) * 1000 });
@@ -85,14 +115,14 @@ export async function browserRoutes(app: FastifyInstance): Promise<void> {
   app.post('/v1/computers/:id/browser/snapshot', async (req: FastifyRequest) => {
     const { id } = req.params as { id: string };
     const body = parseOr422(SnapshotSchema, req.body);
-    const page = await browserFor(await mustGet(app, id)).activePage();
+    const page = await sessionFor(app, await mustGet(app, id)).activePage();
     return { url: await page.url(), nodes: await page.snapshot({ limit: body.limit ?? 400 }) };
   });
 
   app.post('/v1/computers/:id/browser/click', async (req: FastifyRequest) => {
     const { id } = req.params as { id: string };
     const body = parseOr422(RefSchema, req.body);
-    const page = await browserFor(await mustGet(app, id)).activePage();
+    const page = await sessionFor(app, await mustGet(app, id)).activePage();
     // Only pays for a load when the click started one. A click that opens a
     // menu used to cost a flat 5s waiting for an event that was never coming.
     await page.clickAndSettle(body.ref);
@@ -102,7 +132,7 @@ export async function browserRoutes(app: FastifyInstance): Promise<void> {
   app.post('/v1/computers/:id/browser/type', async (req: FastifyRequest) => {
     const { id } = req.params as { id: string };
     const body = parseOr422(TypeSchema, req.body);
-    const page = await browserFor(await mustGet(app, id)).activePage();
+    const page = await sessionFor(app, await mustGet(app, id)).activePage();
     await page.type(body.ref, body.text);
     if (body.submit) {
       await page.press('Enter');
@@ -114,7 +144,7 @@ export async function browserRoutes(app: FastifyInstance): Promise<void> {
   app.get('/v1/computers/:id/browser/screenshot', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
     const { fullPage } = req.query as { fullPage?: string };
-    const page = await browserFor(await mustGet(app, id)).activePage();
+    const page = await sessionFor(app, await mustGet(app, id)).activePage();
     const data = await page.screenshot({ fullPage: fullPage === '1' || fullPage === 'true' });
     // Sent as the image rather than as base64 JSON so the console can point an
     // <img> at it and a human can open the URL.
@@ -124,6 +154,7 @@ export async function browserRoutes(app: FastifyInstance): Promise<void> {
   app.delete('/v1/computers/:id/browser', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
     await mustGet(app, id);
+    wired.delete(id);
     await closeBrowserFor(id);
     return reply.code(204).send();
   });

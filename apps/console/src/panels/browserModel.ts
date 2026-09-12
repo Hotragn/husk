@@ -202,3 +202,31 @@ export function normaliseUrl(raw: string): string | null {
   if (trimmed === '') return null;
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
+
+/**
+ * The most recent provisioning message for this computer, if any.
+ *
+ * The server emits `computers/browser_progress` as the browser is installed and
+ * started -- "downloading Chromium for arm64 (~111 MB)", "unpacking", "starting
+ * Chromium and waiting for its debugger", "Chromium ready". Before this the
+ * console had only a seconds counter and said so.
+ *
+ * Stages, not bytes. The download runs inside the computer, so no byte count
+ * crosses the boundary and none is drawn.
+ *
+ * `events` is newest-first, which is why this returns the first match rather
+ * than the last.
+ */
+export function latestProgressFor(
+  events: readonly { type: string; payload?: unknown }[],
+  computerId: string | null,
+): string | null {
+  if (!computerId) return null;
+  for (const event of events) {
+    if (event.type !== 'browser_progress') continue;
+    const payload = event.payload as { id?: unknown; message?: unknown } | undefined;
+    if (payload?.id !== computerId) continue;
+    return typeof payload.message === 'string' && payload.message.trim() !== '' ? payload.message : null;
+  }
+  return null;
+}

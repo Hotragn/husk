@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { backendNodeIdOf, flattenAxTree } from '@husk/browser';
 import type { SnapshotNode } from '../api/wire';
-import {
+import { latestProgressFor,
   actionableNodes,
   changesPage,
   classifyBrowserError,
@@ -176,5 +176,42 @@ describe('normaliseUrl', () => {
     expect(normaliseUrl('http://127.0.0.1:8111/')).toBe('http://127.0.0.1:8111/');
     expect(normaliseUrl('')).toBeNull();
     expect(normaliseUrl('   ')).toBeNull();
+  });
+});
+
+/**
+ * The panel used to say, in as many words, that the console was not sent any
+ * progress: `browserFor` in `routes/browser.ts` passed no `onProgress`, so the
+ * provisioner's narration went to the server log and stopped there. A 111 MB
+ * download showed a seconds counter and nothing else.
+ */
+describe('latestProgressFor', () => {
+  const ev = (type: string, payload: unknown) => ({ type, payload });
+
+  it('finds the newest message for the computer on screen', () => {
+    // The feed is newest-first, so the newest matching event wins by position.
+    const events = [
+      ev('browser_progress', { id: 'c1', message: 'unpacking 111 MB' }),
+      ev('browsed', { id: 'c1', url: 'https://example.com' }),
+      ev('browser_progress', { id: 'c1', message: 'downloading Chromium' }),
+    ];
+    expect(latestProgressFor(events, 'c1')).toBe('unpacking 111 MB');
+  });
+
+  it('ignores another machine downloading at the same time', () => {
+    const events = [ev('browser_progress', { id: 'c2', message: 'unpacking' })];
+    expect(latestProgressFor(events, 'c1')).toBeNull();
+  });
+
+  it('is null with no computer selected, and with an empty feed', () => {
+    expect(latestProgressFor([ev('browser_progress', { id: 'c1', message: 'x' })], null)).toBeNull();
+    expect(latestProgressFor([], 'c1')).toBeNull();
+  });
+
+  it('does not render a blank or malformed payload as a message', () => {
+    // An empty string would clear nothing and show an empty "Now:" line.
+    expect(latestProgressFor([ev('browser_progress', { id: 'c1', message: '   ' })], 'c1')).toBeNull();
+    expect(latestProgressFor([ev('browser_progress', { id: 'c1' })], 'c1')).toBeNull();
+    expect(latestProgressFor([ev('browser_progress', null)], 'c1')).toBeNull();
   });
 });

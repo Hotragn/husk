@@ -21,10 +21,11 @@
  *    stream behind it and no "live" badge above it; the bar says when the frame
  *    was taken, and every action that could change the page takes a new one.
  * 2. **The first launch is slow and large.** It is announced before it starts,
- *    with the size, and while it runs the panel counts the seconds. The server
- *    does not stream the download's byte progress to the console — `browserFor`
- *    in `routes/browser.ts` passes no `onProgress` — so the panel says where the
- *    real progress is instead of drawing a fake bar over it.
+ *    with the size; while it runs the panel counts the seconds and shows the
+ *    machine's own last word on what it is doing — `routes/browser.ts` puts the
+ *    provisioner's stages on the event bus as `computers/browser_progress`.
+ *    Stages, not bytes: the download is a curl inside the computer and no byte
+ *    count crosses back, so no bar is drawn over one that does not exist.
  * 3. **The debug port.** On `local` and `ssh` the computer shares a network
  *    stack with the host, so Chromium's CDP port may be reachable by other
  *    local processes, and CDP has no authentication. `@husk/browser` says this
@@ -50,6 +51,7 @@ import {
   debugPortIsShared,
   followUps,
   isTextInput,
+  latestProgressFor,
   nodeLabel,
   normaliseUrl,
 } from './browserModel';
@@ -154,7 +156,7 @@ export function BrowserPanel({
   activeId: string | null;
   onSelect: (id: string) => void;
 }) {
-  const { api } = useConnection();
+  const { api, events } = useConnection();
   const computers = useComputers();
   const active = computers.list.find((c) => c.id === activeId) ?? null;
 
@@ -498,6 +500,8 @@ export function BrowserPanel({
   const controls = actionableNodes(nodes);
   const working = mode === 'render' ? busy !== null : loading;
   const provisioning = mode === 'render' && busy !== null && !ready;
+  // The machine's own last word on what it is doing, off the event bus.
+  const progress = latestProgressFor(events, activeId);
 
   return (
     <section className="panel" aria-labelledby="browser-title">
@@ -656,9 +660,16 @@ export function BrowserPanel({
             computer&apos;s own egress path, into <code>/work/.husk-browser</code> — so on a persistent machine it is
             kept, and this wait happens once.
           </p>
+          {progress ? (
+            <p style={{ marginTop: 'var(--space-2)' }}>
+              <span className="hint">Now: </span>
+              <span role="status">{progress}</span>
+            </p>
+          ) : null}
           <p className="hint" style={{ marginTop: 'var(--space-2)' }}>
-            The {elapsed}s above is measured. A byte count is not shown because the console is not sent one: the
-            download reports its progress into the server&apos;s own log and no further. To watch the real thing:
+            The {elapsed}s above is measured, and the line above it is the machine&apos;s own last word on what it is
+            doing. There is no byte count because the download runs inside the computer and none crosses back — a
+            progress bar here would be drawn from nothing. To watch the bytes themselves:
           </p>
           <pre className="code" style={{ marginTop: 'var(--space-2)' }}>
             {`husk exec ${activeId ?? '<id>'} -- du -sh /work/.husk-browser`}

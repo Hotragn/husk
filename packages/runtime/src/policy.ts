@@ -1,6 +1,6 @@
 import { realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, posix, resolve, sep } from 'node:path';
-import { HuskError } from '@husk/core';
+import { HuskError, completeCharEnd } from '@husk/core';
 import { DEFAULT_DENY, type CommandRule } from './deny.js';
 
 /**
@@ -299,6 +299,18 @@ export function assertCommandAllowed(
  * The middle of a runaway build log is never the interesting part; the command
  * that started it and the error that ended it are.
  */
+/**
+ * Skip orphaned continuation bytes at the front of a buffer.
+ *
+ * A truncated stream's tail starts wherever the byte budget put it, which may
+ * be inside a character whose lead byte was dropped.
+ */
+function firstCharBoundary(buf: Buffer): number {
+  let i = 0;
+  while (i < buf.byteLength && (buf[i]! & 0xc0) === 0x80) i++;
+  return i;
+}
+
 export class OutputBuffer {
   private head: Buffer[] = [];
   private headBytes = 0;
@@ -343,10 +355,22 @@ export class OutputBuffer {
   }
 
   toString(): string {
-    const head = Buffer.concat(this.head).toString('utf8');
-    if (!this.truncated) return head + Buffer.concat(this.tail).toString('utf8');
-    const omitted = this.total - this.headBytes - this.tailBytes;
-    const tail = Buffer.concat(this.tail).toString('utf8');
+    const headBuf = Buffer.concat(this.head);
+    const tailBuf = Buffer.concat(this.tail);
+    if (!this.truncated) return Buffer.concat([headBuf, tailBuf]).toString('utf8');
+
+    // The cut between head and tail sits at a byte offset chosen by a size
+    // limit, not by the text, so it lands inside a multi-byte character often
+    // enough to matter. Decode each side across whole characters only; the
+    // stray bytes join the elided count, where they are at least accounted
+    // for, instead of becoming U+FFFD that reads as if the command itself had
+    // emitted garbage.
+    const headEnd = completeCharEnd(headBuf);
+    const tailStart = firstCharBoundary(tailBuf);
+    const head = headBuf.subarray(0, headEnd).toString('utf8');
+    const tail = tailBuf.subarray(tailStart).toString('utf8');
+
+    const omitted = this.total - headEnd - (tailBuf.byteLength - tailStart);
     return `${head}\n... [${omitted} bytes elided by husk] ...\n${tail}`;
   }
 }

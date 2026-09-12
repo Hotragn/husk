@@ -90,6 +90,7 @@ export class BrowserSession {
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private chromium: ProvisionResult | undefined;
   private port = 0;
+  private readonly progressListeners = new Set<(message: string) => void>();
 
   constructor(
     readonly computer: Computer,
@@ -136,8 +137,34 @@ export class BrowserSession {
     return await page.goto(parsed.toString(), opts);
   }
 
+  /**
+   * Watch this session's progress messages.
+   *
+   * `browserFor` caches by computer id and ignores the options on every call
+   * after the first, so a listener passed as an option only ever reaches the
+   * caller that happened to create the session. The server creates sessions
+   * from an HTTP handler and wants the messages on its event bus, so the
+   * listener has to be attachable after the fact. Returns an unsubscribe.
+   */
+  onProgress(fn: (message: string) => void): () => void {
+    this.progressListeners.add(fn);
+    return () => this.progressListeners.delete(fn);
+  }
+
+  /** Fan a progress message out to the constructor option and any listeners. */
+  private say(message: string): void {
+    this.opts.onProgress?.(message);
+    for (const fn of this.progressListeners) {
+      try {
+        fn(message);
+      } catch {
+        // A listener that throws is the listener's problem, not the browser's.
+      }
+    }
+  }
+
   private async launch(): Promise<Page> {
-    const say = this.opts.onProgress ?? ((): void => {});
+    const say = (m: string): void => this.say(m);
 
     this.chromium ??= await provisionChromium(this.computer, { onProgress: say });
     this.port = await this.startChromium(this.chromium.binary, say);
