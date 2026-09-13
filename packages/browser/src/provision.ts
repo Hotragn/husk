@@ -449,8 +449,17 @@ async function assertLinkable(computer: Computer, binary: string, signal?: Abort
   const missing = parseMissingLibs(r.out);
   if (missing.length === 0) return;
 
+  // The old hint was `apt-get install -y <20 sonames>`, which is wrong twice:
+  // those are library filenames rather than package names, and on the container
+  // providers the root filesystem is read-only, so no package manager can run
+  // there at all. Someone following it got a confusing failure on top of this
+  // one.
   throw new HuskError('E_PROVIDER_UNAVAILABLE', `Chromium is missing ${missing.length} shared librar${missing.length === 1 ? 'y' : 'ies'}`, {
-    hint: `install them in the computer, e.g. \`apt-get install -y ${missing.join(' ')}\` (package names may differ)`,
+    hint:
+      'the image in this computer is too slim to run a browser. Container computers mount ' +
+      'their root read-only, so these cannot be installed at runtime -- the image has to ship ' +
+      'them. `--provider local` works today (a stock WSL or desktop Linux already has them), ' +
+      'or point computer.image at an image built for headless Chromium.',
     details: { missing, binary },
   });
 }
