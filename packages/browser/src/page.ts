@@ -355,12 +355,7 @@ export class Page {
       {
         op: 'send',
         method: 'Runtime.evaluate',
-        params: evalParams(
-          `(() => [...document.querySelectorAll('iframe')]
-             .filter((f) => { try { return !f.contentDocument; } catch { return true; } })
-             .map((f) => f.src || '(no src)')
-             .slice(0, 10))()`,
-        ),
+        params: evalParams(unreachableFramesExpression()),
         session: true,
         soft: true,
       },
@@ -620,23 +615,7 @@ export class Page {
       {
         op: 'send',
         method: 'Runtime.evaluate',
-        params: evalParams(
-          `(() => {
-             const el = document.activeElement;
-             if (!el || el.tagName !== 'SELECT') throw new Error('that ref is not a <select>');
-             const want = ${JSON.stringify(value)};
-             const match = [...el.options].find((o) => o.value === want)
-               || [...el.options].find((o) => o.text.trim() === want.trim());
-             if (!match) {
-               throw new Error('no option matching ' + JSON.stringify(want) +
-                 '; options are ' + JSON.stringify([...el.options].map((o) => o.text.trim())));
-             }
-             el.value = match.value;
-             el.dispatchEvent(new Event('input', { bubbles: true }));
-             el.dispatchEvent(new Event('change', { bubbles: true }));
-             return match.text.trim();
-           })()`,
-        ),
+        params: evalParams(selectExpression(value)),
         session: true,
       },
     ]);
@@ -750,4 +729,52 @@ function assertNoPageException(res: CdpParams): void {
 function valueOf(res: CdpParams | undefined): unknown {
   const result = (res ?? {})['result'] as { value?: unknown } | undefined;
   return result?.value;
+}
+
+/**
+ * The page-side half of `select`, as a string.
+ *
+ * Extracted so it can be run against a real DOM in a test. Everything here
+ * executes inside the page, where there is no husk, no types and no way to see
+ * a failure except the exception text -- so the message on the way out has to
+ * carry the options, or a model that guessed wrong has nothing to guess from.
+ */
+export function selectExpression(value: string): string {
+  return `(() => {
+     const el = document.activeElement;
+     if (!el || el.tagName !== 'SELECT') throw new Error('that ref is not a <select>');
+     const want = ${JSON.stringify(value)};
+     const match = [...el.options].find((o) => o.value === want)
+       || [...el.options].find((o) => o.text.trim() === want.trim());
+     if (!match) {
+       throw new Error('no option matching ' + JSON.stringify(want) +
+         '; options are ' + JSON.stringify([...el.options].map((o) => o.text.trim())));
+     }
+     el.value = match.value;
+     el.dispatchEvent(new Event('input', { bubbles: true }));
+     el.dispatchEvent(new Event('change', { bubbles: true }));
+     return match.text.trim();
+   })()`;
+}
+
+/**
+ * The page-side half of the cross-origin iframe report.
+ *
+ * `contentDocument` is null for a frame the document may not read, and reading
+ * it can itself throw in some engines, so both are treated as "cannot see in".
+ * A same-origin frame is readable and is deliberately not reported: it is
+ * already in the accessibility tree, and naming it would train a reader to
+ * ignore the warning.
+ */
+export function unreachableFramesExpression(limit = 10): string {
+  return `(() => [...document.querySelectorAll('iframe')]
+     .filter((f) => { try { return !f.contentDocument; } catch { return true; } })
+     .map((f) => {
+       // The src property resolves against the document, so an iframe with
+       // no src reports the page's own URL -- which reads as a frame that is
+       // somewhere it is not. The attribute says whether there is one at all.
+       const raw = f.getAttribute('src');
+       return raw && raw.trim() ? f.src : '(no src)';
+     })
+     .slice(0, ${limit}))()`;
 }

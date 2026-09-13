@@ -200,6 +200,60 @@ function ensureWorkMountpoint(distro: string): boolean {
 }
 
 /**
+ * Where a WSL computer's workspace lives.
+ *
+ * Inside the distro, not on the Windows drive it used to sit on. Two reasons,
+ * both measured on the machine this was written on:
+ *
+ *  - **Space.** `C:` had 5 GB free while the distro's own ext4 had 938 GB. Each
+ *    computer's browser alone is a 111 MB download that unpacks to 325 MB, so
+ *    three machines were enough to fill the host drive and take WSL and Docker
+ *    down with it. The roomy filesystem was sitting there unused.
+ *  - **Speed.** `/work` was a drvfs mount of a Windows directory, so every file
+ *    the agent touched crossed the 9p boundary. Now the agent is on native ext4
+ *    and only husk's own occasional reads cross, in the other direction.
+ *
+ * The host keeps plain `fs` access through `\\wsl.localhost\<distro>\...`, which
+ * Windows serves for every distro -- verified here for binary round-trips,
+ * recursive mkdir and rm, and at about 4 ms a write. So none of the file
+ * operations had to be rewritten to shell out through `wsl.exe`.
+ *
+ * Returns null when the distro cannot answer, which is a downgrade signal, not
+ * an error: the caller falls back to the Windows-side workspace it always used.
+ */
+function distroWorkspace(distro: string, id: string): { linux: string; host: string } | null {
+  const linuxRoot = `$HOME/.husk/workspaces/${id}`;
+  // One round trip: make it, then print both spellings of where it is. Asking
+  // separately would double the cost of the slowest step in `create`.
+  const made = spawnSync(
+    'wsl.exe',
+    [
+      '-d',
+      distro,
+      '-e',
+      'sh',
+      '-c',
+      `mkdir -p "${linuxRoot}/root" "${linuxRoot}/tmp" && chmod 700 "${linuxRoot}" && ` +
+        `printf '%s\\n%s\\n' "$(cd "${linuxRoot}" && pwd)" "$(wslpath -w "$(cd "${linuxRoot}" && pwd)")"`,
+    ],
+    { timeout: 20_000, windowsHide: true },
+  );
+
+  if (made.status !== 0) return null;
+  const [linux, host] = (made.stdout?.toString('utf8') ?? '')
+    .replace(/\0/g, '')
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  // The UNC path is the load-bearing half: without it husk cannot read the
+  // workspace at all, and a silent half-answer would surface much later as a
+  // confusing ENOENT.
+  if (!linux || !host || !host.startsWith('\\\\')) return null;
+  return { linux, host };
+}
+
+/**
  * Host path -> WSL path.
  *
  * WSL fails transiently in ways that have nothing to do with the request --
@@ -680,6 +734,28 @@ class LocalComputer implements Computer {
   async destroy(): Promise<void> {
     if (this.destroyed) return;
     const workspace = this.info.spec.labels?.['husk.workspace'];
+
+    // An in-distro workspace is deleted from inside it. Removing 325 MB of
+    // unpacked Chromium one file at a time over the \wsl.localhost share takes
+    // minutes and trips over Linux filenames Windows will not open; `rm -rf`
+    // in the distro is one call and knows the filesystem it is on.
+    const linuxWorkspace = this.info.spec.labels?.['husk.wslWorkspace'];
+    const distro = this.info.spec.labels?.['husk.shell']?.replace(/^wsl:/, '');
+    if (linuxWorkspace && distro) {
+      const done = spawnSync('wsl.exe', ['-d', distro, '-e', 'rm', '-rf', linuxWorkspace], {
+        timeout: 120_000,
+        windowsHide: true,
+      });
+      if (done.status === 0) {
+        this.destroyed = true;
+        this.info.state = 'destroyed';
+        await rm(join(paths().computers, `${this.info.id}.json`), { force: true }).catch(() => {});
+        return;
+      }
+      // Fell through on purpose: if WSL is unwell the host still sees the same
+      // files through the UNC path, and a slow delete beats a leaked 325 MB.
+    }
+
     const targets = [this.jail.root, this.jail.tmp, ...(workspace ? [workspace] : [])];
 
     let lastErr: unknown;
@@ -722,19 +798,70 @@ class LocalComputer implements Computer {
  */
 export async function findOrphanedWorkspaces(): Promise<string[]> {
   const p = ensurePaths();
-  let dirs: string[];
-  try {
-    dirs = await readdir(p.workspaces);
-  } catch {
-    return [];
-  }
+  const infos = await loadInfos();
   const known = new Set(
-    (await loadInfos()).map((i: ComputerInfo) => i.spec.labels?.['husk.workspace'] ?? join(p.workspaces, i.id)),
+    infos.map((i: ComputerInfo) => i.spec.labels?.['husk.workspace'] ?? join(p.workspaces, i.id)),
   );
-  return dirs
-    .filter((d) => d.startsWith('cmp_'))
-    .map((d) => join(p.workspaces, d))
-    .filter((dir) => !known.has(dir));
+
+  const orphans: string[] = [];
+
+  // The Windows-side directory. Still used by the posix and host-shell cases,
+  // and by every WSL computer created before workspaces moved into the distro.
+  try {
+    for (const dir of await readdir(p.workspaces)) {
+      if (!dir.startsWith('cmp_')) continue;
+      const full = join(p.workspaces, dir);
+      if (!known.has(full)) orphans.push(full);
+    }
+  } catch {
+    // No workspaces directory yet is not a problem to report.
+  }
+
+  // And inside each distro husk has actually used. Skipped entirely when none
+  // has been -- a `doctor` run on a machine with no WSL should not pay for a
+  // `wsl.exe` probe, and on a broken WSL it should not hang on one either.
+  const knownLinux = new Set(
+    infos.map((i: ComputerInfo) => i.spec.labels?.['husk.wslWorkspace']).filter((x): x is string => Boolean(x)),
+  );
+  for (const distro of distrosInUse(infos)) {
+    const listed = spawnSync(
+      'wsl.exe',
+      ['-d', distro, '-e', 'sh', '-c', 'ls -1d "$HOME"/.husk/workspaces/cmp_* 2>/dev/null || true'],
+      { timeout: 15_000, windowsHide: true },
+    );
+    if (listed.status !== 0) continue;
+    for (const line of (listed.stdout?.toString('utf8') ?? '').replace(/\0/g, '').split(/\r?\n/)) {
+      const dir = line.trim();
+      if (dir && !knownLinux.has(dir)) orphans.push(`${distro}:${dir}`);
+    }
+  }
+
+  return orphans;
+}
+
+/**
+ * The distros this husk home has a computer in, and no others.
+ *
+ * Deliberately derived from the registry rather than from `detectShell`. A
+ * distro's workspaces live under its own `$HOME/.husk`, which has nothing to do
+ * with `HUSK_HOME` on the Windows side -- so probing the current distro
+ * unconditionally made an isolated husk home report another one's workspaces as
+ * its orphans, and made `doctor` pay for a `wsl.exe` round trip it had no use
+ * for. Both observed: a temp-home test found two live workspaces, and the probe
+ * cost 14 seconds.
+ *
+ * The cost is that orphans in a distro with no surviving registry entry go
+ * unseen. That is the rarer case -- an orphan is a workspace whose *deletion*
+ * failed, and the entry is normally still there -- and it is better than
+ * answering for a home that did not ask.
+ */
+function distrosInUse(infos: ComputerInfo[]): string[] {
+  const names = new Set<string>();
+  for (const i of infos) {
+    const shell = i.spec.labels?.['husk.shell'];
+    if (shell?.startsWith('wsl:')) names.add(shell.slice(4));
+  }
+  return [...names];
 }
 
 function splitList(v: string | undefined): string[] | undefined {
@@ -772,7 +899,14 @@ export class LocalProvider implements ComputerProvider {
   async create(spec: ComputerSpec): Promise<Computer> {
     const p = ensurePaths();
     const id = newId('cmp');
-    const workspaceRoot = join(p.workspaces, id);
+
+    // A WSL computer keeps its files inside the distro; everything else keeps
+    // them under ~/.husk/workspaces as before. `inDistro` is null when that
+    // could not be arranged, and the Windows-side layout is the fallback.
+    const probe = detectShell();
+    const inDistro = probe.kind === 'wsl' ? distroWorkspace(probe.distro as string, id) : null;
+
+    const workspaceRoot = inDistro ? inDistro.host : join(p.workspaces, id);
     const jail = jailFor(workspaceRoot);
 
     await mkdir(jail.root, { recursive: true, mode: 0o700 });
@@ -794,8 +928,11 @@ export class LocalProvider implements ComputerProvider {
       // once at create -- where we can still degrade -- instead of failing
       // halfway through an agent's run.
       try {
-        wslLabels['husk.wslRoot'] = wslPath(shell.distro as string, jail.root);
-        wslLabels['husk.wslTmp'] = wslPath(shell.distro as string, jail.tmp);
+        // Already known when the workspace is in the distro -- no conversion,
+        // and no second wsl.exe round trip to get back what we just made.
+        wslLabels['husk.wslRoot'] = inDistro ? `${inDistro.linux}/root` : wslPath(shell.distro as string, jail.root);
+        wslLabels['husk.wslTmp'] = inDistro ? `${inDistro.linux}/tmp` : wslPath(shell.distro as string, jail.tmp);
+        if (inDistro) wslLabels['husk.wslWorkspace'] = inDistro.linux;
         workdir ??= mountable ? GUEST_ROOT : wslLabels['husk.wslRoot'];
       } catch (err) {
         shell = downgradeFromWsl((err as Error).message);
