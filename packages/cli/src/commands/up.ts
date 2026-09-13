@@ -27,6 +27,7 @@ export async function run(argv: string[]): Promise<number> {
       network: { type: 'string' },
       persist: { type: 'boolean', default: false },
       env: { type: 'string', multiple: true },
+      packages: { type: 'string', multiple: true },
       'idle-timeout': { type: 'string' },
     },
     'up',
@@ -58,6 +59,16 @@ export async function run(argv: string[]): Promise<number> {
       ? { network: { mode: parseChoice(values.network as string, NETWORK_MODES, '--network', 'up') ?? 'egress' } }
       : {}),
     ...(values.persist ? { persist: true } : {}),
+    // Repeatable and comma-splittable, because `--packages curl,git` is what
+    // people type and being told it is wrong helps nobody.
+    ...((values.packages as string[] | undefined)?.length
+      ? {
+          packages: (values.packages as string[])
+            .flatMap((p) => p.split(','))
+            .map((p) => p.trim())
+            .filter(Boolean),
+        }
+      : {}),
     ...(values['idle-timeout']
       ? { idleTimeoutSec: parseCount(values['idle-timeout'] as string, '--idle-timeout', 'up') }
       : {}),
@@ -92,10 +103,30 @@ export async function run(argv: string[]): Promise<number> {
           ? ui.green('kernel-level')
           : ui.yellow('guardrails only — not a sandbox'),
       ],
+      ['image', info.imageFallback ? `${info.image} ${ui.yellow('(fallback)')}` : ui.dim(info.image)],
       ['workdir', info.workdir],
       ['network', spec.network?.mode ?? 'egress'],
     ]),
   );
+
+  // Said out loud, because the difference is not cosmetic: the stock fallback
+  // has no python3 and no curl, so `husk browse` and the real browser both fail
+  // on it -- and they fail complaining about the network, which sends you
+  // looking in the wrong place entirely.
+  if (info.imageFallback) {
+    ui.print();
+    ui.print(`  ${ui.yellow('!')} ${ui.bold(info.imageFallback.wanted)} was not available, so this machine is`);
+    ui.print(`    stock ${ui.bold(info.image)} — husk's own tools are not in it.`);
+    // Named rather than generalised: the base fallback really has no python3,
+    // but python:3.12-slim does, and telling someone their python image has no
+    // python is the fastest way to lose their trust in every other message.
+    if (!/python|node/.test(info.image)) {
+      ui.print(`    No python3 and no curl, so ${ui.bold('browsing will not work')} here.`);
+      ui.print(`    ${ui.dim('An image that has one:')}`);
+      ui.print(`    ${ui.gray('$')} husk rm ${info.name} --yes && husk up ${info.name} --flavor python`);
+    }
+  }
+
   ui.print();
   ui.print(ui.dim('  Try it:'));
   ui.print(`  ${ui.gray('$')} husk exec ${info.name} -- uname -sr`);

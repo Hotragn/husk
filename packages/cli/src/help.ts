@@ -39,10 +39,16 @@ export const COMMANDS: HelpEntry[] = [
       ['--memory <size>', 'e.g. 2g, 512m'],
       ['--cpus <n>', 'cpu allocation'],
       ['--network <mode>', 'none | egress | full (default: egress)'],
+      ['--packages <p,..>', 'install these in the machine at create time; repeatable'],
       ['--persist', 'keep the filesystem across restarts'],
       ['--json', 'print the computer record instead of the summary'],
     ],
-    examples: ['husk up', 'husk up scratch --provider local', 'husk up builder --flavor python --memory 2g --network full'],
+    examples: [
+      'husk up',
+      'husk up scratch --provider local',
+      'husk up web --packages curl',
+      'husk up builder --flavor python --memory 2g --network full',
+    ],
   },
   {
     name: 'ps',

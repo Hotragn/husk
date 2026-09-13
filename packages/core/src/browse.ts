@@ -241,7 +241,12 @@ async function browseWithCurl(
 
   if (res.exitCode !== 0) {
     throw new HuskError('E_EXEC_FAILED', `could not load ${parsed.hostname}`, {
-      hint: 'the computer has neither python3 nor a working curl; install one, or use --provider docker',
+      hint:
+        'this machine has neither python3 nor curl, so there is nothing here to fetch with. ' +
+        'Use a flavor whose image ships one -- `husk up <name> --flavor python` works today -- ' +
+        'or point computer.image at your own. On the container providers `computer.packages` ' +
+        'cannot help here: the root filesystem is mounted read-only on purpose, so no package ' +
+        'manager can run.',
       details: { stderr: res.stderr.slice(0, 500) },
     });
   }

@@ -254,11 +254,21 @@ export async function provisionChromium(
     ...(signal ? { signal } : {}),
   }).finally(stopWatching);
   if (!dl.ok) {
+    // "No egress" and "no downloader installed" look identical from here if you
+    // only report the former, and they send you to completely different places:
+    // one to your firewall rules, one to `apt-get install curl`. The stock
+    // debian-slim fallback image has neither curl nor python3, so on the
+    // default provider the second is the likelier answer -- and blaming the
+    // network for it costs somebody an hour.
+    const canDownload = dl.haveTool;
     throw new HuskError('E_PROVIDER_UNAVAILABLE', `could not download Chromium for ${plan.arch}`, {
-      hint:
-        'the computer needs egress to a CDN for this; check `husk exec <name> -- curl -sSI ' +
-        `${plan.url}\`, or install a system chromium in the machine and husk will use that instead`,
-      details: { url: plan.url, detail: dl.detail.slice(0, 500) },
+      hint: canDownload
+        ? 'the computer has a downloader but could not reach the CDN; check `husk exec <name> ' +
+          `-- curl -sSI ${plan.url}\`, or install a system chromium and husk will use that instead`
+        : 'this machine has neither curl nor python3, so there is nothing here to download ' +
+          'with, and nothing was attempted over the network. Use a flavor whose image ships ' +
+          'one -- `--flavor python` works -- or set computer.image to your own.',
+      details: { url: plan.url, haveDownloader: canDownload, detail: dl.detail.slice(0, 500) },
     });
   }
 
@@ -406,12 +416,15 @@ async function download(
   url: string,
   dest: string,
   opts: { timeoutSec: number; signal?: AbortSignal },
-): Promise<{ ok: boolean; detail: string }> {
+): Promise<{ ok: boolean; detail: string; haveTool: boolean }> {
+  // 127 from a shell means "command not found". Distinguishing that from a
+  // failed transfer is the whole difference between a firewall problem and a
+  // missing package, so it is carried out rather than collapsed into `ok`.
   const curl = await sh(computer, `curl -fsSL --max-time ${opts.timeoutSec} -o ${dest} ${url}`, {
     timeoutSec: opts.timeoutSec + 30,
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
-  if (curl.code === 0) return { ok: true, detail: '' };
+  if (curl.code === 0) return { ok: true, detail: '', haveTool: true };
 
   // 127 means there is no curl at all, which is a different problem from a
   // failed transfer and deserves a second attempt rather than a shrug.
@@ -420,8 +433,15 @@ async function download(
     `python3 -c "import urllib.request,sys; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])" ${url} ${dest}`,
     { timeoutSec: opts.timeoutSec + 30, ...(opts.signal ? { signal: opts.signal } : {}) },
   );
-  if (py.code === 0) return { ok: true, detail: '' };
-  return { ok: false, detail: `${curl.err}\n${py.err}`.trim() };
+  if (py.code === 0) return { ok: true, detail: '', haveTool: true };
+  // Both exiting 127 means neither tool is installed -- nothing was ever sent
+  // over the network, so this is not a connectivity failure and must not be
+  // reported as one.
+  return {
+    ok: false,
+    detail: `${curl.err}\n${py.err}`.trim(),
+    haveTool: curl.code !== 127 || py.code !== 127,
+  };
 }
 
 async function assertLinkable(computer: Computer, binary: string, signal?: AbortSignal): Promise<void> {

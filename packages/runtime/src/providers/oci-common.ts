@@ -19,7 +19,7 @@ import type {
   ProviderName,
   WriteFileOptions,
 } from '@husk/core';
-import { type ImagePlan, resolveImage } from '../images.js';
+import { type ImagePlan, installScript, resolveImage } from '../images.js';
 import { OutputBuffer, evaluateCommand } from '../policy.js';
 
 /**
@@ -102,7 +102,11 @@ export function buildRunArgs(cfg: OciConfig, plan: OciRunPlan): string[] {
   if (spec.persist) {
     args.push('-v', `husk-${cid}:${workdir}`);
   } else {
-    args.push('--tmpfs', `${workdir}:rw,exec,nosuid,size=${spec.diskMb ?? 2048}m`);
+    // mode=1777, like /tmp. Without it the tmpfs lands root-owned 0755 and the
+    // container's unprivileged user -- the whole point of the hardening -- gets
+    // "Permission denied" writing to its own workspace. Docker special-cases
+    // /tmp to 1777 and nothing else, which is why /tmp worked and /work did not.
+    args.push('--tmpfs', `${workdir}:rw,exec,nosuid,mode=1777,size=${spec.diskMb ?? 2048}m`);
   }
 
   args.push(`--cpus=${spec.cpus ?? 2}`);
@@ -172,6 +176,11 @@ export function buildExecArgs(_cfg: OciConfig, plan: OciExecPlan): string[] {
   if (plan.user) args.push('-u', plan.user);
   args.push(plan.containerId, ...toContainerArgv(plan.cmd));
   return args;
+}
+
+/** Single-quote a path for the `sh -c` that receives it inside the container. */
+function shQuote(path: string): string {
+  return `'${path.replace(/'/g, `'\\''`)}'`;
 }
 
 export function buildCopyIntoArgs(containerId: string, hostPath: string, targetPath: string): string[] {
@@ -399,34 +408,92 @@ export class OciComputer implements Computer {
       return;
     }
 
-    const tmpPath = join(tmpdir(), newId(`husk-${this.cfg.provider}`));
-    await writeFile(tmpPath, typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content));
-    try {
-      if (opts?.mkdirp !== false) {
-        await this.cli(['exec', this.native, 'mkdir', '-p', posixDirname(path)]);
-      }
-      await this.cli(buildCopyIntoArgs(this.native, tmpPath, path));
-      if (opts?.mode) {
-        await this.cli(['exec', this.native, 'chmod', opts.mode, path]);
-      }
-    } finally {
-      await rm(tmpPath, { force: true }).catch(() => {});
+    // Written through `exec`, not `cp`.
+    //
+    // `docker cp` refuses outright on a container with a read-only rootfs --
+    // "container rootfs is marked read-only" -- even when the destination is a
+    // writable tmpfs like /work or /tmp. It inspects the container, not the
+    // path. Since husk always sets `--read-only`, that made `writeFile` fail
+    // for *every* path on the docker and podman providers: no `write_file`
+    // tool, no `edit_file`, no `browse` (which stages a script in /tmp), and no
+    // browser (which unpacks Chromium into /work).
+    //
+    // `exec` runs inside the container, where the tmpfs is writable, so it goes
+    // exactly where `cp` would not.
+    if (opts?.mkdirp !== false) {
+      await this.cli(['exec', this.native, 'mkdir', '-p', posixDirname(path)]);
+    }
+    const bytes = typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content);
+    await this.execWithStdin(['exec', '-i', this.native, 'sh', '-c', `cat > ${shQuote(path)}`], bytes);
+    if (opts?.mode) {
+      await this.cli(['exec', this.native, 'chmod', opts.mode, path]);
     }
   }
 
+  /**
+   * Run the CLI with `input` on stdin.
+   *
+   * Streamed rather than passed as an argument: file contents are arbitrary
+   * bytes of arbitrary length, and an argv has limits on both.
+   */
+  protected execWithStdin(args: string[], input: Buffer): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(this.cfg.binary, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+      let stderr = '';
+      child.stderr?.on('data', (b: Buffer) => {
+        stderr += b.toString('utf8');
+      });
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (code === 0) return resolve();
+        reject(
+          new HuskError('E_FS_DENIED', `could not write the file: ${stderr.trim() || `exit ${code}`}`, {
+            hint: 'check the path is under a writable mount (/work or /tmp)',
+          }),
+        );
+      });
+      child.stdin?.on('error', reject);
+      child.stdin?.end(input);
+    });
+  }
+
+  /**
+   * Read a file, through `exec` rather than `cp`, for the second half of the
+   * same reason as {@link writeFile}.
+   *
+   * `docker cp` copies out of the container's *filesystem layers*. `/work` and
+   * `/tmp` are tmpfs mounts, so a file plainly visible to `exec ls` is
+   * invisible to `cp`: "Could not find the file /work/api.txt in container".
+   * Every path husk actually uses is on one of those mounts, so this failed for
+   * everything that mattered while looking like a missing-file problem.
+   */
   async readFile(path: string): Promise<Uint8Array> {
-    const tmpPath = join(tmpdir(), newId(`husk-${this.cfg.provider}`));
     try {
-      await this.cli(buildCopyOutOfArgs(this.native, path, tmpPath));
-      return new Uint8Array(await readFile(tmpPath));
+      return await this.execCapture(['exec', this.native, 'cat', path]);
     } catch (e) {
       throw new HuskError('E_FS_DENIED', `cannot read ${path}`, {
         hint: 'check the path exists inside the computer',
         cause: e,
       });
-    } finally {
-      await rm(tmpPath, { force: true }).catch(() => {});
     }
+  }
+
+  /** Run the CLI and collect stdout as raw bytes, so binaries survive intact. */
+  protected execCapture(args: string[]): Promise<Uint8Array> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(this.cfg.binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const chunks: Buffer[] = [];
+      let stderr = '';
+      child.stdout?.on('data', (b: Buffer) => chunks.push(b));
+      child.stderr?.on('data', (b: Buffer) => {
+        stderr += b.toString('utf8');
+      });
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (code === 0) return resolve(new Uint8Array(Buffer.concat(chunks)));
+        reject(new Error(stderr.trim() || `exit ${code}`));
+      });
+    });
   }
 
   async readTextFile(path: string, maxBytes?: number): Promise<string> {
@@ -722,6 +789,11 @@ export abstract class OciProvider implements ComputerProvider {
 
   protected readonly cfg: OciConfig;
 
+  /** The container created by the call in flight, for create-time root execs. */
+  private lastNative = '';
+  /** Whether the last `pullable` settled for the public fallback image. */
+  protected usedFallback = false;
+
   constructor(cfg: OciConfig) {
     this.cfg = cfg;
   }
@@ -737,7 +809,12 @@ export abstract class OciProvider implements ComputerProvider {
    * dies on a registry 404 is a first run that does not happen twice.
    */
   protected async pullable(plan: ImagePlan): Promise<string> {
+    // Remembered so `create` can say when the machine is not the one the spec
+    // asked for. Substituting the image silently is how someone ends up
+    // debugging a missing `python3` on an image they believe ships it.
+    this.usedFallback = false;
     for (const candidate of [plan.primary, plan.fallback]) {
+      this.usedFallback = candidate !== plan.primary;
       try {
         await this.cli(['image', 'inspect', candidate], 15_000);
         return candidate;
@@ -786,11 +863,60 @@ export abstract class OciProvider implements ComputerProvider {
       lastUsedAt: now,
       spec,
       nativeId,
+      ...(this.usedFallback
+        ? {
+            imageFallback: {
+              wanted: plan.primary,
+              reason: `${plan.primary} could not be pulled; using the public fallback`,
+            },
+          }
+        : {}),
     };
 
+    this.lastNative = nativeId;
     const comp = this.wrap(info);
+
+    // `computer.packages` used to be accepted and dropped on the floor here:
+    // `installScript` existed, was exported, and was called by nothing, so a
+    // husk.yaml asking for curl got a machine without curl and no complaint.
+    // It matters most on the fallback image, which is where the tools the
+    // browser needs are absent.
+    await this.installPackages(spec, image);
     if (spec.setup) await comp.exec({ cmd: spec.setup, timeoutSec: 300 });
     return comp;
+  }
+
+  /**
+   * Install `computer.packages`, as root.
+   *
+   * The container runs as an unprivileged user -- that is the point -- so the
+   * package manager has to be reached with `exec -u 0`. Installing is a
+   * create-time privilege, not one the agent ever holds: by the time the agent
+   * can run anything, this has already finished and every later exec is
+   * unprivileged again.
+   */
+  protected async installPackages(spec: ComputerSpec, image: string): Promise<void> {
+    const script = installScript(spec.flavor, spec.packages ?? []);
+    if (!script) return;
+    try {
+      await this.cli(['exec', '-u', '0', this.lastNative, 'sh', '-lc', script], 600_000);
+    } catch (e) {
+      // Not fatal: an agent can usually do its job without the extras, and a
+      // machine that refuses to exist because apt was unreachable is worse than
+      // one that comes up and says what is missing.
+      // Almost always the read-only rootfs rather than the network: husk starts
+      // these containers with `--read-only` and `--cap-drop ALL`, so apt cannot
+      // write to /var/lib/dpkg and its http method cannot setuid to `_apt`.
+      // Saying "check your egress" would send someone to their firewall for a
+      // problem that is entirely local and by design.
+      throw new HuskError('E_COMPUTER_FAILED', `could not install packages into ${image}`, {
+        hint:
+          'container computers run with a read-only root filesystem and no capabilities, so a ' +
+          'package manager cannot run in one. Use a flavor or `computer.image` whose image ' +
+          'already has what you need, or use `--provider local`, where packages do install.',
+        cause: e,
+      });
+    }
   }
 
   protected wrap(info: ComputerInfo): OciComputer {

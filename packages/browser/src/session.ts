@@ -1,4 +1,4 @@
-import { HuskError, assertUrlAllowed, ownsLoopback } from '@husk/core';
+import { HuskError, assertUrlAllowed, onComputerDestroyed, ownsLoopback } from '@husk/core';
 import type { Computer, NetworkPolicy } from '@husk/core';
 import { CdpConnection, ComputerDriverTransport, createTarget } from './cdp.js';
 import type { CdpTransport } from './cdp.js';
@@ -284,6 +284,46 @@ export async function closeBrowserFor(computerId: string): Promise<void> {
   sessions.delete(computerId);
   await s.close('closed by request');
 }
+
+/**
+ * Close this computer's browser when the computer is destroyed.
+ *
+ * Registered at module load, so it is in place before `browserFor` could have
+ * created anything. Without it a destroyed machine left its Chromium running:
+ * on the `local` provider those processes live on the host, so nothing reaps
+ * them, and each one pins its workspace directory open -- which is why `husk
+ * rm` would report "its files are still on disk" and mean it.
+ */
+onComputerDestroyed(async (computerId) => {
+  await closeBrowserFor(computerId);
+});
+
+/**
+ * And on the way out.
+ *
+ * A `husk serve` that is killed, or an MCP server whose client disconnects,
+ * would otherwise leak exactly the same way. `beforeExit` does not fire on a
+ * signal, so the signals are handled too -- without swallowing them: the
+ * default behaviour is restored and the signal re-raised, so a supervisor still
+ * sees the process die the way it expects.
+ */
+let exitWired = false;
+function wireExitCleanup(): void {
+  if (exitWired) return;
+  exitWired = true;
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(signal, () => {
+      void closeAllBrowsers().finally(() => {
+        process.removeAllListeners(signal);
+        process.kill(process.pid, signal);
+      });
+    });
+  }
+  process.once('beforeExit', () => {
+    void closeAllBrowsers();
+  });
+}
+wireExitCleanup();
 
 export async function closeAllBrowsers(): Promise<void> {
   const all = [...sessions.values()];

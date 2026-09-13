@@ -75,6 +75,17 @@ export interface ComputerInfo {
   nativeId?: string;
   /** Ports published to the host, keyed by the in-computer port. */
   ports?: Record<number, PortBinding>;
+  /**
+   * Set when `image` is not the image the spec asked for.
+   *
+   * husk prefers its own images and falls back to a stock public one when the
+   * registry has nothing -- which is every install until the images are
+   * published. The fallback is a bare `debian:bookworm-slim`: no python3, no
+   * curl, no `huskinfo`, and no `husk` user. That is a perfectly usable Linux
+   * box and a surprising one if you were told you had the other, so the
+   * substitution is recorded rather than performed quietly.
+   */
+  imageFallback?: { wanted: string; reason: string };
   error?: string;
 }
 

@@ -60,24 +60,33 @@ describe('buildRunArgs', () => {
     expect(valueAfter(run(), '--pids-limit')).toBe('512');
   });
 
+  /**
+   * `mode=1777` is load-bearing, not cosmetic.
+   *
+   * Docker special-cases /tmp to 1777 and mounts every other tmpfs root-owned
+   * 0755. The container runs as an unprivileged user, so without this the agent
+   * got "Permission denied" writing to its own /work -- the one directory the
+   * whole product is about. Measured on a real container before the fix:
+   *   drwxr-xr-x 2 root root  /work   →  sh: cannot create /work/x.txt
+   */
   it('mounts the root read-only and gives writable tmpfs only where work happens', () => {
     const args = run();
     expect(args).toContain('--read-only');
     expect(valuesAfter(args, '--tmpfs')).toEqual([
       '/tmp:rw,exec,nosuid,size=512m',
       '/run:rw,nosuid,size=16m',
-      '/work:rw,exec,nosuid,size=2048m',
+      '/work:rw,exec,nosuid,mode=1777,size=2048m',
     ]);
   });
 
   it('sizes the workdir tmpfs from diskMb', () => {
-    expect(valuesAfter(run({ diskMb: 512 }), '--tmpfs')).toContain('/work:rw,exec,nosuid,size=512m');
+    expect(valuesAfter(run({ diskMb: 512 }), '--tmpfs')).toContain('/work:rw,exec,nosuid,mode=1777,size=512m');
   });
 
   it('uses a named volume instead of a tmpfs when the spec asks to persist', () => {
     const args = run({ persist: true });
     expect(valueAfter(args, '-v')).toBe('husk-cmp_test:/work');
-    expect(valuesAfter(args, '--tmpfs')).not.toContain('/work:rw,exec,nosuid,size=2048m');
+    expect(valuesAfter(args, '--tmpfs')).not.toContain('/work:rw,exec,nosuid,mode=1777,size=2048m');
   });
 
   it('defaults cpus and memory, and pins swap to memory so the limit bites', () => {

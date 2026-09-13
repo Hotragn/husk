@@ -1,6 +1,6 @@
 import { readFile, mkdir, rename, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { HuskError, createLogger, ensurePaths } from '@husk/core';
+import { HuskError, createLogger, ensurePaths, notifyComputerDestroyed } from '@husk/core';
 import type {
   Availability,
   Computer,
@@ -239,6 +239,9 @@ export class ComputerManager {
     const c = await this.get(id);
     if (!c) return false;
     const key = c.info.spec.labels?.['husk.key'];
+    // Before the machine goes, not after: a browser's `close()` runs a `pkill`
+    // *inside* the computer, which only works while the computer still exists.
+    await notifyComputerDestroyed(id);
     await c.destroy();
     if (key) await clearBinding(key);
     return true;
