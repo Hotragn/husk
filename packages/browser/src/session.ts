@@ -163,6 +163,76 @@ export class BrowserSession {
     }
   }
 
+  /**
+   * Every page-type target the browser currently has open.
+   *
+   * A link with `target="_blank"` opens a tab husk was never attached to, so the
+   * click appeared to do nothing at all -- the snapshot came back unchanged, the
+   * URL came back unchanged, and the page the agent wanted was sitting in a tab
+   * nobody could see. This is how it becomes visible, and `switchTab` is how it
+   * becomes usable.
+   */
+  async tabs(): Promise<Array<{ targetId: string; url: string; title: string; active: boolean }>> {
+    const page = await this.activePage();
+    const conn = this.conn;
+    if (!conn) return [];
+
+    const res = await conn.send('Target.getTargets', {});
+    const infos = Array.isArray(res['targetInfos']) ? (res['targetInfos'] as Array<Record<string, unknown>>) : [];
+    return infos
+      .filter((t) => t['type'] === 'page')
+      .map((t) => ({
+        targetId: String(t['targetId'] ?? ''),
+        url: String(t['url'] ?? ''),
+        title: String(t['title'] ?? ''),
+        active: String(t['targetId'] ?? '') === page.id,
+      }));
+  }
+
+  /**
+   * Make another tab the one every other call acts on.
+   *
+   * The previous page object is dropped rather than kept in a list: one active
+   * page keeps `activePage()` meaning exactly one thing, and a stale `Page`
+   * handed out earlier would otherwise keep driving a tab the caller thinks
+   * they have left.
+   */
+  async switchTab(targetId: string): Promise<{ url: string; title: string }> {
+    const conn = this.conn;
+    if (!conn) {
+      throw new HuskError('E_TOOL_ERROR', 'the browser is not running', {
+        hint: 'call goto first; the browser starts on demand',
+      });
+    }
+
+    const known = await this.tabs();
+    if (!known.some((t) => t.targetId === targetId)) {
+      throw new HuskError('E_TOOL_ERROR', `no tab with id ${targetId}`, {
+        hint: `open tabs are: ${known.map((t) => `${t.targetId} (${t.url})`).join(', ') || 'none'}`,
+      });
+    }
+
+    const page = new Page(conn, targetId);
+    await page.init();
+    // Bring it to the front too, so a screenshot of it is not of a backgrounded
+    // tab that has stopped rendering.
+    await conn.send('Target.activateTarget', { targetId }).catch(() => undefined);
+    this.page = page;
+    this.touch();
+    return { url: await page.url(), title: await page.title() };
+  }
+
+  /** Open a new tab and switch to it. */
+  async newTab(url = 'about:blank'): Promise<{ targetId: string; url: string }> {
+    await this.activePage();
+    const conn = this.conn;
+    if (!conn) throw new HuskError('E_TOOL_ERROR', 'the browser is not running', { hint: 'call goto first' });
+
+    const targetId = await createTarget(conn, url);
+    await this.switchTab(targetId);
+    return { targetId, url };
+  }
+
   private async launch(): Promise<Page> {
     const say = (m: string): void => this.say(m);
 

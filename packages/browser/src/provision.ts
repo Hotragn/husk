@@ -55,6 +55,27 @@ export const CACHE_ROOT = '/work/.husk-browser';
 
 const SYSTEM_CANDIDATES = ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable'] as const;
 
+/**
+ * The computer's CPU architecture.
+ *
+ * Checks that the probe actually ran before believing its output. When it does
+ * not -- a stopped container, a dead daemon -- `uname -m` produces no stdout and
+ * an error on stderr, and passing that straight to `normaliseArch` reported
+ * "no prebuilt Chromium for Error response from daemon: container ... is not
+ * running". Two failures, one of them invented, and the real one nowhere in the
+ * message. Observed exactly that.
+ */
+async function archOf(computer: Computer, signal?: AbortSignal): Promise<BrowserArch> {
+  const res = await sh(computer, 'uname -m', { signal, timeoutSec: 30 });
+  if (res.code !== 0 || !res.out.trim()) {
+    throw new HuskError('E_COMPUTER_FAILED', 'the computer could not run a command, so the browser cannot start', {
+      hint: 'check it is still up with `husk ps`; a stopped or reaped machine needs `husk start <name>`',
+      details: { detail: (res.err || res.out).trim().slice(0, 300) },
+    });
+  }
+  return normaliseArch(res.out);
+}
+
 /** `uname -m` output, and the handful of aliases that mean the same thing. */
 export function normaliseArch(uname: string): BrowserArch {
   const a = uname.trim().toLowerCase();
@@ -206,8 +227,7 @@ export async function findInstalledChromium(
     const found = await findSystemChromium(computer, signal);
     if (found) return found;
   }
-  const unameRes = await sh(computer, 'uname -m', { signal, timeoutSec: 30 });
-  return await findCached(computer, normaliseArch(unameRes.out || unameRes.err), signal);
+  return await findCached(computer, await archOf(computer, signal), signal);
 }
 
 export async function provisionChromium(
@@ -225,8 +245,7 @@ export async function provisionChromium(
     }
   }
 
-  const unameRes = await sh(computer, 'uname -m', { signal, timeoutSec: 30 });
-  const arch = normaliseArch(unameRes.out || unameRes.err);
+  const arch = await archOf(computer, signal);
 
   // A cached copy is checked before the manifest is fetched, so a machine that
   // has already paid for the download never touches the network again.

@@ -218,6 +218,11 @@ export class Page {
   }
 
   /** Attach once up front, so a broken target fails at open rather than at the first click. */
+  /** The target this page drives, so a session can compare tabs by identity. */
+  get id(): string {
+    return this.targetId;
+  }
+
   async init(): Promise<void> {
     await this.run([]);
   }
@@ -328,14 +333,54 @@ export class Page {
     return valueOf(res);
   }
 
+  /**
+   * Everything on this page a caller can read or act on.
+   *
+   * The tree comes from the page's own session, which covers same-origin
+   * iframes and does *not* cover cross-origin ones -- those render in their own
+   * process and appear here as a single empty `Iframe` node. That matters more
+   * than it sounds: consent dialogs, card fields and embedded sign-in are
+   * routinely cross-origin, so the most important element on the page can be
+   * the one thing missing from the list.
+   *
+   * It cannot be fixed by asking harder; it needs attaching to the child
+   * target, which is a different connection. Until that exists, the gap is
+   * *reported* rather than left as a silence a model would read as "the page
+   * does not have one".
+   */
   async snapshot(opts: { limit?: number } = {}): Promise<SnapshotNode[]> {
-    const [, tree] = await this.run([
+    const [, tree, frames] = await this.run([
       { op: 'send', method: 'Accessibility.enable', session: true },
       { op: 'send', method: 'Accessibility.getFullAXTree', session: true },
+      {
+        op: 'send',
+        method: 'Runtime.evaluate',
+        params: evalParams(
+          `(() => [...document.querySelectorAll('iframe')]
+             .filter((f) => { try { return !f.contentDocument; } catch { return true; } })
+             .map((f) => f.src || '(no src)')
+             .slice(0, 10))()`,
+        ),
+        session: true,
+        soft: true,
+      },
     ]);
+
     const res = (tree ?? {}) as CdpParams;
     const nodes = Array.isArray(res['nodes']) ? (res['nodes'] as AxNodeLike[]) : [];
-    return flattenAxTree(nodes, opts);
+    const flat = flattenAxTree(nodes, opts);
+
+    const unreachable = ((frames ?? {}) as { result?: { value?: unknown } }).result?.value;
+    if (Array.isArray(unreachable) && unreachable.length > 0) {
+      flat.push({
+        ref: 'x0',
+        role: 'UnreachableFrames',
+        name:
+          `${unreachable.length} cross-origin iframe${unreachable.length === 1 ? '' : 's'} on this page ` +
+          `cannot be read or clicked from here: ${unreachable.map(String).join(', ')}`,
+      });
+    }
+    return flat;
   }
 
   /** Base64 png (or jpeg). `fullPage` captures past the viewport. */
@@ -482,6 +527,187 @@ export class Page {
       },
       { op: 'send', method: 'Input.dispatchKeyEvent', params: { ...common, type: 'keyUp' }, session: true },
     ]);
+  }
+
+  /**
+   * Wait for something to appear, rather than for a navigation.
+   *
+   * `waitForLoad` answers "did the page navigate", which on a single-page app is
+   * almost always "no" -- the content arrives and the load event never fires
+   * again. That made every SPA a guessing game: snapshot, find nothing, snapshot
+   * again. This waits for the thing actually being waited on.
+   *
+   * Polling rather than a MutationObserver on purpose: each driver invocation is
+   * its own process and connection, so an observer registered in one call is
+   * gone by the next. The loop runs inside a single `Runtime.evaluate`, so it is
+   * one round trip however long it waits.
+   */
+  async waitFor(
+    what: { text?: string; selector?: string; gone?: boolean },
+    timeoutMs = 15_000,
+  ): Promise<{ found: boolean; waitedMs: number }> {
+    const started = Date.now();
+    const probe = what.selector
+      ? `!!document.querySelector(${JSON.stringify(what.selector)})`
+      : `document.body ? document.body.innerText.includes(${JSON.stringify(what.text ?? '')}) : false`;
+    const want = what.gone === true ? 'false' : 'true';
+
+    const [result] = await this.run([
+      {
+        op: 'send',
+        method: 'Runtime.evaluate',
+        params: evalParams(
+          `(async () => {
+             const deadline = Date.now() + ${Math.max(0, timeoutMs)};
+             while (Date.now() < deadline) {
+               if ((${probe}) === ${want}) return true;
+               await new Promise((r) => setTimeout(r, 100));
+             }
+             return (${probe}) === ${want};
+           })()`,
+        ),
+        session: true,
+        // The page's own clock decides; the transport only has to outlast it.
+        timeoutMs: timeoutMs + 5000,
+      },
+    ]);
+
+    assertNoPageException((result ?? {}) as CdpParams);
+    const value = ((result ?? {}) as { result?: { value?: unknown } }).result?.value;
+    return { found: value === true, waitedMs: Date.now() - started };
+  }
+
+  /**
+   * Scroll the window, or bring an element into view.
+   *
+   * Without this, anything below the fold is unreachable in practice: the
+   * accessibility tree carries the whole document, so a model can *see* a button
+   * it cannot click, and an infinite-scroll page never loads its next page.
+   */
+  async scroll(opts: { ref?: string; by?: number; to?: 'top' | 'bottom' } = {}): Promise<void> {
+    if (opts.ref) {
+      // `centreOf` already scrolls into view; this is the same operation, named
+      // for what a caller wants when they are not about to click.
+      await this.centreOf(opts.ref);
+      return;
+    }
+
+    const how =
+      opts.to === 'top'
+        ? 'window.scrollTo(0, 0)'
+        : opts.to === 'bottom'
+          ? 'window.scrollTo(0, document.body.scrollHeight)'
+          : `window.scrollBy(0, ${Number(opts.by ?? 600)})`;
+
+    const [result] = await this.run([
+      { op: 'send', method: 'Runtime.evaluate', params: evalParams(`(() => { ${how}; })()`), session: true },
+    ]);
+    assertNoPageException((result ?? {}) as CdpParams);
+  }
+
+  /**
+   * Choose an option in a native `<select>`.
+   *
+   * Clicking one headless does not open a menu that can then be clicked -- the
+   * popup is drawn by the platform, not the page -- so `click` on a dropdown
+   * appears to succeed and changes nothing. Setting the value and firing the
+   * events a framework listens for is the only thing that does.
+   */
+  async select(ref: string, value: string): Promise<{ selected: string }> {
+    const { backendNodeId } = await this.centreOf(ref);
+    const [, result] = await this.run([
+      { op: 'send', method: 'DOM.focus', params: { backendNodeId }, session: true },
+      {
+        op: 'send',
+        method: 'Runtime.evaluate',
+        params: evalParams(
+          `(() => {
+             const el = document.activeElement;
+             if (!el || el.tagName !== 'SELECT') throw new Error('that ref is not a <select>');
+             const want = ${JSON.stringify(value)};
+             const match = [...el.options].find((o) => o.value === want)
+               || [...el.options].find((o) => o.text.trim() === want.trim());
+             if (!match) {
+               throw new Error('no option matching ' + JSON.stringify(want) +
+                 '; options are ' + JSON.stringify([...el.options].map((o) => o.text.trim())));
+             }
+             el.value = match.value;
+             el.dispatchEvent(new Event('input', { bubbles: true }));
+             el.dispatchEvent(new Event('change', { bubbles: true }));
+             return match.text.trim();
+           })()`,
+        ),
+        session: true,
+      },
+    ]);
+
+    assertNoPageException((result ?? {}) as CdpParams);
+    const chosen = ((result ?? {}) as { result?: { value?: unknown } }).result?.value;
+    return { selected: String(chosen ?? '') };
+  }
+
+  /**
+   * Attach files to a file input.
+   *
+   * The paths are inside the computer, which is the only place they could be:
+   * the browser is in there too, and the host filesystem is a different machine
+   * as far as this page is concerned.
+   */
+  async setFiles(ref: string, files: string[]): Promise<void> {
+    const backendNodeId = backendNodeIdOf(ref);
+    if (backendNodeId === null) {
+      throw new HuskError('E_TOOL_ERROR', `${ref} is not an element`, {
+        hint: 'take a fresh snapshot and use the ref of the file input',
+      });
+    }
+    const [result] = await this.run([
+      { op: 'send', method: 'DOM.setFileInputFiles', params: { backendNodeId, files }, session: true },
+    ]);
+    assertNoPageException((result ?? {}) as CdpParams);
+  }
+
+  /** Hover, for the menus that only exist under the pointer. */
+  async hover(ref: string): Promise<void> {
+    const { x, y } = await this.centreOf(ref);
+    await this.run([
+      {
+        op: 'send',
+        method: 'Input.dispatchMouseEvent',
+        params: { type: 'mouseMoved', x, y, button: 'none', buttons: 0 },
+        session: true,
+      },
+    ]);
+  }
+
+  /** Back, forward or reload, waiting for whatever it starts. */
+  async navigate(how: 'back' | 'forward' | 'reload', timeoutMs = 15_000): Promise<{ url: string }> {
+    if (how === 'reload') {
+      await this.run([
+        { op: 'send', method: 'Page.reload', params: {}, session: true },
+        { op: 'wait', event: 'Page.loadEventFired', session: true, timeoutMs, optional: true },
+      ]);
+      return { url: await this.url() };
+    }
+
+    // History is read first because CDP addresses entries by id rather than by
+    // offset, and stepping past either end is an error, not a no-op.
+    const [history] = await this.run([
+      { op: 'send', method: 'Page.getNavigationHistory', params: {}, session: true },
+    ]);
+    const h = (history ?? {}) as { currentIndex?: number; entries?: Array<{ id?: number }> };
+    const index = (h.currentIndex ?? 0) + (how === 'back' ? -1 : 1);
+    const entry = h.entries?.[index];
+    if (!entry || entry.id === undefined) {
+      throw new HuskError('E_TOOL_ERROR', `there is no page to go ${how} to`, {
+        hint: how === 'back' ? 'this is the first page in this tab' : 'nothing has been navigated back from',
+      });
+    }
+
+    await this.run([
+      { op: 'send', method: 'Page.navigateToHistoryEntry', params: { entryId: entry.id }, session: true },
+      { op: 'wait', event: 'Page.loadEventFired', session: true, timeoutMs, optional: true },
+    ]);
+    return { url: await this.url() };
   }
 
   async setViewport(width: number, height: number): Promise<void> {
