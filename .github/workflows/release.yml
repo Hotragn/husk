@@ -43,6 +43,10 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+      # Same checks you can run locally with `npm run preflight`, so a release
+      # never fails on something that was knowable before the tag existed.
+      - run: npm run preflight
+
       # A tag that disagrees with package.json produces a release nobody can
       # reason about later. Checked before anything leaves the machine.
       - name: the tag matches the version

@@ -2,7 +2,7 @@
   "name": "husk-monorepo",
   "private": true,
   "version": "0.1.0",
-  "description": "Husk — give your agent a computer.",
+  "description": "Husk \u2014 give your agent a computer.",
   "license": "Apache-2.0",
   "engines": {
     "node": ">=20.10"
@@ -19,7 +19,8 @@
     "clean": "node scripts/clean.mjs",
     "husk": "node packages/cli/dist/bin.js",
     "dev:web": "npm run dev --workspace=@husk/web",
-    "dev:console": "npm run dev --workspace=@husk/console"
+    "dev:console": "npm run dev --workspace=@husk/console",
+    "preflight": "node scripts/preflight.mjs"
   },
   "devDependencies": {
     "@fastify/cors": "^11.3.0",
