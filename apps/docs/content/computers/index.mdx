@@ -105,7 +105,7 @@ Every field a computer can be created with. In a `husk.yaml` these live under
 | `name` | string | generated id | Human label, and the container name when unique |
 | `provider` | string | best available | `docker`, `podman`, `local`, `ssh`, `fly` |
 | `image` | string | from `flavor` | Explicit image reference. Overrides `flavor` |
-| `flavor` | enum | `base` | `base`, `python`, `node`, `full` |
+| `flavor` | enum | `base` | `base`, `python`, `node`, `full`. The rendered browser needs `full` — see below |
 | `cpus` | number | `2` | CPU allocation |
 | `memoryMb` | number | `2048` | Memory ceiling |
 | `diskMb` | number | `2048` | Size of the writable `/work` layer |

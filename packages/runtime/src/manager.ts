@@ -196,7 +196,20 @@ export class ComputerManager {
     }
 
     const p = (async () => {
-      const computer = await this.create({ ...spec, labels: { ...(spec.labels ?? {}), 'husk.key': key } });
+      const computer = await this.create({
+        // A computer reached by a stable key is somebody's bot -- one chat, one
+        // session, one machine -- and it is expected to still be there
+        // tomorrow. Anonymous `create()` machines stay ephemeral; these do not.
+        //
+        // This was the gap behind a claim husk was already making: the MCP
+        // server tells its client "/work persists for this session" while the
+        // container providers mounted the workspace as a tmpfs, so the files
+        // and, worse, the browser profile with all its logins died with the
+        // container. Persisting by key makes the sentence true.
+        persist: true,
+        ...spec,
+        labels: { ...(spec.labels ?? {}), 'husk.key': key },
+      });
       await writeBinding(key, computer.id);
       return computer;
     })();

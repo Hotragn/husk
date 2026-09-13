@@ -100,7 +100,7 @@ export function buildRunArgs(cfg: OciConfig, plan: OciRunPlan): string[] {
   args.push('--tmpfs', '/tmp:rw,exec,nosuid,size=512m');
   args.push('--tmpfs', '/run:rw,nosuid,size=16m');
   if (spec.persist) {
-    args.push('-v', `husk-${cid}:${workdir}`);
+    args.push('-v', `${volumeName(cid, spec)}:${workdir}`);
   } else {
     // mode=1777, like /tmp. Without it the tmpfs lands root-owned 0755 and the
     // container's unprivileged user -- the whole point of the hardening -- gets
@@ -181,6 +181,37 @@ export function buildExecArgs(_cfg: OciConfig, plan: OciExecPlan): string[] {
 /** Single-quote a path for the `sh -c` that receives it inside the container. */
 function shQuote(path: string): string {
   return `'${path.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * The volume a persistent workspace lives in.
+ *
+ * Named after the stable key when there is one -- one chat, one bot, one
+ * machine -- rather than after the container instance. That is the difference
+ * between a bot that still has its files and its browser logins tomorrow and
+ * one that gets a clean machine every time the old container is reaped, and it
+ * also stops the old volume being orphaned: keyed by instance, every restart
+ * both lost the state and leaked the disk it was on.
+ *
+ * Docker volume names are `[a-zA-Z0-9][a-zA-Z0-9_.-]*`, and a key is arbitrary
+ * text, so it is sanitised and suffixed with a short digest -- two keys that
+ * sanitise alike must not land in one volume.
+ */
+export function volumeName(cid: string, spec: { labels?: Record<string, string> }): string {
+  const key = spec.labels?.['husk.key'];
+  if (!key) return `husk-${cid}`;
+  const safe = key.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 48).replace(/^-+/, '');
+  return `husk-key-${safe || 'k'}-${shortDigest(key)}`;
+}
+
+/** Short, stable, non-cryptographic. Only needs to separate distinct keys. */
+function shortDigest(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36).padStart(7, '0').slice(0, 7);
 }
 
 export function buildCopyIntoArgs(containerId: string, hostPath: string, targetPath: string): string[] {
@@ -642,9 +673,19 @@ export class OciComputer implements Computer {
     this.info.state = 'running';
   }
 
+  /**
+   * Remove the container; keep the workspace only if it belongs to someone.
+   *
+   * A keyed machine is a bot's, and `husk rm` on it is "stop this for now" --
+   * the next `ensure` with the same key reattaches to the same volume and finds
+   * its files. An anonymous machine has nothing to come back to, so its volume
+   * goes with it; `rm -f` without `-v` was leaving those behind forever.
+   */
   async destroy(): Promise<void> {
     this.closeForwarders();
-    await this.cli(['rm', '-f', this.native], 120_000).catch(() => {});
+    const keyed = Boolean(this.info.spec.labels?.['husk.key']);
+    const args = keyed ? ['rm', '-f', this.native] : ['rm', '-f', '-v', this.native];
+    await this.cli(args, 120_000).catch(() => {});
     this.info.state = 'destroyed';
   }
 
@@ -838,6 +879,10 @@ export abstract class OciProvider implements ComputerProvider {
     const plan = resolveImage(spec);
     const image = await this.pullable(plan);
     const workdir = spec.workdir ?? '/work';
+    // Before the container, not after: see initVolume.
+    if (spec.persist) {
+      await this.initVolume(volumeName(cid, spec), image, workdir, spec.user ?? '1000:1000');
+    }
     const runArgs = buildRunArgs(this.cfg, { cid, image, workdir, spec });
 
     let nativeId: string;
@@ -884,6 +929,71 @@ export abstract class OciProvider implements ComputerProvider {
     await this.installPackages(spec, image);
     if (spec.setup) await comp.exec({ cmd: spec.setup, timeoutSec: 300 });
     return comp;
+  }
+
+  /**
+   * Make the workspace volume belong to the container's user, before the
+   * container exists.
+   *
+   * A named volume mounted where the image has no such directory is created
+   * root-owned 0755, and husk runs unprivileged -- so the agent could not write
+   * to its own `/work`. It cannot be fixed from inside afterwards either:
+   * `--cap-drop ALL` takes CAP_CHOWN, so even `exec -u 0 chown` returns
+   * "Operation not permitted". Measured, both ways, before this existed.
+   *
+   * So the volume is initialised by a throwaway container that has exactly the
+   * one capability needed and lives for about a second. The real container is
+   * still created with every capability dropped; nothing is relaxed for the
+   * machine the agent actually gets.
+   *
+   * Best-effort: a first write failing loudly is better than refusing to create
+   * the computer at all, and on husk's own images the directory already has the
+   * right owner and this changes nothing.
+   */
+  protected async initVolume(volume: string, image: string, workdir: string, user: string): Promise<void> {
+    const [uid, gid] = user.split(':');
+    if (!uid || uid === '0') return;
+
+    // A marker file, not just a chown.
+    //
+    // Docker re-seeds a volume it considers *empty* from the image every time a
+    // container mounts it, ownership included -- so chowning an empty volume
+    // looks like it worked (the next `docker run` sees 1000:1000) and is undone
+    // the moment the real container starts. Measured exactly that: correct
+    // immediately after init, root-owned one second later.
+    //
+    // Leaving one file behind makes the volume initialised, so the seeding stops
+    // and the ownership is the one set here.
+    await this.cli(
+      [
+        'run',
+        '--rm',
+        '-u',
+        '0',
+        '--cap-drop',
+        'ALL',
+        '--cap-add',
+        'CHOWN',
+        '--entrypoint',
+        'sh',
+        '-v',
+        `${volume}:${workdir}`,
+        image,
+        '-c',
+        // Idempotent: a volume that already carries the marker is already
+        // owned correctly, and re-running the chown would fail anyway -- the
+        // init container drops DAC_OVERRIDE, so uid 0 cannot write into a
+        // directory that now belongs to the agent.
+        `[ -e ${shQuote(`${workdir}/.husk-workspace`)} ] || ` +
+          `{ touch ${shQuote(`${workdir}/.husk-workspace`)} && ` +
+          `chown -R ${uid}:${gid ?? uid} ${shQuote(workdir)}; }`,
+      ],
+      120_000,
+    ).catch((e) => {
+      // Not fatal, but not silent: if this fails the agent meets "Permission
+      // denied" on its first write, and the reason belongs somewhere findable.
+      process.emitWarning(`husk: could not initialise workspace volume ${volume}: ${(e as Error).message}`);
+    });
   }
 
   /**

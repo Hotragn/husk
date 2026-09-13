@@ -5,6 +5,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { HUSK_VERSION, createLogger, quiet } from '@husk/core';
 import type { Computer, ComputerSpec, Logger } from '@husk/core';
 import { ComputerManager } from '@husk/runtime';
+import { audited } from '@husk/core';
 import { TOOLS, callTool } from './tools.js';
 
 export interface HuskMcpOptions {
@@ -73,7 +74,19 @@ export class HuskMcpServer {
     this.mcp.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
       const { name, arguments: args } = request.params;
       const computer = await this.getComputer();
-      const result = await callTool(computer, name, (args ?? {}) as Record<string, unknown>);
+      const toolArgs = (args ?? {}) as Record<string, unknown>;
+
+      // Every call, at the one place they all pass through. An audit log that
+      // has to be remembered at each new tool is an audit log with holes -- and
+      // this path had no log at all until now, which is the more embarrassing
+      // version of the same problem.
+      const result = await audited(
+        { computerId: computer.id, via: 'mcp', tool: name, args: toolArgs },
+        () => callTool(computer, name, toolArgs),
+        // MCP tools report failure in the result rather than by throwing, so
+        // the wrapper is told how to recognise one.
+        (r) => (r.isError ? firstText(r.content) : undefined),
+      );
 
       const content = [...result.content];
       if (!this.announced) {
@@ -139,4 +152,10 @@ export class HuskMcpServer {
       await quiet(() => this.computer!.destroy());
     }
   }
+}
+
+/** The first line of a tool's text output, for the audit log's `error`. */
+function firstText(content: Array<{ type: string; text?: string }>): string {
+  const text = content.find((c) => c.type === 'text')?.text ?? 'failed';
+  return text.split('\n')[0]?.slice(0, 200) ?? 'failed';
 }

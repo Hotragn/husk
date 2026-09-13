@@ -45,6 +45,16 @@ const PLANS: Record<Flavor, ImagePlan> = {
     installCmd: 'npm install -g --no-fund --no-audit $PKGS',
     user: 'husk',
   },
+  /**
+   * The only flavor that can run the rendered browser.
+   *
+   * `@husk/browser` downloads Chromium at runtime, but the binary links against
+   * ~20 shared libraries that the slim images do not carry, and container
+   * computers mount their root read-only so they cannot be added later. The
+   * husk-full image bakes them in; the public fallback below does not, so on a
+   * machine that cannot pull husk's own image the rendered browser still needs
+   * `--provider local`.
+   */
   full: {
     primary: `${REGISTRY}/husk-full:${IMAGE_TAG}`,
     fallback: 'debian:bookworm',
