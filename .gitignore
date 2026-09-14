@@ -1,0 +1,106 @@
+# ---------------------------------------------------------------- build output
+node_modules/
+dist/
+.next/
+out/
+build/
+coverage/
+*.tsbuildinfo
+.turbo/
+.vite/
+.vercel
+.eslintcache
+
+# ------------------------------------------------------------------- secrets
+#
+# `.env` is the one everybody remembers. The rest are the ones that actually
+# leak: a key file dropped in the repo while testing the ssh provider, a
+# service-account JSON downloaded from a cloud console, a `.netrc` written by
+# some tool.
+#
+# Note what is deliberately NOT here: `.npmrc` is tracked, because it carries
+# shared settings (fund=false, audit=false) -- and ignoring it would not help
+# anyway, since ignore rules have no effect on a file git already follows.
+# `npm login` writes `_authToken` into exactly that file, so it is covered by
+# `scripts/secret-scan.mjs`, which reads tracked files and full history.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+.netrc
+_netrc
+credentials.json
+service-account*.json
+gha-creds-*.json
+
+# --------------------------------------------------------------- husk runtime
+#
+# Computers, workspaces, audit logs and the downloaded Chromium live under
+# ~/.husk, not in the repo -- but a `.husk/` appears here the moment anyone
+# runs the CLI with HUSK_HOME pointed at the checkout, and each computer's
+# browser is 325 MB unpacked.
+.husk/
+.husk-browser/
+
+# The GitHub repo was cloned into the working tree as `husk/`, which puts a
+# second `.git` inside this one. Committing it would add a gitlink nobody can
+# resolve. Anchored to the root, so a future `packages/*/husk` would be fine.
+/husk/
+
+# --------------------------------------------------------------- agent tooling
+#
+# Third-party skill files installed by `npx skills add <repo>`. Re-installable
+# in one command, not this repo's content.
+.agents/
+
+# Machine-local agent state, including `worktrees/` which are full duplicate
+# checkouts. Committing it would put a second copy of the source tree inside
+# the first one.
+.claude/
+
+# Lock file written by `npx skills add` — goes with .agents/.
+skills-lock.json
+
+# ------------------------------------------------------------- scratch & junk
+#
+# `npm pack` leaves a tarball in whichever package directory it ran in, and
+# `scripts/preflight.mjs` runs it eleven times.
+*.tgz
+*.tar.gz
+*.bak
+*.husk-bak
+*.orig
+*.rej
+*~
+*.log
+
+# Ad-hoc scripts written at the repo root while debugging. Every one of these
+# existed here at some point and none of them belong in a clone.
+/probe*.mjs
+/verify*.mjs
+/persist*.mjs
+/decisive.mjs
+
+# --------------------------------------------------------------- test output
+playwright-report/
+test-results/
+.nyc_output/
+*.lcov
+
+# --------------------------------------------------------------- editors & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini

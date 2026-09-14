@@ -1,0 +1,20 @@
+# Normalise to LF in the repository, whatever the checkout platform does.
+# CI runs on windows, macos and ubuntu, and a shell script or a Dockerfile that
+# arrives with CRLF fails in ways that look like a code bug.
+* text=auto eol=lf
+
+# Never touched: these are binary or must keep exact bytes.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# Shell scripts and container files are LF or they do not run.
+*.sh text eol=lf
+Dockerfile* text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Generated, so keep it out of diffs and reviews.
+package-lock.json linguist-generated=true -diff
