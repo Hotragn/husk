@@ -19,7 +19,8 @@
   },
   "overrides": {
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@fastify/cors": "^11.3.0",
