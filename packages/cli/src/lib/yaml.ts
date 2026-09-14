@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
-import { HuskError, defaultSpec, parseSpec, safeParseSpec } from '@husk/core';
-import type { DistilledAgent, HuskSpec, Transcript } from '@husk/core';
-import { toSpec } from '@husk/sessions';
-import type { ToSpecOverrides } from '@husk/sessions';
+import { HuskError, defaultSpec, parseSpec, safeParseSpec } from '@husk-ai/core';
+import type { DistilledAgent, HuskSpec, Transcript } from '@husk-ai/core';
+import { toSpec } from '@husk-ai/sessions';
+import type { ToSpecOverrides } from '@husk-ai/sessions';
 
 /**
  * husk.yaml, read and written.
@@ -234,7 +234,7 @@ function renderValue(value: unknown): string {
 /**
  * A DistilledAgent is not a HuskSpec, and the gap is where bugs live.
  *
- * The mapping itself lives in `@husk/sessions.toSpec` and is shared with
+ * The mapping itself lives in `@husk-ai/sessions.toSpec` and is shared with
  * `POST /v1/sessions/distill`. This wrapper exists only to apply the CLI's
  * flags -- `--name`, `--model` -- and the transcript it already has in hand.
  * When it had its own copy of the mapping, `husk distill` and the control plane

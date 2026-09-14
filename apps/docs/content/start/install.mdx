@@ -24,7 +24,7 @@ with no C++ toolchain gets a clean `npm install`.
 ### Run it without installing
 
 ```bash
-npx -y @husk/cli doctor
+npx -y @husk-ai/cli doctor
 ```
 
 Good for a first look. Every invocation pays npm's resolution cost, so it is not what
@@ -33,7 +33,7 @@ you want for day-to-day use.
 ### Install the CLI globally
 
 ```bash
-npm install -g @husk/cli
+npm install -g @husk-ai/cli
 husk doctor
 ```
 
@@ -46,28 +46,28 @@ them.
 If all you want is a computer inside Claude Code, you do not need the CLI at all:
 
 ```bash
-claude mcp add husk -- npx -y @husk/mcp
+claude mcp add husk -- npx -y @husk-ai/mcp
 ```
 
 See [MCP](/mcp).
 
 ## The packages
 
-`@husk/cli` depends on the first five and treats the last three as optional — `husk mcp`,
+`@husk-ai/cli` depends on the first five and treats the last three as optional — `husk mcp`,
 `husk serve` and the SDK load lazily and fail with an actionable error if they are
 absent.
 
 | Package | What it is |
 | --- | --- |
-| `@husk/core` | Contracts, the `husk.yaml` schema, `paths()`, `redact()`. Depends on nothing but zod. |
-| `@husk/runtime` | Computer providers: docker, podman, local, ssh, fly. |
-| `@husk/models` | The model router: 11 providers, no vendor SDKs. |
-| `@husk/sessions` | Transcript importers and the distiller. |
-| `@husk/agent` | The tool-calling loop and the built-in tools. |
-| `@husk/mcp` | The MCP server. Optional. |
-| `@husk/server` | Control plane and bot host. Optional. |
-| `@husk/sdk` | Typed client for the control plane. Optional. |
-| `@husk/cli` | The `husk` binary. |
+| `@husk-ai/core` | Contracts, the `husk.yaml` schema, `paths()`, `redact()`. Depends on nothing but zod. |
+| `@husk-ai/runtime` | Computer providers: docker, podman, local, ssh, fly. |
+| `@husk-ai/models` | The model router: 11 providers, no vendor SDKs. |
+| `@husk-ai/sessions` | Transcript importers and the distiller. |
+| `@husk-ai/agent` | The tool-calling loop and the built-in tools. |
+| `@husk-ai/mcp` | The MCP server. Optional. |
+| `@husk-ai/server` | Control plane and bot host. Optional. |
+| `@husk-ai/sdk` | Typed client for the control plane. Optional. |
+| `@husk-ai/cli` | The `husk` binary. |
 
 ## Optional pieces, and what each one buys
 
@@ -120,7 +120,7 @@ reads keys from the environment and keeps them there.
 
 ```bash
 husk rm --all --yes        # destroy every computer first
-npm uninstall -g @husk/cli
+npm uninstall -g @husk-ai/cli
 rm -rf ~/.husk
 ```
 

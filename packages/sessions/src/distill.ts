@@ -5,14 +5,14 @@ import {
   parseSpec,
   slug,
   deepMerge,
-} from '@husk/core';
+} from '@husk-ai/core';
 import type {
   DistilledAgent,
   HuskSpec,
   HuskSpecInput,
   Transcript,
   TranscriptMessage,
-} from '@husk/core';
+} from '@husk-ai/core';
 import {
   CandidateSchema,
   MergedSchema,
@@ -779,7 +779,7 @@ export interface ToSpecOverrides extends Partial<HuskSpecInput> {
   transcript?: Transcript;
 }
 
-/** The bundles `@husk/agent` can actually resolve. Anything else is a typo. */
+/** The bundles `@husk-ai/agent` can actually resolve. Anything else is a typo. */
 const KNOWN_BUNDLES = new Set(['computer', 'files', 'web', 'http']);
 
 const FALLBACK_PERSONA = 'You are a careful, concise assistant.';

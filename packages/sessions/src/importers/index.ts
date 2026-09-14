@@ -1,6 +1,6 @@
 import { basename, extname, join } from 'node:path';
-import { mapLimit } from '@husk/core';
-import type { ImportInput, Transcript, TranscriptImporter, TranscriptSource } from '@husk/core';
+import { mapLimit } from '@husk-ai/core';
+import type { ImportInput, Transcript, TranscriptImporter, TranscriptSource } from '@husk-ai/core';
 import { ClaudeCodeImporter, parseClaudeJsonl } from './claude.js';
 import { ChatGPTImporter } from './chatgpt.js';
 import { CursorImporter } from './cursor.js';

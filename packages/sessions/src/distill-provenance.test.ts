@@ -1,5 +1,5 @@
-import { parseSpec } from '@husk/core';
-import type { DistilledAgent, Transcript } from '@husk/core';
+import { parseSpec } from '@husk-ai/core';
+import type { DistilledAgent, Transcript } from '@husk-ai/core';
 import { describe, expect, it } from 'vitest';
 import { normaliseTools, toSpec } from './distill.js';
 import { parseSpecYaml, stringifySpec } from './serialize.js';
@@ -7,7 +7,7 @@ import { parseSpecYaml, stringifySpec } from './serialize.js';
 /**
  * One mapper, one set of metadata keys.
  *
- * `@husk/sessions`, `@husk/cli` and `@husk/server` each carried their own
+ * `@husk-ai/sessions`, `@husk-ai/cli` and `@husk-ai/server` each carried their own
  * `DistilledAgent -> HuskSpec` mapping. Two of them wrote
  * `metadata.distilledConfidence` / `metadata.distillerNotes`; the third wrote
  * `distillConfidence` / `distillNotes`. A husk distilled over HTTP therefore

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { Availability, ProviderName } from '@husk/core';
+import type { Availability, ProviderName } from '@husk-ai/core';
 import { OciComputer, OciProvider } from './oci-common.js';
 
 const execFileAsync = promisify(execFile);

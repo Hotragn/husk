@@ -1,4 +1,4 @@
-import type { HuskSpec, Logger, Tool } from '@husk/core';
+import type { HuskSpec, Logger, Tool } from '@husk-ai/core';
 import { asTools } from '../types.js';
 import type { AgentTool } from '../types.js';
 import { browserTools } from './browse.js';

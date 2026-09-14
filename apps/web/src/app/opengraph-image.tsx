@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 
 export const alt =
-  "Husk — give your agent a computer. claude mcp add husk -- npx -y @husk/mcp";
+  "Husk — give your agent a computer. claude mcp add husk -- npx -y @husk-ai/mcp";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -107,7 +107,7 @@ export default function OpengraphImage() {
             }}
           >
             <span style={{ color: C.gold, marginRight: 14 }}>$</span>
-            claude mcp add husk -- npx -y @husk/mcp
+            claude mcp add husk -- npx -y @husk-ai/mcp
           </div>
           <div
             style={{

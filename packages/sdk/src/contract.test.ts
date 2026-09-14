@@ -2,7 +2,7 @@
  * The contract test.
  *
  * This boots the **real** control plane -- `createApp` imported from
- * `@husk/server`, real Fastify, a real listening socket on port 0 -- and drives
+ * `@husk-ai/server`, real Fastify, a real listening socket on port 0 -- and drives
  * every public method of `HuskClient` against it over real HTTP and a real
  * WebSocket.
  *
@@ -12,7 +12,7 @@
  * nothing else. The `fetch` wrapper below only *records* method, path and
  * status; it forwards to the platform `fetch` and returns the real response.
  *
- * Computers are real too: a real `ComputerManager` from `@husk/runtime` with
+ * Computers are real too: a real `ComputerManager` from `@husk-ai/runtime` with
  * the real `LocalProvider`, so `/exec`, `/exec/stream` and every `/fs` route
  * run against an actual guarded working directory. `provider: 'local'` is the
  * one backend that needs neither Docker nor a network, so this works on the
@@ -28,7 +28,7 @@ import { mkdtemp, rm, writeFile as writeHostFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { HuskError, createLogger, defaultSpec } from '@husk/core';
+import { HuskError, createLogger, defaultSpec } from '@husk-ai/core';
 import type {
   ChatRequest,
   ChatResponse,
@@ -37,10 +37,10 @@ import type {
   RunEvent,
   RunResult,
   StreamEvent,
-} from '@husk/core';
-import { ComputerManager, LocalProvider } from '@husk/runtime';
-import { SERVER_ERROR_CODES, Store, createApp } from '@husk/server';
-import type { AgentFactory, AgentLike, RouterLike, ServerRunOptions } from '@husk/server';
+} from '@husk-ai/core';
+import { ComputerManager, LocalProvider } from '@husk-ai/runtime';
+import { SERVER_ERROR_CODES, Store, createApp } from '@husk-ai/server';
+import type { AgentFactory, AgentLike, RouterLike, ServerRunOptions } from '@husk-ai/server';
 import type { FastifyInstance } from 'fastify';
 import { WebSocket as NodeWebSocket } from 'ws';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';

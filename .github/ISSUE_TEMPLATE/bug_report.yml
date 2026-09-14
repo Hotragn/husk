@@ -18,7 +18,7 @@ body:
     id: doctor-output
     attributes:
       label: "`husk doctor` output"
-      description: Paste the full output of `npx @husk/cli doctor --json`.
+      description: Paste the full output of `npx @husk-ai/cli doctor --json`.
       render: json
     validations:
       required: true
@@ -43,7 +43,7 @@ body:
     id: husk-version
     attributes:
       label: Husk version
-      description: Output of `npx @husk/cli --version`.
+      description: Output of `npx @husk-ai/cli --version`.
       placeholder: "0.1.0"
     validations:
       required: true

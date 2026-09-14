@@ -1,17 +1,17 @@
-# @husk/sdk
+# @husk-ai/sdk
 
 Typed client for the Husk control plane.
 
-Dependency-free: global `fetch` and `@husk/core` for the shared contracts. No
+Dependency-free: global `fetch` and `@husk-ai/core` for the shared contracts. No
 axios, no ws, no polyfills. Node >= 20.10.
 
 ```bash
-npm install @husk/sdk
+npm install @husk-ai/sdk
 ```
 
 The contract is [`docs/API.md`](../../docs/API.md), and where that disagrees
 with [`packages/server/src/routes/`](../server/src/routes) the routes win.
-`src/contract.test.ts` boots the real server — `createApp` from `@husk/server`,
+`src/contract.test.ts` boots the real server — `createApp` from `@husk-ai/server`,
 a real socket, real `provider: 'local'` computers — and drives every method
 below against it, including the snippets on this page. This README describes
 what runs, not what was planned.
@@ -22,7 +22,7 @@ Create a computer, write a file to it, stream a command's output, and read the
 file back.
 
 ```ts
-import { HuskClient } from '@husk/sdk';
+import { HuskClient } from '@husk-ai/sdk';
 
 const husk = new HuskClient({ baseUrl: 'http://127.0.0.1:7377' });
 
@@ -130,7 +130,7 @@ Failures come back as the same `HuskError` the server threw — code, message an
 hint intact — so a caller handles them identically over HTTP and in-process.
 
 ```ts
-import { isHuskError } from '@husk/sdk';
+import { isHuskError } from '@husk-ai/sdk';
 
 try {
   await husk.computers.create();

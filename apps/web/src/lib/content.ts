@@ -14,7 +14,7 @@ export const LICENCE = "Apache-2.0";
 export const SITE_DESCRIPTION =
   "Husk gives any AI agent a disposable Linux computer, and turns any chat into a bot. Runs free on your machine. No account, no telemetry.";
 
-export const MCP_COMMAND = "claude mcp add husk -- npx -y @husk/mcp";
+export const MCP_COMMAND = "claude mcp add husk -- npx -y @husk-ai/mcp";
 
 /* -----------------------------------------------------------------------------
    Providers — docs/ARCHITECTURE.md "Provider selection" and README.md
@@ -149,7 +149,7 @@ export const TRANSCRIPT_TEXT = TRANSCRIPT.map((l) => l.text).join("\n");
  * news, in the same type, at the same weight.
  */
 export const DOCTOR: TermLine[] = [
-  { kind: "prompt", text: "$ npx -y @husk/cli" },
+  { kind: "prompt", text: "$ npx -y @husk-ai/cli" },
   { kind: "blank", text: "" },
   { kind: "out", text: "husk 0.1.0 · first run · ~/.husk created" },
   { kind: "blank", text: "" },

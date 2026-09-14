@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { HuskError, isHuskError } from '@husk/core';
-import type { Computer, ExecRequest, ExecResult } from '@husk/core';
+import { HuskError, isHuskError } from '@husk-ai/core';
+import type { Computer, ExecRequest, ExecResult } from '@husk-ai/core';
 import { CdpConnection, ComputerDriverTransport, DRIVER_SCRATCH_PATH, createTarget, waitResultOf } from './cdp.js';
 import type { CdpTransport, DriverRequest, DriverResult } from './cdp.js';
 import { DRIVER_SOURCE } from './driver.js';

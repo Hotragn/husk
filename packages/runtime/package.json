@@ -1,5 +1,5 @@
 {
-  "name": "@husk/runtime",
+  "name": "@husk-ai/runtime",
   "version": "0.1.0",
   "description": "Husk runtime package",
   "license": "Apache-2.0",
@@ -21,6 +21,6 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@husk/core": "0.1.0"
+    "@husk-ai/core": "0.1.0"
   }
 }

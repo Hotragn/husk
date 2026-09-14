@@ -1,5 +1,5 @@
 /**
- * @husk/adapters -- the chat front ends.
+ * @husk-ai/adapters -- the chat front ends.
  *
  * One interface, four platforms. An adapter translates a platform's message shape
  * into a prompt and a reply, and does nothing else: it never reaches into the

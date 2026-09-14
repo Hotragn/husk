@@ -2,14 +2,14 @@ import { existsSync } from 'node:fs';
 import { setNotFoundFallback } from './errors.js';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HUSK_VERSION } from '@husk/core';
+import { HUSK_VERSION } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 
 /**
  * Where a built console might be, relative to this file inside `dist/`.
  *
  * Checked in order and the first hit wins, so a monorepo checkout and an installed
- * `node_modules/@husk/server` both find it without configuration.
+ * `node_modules/@husk-ai/server` both find it without configuration.
  */
 function candidateDirs(here: string): string[] {
   return [
@@ -52,7 +52,7 @@ const PLACEHOLDER = (authed: boolean) => `<!doctype html>
 <main>
   <h1>Husk ${HUSK_VERSION} &middot; control plane</h1>
   <p>The API is up. The dashboard bundle has not been built yet.</p>
-  <pre>npm run build --workspace=@husk/console</pre>
+  <pre>npm run build --workspace=@husk-ai/console</pre>
   <p>Then reload this page. In the meantime:</p>
   <ul>
     <li><a href="/health">/health</a> <span class="dim">liveness</span></li>

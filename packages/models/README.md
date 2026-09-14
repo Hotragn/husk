@@ -1,7 +1,7 @@
-# @husk/models
+# @husk-ai/models
 
 One model surface over every provider Husk speaks to, with routing, fallback and cost
-accounting. No vendor SDKs — the whole package depends on `@husk/core` and `fetch`.
+accounting. No vendor SDKs — the whole package depends on `@husk-ai/core` and `fetch`.
 
 Eleven providers, three wire formats:
 
@@ -22,11 +22,11 @@ OpenAPI schema subset that 400s on half of JSON Schema draft-07.
 ## Example
 
 Save as `demo.mjs` and run with `node demo.mjs`, after
-`npm run build --workspace=@husk/models`. It works with nothing configured, as long as
+`npm run build --workspace=@husk-ai/models`. It works with nothing configured, as long as
 Ollama is running: `auto` picks the best model that is actually reachable.
 
 ```js
-import { ModelRouter } from '@husk/models';
+import { ModelRouter } from '@husk-ai/models';
 
 const router = new ModelRouter();
 

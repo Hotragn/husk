@@ -1,8 +1,8 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { mapLimit, slug } from '@husk/core';
-import type { DistilledAgent, HuskSpec, Transcript, TranscriptImporter, TranscriptSource } from '@husk/core';
+import { mapLimit, slug } from '@husk-ai/core';
+import type { DistilledAgent, HuskSpec, Transcript, TranscriptImporter, TranscriptSource } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { stringify as stringifyYaml } from 'yaml';
 import { ctxOf } from '../context.js';
@@ -96,7 +96,7 @@ async function peek(file: string, source: TranscriptSource): Promise<DiscoveredS
 async function loadImporters(): Promise<Map<TranscriptSource, TranscriptImporter>> {
   const map = new Map<TranscriptSource, TranscriptImporter>();
   try {
-    const mod = (await import('@husk/sessions')) as Record<string, unknown>;
+    const mod = (await import('@husk-ai/sessions')) as Record<string, unknown>;
     for (const value of Object.values(mod)) {
       if (typeof value !== 'function') continue;
       let instance: unknown;
@@ -111,7 +111,7 @@ async function loadImporters(): Promise<Map<TranscriptSource, TranscriptImporter
       }
     }
   } catch {
-    // @husk/sessions unbuilt: session endpoints degrade, the rest of the server does not.
+    // @husk-ai/sessions unbuilt: session endpoints degrade, the rest of the server does not.
   }
   return map;
 }
@@ -124,7 +124,7 @@ async function pickImporter(
     const exact = importers.get(input.source);
     if (exact) return exact;
     throw huskError('E_IMPORT_FAILED', `no importer for source "${input.source}"`, {
-      hint: `known sources: ${[...importers.keys()].join(', ') || 'none -- build @husk/sessions'}`,
+      hint: `known sources: ${[...importers.keys()].join(', ') || 'none -- build @husk-ai/sessions'}`,
     });
   }
   const detectInput: { path?: string; content?: string } = {};
@@ -154,17 +154,17 @@ type ToSpecFn = (agent: DistilledAgent, overrides?: { transcript?: Transcript })
  * `DistilledAgent` -> `HuskSpec`, borrowed rather than reimplemented.
  *
  * This route used to carry its own mapper, which wrote `metadata.distillConfidence`
- * while `@husk/sessions` and the CLI wrote `metadata.distilledConfidence`. Same
+ * while `@husk-ai/sessions` and the CLI wrote `metadata.distilledConfidence`. Same
  * information, two spellings, so a husk distilled over HTTP and one distilled at
- * the terminal did not round-trip to the same file. `toSpec` in `@husk/sessions`
+ * the terminal did not round-trip to the same file. `toSpec` in `@husk-ai/sessions`
  * is now the only mapper; see docs/reference/husk-yaml for the keys it writes.
  */
 async function loadToSpec(): Promise<ToSpecFn> {
-  const mod = (await import('@husk/sessions')) as Record<string, unknown>;
+  const mod = (await import('@husk-ai/sessions')) as Record<string, unknown>;
   const fn = mod['toSpec'] as ToSpecFn | undefined;
   if (!fn) {
-    throw huskError('E_IMPORT_FAILED', '@husk/sessions does not export toSpec', {
-      hint: 'run `npm run build --workspace=@husk/sessions`',
+    throw huskError('E_IMPORT_FAILED', '@husk-ai/sessions does not export toSpec', {
+      hint: 'run `npm run build --workspace=@husk-ai/sessions`',
     });
   }
   return fn;
@@ -181,11 +181,11 @@ async function distill(
   router: unknown,
   model: string | undefined,
 ): Promise<DistilledAgent> {
-  const mod = (await import('@husk/sessions')) as Record<string, unknown>;
+  const mod = (await import('@husk-ai/sessions')) as Record<string, unknown>;
   const Ctor = mod['Distiller'] as (new (provider?: unknown) => { distill(t: Transcript): Promise<DistilledAgent> }) | undefined;
   if (!Ctor) {
-    throw huskError('E_IMPORT_FAILED', '@husk/sessions does not export a Distiller', {
-      hint: 'run `npm run build --workspace=@husk/sessions`',
+    throw huskError('E_IMPORT_FAILED', '@husk-ai/sessions does not export a Distiller', {
+      hint: 'run `npm run build --workspace=@husk-ai/sessions`',
     });
   }
   // The distiller takes a ModelProvider; the router satisfies the same chat surface,

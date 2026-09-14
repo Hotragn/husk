@@ -21,7 +21,7 @@ over HTTP, on a cron schedule, or from a webhook.
 The bridge between the two is MCP. One line puts a Linux machine inside Claude Code:
 
 ```bash
-claude mcp add husk -- npx -y @husk/mcp
+claude mcp add husk -- npx -y @husk-ai/mcp
 ```
 
 There is no second step, no account, and no config file.
@@ -30,34 +30,34 @@ There is no second step, no account, and no config file.
 
 ```
                        ┌──────────────────────────────────────────┐
-   Claude Code ───────▶│  @husk/mcp                         stdio │
+   Claude Code ───────▶│  @husk-ai/mcp                         stdio │
    Cursor, Zed         └────────────────────┬─────────────────────┘
    any MCP client                           │
                        ┌────────────────────▼─────────────────────┐
-   HTTP / cron ───────▶│  @husk/server     control plane + bots   │
+   HTTP / cron ───────▶│  @husk-ai/server     control plane + bots   │
    webhook             └────────────────────┬─────────────────────┘
                        ┌────────────────────▼─────────────────────┐
-   husk run ──────────▶│  @husk/agent      the tool-calling loop  │
+   husk run ──────────▶│  @husk-ai/agent      the tool-calling loop  │
                        └───┬──────────────────────────┬───────────┘
                            │                          │
         ┌──────────────────▼──────┐      ┌────────────▼─────────────┐
-        │ @husk/runtime           │      │ @husk/models             │
+        │ @husk-ai/runtime           │      │ @husk-ai/models             │
         │ docker podman local     │      │ anthropic openai google  │
         │ ssh fly                 │      │ groq ollama openrouter … │
         └─────────────────────────┘      └──────────────────────────┘
                            │                          │
                        ┌───▼──────────────────────────▼───────────┐
-                       │ @husk/core   contracts, spec, primitives │
+                       │ @husk-ai/core   contracts, spec, primitives │
                        └──────────────────────────────────────────┘
 
-   @husk/sessions  transcript ──▶ husk.yaml
+   @husk-ai/sessions  transcript ──▶ husk.yaml
 ```
 
 Dependencies run strictly downhill. `core` imports nothing else from the workspace, and
 nothing imports `cli`.
 
 <NotYet>
-`docs/ARCHITECTURE.md` describes `@husk/mcp` as speaking "stdio + streamable HTTP".
+`docs/ARCHITECTURE.md` describes `@husk-ai/mcp` as speaking "stdio + streamable HTTP".
 The package imports one transport, `StdioServerTransport`, and exposes one connect
 method, `connectStdio()`. There is a `get server()` accessor for embedding the raw
 protocol server in an HTTP framework you supply, but no HTTP server ships in the

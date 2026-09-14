@@ -4,7 +4,7 @@ import { createReadStream, createWriteStream, existsSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { HuskError, clampText, ensurePaths, id as newId, paths } from '@husk/core';
+import { HuskError, clampText, ensurePaths, id as newId, paths } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -17,7 +17,7 @@ import type {
   PortBinding,
   ProviderName,
   WriteFileOptions,
-} from '@husk/core';
+} from '@husk-ai/core';
 import { loadInfos, persistInfo as persist } from '../registry.js';
 import {
   GUEST_ROOT,

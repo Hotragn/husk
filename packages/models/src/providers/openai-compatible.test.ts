@@ -1,5 +1,5 @@
-import type { ChatResponse, StreamEvent } from '@husk/core';
-import { HuskError } from '@husk/core';
+import type { ChatResponse, StreamEvent } from '@husk-ai/core';
+import { HuskError } from '@husk-ai/core';
 import { describe, expect, it } from 'vitest';
 import { errorResponse, jsonResponse, recordingFetch, streamResponse } from '../testing.js';
 import {

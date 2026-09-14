@@ -1,7 +1,7 @@
 /**
  * The console's control-plane client.
  *
- * Built on `@husk/sdk`: `HuskClient` owns the transport, the URL building, the
+ * Built on `@husk-ai/sdk`: `HuskClient` owns the transport, the URL building, the
  * timeout composition and — the part that matters most here — turning a failed
  * response back into the same `HuskError` (code + message + hint) the server
  * threw. Every error surface in this UI renders those three fields directly.
@@ -13,7 +13,7 @@
  * full list is in `apps/console/README.md`. Nothing here is `any`.
  */
 
-import { HuskClient, HuskError, errorFromResponse, isHuskError, transportError } from '@husk/sdk';
+import { HuskClient, HuskError, errorFromResponse, isHuskError, transportError } from '@husk-ai/sdk';
 import type {
   ApprovalAnswer,
   BrowseRequestBody,
@@ -225,7 +225,7 @@ export class HuskApi {
    * `POST /v1/computers/:id/browse` -> `BrowsePage`.
    *
    * Not `client.computers.*`: the SDK has no browse method at all, so this goes
-   * through `client.http` with the verified path and `@husk/core`'s own return
+   * through `client.http` with the verified path and `@husk-ai/core`'s own return
    * type.
    *
    * The timeout is composed the way the server composes its own. `browseInComputer`

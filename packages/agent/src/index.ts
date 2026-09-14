@@ -1,7 +1,7 @@
 /**
- * @husk/agent -- the tool-calling loop and the built-in tools.
+ * @husk-ai/agent -- the tool-calling loop and the built-in tools.
  *
- * Depends on @husk/core only. The model router and the computer source are
+ * Depends on @husk-ai/core only. The model router and the computer source are
  * injected as structural interfaces, so the loop runs in a test with no network,
  * no Docker, and no build-order coupling to the packages that provide them.
  */

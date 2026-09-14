@@ -1,12 +1,12 @@
 import { Buffer } from 'node:buffer';
-import { HuskError, clampText } from '@husk/core';
-import type { Computer, ComputerInfo, ComputerSpec, ExecRequest, ExecResult } from '@husk/core';
+import { HuskError, clampText } from '@husk-ai/core';
+import type { Computer, ComputerInfo, ComputerSpec, ExecRequest, ExecResult } from '@husk-ai/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
 import { SseStream } from '../sse.js';
-import { browseInComputer } from '@husk/core';
+import { browseInComputer } from '@husk-ai/core';
 
 const NetworkPolicySchema = z.object({
   mode: z.enum(['none', 'egress', 'full']),

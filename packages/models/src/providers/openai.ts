@@ -8,7 +8,7 @@
  * request and a dead one.
  */
 
-import type { ChatRequest } from '@husk/core';
+import type { ChatRequest } from '@husk-ai/core';
 import {
   OpenAICompatibleProvider,
   type OpenAICompatibleConfig,

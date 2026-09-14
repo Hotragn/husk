@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG, HuskError } from '@husk/core';
+import { DEFAULT_CONFIG, HuskError } from '@husk-ai/core';
 import { parse, parseCount } from '../args.js';
 import { interruptSignal } from '../signal.js';
 import * as ui from '../ui.js';
@@ -7,7 +7,7 @@ import { EXIT_OK } from '../exit.js';
 /**
  * Start the control plane.
  *
- * `@husk/server` is imported lazily -- it pulls Fastify, and a CLI that paid for
+ * `@husk-ai/server` is imported lazily -- it pulls Fastify, and a CLI that paid for
  * a web framework on `husk --help` would be a slow CLI.
  */
 interface RunningServer {
@@ -30,9 +30,9 @@ export async function run(argv: string[]): Promise<number> {
 
   let mod: ServerModule;
   try {
-    mod = (await import('@husk/server')) as ServerModule;
+    mod = (await import('@husk-ai/server')) as ServerModule;
   } catch (err) {
-    throw new HuskError('E_NOT_IMPLEMENTED', `could not load @husk/server: ${(err as Error).message}`, {
+    throw new HuskError('E_NOT_IMPLEMENTED', `could not load @husk-ai/server: ${(err as Error).message}`, {
       hint: 'run `npm install && npm run build` at the repo root',
       cause: err,
     });
@@ -60,7 +60,7 @@ export async function run(argv: string[]): Promise<number> {
   ui.print(`${ui.green('✓')} control plane on ${ui.bold(server.url)}`);
   ui.print(ui.dim(`  health   ${server.url}/health`));
   ui.print(ui.dim(`  doctor   ${server.url}/v1/doctor`));
-  ui.print(ui.dim(`  clients  new HuskClient({ baseUrl: "${server.url}" })  // @husk/sdk`));
+  ui.print(ui.dim(`  clients  new HuskClient({ baseUrl: "${server.url}" })  // @husk-ai/sdk`));
   ui.note('');
   ui.note(ui.dim('Ctrl-C to stop.'));
 

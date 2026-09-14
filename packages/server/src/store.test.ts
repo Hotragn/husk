@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { defaultSpec } from '@husk/core';
-import type { RunResult } from '@husk/core';
+import { defaultSpec } from '@husk-ai/core';
+import type { RunResult } from '@husk-ai/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Store } from './store.js';
 import { paths, tempStore } from './testing.js';

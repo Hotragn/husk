@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { TranscriptImporter } from '@husk/core';
+import type { TranscriptImporter } from '@husk-ai/core';
 import { builtinImporters, detectAll, detectAndParse, discover } from './index.js';
 import { readHeadTail, wholeLines } from './fsutil.js';
 

@@ -1,4 +1,4 @@
-import { HuskError } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
 import { UsageError, parse } from '../args.js';
 import { manager, resolve } from '../lib/computers.js';
 import { confirm, interactive } from '../lib/prompt.js';

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createLogger, defaultSpec } from '@husk/core';
+import { createLogger, defaultSpec } from '@husk-ai/core';
 import type {
   ChatRequest,
   ChatResponse,
@@ -17,7 +17,7 @@ import type {
   RunEvent,
   RunResult,
   StreamEvent,
-} from '@husk/core';
+} from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
 import type { AgentFactory, AgentLike, ManagerLike, RouterLike, ServerRunOptions } from './deps.js';

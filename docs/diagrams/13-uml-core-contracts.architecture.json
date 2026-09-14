@@ -2,7 +2,7 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "UML — the @husk/core contracts",
+    "title": "UML — the @husk-ai/core contracts",
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/Hotragn/husk",
@@ -285,7 +285,7 @@
       "dot": "cyan",
       "title": "One place for shared types",
       "items": [
-        "If a type belongs to more than one package, it belongs in @husk/core",
+        "If a type belongs to more than one package, it belongs in @husk-ai/core",
         "core imports nothing from the workspace, so the graph stays acyclic"
       ]
     },

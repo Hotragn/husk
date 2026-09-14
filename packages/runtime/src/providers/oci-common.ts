@@ -5,7 +5,7 @@ import { createServer, connect as tcpConnect, type Server, type Socket } from 'n
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { HuskError, ensurePaths, id as newId } from '@husk/core';
+import { HuskError, ensurePaths, id as newId } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -18,7 +18,7 @@ import type {
   PortBinding,
   ProviderName,
   WriteFileOptions,
-} from '@husk/core';
+} from '@husk-ai/core';
 import { type ImagePlan, installScript, resolveImage } from '../images.js';
 import { OutputBuffer, evaluateCommand } from '../policy.js';
 

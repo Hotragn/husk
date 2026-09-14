@@ -1,5 +1,5 @@
 {
-  "name": "@husk/cli",
+  "name": "@husk-ai/cli",
   "version": "0.1.0",
   "description": "The husk command line: give your agent a computer, and turn a chat into a bot.",
   "license": "Apache-2.0",
@@ -29,16 +29,16 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@husk/agent": "0.1.0",
-    "@husk/core": "0.1.0",
-    "@husk/models": "0.1.0",
-    "@husk/runtime": "0.1.0",
-    "@husk/sessions": "0.1.0",
+    "@husk-ai/agent": "0.1.0",
+    "@husk-ai/core": "0.1.0",
+    "@husk-ai/models": "0.1.0",
+    "@husk-ai/runtime": "0.1.0",
+    "@husk-ai/sessions": "0.1.0",
     "yaml": "^2.9.0"
   },
   "optionalDependencies": {
-    "@husk/mcp": "0.1.0",
-    "@husk/sdk": "0.1.0",
-    "@husk/server": "0.1.0"
+    "@husk-ai/mcp": "0.1.0",
+    "@husk-ai/sdk": "0.1.0",
+    "@husk-ai/server": "0.1.0"
   }
 }

@@ -180,7 +180,7 @@
       "title": "Five subsystems, one contract",
       "items": [
         "Entry, agent loop, sessions, model router, computer manager",
-        "All five speak only the types in @husk/core"
+        "All five speak only the types in @husk-ai/core"
       ]
     },
     {

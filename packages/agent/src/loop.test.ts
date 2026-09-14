@@ -1,5 +1,5 @@
-import { createLogger } from '@husk/core';
-import type { ModelMessage, ToolCallPart, ToolResultPart } from '@husk/core';
+import { createLogger } from '@husk-ai/core';
+import type { ModelMessage, ToolCallPart, ToolResultPart } from '@husk-ai/core';
 import { describe, expect, it, vi } from 'vitest';
 import { Agent } from './loop.js';
 import {

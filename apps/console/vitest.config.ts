@@ -4,7 +4,7 @@ import base from './vite.config';
 /**
  * The console's tests are components, so they run in jsdom and reuse the build
  * config wholesale — the react plugin for JSX, and the `node:` aliases that
- * `@husk/sdk` needs to be importable outside Node.
+ * `@husk-ai/sdk` needs to be importable outside Node.
  */
 export default mergeConfig(
   base,

@@ -1,5 +1,5 @@
-import { HuskError } from '@husk/core';
-import type { Computer } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
+import type { Computer } from '@husk-ai/core';
 import { DRIVER_PATH, DRIVER_SOURCE } from './driver.js';
 
 /**

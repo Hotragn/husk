@@ -7,7 +7,7 @@
  * package mint key formats no pattern list knows about.
  */
 
-import { HuskError, redact, type HuskErrorCode } from '@husk/core';
+import { HuskError, redact, type HuskErrorCode } from '@husk-ai/core';
 
 export const HUSK_UA = 'husk/0.1.0 (+https://husk.sh)';
 

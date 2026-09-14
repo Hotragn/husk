@@ -17,7 +17,7 @@
  * entries: what is actually pulled on the machine wins over what we guessed here.
  */
 
-import type { ModelInfo } from '@husk/core';
+import type { ModelInfo } from '@husk-ai/core';
 
 export interface CatalogModel extends ModelInfo {
   /**

@@ -1,5 +1,5 @@
-import type { ChatRequest, ChatResponse, ModelInfo, ModelProvider, StreamEvent } from '@husk/core';
-import { HuskError, createLogger } from '@husk/core';
+import type { ChatRequest, ChatResponse, ModelInfo, ModelProvider, StreamEvent } from '@husk-ai/core';
+import { HuskError, createLogger } from '@husk-ai/core';
 import { describe, expect, it } from 'vitest';
 import { ModelRouter, defaultProviders, type RouterStreamEvent } from './router.js';
 import { findModel } from './catalog.js';

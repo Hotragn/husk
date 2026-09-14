@@ -1,5 +1,5 @@
-import { HuskError, assertUrlAllowed, onComputerDestroyed, ownsLoopback } from '@husk/core';
-import type { Computer, NetworkPolicy } from '@husk/core';
+import { HuskError, assertUrlAllowed, onComputerDestroyed, ownsLoopback } from '@husk-ai/core';
+import type { Computer, NetworkPolicy } from '@husk-ai/core';
 import { CdpConnection, ComputerDriverTransport, createTarget } from './cdp.js';
 import type { CdpTransport } from './cdp.js';
 import { Page } from './page.js';

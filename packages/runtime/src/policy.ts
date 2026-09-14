@@ -1,6 +1,6 @@
 import { realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, posix, resolve, sep } from 'node:path';
-import { HuskError, completeCharEnd } from '@husk/core';
+import { HuskError, completeCharEnd } from '@husk-ai/core';
 import { DEFAULT_DENY, type CommandRule } from './deny.js';
 
 /**
@@ -384,9 +384,9 @@ export function shellQuote(args: string[]): string {
 
 export { normalize, isAbsolute, join };
 
-// Network policy has exactly one implementation, in @husk/core. It is
+// Network policy has exactly one implementation, in @husk-ai/core. It is
 // re-exported here so runtime callers and the existing tests are unaffected --
 // three copies had already drifted on whether `mode: 'full'` reaches the cloud
 // metadata endpoint, and a security check with two answers is not a check.
-export { hostMatches, isInternalHost, isHostAllowed, urlHost, assertUrlAllowed } from '@husk/core';
+export { hostMatches, isInternalHost, isHostAllowed, urlHost, assertUrlAllowed } from '@husk-ai/core';
 export { DEFAULT_DENY, type CommandRule } from './deny.js';

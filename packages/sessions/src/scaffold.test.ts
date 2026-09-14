@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSpec } from '@husk/core';
+import { parseSpec } from '@husk-ai/core';
 import {
   containsHarnessArtifact,
   isScaffoldingOnly,
@@ -20,9 +20,9 @@ const TASK_NOTIFICATION = [
   '<tool-use-id>toolu_0117qfiw98YCkUJY4sdipUaT</tool-use-id>',
   '<output-file>~\\AppData\\Local\\Temp\\claude\\sess\\tasks\\a207096b99b0f9aa0.output</output-file>',
   '<status>completed</status>',
-  '<summary>Agent "Build @husk/agent loop and tools" finished</summary>',
+  '<summary>Agent "Build @husk-ai/agent loop and tools" finished</summary>',
   '<note>A task-notification fires each time this agent stops with no live background children of its own.</note>',
-  '<result>`@husk/agent` is built, typechecks, and its 126 tests pass.</result>',
+  '<result>`@husk-ai/agent` is built, typechecks, and its 126 tests pass.</result>',
   '</task-notification>',
 ].join('\n');
 
@@ -106,7 +106,7 @@ describe('containsHarnessArtifact', () => {
 
 describe('looksLikeStatusReport / markupRatio', () => {
   it('recognises a completion report', () => {
-    expect(looksLikeStatusReport('Agent "Build @husk/models" failed: rate limited')).toBe(true);
+    expect(looksLikeStatusReport('Agent "Build @husk-ai/models" failed: rate limited')).toBe(true);
     expect(looksLikeStatusReport('The deploy runs on fly.io in iad.')).toBe(false);
   });
 
@@ -212,7 +212,7 @@ const FORBIDDEN = [
   'a207096b99b0f9aa0',
   'AppData\\Local\\Temp',
   '<system-reminder>\nThe user has a file open',
-  'Agent "Build @husk/agent loop and tools" finished',
+  'Agent "Build @husk-ai/agent loop and tools" finished',
   'A task-notification fires each time this agent stops',
   '[Image: original',
 ];

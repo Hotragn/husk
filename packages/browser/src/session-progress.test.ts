@@ -10,7 +10,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { BrowserSession, browserFor } from './session.js';
-import type { Computer } from '@husk/core';
+import type { Computer } from '@husk-ai/core';
 
 /** Enough of a Computer to construct a session. Nothing here launches one. */
 function fakeComputer(id: string): Computer {

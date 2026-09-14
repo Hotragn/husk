@@ -1,5 +1,5 @@
-import { HuskError, isHuskError } from '@husk/core';
-import type { HuskErrorCode } from '@husk/core';
+import { HuskError, isHuskError } from '@husk-ai/core';
+import type { HuskErrorCode } from '@husk-ai/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 /**
@@ -8,7 +8,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
  * API.md maps `E_*_NOT_FOUND` -> 404 as a family, but core only declares
  * `E_COMPUTER_NOT_FOUND`. Rather than return a computer error for a missing husk,
  * the server declares the rest here and casts in exactly one place. These belong in
- * `@husk/core`; see the note in README.md.
+ * `@husk-ai/core`; see the note in README.md.
  */
 export const SERVER_ERROR_CODES = [
   'E_HUSK_NOT_FOUND',

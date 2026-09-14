@@ -73,7 +73,7 @@ is not done.
 
 ## Adding a computer provider
 
-Implement `ComputerProvider` from `@husk/core`. The bar:
+Implement `ComputerProvider` from `@husk-ai/core`. The bar:
 
 - `isAvailable()` never throws, and distinguishes *not installed* from *installed but
   not running* from *installed and refusing this user*, each with its own hint.

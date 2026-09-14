@@ -29,7 +29,7 @@
  *    measured from inside every few seconds.
  * 3. **The debug port.** On `local` and `ssh` the computer shares a network
  *    stack with the host, so Chromium's CDP port may be reachable by other
- *    local processes, and CDP has no authentication. `@husk/browser` says this
+ *    local processes, and CDP has no authentication. `@husk-ai/browser` says this
  *    at launch into the server's log, where nobody using the console will see
  *    it. It is said here too, once, as a property of the provider — not as an
  *    alarm, because nothing has gone wrong.
@@ -82,7 +82,7 @@ const LINKS_SHOWN = 60;
 /** What the snapshot route defaults to, stated rather than left implicit. */
 const SNAPSHOT_LIMIT = 400;
 
-/** `downloadPlanFor` in `@husk/browser`: 111 MB on arm64, and about that on x64. */
+/** `downloadPlanFor` in `@husk-ai/browser`: 111 MB on arm64, and about that on x64. */
 const DOWNLOAD_MB = 111;
 
 /**

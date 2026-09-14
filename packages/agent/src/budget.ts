@@ -1,4 +1,4 @@
-import type { ModelInfo, Usage } from '@husk/core';
+import type { ModelInfo, Usage } from '@husk-ai/core';
 
 export type BudgetStop = 'step_limit' | 'budget' | 'timeout';
 

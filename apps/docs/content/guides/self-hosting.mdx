@@ -22,7 +22,7 @@ in a directory you can back up.
 ## Step 1: Install and check
 
 ```bash
-npm install -g @husk/cli
+npm install -g @husk-ai/cli
 husk doctor
 ```
 
@@ -170,7 +170,7 @@ CORS is **off** by default, and there is no `husk serve` flag to turn it on.
 own Node process:
 
 ```ts title="serve.mjs"
-import { serve } from '@husk/server';
+import { serve } from '@husk-ai/server';
 
 await serve({
   host: '127.0.0.1',
@@ -349,7 +349,7 @@ done
 ### Upgrades
 
 ```bash
-sudo -u husk npm install -g @husk/cli@latest
+sudo -u husk npm install -g @husk-ai/cli@latest
 sudo systemctl restart husk
 ```
 

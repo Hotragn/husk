@@ -4,11 +4,11 @@
  * Run it with nothing configured to see the free-path hints:
  *   node packages/models/examples/doctor.mjs
  *
- * Requires `npm run build --workspace=@husk/models` first.
+ * Requires `npm run build --workspace=@husk-ai/models` first.
  */
 
-import { createLogger } from '@husk/core';
-import { ModelRouter } from '@husk/models';
+import { createLogger } from '@husk-ai/core';
+import { ModelRouter } from '@husk-ai/models';
 
 // Simulate a machine with nothing set up, whatever this one actually has.
 if (process.argv.includes('--pristine')) {

@@ -1,4 +1,4 @@
-import { HuskError } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
 import { parse } from '../args.js';
 import * as ui from '../ui.js';
 import { EXIT_OK } from '../exit.js';
@@ -34,16 +34,16 @@ export async function run(argv: string[]): Promise<number> {
 
   let mod: McpModule;
   try {
-    mod = (await import('@husk/mcp')) as McpModule;
+    mod = (await import('@husk-ai/mcp')) as McpModule;
   } catch (err) {
-    throw new HuskError('E_NOT_IMPLEMENTED', `could not load @husk/mcp: ${(err as Error).message}`, {
+    throw new HuskError('E_NOT_IMPLEMENTED', `could not load @husk-ai/mcp: ${(err as Error).message}`, {
       hint: 'run `npm install && npm run build` at the repo root',
       cause: err,
     });
   }
 
   if (typeof mod.HuskMcpServer !== 'function') {
-    throw new HuskError('E_NOT_IMPLEMENTED', '@husk/mcp exports no stdio server', {
+    throw new HuskError('E_NOT_IMPLEMENTED', '@husk-ai/mcp exports no stdio server', {
       hint: 'expected HuskMcpServer — the CLI is ready to call it the moment it lands',
     });
   }

@@ -11,7 +11,7 @@ import * as ui from './ui.js';
 /**
  * The entry point, and the reason `husk --help` answers in tens of milliseconds.
  *
- * Nothing above this line touches `@husk/core` (which pulls zod), the runtime, or
+ * Nothing above this line touches `@husk-ai/core` (which pulls zod), the runtime, or
  * the model router. Every command is behind a dynamic import, so the only cost a
  * user pays is the cost of the command they actually ran. A CLI invoked a few
  * hundred times a day cannot afford to load the world to print a usage string.

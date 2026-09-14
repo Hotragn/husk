@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { TranscriptMessage } from '@husk/core';
+import type { TranscriptMessage } from '@husk-ai/core';
 import {
   CandidateSchema,
   MergedSchema,

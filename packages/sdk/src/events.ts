@@ -1,4 +1,4 @@
-import { HuskError } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
 import type { Http } from './http.js';
 import type { EventTopic, HuskEventFrame } from './types.js';
 

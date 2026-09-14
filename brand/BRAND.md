@@ -46,7 +46,7 @@ anywhere.
 
 ### 100 words
 
-> Husk gives any AI agent a computer. Run `claude mcp add husk -- npx -y @husk/mcp` and
+> Husk gives any AI agent a computer. Run `claude mcp add husk -- npx -y @husk-ai/mcp` and
 > your assistant has a Linux machine mid-conversation: shell, filesystem, ports,
 > snapshots. Docker when it is there, Podman when it is not, and a guarded local
 > workspace when neither is — we tell you which one you got, and whether it is really
@@ -81,7 +81,7 @@ copy ("plant your agent", "harvest your results" — never). No "husk of your fo
 workflow". The metaphor earns exactly one job: explaining the mark and the palette. After
 that it gets out of the way.
 
-**Casing.** `Husk` in prose, `husk` as the binary and in code, `@husk/*` for packages.
+**Casing.** `Husk` in prose, `husk` as the binary and in code, `@husk-ai/*` for packages.
 Never `HUSK`, never `HuSK`, never `husk.` with a trailing period in the wordmark.
 
 ---
@@ -128,7 +128,7 @@ If a shell line can carry the claim, ship the shell line and cut the paragraph.
 > ✗ *Getting started is easy. Simply install the Husk MCP server, add it to your Claude
 > Code configuration, and you'll be up and running in minutes.*
 > ✓ ```bash
-> claude mcp add husk -- npx -y @husk/mcp
+> claude mcp add husk -- npx -y @husk-ai/mcp
 > ```
 > *That is the whole install. There is no second step.*
 
@@ -257,7 +257,7 @@ that runs in a terminal.
 *Claim:* No account, no card, no API key, no Docker required, and the thing still runs.
 *Because:* The local provider is the primitive; hosted providers are plugins behind the
 same interface. There is no code path that requires an account.
-*Proof:* `npx -y @husk/cli doctor` on a bare machine prints a working configuration.
+*Proof:* `npx -y @husk-ai/cli doctor` on a bare machine prints a working configuration.
 *Copy that lives here:* the hero, pricing (there is none), the README's first screen.
 
 ### Pillar 2 — Honest about containment
@@ -290,7 +290,7 @@ conversation.
 
 ### The supporting wedge, not a pillar
 
-`claude mcp add husk -- npx -y @husk/mcp` is the single highest-value line of copy Husk
+`claude mcp add husk -- npx -y @husk-ai/mcp` is the single highest-value line of copy Husk
 owns. It is not a pillar because it is not a value — it is the proof for Pillar 1, and it
 should appear within the first screen of every surface where a command is legal.
 

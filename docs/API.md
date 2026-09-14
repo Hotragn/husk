@@ -1,6 +1,6 @@
 # Husk control-plane API — v1
 
-Served by `@husk/server` (`husk serve`), consumed by `@husk/sdk`, `@husk/console`, and
+Served by `@husk-ai/server` (`husk serve`), consumed by `@husk-ai/sdk`, `@husk-ai/console`, and
 anything else. Default bind `127.0.0.1:7377`.
 
 This document is the contract. The server implements it; the SDK mirrors it; neither
@@ -15,7 +15,7 @@ invents endpoints the other does not know about.
   ```json
   { "error": { "code": "E_COMPUTER_NOT_FOUND", "message": "no computer with id cmp_x", "hint": "run `husk ps` to list computers" } }
   ```
-  `code` is a `HuskErrorCode` from `@husk/core`. Status mapping: `E_*_NOT_FOUND` → 404,
+  `code` is a `HuskErrorCode` from `@husk-ai/core`. Status mapping: `E_*_NOT_FOUND` → 404,
   `E_*_DENIED` → 403, `E_SPEC_INVALID` → 422, `E_QUOTA` / `E_BUDGET_EXCEEDED` → 429,
   `E_NO_CREDENTIALS` → 401, `E_PROVIDER_UNAVAILABLE` / `E_MODEL_UNAVAILABLE` → 503,
   `E_NOT_IMPLEMENTED` → 501, `E_EXEC_TIMEOUT` → 504, everything else → 500.
@@ -46,7 +46,7 @@ GET /v1/doctor  -> 200 DoctorReport
 
 `DoctorReport` is what `husk doctor` prints — the honest state of the machine:
 
-This is one shape shared by three consumers: the server returns it, `@husk/sdk`
+This is one shape shared by three consumers: the server returns it, `@husk-ai/sdk`
 types it, and `husk doctor --json` prints it. Do not add a field to one without the
 other two — the `selected` / `selection` split cost a release once.
 
@@ -223,7 +223,7 @@ body: { input: string | ModelMessage[], history?, model?, vars?, maxSteps?,
 `maxCostUsd` is clamped down to the husk's own `limits.maxCostUsd` — a request
 can lower the ceiling, never raise it.
 
-Streaming, same body, SSE carrying `RunEvent` objects verbatim from `@husk/core`:
+Streaming, same body, SSE carrying `RunEvent` objects verbatim from `@husk-ai/core`:
 
 ```
 data: {"type":"run_start","runId":"run_x","husk":"triage","model":"anthropic/claude-sonnet-5"}
@@ -296,7 +296,7 @@ body: { transcriptId?: string, transcript?: Transcript, useModel?: boolean, mode
 `/v1/sessions/distill/stream` emits `{"type":"progress","stage":"scanning|extracting|merging","pct":0.4}`
 then one `{"type":"done","spec":{...},"distilled":{...},"yaml":"..."}`.
 
-The mapping from `DistilledAgent` to `HuskSpec` is `toSpec` from `@husk/sessions`
+The mapping from `DistilledAgent` to `HuskSpec` is `toSpec` from `@husk-ai/sessions`
 — the same function `husk distill` uses, so the two produce the same file. It
 records provenance in `origin` and writes `metadata.distilledConfidence` and
 `metadata.distillerNotes`. Those two key names are the contract; nothing writes
@@ -355,7 +355,7 @@ each case the stated reason was wrong rather than merely outdated:
   npm is a native module or a large dependency". True, and answering the wrong
   question -- the tar is already inside the machine. See [Files](#files).
 - `computerId` on the run body was accepted and ignored, on the reasoning that
-  honouring it meant widening a `@husk/agent` contract. `ComputerSource` has one
+  honouring it meant widening a `@husk-ai/agent` contract. `ComputerSource` has one
   method, and a source that answers every key with the same machine satisfies it
   exactly. It now pins the run, and an id that does not exist is a `404` raised
   before the model is called rather than a field that quietly does nothing.

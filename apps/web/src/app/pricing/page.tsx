@@ -31,7 +31,7 @@ export default function Pricing() {
             </p>
 
             <div style={{ marginTop: "var(--space-8)", maxWidth: "40rem" }}>
-              <CommandBlock command="npx -y @husk/cli doctor" />
+              <CommandBlock command="npx -y @husk-ai/cli doctor" />
             </div>
             <p className="meta" style={{ marginTop: "var(--space-3)" }}>
               That is the purchase flow.

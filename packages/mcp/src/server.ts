@@ -2,10 +2,10 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { HUSK_VERSION, createLogger, quiet } from '@husk/core';
-import type { Computer, ComputerSpec, Logger } from '@husk/core';
-import { ComputerManager } from '@husk/runtime';
-import { audited } from '@husk/core';
+import { HUSK_VERSION, createLogger, quiet } from '@husk-ai/core';
+import type { Computer, ComputerSpec, Logger } from '@husk-ai/core';
+import { ComputerManager } from '@husk-ai/runtime';
+import { audited } from '@husk-ai/core';
 import { TOOLS, callTool } from './tools.js';
 
 export interface HuskMcpOptions {

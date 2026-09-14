@@ -1,5 +1,5 @@
-import { slug } from '@husk/core';
-import type { ComputerSpec } from '@husk/core';
+import { slug } from '@husk-ai/core';
+import type { ComputerSpec } from '@husk-ai/core';
 import { parse, parseChoice, parseCount, parseMemory } from '../args.js';
 import { manager } from '../lib/computers.js';
 import { orient } from '../lib/first-run.js';

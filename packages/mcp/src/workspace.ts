@@ -1,4 +1,4 @@
-import { HUSK_PORT_DEFAULT } from '@husk/core';
+import { HUSK_PORT_DEFAULT } from '@husk-ai/core';
 
 /**
  * Telling the agent — and through it, the human — where to *look* at the machine.

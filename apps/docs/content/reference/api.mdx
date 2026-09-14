@@ -67,7 +67,7 @@ Status is derived from the code: an explicit table first, then two suffix rules.
 | anything ending `_DENIED` | 403 |
 | everything else | 500 |
 
-The server declares five codes that `@husk/core` does not: `E_HUSK_NOT_FOUND`,
+The server declares five codes that `@husk-ai/core` does not: `E_HUSK_NOT_FOUND`,
 `E_RUN_NOT_FOUND`, `E_APPROVAL_NOT_FOUND`, `E_TRANSCRIPT_NOT_FOUND`,
 `E_ROUTE_NOT_FOUND`. They land on 404 through the suffix rule.
 [Error codes](/reference/errors) is the full list.
@@ -100,7 +100,7 @@ GET /health     -> 200 { ok, version, uptimeSec }
 GET /v1/doctor  -> 200 DoctorReport
 ```
 
-`DoctorReport` is one shape with three consumers: this endpoint, `@husk/sdk`, and
+`DoctorReport` is one shape with three consumers: this endpoint, `@husk-ai/sdk`, and
 `husk doctor --json`. Real output from a machine with no keys and no Docker daemon,
 abridged:
 
@@ -326,7 +326,7 @@ own. An id that does not exist is a `404`, checked before the model is called. O
 and nothing changes: the agent asks for a computer by its own key, as before.
 </Note>
 
-The streaming variant emits `RunEvent` objects verbatim from `@husk/core`:
+The streaming variant emits `RunEvent` objects verbatim from `@husk-ai/core`:
 
 ```text
 data: {"type":"run_start","runId":"run_x","husk":"triage","model":"ollama/qwen2.5:7b"}
@@ -421,7 +421,7 @@ event: done
 ```
 
 <Note>
-There is one mapper: `toSpec` in `@husk/sessions`. This route calls it, and so does
+There is one mapper: `toSpec` in `@husk-ai/sessions`. This route calls it, and so does
 `husk distill`, so the same transcript produces the same husk.yaml either way. It
 writes `metadata.distilledConfidence` and `metadata.distillerNotes` — see
 [metadata and origin](/chat-to-bot/husk-yaml#metadata-and-origin). It used to be
@@ -506,6 +506,6 @@ Verified against this checkout with `apps/console/dist/index.html` in place.
 
 ## The SDK
 
-`@husk/sdk` is the typed client for this API, and in this release **it does not match
+`@husk-ai/sdk` is the typed client for this API, and in this release **it does not match
 the server it ships beside**. See [SDK](/reference/sdk) for the endpoint-by-endpoint
 comparison and what still works.

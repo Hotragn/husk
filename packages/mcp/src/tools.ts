@@ -1,6 +1,6 @@
-import type { Computer } from '@husk/core';
-import { HuskError, clampText, formatBytes, redact } from '@husk/core';
-import { browseInComputer } from '@husk/core';
+import type { Computer } from '@husk-ai/core';
+import { HuskError, clampText, formatBytes, redact } from '@husk-ai/core';
+import { browseInComputer } from '@husk-ai/core';
 import { BROWSER_TOOLS, BROWSER_TOOL_NAMES, callBrowserTool } from './browser-tools.js';
 import { workspaceNote } from './workspace.js';
 

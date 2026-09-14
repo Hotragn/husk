@@ -14,8 +14,8 @@ npm test            # all workspaces (vitest)
 Single package:
 
 ```bash
-npm run build -w @husk/core
-npm test -w @husk/core
+npm run build -w @husk-ai/core
+npm test -w @husk-ai/core
 ```
 
 ## Architecture

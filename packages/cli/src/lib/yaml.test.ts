@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { defaultSpec, parseSpec } from '@husk/core';
-import type { DistilledAgent } from '@husk/core';
+import { defaultSpec, parseSpec } from '@husk-ai/core';
+import type { DistilledAgent } from '@husk-ai/core';
 import { renderSpec, slugName, specFromDistilled } from './yaml.js';
 import { parseYaml } from './yaml.js';
 

@@ -9,7 +9,7 @@
 
   <p>
     <a href="https://github.com/Hotragn/husk/actions/workflows/ci.yml"><img src="https://github.com/Hotragn/husk/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-    <a href="https://www.npmjs.com/package/@husk/cli"><img src="https://img.shields.io/npm/v/@husk/cli?label=npm&color=cb3837" alt="npm"></a>
+    <a href="https://www.npmjs.com/package/@husk-ai/cli"><img src="https://img.shields.io/npm/v/@husk-ai/cli?label=npm&color=cb3837" alt="npm"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License"></a>
     <a href="https://github.com/Hotragn/husk/stargazers"><img src="https://img.shields.io/github/stars/Hotragn/husk?style=social" alt="GitHub stars"></a>
   </p>
@@ -24,10 +24,10 @@ Free to start. Runs on your hardware. No account required.
 ## Quick start
 
 ```bash
-npx @husk/cli doctor            # what's available on this machine
-npx @husk/cli up dev            # spin up a Linux computer
-npx @husk/cli exec dev -- 'uname -sr && python3 -V'
-npx @husk/cli rm dev            # tear it down
+npx @husk-ai/cli doctor            # what's available on this machine
+npx @husk-ai/cli up dev            # spin up a Linux computer
+npx @husk-ai/cli exec dev -- 'uname -sr && python3 -V'
+npx @husk-ai/cli rm dev            # tear it down
 ```
 
 No Docker? It still works — [see what each provider gives you](#isolation).
@@ -35,7 +35,7 @@ No Docker? It still works — [see what each provider gives you](#isolation).
 ### Give Claude Code a computer
 
 ```bash
-claude mcp add husk -- npx -y @husk/mcp
+claude mcp add husk -- npx -y @husk-ai/mcp
 ```
 
 One command. Claude Code gets `shell`, `read_file`, `write_file`, `list_dir` and `expose_port` against a real Linux machine — sandboxed away from your repo, filesystem persisting across the conversation. Works with Cursor, Zed, or anything that speaks MCP.
@@ -110,7 +110,7 @@ This is the part most tools are vague about, so here it is plainly.
 ## Install
 
 ```bash
-npm i -g @husk/cli      # or: npx @husk/cli
+npm i -g @husk-ai/cli      # or: npx @husk-ai/cli
 ```
 
 Node 20.10+. No native modules. Docker optional. API key optional.

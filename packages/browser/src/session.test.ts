@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isHuskError } from '@husk/core';
-import type { Computer, ComputerInfo, ExecResult, NetworkPolicy, ProviderName } from '@husk/core';
+import { isHuskError } from '@husk-ai/core';
+import type { Computer, ComputerInfo, ExecResult, NetworkPolicy, ProviderName } from '@husk-ai/core';
 import { BrowserSession, warnIfDebugPortIsExposed } from './session.js';
 
 /**

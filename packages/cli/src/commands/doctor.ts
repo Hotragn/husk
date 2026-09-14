@@ -1,11 +1,11 @@
 import { existsSync } from 'node:fs';
-import { ENV_KEYS, HUSK_VERSION, huskHome } from '@husk/core';
-import type { ModelInfo, ModelProvider } from '@husk/core';
+import { ENV_KEYS, HUSK_VERSION, huskHome } from '@husk-ai/core';
+import type { ModelInfo, ModelProvider } from '@husk-ai/core';
 import { parse } from '../args.js';
 import * as ui from '../ui.js';
 import { EXIT_OK } from '../exit.js';
-import { paths } from '@husk/core';
-import { findOrphanedWorkspaces } from '@husk/runtime';
+import { paths } from '@husk-ai/core';
+import { findOrphanedWorkspaces } from '@husk-ai/runtime';
 
 /**
  * The command people run when they are confused, so it must never be confusing.
@@ -64,7 +64,7 @@ export interface DoctorReport {
  *
  * The list exists so that a provider is reported even when it is not built --
  * silently omitting one makes a user with a GROQ_API_KEY sitting right there
- * wonder why husk cannot see it. Anything `@husk/models` implements is probed
+ * wonder why husk cannot see it. Anything `@husk-ai/models` implements is probed
  * for real; anything it does not is labelled as such.
  */
 const DECLARED_MODEL_PROVIDERS: Array<{ id: string; displayName: string; envKey?: string }> = [
@@ -158,7 +158,7 @@ export async function collect(force = false): Promise<DoctorReport> {
 }
 
 async function collectProviders(force: boolean): Promise<ProviderRow[]> {
-  const { ComputerManager } = await import('@husk/runtime');
+  const { ComputerManager } = await import('@husk-ai/runtime');
   const status = await new ComputerManager().status(force);
   return status.map((s) => ({
     name: String(s.name),
@@ -174,7 +174,7 @@ async function collectProviders(force: boolean): Promise<ProviderRow[]> {
 }
 
 async function collectModels(): Promise<ModelRow[]> {
-  const mod = await import('@husk/models');
+  const mod = await import('@husk-ai/models');
   // Ask the package what it implements. A hardcoded list here once reported six
   // working providers as "not implemented" for a whole release.
   const built = new Map<string, ModelProvider>();
@@ -191,8 +191,8 @@ async function collectModels(): Promise<ModelRow[]> {
         available: false,
         implemented: false,
         reason: keySet
-          ? `${declared.envKey} is set, but @husk/models has no ${declared.id} provider yet`
-          : 'not implemented in @husk/models yet',
+          ? `${declared.envKey} is set, but @husk-ai/models has no ${declared.id} provider yet`
+          : 'not implemented in @husk-ai/models yet',
         hint: 'use anthropic, openai, or ollama until this provider lands',
         models: [],
       });

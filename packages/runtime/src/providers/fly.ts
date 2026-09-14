@@ -1,6 +1,6 @@
 import { readFile as readHostFile, mkdir, writeFile as writeHostFile } from 'node:fs/promises';
 import { dirname, posix } from 'node:path';
-import { HuskError, clampText, id as newId } from '@husk/core';
+import { HuskError, clampText, id as newId } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -13,7 +13,7 @@ import type {
   PortBinding,
   ProviderName,
   WriteFileOptions,
-} from '@husk/core';
+} from '@husk-ai/core';
 import { GUEST_ROOT, evaluateCommand, normaliseGuestPath, shellQuote } from '../policy.js';
 import { expired, forgetInfo, loadInfos, persistInfo } from '../registry.js';
 import { parseLsLong } from './oci-common.js';

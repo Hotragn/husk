@@ -9,7 +9,7 @@
  * shipped pointing at twelve routes that did not exist.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { HuskError } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
 import { HuskClient } from './client.js';
 import type { FetchLike } from './http.js';
 

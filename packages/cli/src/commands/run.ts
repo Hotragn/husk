@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
-import { HuskError, formatDuration, paths } from '@husk/core';
-import type { ApprovalMode, ChatRequest, ChatResponse, HuskSpec, StreamEvent } from '@husk/core';
-import type { AgentRunEvent, ApprovalRequest, RouterLike } from '@husk/agent';
+import { HuskError, formatDuration, paths } from '@husk-ai/core';
+import type { ApprovalMode, ChatRequest, ChatResponse, HuskSpec, StreamEvent } from '@husk-ai/core';
+import type { AgentRunEvent, ApprovalRequest, RouterLike } from '@husk-ai/agent';
 import { UsageError, parse, parseChoice, parseCount,
   parseAmount, required } from '../args.js';
 import { manager } from '../lib/computers.js';
@@ -95,7 +95,7 @@ export async function run(argv: string[]): Promise<number> {
   // path: a husk that declared a fallback got a hard failure instead of one.
   // The router also emits a warning on every downgrade, so a quietly weaker
   // answer is impossible.
-  const { ModelRouter } = await import('@husk/models');
+  const { ModelRouter } = await import('@husk-ai/models');
   const modelRouter = new ModelRouter({ maxCostUsd });
   const fallbacks = spec.fallbackModels;
   const router: RouterLike = {
@@ -106,7 +106,7 @@ export async function run(argv: string[]): Promise<number> {
 
   const wantsComputer = spec.computer.enabled && values['no-computer'] !== true;
 
-  const { Agent } = await import('@husk/agent');
+  const { Agent } = await import('@husk-ai/agent');
   const agent = new Agent({
     spec: wantsComputer ? spec : { ...spec, computer: { ...spec.computer, enabled: false } },
     router,

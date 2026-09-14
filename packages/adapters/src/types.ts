@@ -1,4 +1,4 @@
-import type { Logger } from '@husk/core';
+import type { Logger } from '@husk-ai/core';
 
 /** One inbound message, normalised across every platform. */
 export interface InboundMessage {

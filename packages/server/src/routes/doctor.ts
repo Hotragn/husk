@@ -1,14 +1,14 @@
 import { existsSync } from 'node:fs';
-import { ENV_KEYS, HUSK_VERSION, mapLimit, paths } from '@husk/core';
+import { ENV_KEYS, HUSK_VERSION, mapLimit, paths } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { ctxOf } from '../context.js';
-import { findOrphanedWorkspaces } from '@husk/runtime';
+import { findOrphanedWorkspaces } from '@husk-ai/runtime';
 
 /**
  * `GET /v1/doctor`.
  *
  * The wire shape is identical to what `husk doctor --json` prints and to
- * `DoctorReport` in `@husk/sdk`. It diverged once -- the server answered
+ * `DoctorReport` in `@husk-ai/sdk`. It diverged once -- the server answered
  * `selected` while the SDK read `selection` -- which meant the console rendered
  * an empty selection against a server that was reporting one correctly. One
  * shape, three consumers, no translation layer.

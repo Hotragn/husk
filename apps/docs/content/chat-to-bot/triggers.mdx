@@ -42,10 +42,10 @@ husk's summary — and then do nothing. `TriggerHost.sync()` is an `if / else if
 covering `http`, `webhook` and `cron`; anything else falls through with no branch, no
 warning, and no entry in `GET /v1/triggers`.
 
-The adapters themselves are complete. `@husk/adapters` ships a Discord gateway client
+The adapters themselves are complete. `@husk-ai/adapters` ships a Discord gateway client
 with resume and heartbeat handling, a Slack adapter with both Socket Mode and a
 signature-verified Events API endpoint, and a Telegram long-poller with an allowlist.
-`@husk/server` declares `@husk/adapters` as a dependency and never imports it.
+`@husk-ai/server` declares `@husk-ai/adapters` as a dependency and never imports it.
 `ServerConfig.adapters` is resolved, defaulted to `true`, and never read. The `adapters`
 event topic exists and nothing emits on it.
 

@@ -1,4 +1,4 @@
-import { HuskError, isHuskError } from '@husk/core';
+import { HuskError, isHuskError } from '@husk-ai/core';
 import type {
   ApprovalRequest,
   Computer,
@@ -8,7 +8,7 @@ import type {
   RunEvent,
   RunResult,
   ToolCallPart,
-} from '@husk/core';
+} from '@husk-ai/core';
 import { ApprovalRegistry } from './approvals.js';
 import type { PendingApproval } from './approvals.js';
 import type { ComputerSourceLike, ManagerLike, ResolvedDeps, ServerRunOptions } from './deps.js';
@@ -30,7 +30,7 @@ export interface RunRequestBody {
    *
    * This was documented for months as accepted-and-ignored, on the reasoning
    * that the agent addresses machines by a stable *key* rather than by id, so
-   * honouring it would mean widening a `@husk/agent` contract. It does not:
+   * honouring it would mean widening a `@husk-ai/agent` contract. It does not:
    * `ComputerSource` is an interface with one method, and a source that answers
    * every key with one particular machine satisfies it exactly. See
    * {@link pinnedSource}.

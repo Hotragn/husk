@@ -1,5 +1,5 @@
 /**
- * @husk/models — one model surface over every provider Husk speaks to.
+ * @husk-ai/models — one model surface over every provider Husk speaks to.
  *
  * The public entry point is `ModelRouter`. Everything else here is exported because
  * `husk doctor`, `husk models` and the agent loop need to introspect the catalog, the

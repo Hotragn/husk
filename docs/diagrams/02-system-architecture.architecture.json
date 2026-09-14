@@ -27,7 +27,7 @@
     {
       "id": "mcp",
       "type": "backend",
-      "label": "@husk/mcp",
+      "label": "@husk-ai/mcp",
       "sublabel": "stdio only",
       "row": 0,
       "col": 0,
@@ -46,7 +46,7 @@
     {
       "id": "cli",
       "type": "backend",
-      "label": "@husk/cli",
+      "label": "@husk-ai/cli",
       "sublabel": "up · run · doctor",
       "row": 0,
       "col": 1,
@@ -64,7 +64,7 @@
     {
       "id": "server",
       "type": "backend",
-      "label": "@husk/server",
+      "label": "@husk-ai/server",
       "sublabel": "Fastify, loopback",
       "row": 0,
       "col": 3,
@@ -82,7 +82,7 @@
     {
       "id": "adapters",
       "type": "backend",
-      "label": "@husk/adapters",
+      "label": "@husk-ai/adapters",
       "sublabel": "chat front ends",
       "row": 0,
       "col": 2,
@@ -100,7 +100,7 @@
     {
       "id": "sdk",
       "type": "backend",
-      "label": "@husk/sdk",
+      "label": "@husk-ai/sdk",
       "sublabel": "typed HTTP client",
       "row": 0,
       "col": 4,
@@ -118,7 +118,7 @@
     {
       "id": "agent",
       "type": "backend",
-      "label": "@husk/agent",
+      "label": "@husk-ai/agent",
       "sublabel": "the tool-calling loop",
       "row": 1,
       "col": 1,
@@ -136,7 +136,7 @@
     {
       "id": "sessions",
       "type": "backend",
-      "label": "@husk/sessions",
+      "label": "@husk-ai/sessions",
       "sublabel": "chat → husk.yaml",
       "row": 1,
       "col": 2,
@@ -166,7 +166,7 @@
     {
       "id": "runtime",
       "type": "cloud",
-      "label": "@husk/runtime",
+      "label": "@husk-ai/runtime",
       "sublabel": "5 providers, scored",
       "row": 2,
       "col": 0,
@@ -184,7 +184,7 @@
     {
       "id": "models",
       "type": "cloud",
-      "label": "@husk/models",
+      "label": "@husk-ai/models",
       "sublabel": "10 providers, no SDKs",
       "row": 2,
       "col": 2,
@@ -202,7 +202,7 @@
     {
       "id": "browser",
       "type": "cloud",
-      "label": "@husk/browser",
+      "label": "@husk-ai/browser",
       "sublabel": "Chromium via CDP",
       "row": 2,
       "col": 3,
@@ -238,7 +238,7 @@
     {
       "id": "core",
       "type": "security",
-      "label": "@husk/core",
+      "label": "@husk-ai/core",
       "sublabel": "contracts · zod spec · network policy · redact · audit",
       "row": 3,
       "col": 0,
@@ -390,16 +390,16 @@
       "dot": "cyan",
       "title": "Four entry points",
       "items": [
-        "@husk/mcp — stdio only; streamable HTTP is specced, not built",
-        "@husk/cli, @husk/server (loopback), @husk/adapters"
+        "@husk-ai/mcp — stdio only; streamable HTTP is specced, not built",
+        "@husk-ai/cli, @husk-ai/server (loopback), @husk-ai/adapters"
       ]
     },
     {
       "dot": "emerald",
       "title": "Dependencies run downhill",
       "items": [
-        "All 10 packages import @husk/core; core imports nothing from the workspace",
-        "Nothing imports @husk/cli"
+        "All 10 packages import @husk-ai/core; core imports nothing from the workspace",
+        "Nothing imports @husk-ai/cli"
       ]
     },
     {

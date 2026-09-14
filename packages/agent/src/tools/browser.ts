@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
-import { HuskError } from '@husk/core';
-import { browserFor } from '@husk/browser';
-import type { SnapshotNode } from '@husk/browser';
+import { HuskError } from '@husk-ai/core';
+import { browserFor } from '@husk-ai/browser';
+import type { SnapshotNode } from '@husk-ai/browser';
 import { defineTool, type AgentTool } from '../types.js';
 
 /**

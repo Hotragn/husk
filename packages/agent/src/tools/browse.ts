@@ -1,5 +1,5 @@
-import { HuskError, browseInComputer } from '@husk/core';
-import type { BrowseLink } from '@husk/core';
+import { HuskError, browseInComputer } from '@husk-ai/core';
+import type { BrowseLink } from '@husk-ai/core';
 import { defineTool, type AgentTool } from '../types.js';
 
 /**

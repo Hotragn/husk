@@ -180,7 +180,7 @@ info  [husk] no HUSK_TOKEN set -- loopback connections only
 ✓ control plane on http://127.0.0.1:7377
   health   http://127.0.0.1:7377/health
   doctor   http://127.0.0.1:7377/v1/doctor
-  clients  new HuskClient({ baseUrl: "http://127.0.0.1:7377" })  // @husk/sdk
+  clients  new HuskClient({ baseUrl: "http://127.0.0.1:7377" })  // @husk-ai/sdk
 
 Ctrl-C to stop.`}
 </Terminal>
@@ -196,7 +196,7 @@ single-page-app fallback is installed through `setNotFoundFallback` rather than 
 second handler, so it no longer collides with the API's own. Verified against this
 checkout with the console built.
 
-The line about the SDK in that paragraph still stands: `@husk/sdk` targets a different
+The line about the SDK in that paragraph still stands: `@husk-ai/sdk` targets a different
 set of paths than the server serves. See [SDK](/reference/sdk).
 </Note>
 
@@ -206,10 +206,10 @@ set of paths than the server serves. See [SDK](/reference/sdk).
 ## Running from the library
 
 ```ts
-import { Agent } from '@husk/agent';
-import { ModelRouter } from '@husk/models';
-import { ComputerManager } from '@husk/runtime';
-import { parseSpec } from '@husk/core';
+import { Agent } from '@husk-ai/agent';
+import { ModelRouter } from '@husk-ai/models';
+import { ComputerManager } from '@husk-ai/runtime';
+import { parseSpec } from '@husk-ai/core';
 
 const agent = new Agent({
   spec: parseSpec({ name: 'notes', model: 'sonnet', tools: ['computer', 'files'] }),
@@ -231,5 +231,5 @@ console.log(result.stopReason, result.steps, result.usage.costUsd);
 `run()` is `stream()` drained to completion, so there is one code path rather than two.
 
 The router and the computer source are structural interfaces, not concrete imports:
-`@husk/agent` depends on `@husk/core` and nothing else in the workspace, so you can pass
+`@husk-ai/agent` depends on `@husk-ai/core` and nothing else in the workspace, so you can pass
 a fake in a test without a container anywhere near it.

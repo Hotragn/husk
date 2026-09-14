@@ -6,7 +6,7 @@ import { UsageError } from './args.js';
  * Render a failure.
  *
  * Deliberately duck-typed instead of `instanceof HuskError`: importing
- * `@husk/core` here would pull zod onto the startup path of every invocation,
+ * `@husk-ai/core` here would pull zod onto the startup path of every invocation,
  * including `husk --help`. The shape is stable and part of the contract, and a
  * HuskError that crossed a package boundary is still the same object.
  */

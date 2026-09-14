@@ -1,5 +1,5 @@
-import { HuskError, clampText } from '@husk/core';
-import type { Computer, DirEntry } from '@husk/core';
+import { HuskError, clampText } from '@husk-ai/core';
+import type { Computer, DirEntry } from '@husk-ai/core';
 import { defineTool } from '../types.js';
 import type { AgentTool, AgentToolContext } from '../types.js';
 import { bool, int, object, shellQuote, str } from './util.js';

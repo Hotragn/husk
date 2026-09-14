@@ -1,5 +1,5 @@
 /**
- * @husk/sessions -- a chat becomes a bot.
+ * @husk-ai/sessions -- a chat becomes a bot.
  *
  * Import a transcript (Claude Code, ChatGPT, Cursor, Gemini, markdown),
  * reconstruct the thread that actually happened, distil it into a

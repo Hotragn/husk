@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { TranscriptMessage } from '@husk/core';
+import type { TranscriptMessage } from '@husk-ai/core';
 
 /**
  * Every prompt the distiller sends, as a pure function of its inputs.

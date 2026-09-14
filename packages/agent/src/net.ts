@@ -1,10 +1,10 @@
-import { HuskError } from '@husk/core';
-import type { NetworkPolicy } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
+import type { NetworkPolicy } from '@husk-ai/core';
 
 /**
  * Host matching for the husk's NetworkPolicy.
  *
- * This duplicates `@husk/runtime`'s policy helpers on purpose: the dependency
+ * This duplicates `@husk-ai/runtime`'s policy helpers on purpose: the dependency
  * direction is core <- runtime <- agent, and agent may only import core. The
  * rules are small enough to restate exactly, and both copies are tested, so a
  * host refused in one place is refused in the other.

@@ -31,7 +31,7 @@
     { "id": "w9", "from": "approver", "to": "approve", "label": "answers", "labelDy": -28 }
   ],
   "cards": [
-    { "dot": "cyan", "title": "The wedge is one line", "items": ["claude mcp add husk -- npx -y @husk/mcp", "No account, no config file, no signup — the developer already has the model"] },
+    { "dot": "cyan", "title": "The wedge is one line", "items": ["claude mcp add husk -- npx -y @husk-ai/mcp", "No account, no config file, no signup — the developer already has the model"] },
     { "dot": "emerald", "title": "The second product is a file", "items": ["A transcript becomes a husk.yaml a human can read, diff and edit", "Triggers — http, cron, discord, slack, telegram, webhook, cli — make it a bot"] },
     { "dot": "rose", "title": "Approval is a real actor", "items": ["In ask mode, dangerous tools pause for a human", "With no approver wired the call is denied, not allowed"] }
   ]

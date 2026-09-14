@@ -1,4 +1,4 @@
-# @husk/agent
+# @husk-ai/agent
 
 The tool-calling loop at the heart of Husk, plus the built-in tools.
 
@@ -6,7 +6,7 @@ It streams tokens, runs a turn's tool calls in parallel while keeping their resu
 the model's order, enforces every ceiling *before* it spends, and treats approval as a
 control rather than a suggestion.
 
-This package depends on `@husk/core` and nothing else in the workspace. The model
+This package depends on `@husk-ai/core` and nothing else in the workspace. The model
 router and the computer source are **injected** as structural interfaces, so the loop
 runs in a test with no network, no Docker, and no build-order coupling.
 
@@ -30,10 +30,10 @@ can reach (an `ANTHROPIC_API_KEY`, or a local Ollama), and Docker if you want a 
 container — without Docker the runtime falls back to the guarded `local` provider.
 
 ```js
-import { ComputerManager } from '@husk/runtime';
-import { ModelRouter } from '@husk/models';
-import { Agent } from '@husk/agent';
-import { parseSpec } from '@husk/core';
+import { ComputerManager } from '@husk-ai/runtime';
+import { ModelRouter } from '@husk-ai/models';
+import { Agent } from '@husk-ai/agent';
+import { parseSpec } from '@husk-ai/core';
 
 const spec = parseSpec({
   name: 'release-notes',
@@ -142,7 +142,7 @@ always fails.
 Write your own with `defineTool`, and hand it in as `tools: [...]`:
 
 ```ts
-import { defineTool } from '@husk/agent';
+import { defineTool } from '@husk-ai/agent';
 
 const wordCount = defineTool({
   name: 'word_count',
@@ -173,7 +173,7 @@ separated from its `tool_result` — the mistake every provider answers with a 4
 ## Scripts
 
 ```
-npm run typecheck --workspace=@husk/agent
-npm run build     --workspace=@husk/agent
-npm run test      --workspace=@husk/agent
+npm run typecheck --workspace=@husk-ai/agent
+npm run build     --workspace=@husk-ai/agent
+npm run test      --workspace=@husk-ai/agent
 ```

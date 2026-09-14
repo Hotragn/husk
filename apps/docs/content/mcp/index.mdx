@@ -6,7 +6,7 @@ order: 1
 ---
 
 ```bash
-claude mcp add husk -- npx -y @husk/mcp
+claude mcp add husk -- npx -y @husk-ai/mcp
 ```
 
 That is the whole install. There is no second step, no account, and no config file to
@@ -18,7 +18,7 @@ persists across tool calls, and a way to publish a port.
 ## Verify it
 
 ```bash
-npx -y @husk/mcp --help      # options, printed to stderr
+npx -y @husk-ai/mcp --help      # options, printed to stderr
 ```
 
 The protocol itself is easy to check by hand — the server speaks JSON-RPC over stdio, so
@@ -28,7 +28,7 @@ two lines of input list its tools:
 {`$ printf '%s\\n%s\\n' \\
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' \\
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \\
-  | npx -y @husk/mcp 2>/dev/null | jq -r 'select(.id==2) | .result.tools[].name'
+  | npx -y @husk-ai/mcp 2>/dev/null | jq -r 'select(.id==2) | .result.tools[].name'
 shell
 read_file
 write_file
@@ -43,7 +43,7 @@ computer_info`}
 Stdio. That is the whole list.
 
 <NotYet>
-`docs/ARCHITECTURE.md` and `docs/BUILD-CONTRACT.md` both describe `@husk/mcp` as
+`docs/ARCHITECTURE.md` and `docs/BUILD-CONTRACT.md` both describe `@husk-ai/mcp` as
 "stdio + streamable HTTP". The package imports one transport, `StdioServerTransport`,
 and exposes one connect method, `connectStdio()`.
 
@@ -114,8 +114,8 @@ The server also sends MCP `instructions` at initialisation:
 client:
 
 ```bash
-claude mcp add husk-api -- npx -y @husk/mcp --session api --flavor python
-claude mcp add husk-web -- npx -y @husk/mcp --session web --flavor node
+claude mcp add husk-api -- npx -y @husk-ai/mcp --session api --flavor python
+claude mcp add husk-web -- npx -y @husk-ai/mcp --session web --flavor node
 ```
 
 <Note>
@@ -134,7 +134,7 @@ stdout carries JSON-RPC and nothing else. Every log line goes to stderr. A stray
 If you are debugging, read stderr:
 
 ```bash
-npx -y @husk/mcp 2>/tmp/husk-mcp.log
+npx -y @husk-ai/mcp 2>/tmp/husk-mcp.log
 ```
 
 ## Which provider you get
@@ -156,7 +156,7 @@ JSON block rather than a CLI command:
   "mcpServers": {
     "husk": {
       "command": "npx",
-      "args": ["-y", "@husk/mcp", "--session", "cursor", "--flavor", "python"]
+      "args": ["-y", "@husk-ai/mcp", "--session", "cursor", "--flavor", "python"]
     }
   }
 }

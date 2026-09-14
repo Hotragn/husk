@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { parseSpec } from '@husk/core';
-import type { ChatRequest, ChatResponse, Transcript, TranscriptMessage } from '@husk/core';
+import { parseSpec } from '@husk-ai/core';
+import type { ChatRequest, ChatResponse, Transcript, TranscriptMessage } from '@husk-ai/core';
 import {
   DIRECTIVES,
   distill,
@@ -408,7 +408,7 @@ describe('mining respects the speaker', () => {
       '<task-notification>',
       '<task-id>a207096b99b0f9aa0</task-id>',
       '<tool-use-id>toolu_01VMSUooodxpFaGNWuLZKtFL</tool-use-id>',
-      '<summary>Agent "Build @husk/models" finished</summary>',
+      '<summary>Agent "Build @husk-ai/models" finished</summary>',
       '<result>Always assert the cost ceiling is never crossed.</result>',
       '</task-notification>',
     ].join('\n');
@@ -445,7 +445,7 @@ describe('knowledge quality floor', () => {
 
   it('rejects a status report', () => {
     expect(
-      knowledgeFrom('- Agent "Build @husk/models" failed: rate limited\n- https://ci.example.com/3'),
+      knowledgeFrom('- Agent "Build @husk-ai/models" failed: rate limited\n- https://ci.example.com/3'),
     ).toEqual([]);
   });
 

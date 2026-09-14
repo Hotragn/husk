@@ -21,7 +21,7 @@
        `strict` is on because the brief says no `any` at the SDK boundary, and
        the only way to hold that line is to let the compiler refuse the
        shortcuts. `exactOptionalPropertyTypes` earns its keep here in
-       particular: `@husk/core` distinguishes an absent optional field from one
+       particular: `@husk-ai/core` distinguishes an absent optional field from one
        explicitly set to `undefined`, and so does the wire format. */
     "strict": true,
     "noUncheckedIndexedAccess": true,

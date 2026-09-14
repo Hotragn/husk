@@ -1,5 +1,5 @@
-import { mapLimit } from '@husk/core';
-import type { ChatRequest, ModelInfo, StreamEvent } from '@husk/core';
+import { mapLimit } from '@husk-ai/core';
+import type { ChatRequest, ModelInfo, StreamEvent } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ctxOf } from '../context.js';

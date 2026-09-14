@@ -7,7 +7,7 @@
   // The tests are excluded from the build config so they never reach `dist`.
   // They are typechecked here instead: `contract.test.ts` is the file that
   // encodes the server contract, and a contract that does not typecheck is not
-  // one. Everything it needs -- `@husk/server`, `@husk/runtime` -- it imports
+  // one. Everything it needs -- `@husk-ai/server`, `@husk-ai/runtime` -- it imports
   // through the package entry points, so no sibling source enters the program.
   "include": [
     "src"

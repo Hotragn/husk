@@ -1,4 +1,4 @@
-import type { DistilledAgent, Transcript } from '@husk/core';
+import type { DistilledAgent, Transcript } from '@husk-ai/core';
 import { distillHeuristic, distillWithModel } from './distill.js';
 import type { ModelDistillOptions } from './distill.js';
 import type { ChatLike } from './chat.js';

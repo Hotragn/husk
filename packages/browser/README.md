@@ -1,9 +1,9 @@
-# @husk/browser
+# @husk-ai/browser
 
 A real Chromium, running **inside the agent's computer**, driven over the Chrome
 DevTools Protocol.
 
-`browseInComputer` in `@husk/core` fetches HTML with `urllib` and strips the
+`browseInComputer` in `@husk-ai/core` fetches HTML with `urllib` and strips the
 tags. That is the right zero-dependency floor and it is not going anywhere — but
 it cannot see a page that only exists after JavaScript runs, it cannot log in,
 and it cannot click. This can.
@@ -30,8 +30,8 @@ fast enough.
 ## Example
 
 ```ts
-import { LocalProvider } from '@husk/runtime';
-import { browserFor } from '@husk/browser';
+import { LocalProvider } from '@husk-ai/runtime';
+import { browserFor } from '@husk-ai/browser';
 
 const computer = await new LocalProvider().create({
   name: 'browsing',
@@ -97,7 +97,7 @@ explicitly rather than resolving them to something nearby.
 
 ## Network policy
 
-Every navigation goes through `assertUrlAllowed` from `@husk/core`, with the
+Every navigation goes through `assertUrlAllowed` from `@husk-ai/core`, with the
 same `loopbackIsOwn` rule `browseInComputer` uses: `docker`, `podman` and `fly`
 own their loopback, `local` and `ssh` do not. `mode: 'full'` still refuses
 `169.254.169.254`. A real browser — which will follow a redirect chain a

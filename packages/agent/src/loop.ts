@@ -8,7 +8,7 @@ import {
   messageText,
   redact,
   renderPersona,
-} from '@husk/core';
+} from '@husk-ai/core';
 import type {
   ChatRequest,
   ChatResponse,
@@ -24,7 +24,7 @@ import type {
   ToolResultPart,
   ToolSchema,
   Usage,
-} from '@husk/core';
+} from '@husk-ai/core';
 import { Budget, pricingOf } from './budget.js';
 import { renderForSummary, trimHistory } from './memory.js';
 import { EventQueue } from './queue.js';
@@ -86,7 +86,7 @@ export class Agent {
     }
     if (!result) {
       throw new HuskError('E_INTERNAL', 'the run produced no result', {
-        hint: 'this is a bug in @husk/agent; report it with the husk.yaml that triggered it',
+        hint: 'this is a bug in @husk-ai/agent; report it with the husk.yaml that triggered it',
       });
     }
     return result;
@@ -610,7 +610,7 @@ class Run {
       return Promise.reject(
         new HuskError('E_COMPUTER_NOT_FOUND', `the husk "${this.spec.name}" has no computer`, {
           hint: this.spec.computer.enabled
-            ? 'construct the Agent with a `computers` source, such as a ComputerManager from @husk/runtime'
+            ? 'construct the Agent with a `computers` source, such as a ComputerManager from @husk-ai/runtime'
             : 'set computer.enabled to true in husk.yaml',
         }),
       );

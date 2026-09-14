@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { basename, resolve as resolvePath } from 'node:path';
-import { HuskError, defaultSpec, parseSpec } from '@husk/core';
+import { HuskError, defaultSpec, parseSpec } from '@husk-ai/core';
 import { parse } from '../args.js';
 import { renderSpec, slugName } from '../lib/yaml.js';
 import { interactive, session } from '../lib/prompt.js';

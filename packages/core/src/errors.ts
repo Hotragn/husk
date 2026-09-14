@@ -15,7 +15,7 @@ export type HuskErrorCode =
    * the output the agent needs in order to explain what happened.
    *
    * Kept because it is the honest code for the *status* of such a result: the
-   * server maps it to 504 and `@husk/sdk` decodes 504 back to it, so a proxy or
+   * server maps it to 504 and `@husk-ai/sdk` decodes 504 back to it, so a proxy or
    * gateway timing out a request still round-trips into a sensible `HuskError`.
    */
   | 'E_EXEC_TIMEOUT'
@@ -46,8 +46,8 @@ export type HuskErrorCode =
 /**
  * Codes that are part of the contract but are never thrown by husk itself.
  *
- * They are declared so the status mapping in `@husk/server` and the decoder in
- * `@husk/sdk` have something to name, and so removing one is a deliberate
+ * They are declared so the status mapping in `@husk-ai/server` and the decoder in
+ * `@husk-ai/sdk` have something to name, and so removing one is a deliberate
  * breaking change rather than an accident. The condition each describes
  * surfaces as data -- `ExecResult.timedOut`, `RunResult.stopReason` -- because
  * a timeout or a step ceiling is a result the caller wants to read, not an

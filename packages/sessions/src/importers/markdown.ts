@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
-import { HuskError, id } from '@husk/core';
-import type { ImportInput, Transcript, TranscriptImporter, TranscriptMessage } from '@husk/core';
+import { HuskError, id } from '@husk-ai/core';
+import type { ImportInput, Transcript, TranscriptImporter, TranscriptMessage } from '@husk-ai/core';
 import { isDirectory, listFiles } from './fsutil.js';
 
 /**

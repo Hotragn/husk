@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HuskError } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
 import { decodeEvents, parseFrame, readFrames } from './sse.js';
 
 function streamOf(...chunks: string[]): ReadableStream<Uint8Array> {

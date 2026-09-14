@@ -1,5 +1,5 @@
 import { resolve as resolvePath } from 'node:path';
-import { formatBytes } from '@husk/core';
+import { formatBytes } from '@husk-ai/core';
 import { UsageError, parse, parseCount } from '../args.js';
 import { discover } from '../lib/discover.js';
 import type { Candidate } from '../lib/discover.js';

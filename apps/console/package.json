@@ -1,5 +1,5 @@
 {
-  "name": "@husk/console",
+  "name": "@husk-ai/console",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -12,9 +12,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@husk/browser": "0.1.0",
-    "@husk/core": "0.1.0",
-    "@husk/sdk": "0.1.0",
+    "@husk-ai/browser": "0.1.0",
+    "@husk-ai/core": "0.1.0",
+    "@husk-ai/sdk": "0.1.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "react": "19.2.8",

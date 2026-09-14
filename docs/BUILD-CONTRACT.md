@@ -16,7 +16,7 @@ Two jobs, one runtime:
    markdown), distill it into a `husk.yaml`, and serve it as a bot over HTTP, CLI,
    Discord, Slack, Telegram, or cron.
 
-The bridge is MCP: `claude mcp add husk -- npx -y @husk/mcp` gives Claude Code
+The bridge is MCP: `claude mcp add husk -- npx -y @husk-ai/mcp` gives Claude Code
 (or any MCP client) a computer immediately, with no account and no signup.
 
 ## Non-negotiables
@@ -28,7 +28,7 @@ The bridge is MCP: `claude mcp add husk -- npx -y @husk/mcp` gives Claude Code
 - **No telemetry.** Nothing leaves the machine except calls to the model provider the
   user configured. There is no phone-home, no analytics, no crash reporter.
 - **Secrets never reach a model.** Tool output passes through `redact()` from
-  `@husk/core` before it is added to the conversation.
+  `@husk-ai/core` before it is added to the conversation.
 - **Every error is actionable.** Throw `HuskError` with a `code` and a one-line `hint`
   that says what to do next.
 
@@ -36,20 +36,20 @@ The bridge is MCP: `claude mcp add husk -- npx -y @husk/mcp` gives Claude Code
 
 ```
 packages/
-  core/       @husk/core       contracts + primitives. Depends on nothing but zod.
-  runtime/    @husk/runtime    computer providers: docker, podman, local, ssh, fly
-  models/     @husk/models     model router: anthropic, openai, google, groq,
+  core/       @husk-ai/core       contracts + primitives. Depends on nothing but zod.
+  runtime/    @husk-ai/runtime    computer providers: docker, podman, local, ssh, fly
+  models/     @husk-ai/models     model router: anthropic, openai, google, groq,
                                openrouter, ollama, lmstudio, deepseek, mistral, cerebras
-  sessions/   @husk/sessions   transcript importers + the distiller (chat -> husk.yaml)
-  agent/      @husk/agent      the tool-calling loop + the built-in tools
-  mcp/        @husk/mcp        MCP server (stdio + streamable http)
-  server/     @husk/server     control plane REST/WS + bot host
-  adapters/   @husk/adapters   discord / slack / telegram / webhook front ends
-  sdk/        @husk/sdk        typed client for the control plane
-  cli/        @husk/cli        the `husk` binary
+  sessions/   @husk-ai/sessions   transcript importers + the distiller (chat -> husk.yaml)
+  agent/      @husk-ai/agent      the tool-calling loop + the built-in tools
+  mcp/        @husk-ai/mcp        MCP server (stdio + streamable http)
+  server/     @husk-ai/server     control plane REST/WS + bot host
+  adapters/   @husk-ai/adapters   discord / slack / telegram / webhook front ends
+  sdk/        @husk-ai/sdk        typed client for the control plane
+  cli/        @husk-ai/cli        the `husk` binary
 apps/
-  web/        @husk/web        marketing site + docs (Next.js, three.js)
-  console/    @husk/console    dashboard: live terminal, files, playground (Vite)
+  web/        @husk-ai/web        marketing site + docs (Next.js, three.js)
+  console/    @husk-ai/console    dashboard: live terminal, files, playground (Vite)
 sandbox/                       Dockerfiles for the husk images
 brand/                         brand kit
 ```
@@ -67,12 +67,12 @@ Never import from another package's `src/` — always the package name.
   writing it yourself would be irresponsible.
 - **No native modules.** No `better-sqlite3`, no `node-pty`, no anything needing a
   C++ toolchain. Windows users must get a clean `npm install`. Persist state as JSON
-  files under `paths()` from `@husk/core`.
+  files under `paths()` from `@husk-ai/core`.
 - Each package: `package.json` (name, version 0.1.0, license Apache-2.0, type module,
   main/types/exports pointing at `dist`, `files: ["dist"]`, scripts `build`,
   `typecheck`, `test`), `tsconfig.json` extending `../../tsconfig.base.json` with
   `outDir: dist`, `rootDir: src`, and `src/index.ts` as the only public surface.
-- Workspace deps use `"@husk/core": "0.1.0"` — npm workspaces links them.
+- Workspace deps use `"@husk-ai/core": "0.1.0"` — npm workspaces links them.
 - `strict` is on, and so is `noUncheckedIndexedAccess`. Index access yields `T |
   undefined`; handle it, do not blanket-assert.
 - Comments explain *why*. No comment restates the line below it. No section banners.
@@ -82,7 +82,7 @@ Never import from another package's `src/` — always the package name.
 
 ## The contracts (already written, do not change)
 
-Import these from `@husk/core`:
+Import these from `@husk-ai/core`:
 
 - `ComputerProvider`, `Computer`, `ComputerSpec`, `ExecRequest`, `ExecResult`,
   `NetworkPolicy`, `Availability` — the computer surface.
@@ -148,4 +148,4 @@ Verify with `ls packages/<name>/dist/*.test.js` — it must find nothing.
 `isHostAllowed` refuses loopback, link-local, and RFC1918 hosts **even in
 `network.mode: 'full'`**, unless the operator names them in `allow`. `mode: 'full'` means
 the internet, not the cloud metadata service at `169.254.169.254` that hands IAM
-credentials to anything that asks. Both `@husk/runtime` and `@husk/agent` enforce this.
+credentials to anything that asks. Both `@husk-ai/runtime` and `@husk-ai/agent` enforce this.

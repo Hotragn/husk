@@ -1,12 +1,12 @@
 /**
- * Browser shims for the four Node built-ins `@husk/core` reaches for.
+ * Browser shims for the four Node built-ins `@husk-ai/core` reaches for.
  *
- * `@husk/sdk` is described as "dependency-free: global `fetch`, and
- * `@husk/core` for the shared contracts", and its own code is genuinely
- * browser-safe. But every SDK module imports from `@husk/core`'s barrel, and
+ * `@husk-ai/sdk` is described as "dependency-free: global `fetch`, and
+ * `@husk-ai/core` for the shared contracts", and its own code is genuinely
+ * browser-safe. But every SDK module imports from `@husk-ai/core`'s barrel, and
  * that barrel re-exports `config.js` (`node:os`, `node:fs`, `node:path`) and
  * `ids.js` (`node:crypto`). Those are *value* imports evaluated at module load,
- * so a browser bundle throws on `import { HuskClient } from '@husk/sdk'`
+ * so a browser bundle throws on `import { HuskClient } from '@husk-ai/sdk'`
  * before a line of console code runs. Verified against 0.1.0:
  *
  *   Uncaught: Module "node:crypto" has been externalized for browser
@@ -26,13 +26,13 @@
 function unavailable(module: string, fn: string): never {
   throw new Error(
     `${module}.${fn}() is not available in the browser. The Husk console reached a Node-only code path in ` +
-      `@husk/core; nothing in the console should call it. Report this rather than working around it.`,
+      `@husk-ai/core; nothing in the console should call it. Report this rather than working around it.`,
   );
 }
 
 // -- node:crypto --------------------------------------------------------------
 
-/** A real implementation. `@husk/core`'s `id()` only needs random bytes. */
+/** A real implementation. `@husk-ai/core`'s `id()` only needs random bytes. */
 export function randomBytes(size: number): Uint8Array {
   return globalThis.crypto.getRandomValues(new Uint8Array(size));
 }

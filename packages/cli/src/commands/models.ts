@@ -1,4 +1,4 @@
-import type { ModelInfo } from '@husk/core';
+import type { ModelInfo } from '@husk-ai/core';
 import { parse } from '../args.js';
 import { buildProviders } from '../lib/models.js';
 import * as ui from '../ui.js';

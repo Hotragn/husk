@@ -1,4 +1,4 @@
-import { HuskError } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
 import { waitResultOf } from './cdp.js';
 import type { CdpConnection, CdpParams, DriverStep, SendStep } from './cdp.js';
 

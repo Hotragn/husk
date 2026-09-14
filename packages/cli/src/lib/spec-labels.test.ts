@@ -1,6 +1,6 @@
-import { computerSpecFor } from '@husk/agent';
-import { parseSpec } from '@husk/core';
-import { resolveFlyConfig, resolveSshSettings } from '@husk/runtime';
+import { computerSpecFor } from '@husk-ai/agent';
+import { parseSpec } from '@husk-ai/core';
+import { resolveFlyConfig, resolveSshSettings } from '@husk-ai/runtime';
 import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { renderSpec } from './yaml.js';

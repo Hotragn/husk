@@ -2,7 +2,7 @@
  * Husks: the list, the YAML, validation, and a playground that runs one.
  *
  * The playground streams `POST /v1/husks/:name/run/stream` and renders the
- * `RunEvent` union from `@husk/core` as it arrives — `text_delta`,
+ * `RunEvent` union from `@husk-ai/core` as it arrives — `text_delta`,
  * `tool_start`, `tool_delta`, `tool_end`, `usage` and the rest. When the run
  * blocks on `approval_required` the panel actually prompts and POSTs the answer
  * to `/v1/approvals/:id`; an unanswered request is denied by the server after
