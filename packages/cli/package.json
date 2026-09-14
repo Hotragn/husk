@@ -1,6 +1,6 @@
 {
   "name": "@husk-ai/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The husk command line: give your agent a computer, and turn a chat into a bot.",
   "license": "Apache-2.0",
   "type": "module",

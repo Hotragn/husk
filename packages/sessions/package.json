@@ -1,6 +1,6 @@
 {
   "name": "@husk-ai/sessions",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Transcript importers and the distiller that turns a chat into a husk.yaml.",
   "license": "Apache-2.0",
   "type": "module",

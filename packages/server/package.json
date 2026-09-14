@@ -1,6 +1,6 @@
 {
   "name": "@husk-ai/server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Husk control plane (REST + SSE + WS) and bot host.",
   "license": "Apache-2.0",
   "type": "module",
