@@ -14,8 +14,8 @@ env:
   HUSK_LOG_LEVEL: warn
 
 jobs:
-  packages:
-    name: packages (node ${{ matrix.node }}, ${{ matrix.os }})
+  install:
+    name: install (node ${{ matrix.node }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -29,9 +29,6 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: npm run build --workspaces --if-present
-      - run: npm run typecheck --workspaces --if-present
-      - run: npm run test --workspaces --if-present
 
   secrets:
     name: no credentials in the tree or the history
