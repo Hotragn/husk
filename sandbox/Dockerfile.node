@@ -1,0 +1,40 @@
+# husk node flavor
+#
+# Node from nodesource rather than Debian's, because Debian ships a Node old enough
+# that half of npm refuses to install on it.
+ARG HUSK_VERSION=0.1.0
+FROM ghcr.io/husk-sh/husk-base:${HUSK_VERSION} AS base
+
+LABEL org.opencontainers.image.title="husk-node" \
+      husk.flavor="node"
+
+USER root
+ARG NODE_MAJOR=22
+ENV HUSK_FLAVOR=node \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NODE_ENV=development
+
+RUN mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+        | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
+        > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable \
+    && node --version && npm --version
+
+# npm's global prefix must be writable by the husk user, or every `npm i -g` fails
+# with a permissions error the agent cannot fix.
+RUN mkdir -p /home/husk/.npm-global \
+    && chown -R husk:husk /home/husk/.npm-global
+ENV NPM_CONFIG_PREFIX=/home/husk/.npm-global \
+    PATH=/home/husk/.npm-global/bin:$PATH
+
+USER husk
+WORKDIR /work
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/husk-entrypoint"]
+CMD ["idle"]

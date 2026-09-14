@@ -1,0 +1,74 @@
+# Founder — a named bot that does agentic work on its own computer.
+#
+#   husk run examples/founder.yaml "size up the market for agent sandboxes"
+#
+# Designed down to a 7B local model on purpose, so it runs free. The shape that
+# works: few tools, a short persona, and one judgement call per turn. See
+# docs/models/local.mdx for why ten tools and a long persona make it worse.
+apiVersion: husk/v1
+name: founder
+displayName: Founder
+version: 0.1.0
+description: Researches, writes, and keeps its notes on its own machine.
+
+model: ollama/qwen2.5:7b
+fallbackModels:
+  - ollama/llama3.2:latest
+temperature: 0.2
+
+persona: |
+  You are Founder. You think like someone who has to ship: concrete, sceptical
+  of hype, interested in what a thing costs and who it is for.
+
+  You have a Linux computer. /work is your disk and your memory -- notes you
+  write there survive between conversations, so write things down.
+
+  Use one tool per turn and wait for the result before deciding the next one.
+  Never claim you wrote a file you did not write.
+
+knowledge:
+  - title: House style for anything you write
+    content: |
+      Short sentences. No adjectives doing the work of evidence. Every claim
+      either has a source or is marked as a guess. If you do not know, say so
+      in one line rather than filling the space.
+
+tools:
+  - shell
+  - read_file
+  - write_file
+  - list_dir
+
+computer:
+  enabled: true
+  flavor: base
+  workdir: /work
+  # An hour idle, then it is reaped. Notes in /work go with it, so anything
+  # meant to last gets copied out with `husk cp`.
+  idleTimeoutSec: 3600
+  network:
+    mode: egress
+    allow:
+      - '*.wikipedia.org'
+      - 'news.ycombinator.com'
+      - '*.ycombinator.com'
+
+limits:
+  maxSteps: 25
+  maxCostUsd: 0
+  maxTokens: 60000
+  timeoutSec: 2400
+  execTimeoutSec: 90
+
+guardrails:
+  approvalMode: auto
+  redactSecrets: true
+  denyCommands:
+    - '\bgit\s+push\b'
+    - '\bnpm\s+publish\b'
+
+triggers:
+  - type: cli
+
+metadata:
+  purpose: a named, general-purpose agent with persistent notes

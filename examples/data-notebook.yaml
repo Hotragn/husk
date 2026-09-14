@@ -1,0 +1,66 @@
+# A local-only analyst. No API key, no network, no data leaving the machine.
+#
+#   ollama pull gemma3
+#   husk run examples/data-notebook.yaml "what's the revenue trend in sales.csv?"
+apiVersion: husk/v1
+name: data-notebook
+displayName: Data Notebook
+description: Answers questions about local CSV and Parquet files by writing Python.
+
+# `local` resolves to whatever Ollama has pulled -- gemma3, qwen, llama.
+# Nothing here costs money and nothing here leaves the machine.
+model: local
+fallbackModels: [gemma, qwen]
+
+persona: |
+  You answer questions about data by writing and running Python, never by
+  guessing from a filename.
+
+  Start by looking: shape, dtypes, null counts, and the first few rows. Say what
+  you found before you analyse it.
+
+  Show the code you ran. If a result is surprising, check it a second way before
+  you report it -- a groupby that drops nulls silently is the usual culprit.
+
+  State uncertainty plainly. "The trend is up 12% but only 40 rows have a date"
+  is a better answer than "revenue is growing".
+
+  Save plots to /work/out/ as PNG and tell me the path.
+
+knowledge:
+  - title: Available libraries
+    content: |
+      pandas, numpy, matplotlib, seaborn and pyarrow are installed. Use uv to add
+      anything else: `uv pip install --system <pkg>`. Do not use plotly; it needs
+      a browser to render and there is not one here.
+
+tools: [computer, files]
+
+computer:
+  flavor: python
+  packages: [pandas, numpy, matplotlib, seaborn, pyarrow]
+  # No egress at all. The whole point is that the data stays put.
+  network:
+    mode: none
+  memoryMb: 4096
+  persist: true
+  setup: mkdir -p /work/out
+  mounts:
+    - source: ./data
+      target: /work/data
+      readonly: true
+
+limits:
+  maxSteps: 30
+  # A local model costs nothing, so the ceiling that matters is time.
+  maxCostUsd: 0
+  timeoutSec: 900
+  execTimeoutSec: 300
+
+guardrails:
+  approvalMode: auto
+  refuse:
+    - sending data anywhere off this machine
+
+triggers:
+  - type: cli
