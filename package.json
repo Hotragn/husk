@@ -12,7 +12,7 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build -w @husk/core -w @husk/runtime -w @husk/models -w @husk/sessions -w @husk/browser -w @husk/agent",
+    "build": "npm run build -w @husk/core -w @husk/runtime -w @husk/models -w @husk/sessions -w @husk/browser -w @husk/agent -w @husk/adapters",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "clean": "node scripts/clean.mjs"
