@@ -4,7 +4,7 @@
 
 ```bash
 npm install
-npm run build:packages
+npm run build
 npm test
 node packages/cli/dist/bin.js doctor
 ```
