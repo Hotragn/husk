@@ -234,7 +234,7 @@ describe.skipIf(!built)('the free path, end to end', () => {
     }
 
     try {
-      const exec = husk(['exec', name, '--json', '--', 'echo hi > /work/a.txt; cat /work/a.txt']);
+      const exec = husk(['exec', name, '--json', '--', 'echo hi > a.txt; cat a.txt']);
       expect(exec.status).toBe(0);
       const result = JSON.parse(exec.stdout);
       expect(result.exitCode).toBe(0);
