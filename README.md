@@ -10,6 +10,7 @@
   <p>
     <a href="https://github.com/Hotragn/husk/actions/workflows/ci.yml"><img src="https://github.com/Hotragn/husk/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
     <a href="https://www.npmjs.com/package/@husk-ai/cli"><img src="https://img.shields.io/npm/v/@husk-ai/cli?label=npm&color=cb3837" alt="npm"></a>
+    <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status: Alpha">
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License"></a>
     <a href="https://github.com/Hotragn/husk/stargazers"><img src="https://img.shields.io/github/stars/Hotragn/husk?style=social" alt="GitHub stars"></a>
   </p>
@@ -18,6 +19,9 @@
 Husk gives your AI chat a real computer of its own: files, a browser, and somewhere to run code. It can build things, look stuff up online and keep your work between chats. Turn a chat you already had into a bot that does the job again tomorrow.
 
 Free to start. Runs on your hardware. No account required.
+
+> [!WARNING]
+> Husk is in **alpha** — the API, CLI flags, and `husk.yaml` schema may change between minor versions until v1.0. Pin your dependency versions and check the [changelog](CHANGELOG.md) before upgrading.
 
 > **See how it fits together** — open the [interactive architecture diagram](docs/diagrams/01-hero.html) locally. Pan, zoom, dark/light mode, PNG/SVG export, no server needed.
 
