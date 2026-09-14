@@ -35,6 +35,18 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  secrets:
+    name: no credentials in the tree or the history
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # The whole history, not the default shallow clone: a key deleted in a
+        # later commit is still in the object store, and still leaked.
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: node scripts/secret-scan.mjs
+
   cli-smoke:
     name: cli smoke (no keys, no docker)
     runs-on: ubuntu-latest
