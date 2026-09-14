@@ -21,7 +21,7 @@ Husk gives your AI chat a real computer of its own: files, a browser, and somewh
 Free to start. Runs on your hardware. No account required.
 
 > [!NOTE]
-> Husk is in **alpha** and under active development. The API, CLI flags, and `husk.yaml` schema may change between minor versions before v1.0. Feedback and contributions are welcome — see the [good first issues](https://github.com/Hotragn/husk/labels/good%20first%20issue).
+> Husk is in **early alpha** — everything works, things are moving fast, and your feedback shapes what comes next. [Jump in](https://github.com/Hotragn/husk/discussions).
 
 > **See how it fits together** — open the [interactive architecture diagram](docs/diagrams/01-hero.html) locally. Pan, zoom, dark/light mode, PNG/SVG export, no server needed.
 
