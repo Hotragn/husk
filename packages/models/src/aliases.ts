@@ -7,7 +7,7 @@
  * strategy the router executes against `detect()`.
  */
 
-import { HuskError } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
 import { CATALOG, findByBareName, findModel, splitModelId } from './catalog.js';
 
 /** Aliases that resolve to a fixed, fully-qualified model id. */

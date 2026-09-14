@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ContentPart, ModelMessage } from '@husk/core';
+import type { ContentPart, ModelMessage } from '@husk-ai/core';
 import { pruneOrphans, renderForSummary, trimHistory } from './memory.js';
 
 function user(text: string): ModelMessage {

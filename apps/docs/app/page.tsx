@@ -79,7 +79,7 @@ hint:  add a pattern to guardrails.allowCommands in husk.yaml if this is intenti
             Linux machine mid-conversation.
           </p>
         </div>
-        <Terminal>{`claude mcp add husk -- npx -y @husk/mcp`}</Terminal>
+        <Terminal>{`claude mcp add husk -- npx -y @husk-ai/mcp`}</Terminal>
         <div className="landing-prose">
           <p>
             There is no second step. Nothing is created until the model calls a tool, and

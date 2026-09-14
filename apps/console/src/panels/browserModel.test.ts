@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backendNodeIdOf, flattenAxTree } from '@husk/browser';
+import { backendNodeIdOf, flattenAxTree } from '@husk-ai/browser';
 import type { SnapshotNode } from '../api/wire';
 import { latestProgressFor,
   actionableNodes,
@@ -37,7 +37,7 @@ describe('ref selection', () => {
     expect(isActionableRef('')).toBe(false);
   });
 
-  it('agrees with @husk/browser about which refs resolve', () => {
+  it('agrees with @husk-ai/browser about which refs resolve', () => {
     // The contract, not our restatement of it: whatever `backendNodeIdOf`
     // resolves is exactly what this panel is allowed to offer.
     for (const ref of ['e1', 'e999', 'a1', 'a', 'e', 'exyz', '']) {

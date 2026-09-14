@@ -79,13 +79,13 @@ else bad(`versions disagree: ${[...versions].join(', ')}`);
 // usable for a consumer.
 for (const [dir, p] of Object.entries(pkgs)) {
   for (const [dep, range] of Object.entries(p.dependencies ?? {})) {
-    if (!dep.startsWith('@husk/')) continue;
+    if (!dep.startsWith('@husk-ai/')) continue;
     if (/^(workspace:|\*)/.test(range)) bad(`${p.name} depends on ${dep}@${range}, which cannot resolve off the workspace`);
-    const target = pkgs[dep.replace('@husk/', '')];
+    const target = pkgs[dep.replace('@husk-ai/', '')];
     if (target && range !== target.version) {
       warn(`${p.name} wants ${dep}@${range} but that package is ${target.version}`);
     }
-    if (target && ORDER.indexOf(dep.replace('@husk/', '')) > ORDER.indexOf(dir)) {
+    if (target && ORDER.indexOf(dep.replace('@husk-ai/', '')) > ORDER.indexOf(dir)) {
       bad(`${p.name} depends on ${dep}, which publishes later -- reorder`);
     }
   }

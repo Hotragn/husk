@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { defaultProviders as defaultModelProviders } from '@husk/models';
-import { defaultProviders as defaultComputerProviders } from '@husk/runtime';
+import { defaultProviders as defaultModelProviders } from '@husk-ai/models';
+import { defaultProviders as defaultComputerProviders } from '@husk-ai/runtime';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { statusForCode } from './errors.js';
 import type { ServerErrorCode } from './errors.js';

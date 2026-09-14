@@ -1,8 +1,8 @@
-import { HuskError } from '@husk/core';
-import type { ChatRequest, ChatResponse, ModelInfo, ModelProvider, StreamEvent } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
+import type { ChatRequest, ChatResponse, ModelInfo, ModelProvider, StreamEvent } from '@husk-ai/core';
 
 /**
- * Every model provider `@husk/models` implements.
+ * Every model provider `@husk-ai/models` implements.
  *
  * Taken from the package's own `defaultProviders()` rather than a list kept
  * here, so a provider added upstream appears in `husk doctor` and `husk models`
@@ -10,7 +10,7 @@ import type { ChatRequest, ChatResponse, ModelInfo, ModelProvider, StreamEvent }
  * missing when it actually exists.
  */
 export async function buildProviders(): Promise<ModelProvider[]> {
-  const m = await import('@husk/models');
+  const m = await import('@husk-ai/models');
   return [...m.defaultProviders()].sort((a, b) => b.priority - a.priority);
 }
 

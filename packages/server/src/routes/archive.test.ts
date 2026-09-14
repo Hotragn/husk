@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Buffer } from 'node:buffer';
 import { buildTestApp, FakeComputer } from '../testing.js';
 import type { TestApp } from '../testing.js';
-import type { ExecRequest, ExecResult } from '@husk/core';
+import type { ExecRequest, ExecResult } from '@husk-ai/core';
 
 /**
  * A computer whose `tar` does something.

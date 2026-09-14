@@ -60,7 +60,7 @@ function writeStored(key: string, value: string): void {
 }
 
 export function ConnectionProvider({ children }: { children: ReactNode }) {
-  // Same origin by default: in production `@husk/server` serves this bundle
+  // Same origin by default: in production `@husk-ai/server` serves this bundle
   // itself, and in development `vite.config.ts` proxies `/v1` and `/health`
   // through to it. Either way there is no cross-origin request to arrange.
   const [baseUrl, setBaseUrl] = useState(() => readStored(BASE_URL_KEY, window.location.origin));

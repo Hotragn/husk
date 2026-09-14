@@ -32,27 +32,27 @@ entirely in the provider.
 
 ```
                        ┌──────────────────────────────────────────┐
-   Claude Code ───────▶│  @husk/mcp        stdio + streamable HTTP│
+   Claude Code ───────▶│  @husk-ai/mcp        stdio + streamable HTTP│
    Cursor, Zed         └────────────────────┬─────────────────────┘
    any MCP client                           │
                        ┌────────────────────▼─────────────────────┐
-   HTTP / Discord ────▶│  @husk/server     control plane + bots   │
+   HTTP / Discord ────▶│  @husk-ai/server     control plane + bots   │
    Slack / cron        └────────────────────┬─────────────────────┘
                        ┌────────────────────▼─────────────────────┐
-   husk run ──────────▶│  @husk/agent      the tool-calling loop  │
+   husk run ──────────▶│  @husk-ai/agent      the tool-calling loop  │
                        └───┬──────────────────────────┬───────────┘
                            │                          │
         ┌──────────────────▼──────┐      ┌────────────▼─────────────┐
-        │ @husk/runtime           │      │ @husk/models             │
+        │ @husk-ai/runtime           │      │ @husk-ai/models             │
         │ docker podman local     │      │ anthropic openai google  │
         │ ssh fly                 │      │ groq ollama openrouter   │
         └─────────────────────────┘      └──────────────────────────┘
                            │                          │
                        ┌───▼──────────────────────────▼───────────┐
-                       │ @husk/core   contracts, spec, primitives │
+                       │ @husk-ai/core   contracts, spec, primitives │
                        └──────────────────────────────────────────┘
 
-   @husk/sessions  transcript ──▶ husk.yaml    (feeds the layers above, depends on core)
+   @husk-ai/sessions  transcript ──▶ husk.yaml    (feeds the layers above, depends on core)
 ```
 
 Dependencies run strictly downhill. `core` imports nothing from the workspace. Nothing
@@ -150,17 +150,17 @@ scalars, a provenance header naming the transcript it came from.
 ## Serving
 
 A husk becomes a bot through triggers declared in its spec: `http`, `cron`, `discord`,
-`slack`, `telegram`, `webhook`, `cli`. `@husk/server` hosts them on one Fastify process
+`slack`, `telegram`, `webhook`, `cli`. `@husk-ai/server` hosts them on one Fastify process
 with a JSON-file store (no native modules — a Windows `npm install` must be clean), and
-`@husk/adapters` holds the per-platform front ends.
+`@husk-ai/adapters` holds the per-platform front ends.
 
 ## MCP: the wedge
 
 ```bash
-claude mcp add husk -- npx -y @husk/mcp
+claude mcp add husk -- npx -y @husk-ai/mcp
 ```
 
-That is the whole onboarding for the largest audience. `@husk/mcp` exposes the computer
+That is the whole onboarding for the largest audience. `@husk-ai/mcp` exposes the computer
 as MCP tools over stdio, so Claude Code — or Cursor, or Zed, or anything speaking MCP —
 gets a Linux machine mid-conversation with no account, no config file, and no signup. The
 same server runs over streamable HTTP for remote clients.

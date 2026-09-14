@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { createLogger } from '@husk/core';
+import { createLogger } from '@husk-ai/core';
 import type { WebSocket } from 'ws';
 import type { AdapterContext, InboundHttpHandler, InboundHttpRequest, InboundHttpResponse } from './types.js';
 

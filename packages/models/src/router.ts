@@ -19,8 +19,8 @@ import type {
   ModelInfo,
   ModelProvider,
   StreamEvent,
-} from '@husk/core';
-import { HuskError, createLogger, redact, retry, withTimeout } from '@husk/core';
+} from '@husk-ai/core';
+import { HuskError, createLogger, redact, retry, withTimeout } from '@husk-ai/core';
 import { resolveAlias, type DynamicStrategy } from './aliases.js';
 import { findModel, unknownModel, type CatalogModel } from './catalog.js';
 import { costOf, formatUsd, minimumCostUsd } from './cost.js';
@@ -37,7 +37,7 @@ import { estimateMessages } from './tokens.js';
  * A downgrade, a retry, or a budget skip, in the router's own vocabulary.
  *
  * This is the internal descriptor. What reaches the caller is the `warning` member of
- * `StreamEvent`, which `@husk/core` now owns — `warningEvent()` below is the only
+ * `StreamEvent`, which `@husk-ai/core` now owns — `warningEvent()` below is the only
  * place the two shapes meet, and `from`/`to` land in `detail` so a consumer can tell
  * which model actually answered without parsing the message string.
  */
@@ -48,7 +48,7 @@ export interface ModelWarning {
   to?: string;
 }
 
-/** The `warning` member of `StreamEvent`, narrowed. Defined by `@husk/core`. */
+/** The `warning` member of `StreamEvent`, narrowed. Defined by `@husk-ai/core`. */
 export type ModelWarningEvent = Extract<StreamEvent, { type: 'warning' }>;
 
 /**
@@ -686,7 +686,7 @@ function fallbackMessage(from: string, to: string, err: unknown): string {
 }
 
 /**
- * The router's internal warning, in the shape `@husk/core` defines.
+ * The router's internal warning, in the shape `@husk-ai/core` defines.
  *
  * `from` and `to` go in `detail` rather than only in the prose so a caller can act on
  * a downgrade — re-prompt, annotate the transcript, abort — without regex-ing an

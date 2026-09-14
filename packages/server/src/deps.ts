@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG, createLogger } from '@husk/core';
+import { DEFAULT_CONFIG, createLogger } from '@husk-ai/core';
 import type {
   Availability,
   ChatRequest,
@@ -18,7 +18,7 @@ import type {
   Tool,
   ToolCallPart,
   Approver,
-} from '@husk/core';
+} from '@husk-ai/core';
 import { Store } from './store.js';
 import { huskError } from './errors.js';
 
@@ -85,7 +85,7 @@ export interface AgentInit {
 export type AgentFactory = (init: AgentInit) => Promise<AgentLike>;
 
 /**
- * Build an agent without importing `@husk/agent` at module load.
+ * Build an agent without importing `@husk-ai/agent` at module load.
  *
  * `husk serve` has to come up even when a sibling package is mid-rebuild or
  * half-installed: an import error should cost you `POST /v1/husks/:name/run`, not
@@ -94,16 +94,16 @@ export type AgentFactory = (init: AgentInit) => Promise<AgentLike>;
 export const lazyAgentFactory: AgentFactory = async (init) => {
   let mod: Record<string, unknown>;
   try {
-    mod = (await import('@husk/agent')) as Record<string, unknown>;
+    mod = (await import('@husk-ai/agent')) as Record<string, unknown>;
   } catch (err) {
-    throw huskError('E_NOT_IMPLEMENTED', `@husk/agent could not be loaded: ${(err as Error).message}`, {
-      hint: 'run `npm run build --workspace=@husk/agent`, then retry',
+    throw huskError('E_NOT_IMPLEMENTED', `@husk-ai/agent could not be loaded: ${(err as Error).message}`, {
+      hint: 'run `npm run build --workspace=@husk-ai/agent`, then retry',
       cause: err,
     });
   }
   const Ctor = mod['Agent'] as (new (init: AgentInit) => AgentLike) | undefined;
   if (typeof Ctor !== 'function') {
-    throw huskError('E_NOT_IMPLEMENTED', '@husk/agent does not export an Agent class', {
+    throw huskError('E_NOT_IMPLEMENTED', '@husk-ai/agent does not export an Agent class', {
       hint: 'expected `new Agent({ spec, router, computers, tools })` with run() and stream()',
     });
   }

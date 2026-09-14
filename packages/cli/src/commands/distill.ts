@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { basename, resolve as resolvePath } from 'node:path';
-import { HuskError } from '@husk/core';
-import type { DistilledAgent, ModelProvider, Transcript } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
+import type { DistilledAgent, ModelProvider, Transcript } from '@husk-ai/core';
 import { parse, required } from '../args.js';
 import { load, parseTranscripts, save, summarise } from '../lib/transcripts.js';
 import { pinned, resolveModel } from '../lib/models.js';
@@ -52,11 +52,11 @@ export async function run(argv: string[]): Promise<number> {
   ui.note(`${ui.dim('using ')} ${modelId ?? 'heuristics only'} ${ui.dim(`· ${why}`)}`);
 
   const spin = ui.spinner(provider ? 'distilling with the model' : 'distilling');
-  const { Distiller } = await import('@husk/sessions');
+  const { Distiller } = await import('@husk-ai/sessions');
   const agent: DistilledAgent = await new Distiller(provider).distill(transcript).finally(() => spin.stop());
 
   // The distiller emits a free-form shape; the schema wants a slug and known
-  // tool bundles. `toSpec` in @husk/sessions does that normalising -- including
+  // tool bundles. `toSpec` in @husk-ai/sessions does that normalising -- including
   // `origin`, from the transcript itself, so the CLI and the control plane
   // record provenance the same way.
   const spec = specFromDistilled(agent, {

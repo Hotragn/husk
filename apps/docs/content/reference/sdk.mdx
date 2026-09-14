@@ -1,22 +1,22 @@
 ---
-title: "@husk/sdk"
+title: "@husk-ai/sdk"
 navTitle: SDK
 description: "The typed client for the control plane: every endpoint husk serve exposes, with the types the server actually returns."
 order: 4
 ---
 
-# `@husk/sdk`
+# `@husk-ai/sdk`
 
 A dependency-free, typed client for the Husk control plane. It uses global
-`fetch`, takes its shared types from `@husk/core`, and speaks exactly the routes
+`fetch`, takes its shared types from `@husk-ai/core`, and speaks exactly the routes
 in [the HTTP API](/reference/api).
 
 ```bash
-npm install @husk/sdk
+npm install @husk-ai/sdk
 ```
 
 ```ts
-import { HuskClient } from '@husk/sdk';
+import { HuskClient } from '@husk-ai/sdk';
 
 const husk = new HuskClient({ baseUrl: 'http://127.0.0.1:7377' });
 
@@ -33,7 +33,7 @@ Start the server first with `husk serve`.
 
 An SDK and a server can drift into two different products while both look
 healthy, because each one's tests mock the other. So `src/contract.test.ts`
-boots a **real** `@husk/server` on an ephemeral port, backs it with a **real**
+boots a **real** `@husk-ai/server` on an ephemeral port, backs it with a **real**
 `ComputerManager` and `LocalProvider`, and drives every public method against
 it, asserting the status, body shape and decoded type of each.
 
@@ -176,7 +176,7 @@ activity — the same feed the console renders.
 Every failure throws a `HuskError` carrying the server's own `code` and `hint`:
 
 ```ts
-import { isHuskError } from '@husk/sdk';
+import { isHuskError } from '@husk-ai/sdk';
 
 try {
   await husk.computers.exec(id, { cmd: 'sudo rm -rf /' });

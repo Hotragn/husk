@@ -33,7 +33,7 @@
       "id": "router",
       "type": "cloud",
       "label": "model router",
-      "sublabel": "@husk/models"
+      "sublabel": "@husk-ai/models"
     },
     {
       "id": "redactor",

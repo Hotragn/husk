@@ -130,8 +130,8 @@ a hop limit of 1 and run the agent in a container, or both.
 
 ## Two implementations, kept in step by hand
 
-The floor exists twice: `isInternalHost` in `@husk/runtime`, and `isPrivateHost` in
-`@husk/agent`. The duplication is deliberate — dependencies run strictly downhill,
+The floor exists twice: `isInternalHost` in `@husk-ai/runtime`, and `isPrivateHost` in
+`@husk-ai/agent`. The duplication is deliberate — dependencies run strictly downhill,
 `agent` sits above `runtime`, and `agent` may only import `core`.
 
 Both copies are tested, and they are close but not identical. `isInternalHost` also

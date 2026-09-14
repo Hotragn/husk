@@ -1,4 +1,4 @@
-import type { ChatResponse, StreamEvent } from '@husk/core';
+import type { ChatResponse, StreamEvent } from '@husk-ai/core';
 import { describe, expect, it } from 'vitest';
 import { jsonResponse, recordingFetch, streamResponse } from '../testing.js';
 import { OllamaProvider, toOllamaMessages } from './ollama.js';

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { huskHome } from '@husk/core';
+import { huskHome } from '@husk-ai/core';
 import * as ui from '../ui.js';
 
 /**

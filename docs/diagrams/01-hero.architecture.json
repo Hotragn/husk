@@ -29,8 +29,8 @@
     {
       "id": "mcp",
       "type": "backend",
-      "label": "@husk/mcp",
-      "sublabel": "npx -y @husk/mcp",
+      "label": "@husk-ai/mcp",
+      "sublabel": "npx -y @husk-ai/mcp",
       "pos": [
         300,
         300
@@ -49,7 +49,7 @@
     {
       "id": "runtime",
       "type": "cloud",
-      "label": "@husk/runtime",
+      "label": "@husk-ai/runtime",
       "sublabel": "docker · podman · ssh · fly · local",
       "pos": [
         550,
@@ -170,7 +170,7 @@
       "dot": "cyan",
       "title": "Works with what you have",
       "items": [
-        "One line: claude mcp add husk -- npx -y @husk/mcp",
+        "One line: claude mcp add husk -- npx -y @husk-ai/mcp",
         "No account, no config file, no signup"
       ]
     },

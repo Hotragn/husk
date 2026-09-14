@@ -1,4 +1,4 @@
-import type { DistilledAgent, Transcript } from '@husk/core';
+import type { DistilledAgent, Transcript } from '@husk-ai/core';
 import { toSpec } from './distill.js';
 import { stringifySpec } from './serialize.js';
 

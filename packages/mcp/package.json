@@ -1,5 +1,5 @@
 {
-  "name": "@husk/mcp",
+  "name": "@husk-ai/mcp",
   "version": "0.1.0",
   "description": "Give any MCP client a Linux computer.",
   "license": "Apache-2.0",
@@ -22,9 +22,9 @@
     "smoke": "node dist/smoke.js"
   },
   "dependencies": {
-    "@husk/browser": "0.1.0",
-    "@husk/core": "0.1.0",
-    "@husk/runtime": "0.1.0",
+    "@husk-ai/browser": "0.1.0",
+    "@husk-ai/core": "0.1.0",
+    "@husk-ai/runtime": "0.1.0",
     "@modelcontextprotocol/sdk": "^1.30.0"
   },
   "bin": {

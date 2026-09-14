@@ -1,4 +1,4 @@
-import type { Flavor } from '@husk/core';
+import type { Flavor } from '@husk-ai/core';
 
 /**
  * Flavor -> image, and how to install a package once you are inside one.
@@ -48,7 +48,7 @@ const PLANS: Record<Flavor, ImagePlan> = {
   /**
    * The only flavor that can run the rendered browser.
    *
-   * `@husk/browser` downloads Chromium at runtime, but the binary links against
+   * `@husk-ai/browser` downloads Chromium at runtime, but the binary links against
    * ~20 shared libraries that the slim images do not carry, and container
    * computers mount their root read-only so they cannot be added later. The
    * husk-full image bakes them in; the public fallback below does not, so on a

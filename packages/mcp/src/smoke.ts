@@ -5,7 +5,7 @@
  * available, drives every tool through the same `callTool` the MCP handler uses,
  * and cleans up. If this passes, `claude mcp add husk` will work.
  */
-import { ComputerManager } from '@husk/runtime';
+import { ComputerManager } from '@husk-ai/runtime';
 import { TOOLS, callTool } from './tools.js';
 import type { ToolResult } from './tools.js';
 

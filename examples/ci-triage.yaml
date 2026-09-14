@@ -47,7 +47,7 @@ examples:
       TS2345 on `src/spec.ts:118` -- `parseSpec` is being handed an unvalidated
       `unknown`. This is the change, not a flake: the same commit fails
       identically on node 22. The three downstream app failures are all
-      "cannot find module @husk/core/dist" and will clear once core compiles.
+      "cannot find module @husk-ai/core/dist" and will clear once core compiles.
 
 tools: [computer, files]
 

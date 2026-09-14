@@ -1,5 +1,5 @@
 /**
- * @husk/cli -- the `husk` binary.
+ * @husk-ai/cli -- the `husk` binary.
  *
  * The executable is `dist/bin.js`. This module exists so the CLI's testable
  * parts can be imported without running it.

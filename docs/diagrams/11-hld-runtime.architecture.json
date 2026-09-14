@@ -33,7 +33,7 @@
     {
       "id": "mcpproc",
       "type": "backend",
-      "label": "npx @husk/mcp",
+      "label": "npx @husk-ai/mcp",
       "sublabel": "a child of the editor",
       "row": 0,
       "col": 1,

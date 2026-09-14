@@ -272,7 +272,7 @@ headless server quietly behaves as though it were in `auto`.
 ### What is the fastest way to give Claude Code a computer?
 
 ```bash
-claude mcp add husk -- npx -y @husk/mcp
+claude mcp add husk -- npx -y @husk-ai/mcp
 ```
 
 No account, no config file, and nothing is created until the model calls a tool.
@@ -290,7 +290,7 @@ No. One process is one user's control plane: one token, one `HUSK_HOME`, one set
 husks. There are no accounts and no authorization beyond "has the token or does not".
 Run one process per person.
 
-### Why does `@husk/sdk` 404?
+### Why does `@husk-ai/sdk` 404?
 
 Because in 0.1.0 the SDK targets a different API than the server serves. Twelve of its
 twenty methods hit routes that do not exist, and several more return a body that does
@@ -300,7 +300,7 @@ not match their declared type. The eight that work, and the workaround, are on
 ### Do the Discord, Slack and Telegram triggers work?
 
 The adapters do. The triggers do not — `TriggerHost.sync()` has branches for `http`,
-`webhook` and `cron` only, and `@husk/server` never imports `@husk/adapters`. About 40
+`webhook` and `cron` only, and `@husk-ai/server` never imports `@husk-ai/adapters`. About 40
 lines of glue connects them, and [the Discord guide](/guides/discord-bot#step-6-the-glue)
 is that glue, tested.
 

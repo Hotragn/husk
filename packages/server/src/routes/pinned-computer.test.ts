@@ -4,7 +4,7 @@
  * It was declared in the SDK types, documented in the API reference, and never
  * read -- and the stated reason was that the agent addresses machines by a
  * stable key rather than by id, so honouring it would mean widening a
- * `@husk/agent` contract. That was wrong twice: `ComputerSource` has one
+ * `@husk-ai/agent` contract. That was wrong twice: `ComputerSource` has one
  * method, and a source that answers every key with one machine satisfies it.
  *
  * A field that is accepted and does nothing is worse than one that errors,

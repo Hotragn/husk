@@ -384,7 +384,7 @@ rectangles, under the words "Trusted by teams at".
 *Why it fails:* we have no telemetry, so we cannot count users; we have no
 customers to name. It is a claim we are not permitted to make (`BRAND.md` §5),
 and this audience checks.
-*Instead:* the command. `claude mcp add husk -- npx -y @husk/mcp` is stronger
+*Instead:* the command. `claude mcp add husk -- npx -y @husk-ai/mcp` is stronger
 social proof than a logo wall, because the reader can run it. If we later have
 real, named, permissioned users, quote one of them saying something specific.
 

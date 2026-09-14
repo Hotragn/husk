@@ -1,4 +1,4 @@
-import type { JSONSchema } from '@husk/core';
+import type { JSONSchema } from '@husk-ai/core';
 
 /** Join an argv array into something safe to hand a POSIX shell. */
 export function shellQuote(args: string[]): string {

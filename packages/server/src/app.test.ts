@@ -574,7 +574,7 @@ describe('console fallback', () => {
     const res = await harness.app.inject({ method: 'GET', url: '/' });
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('text/html');
-    expect(res.body).toContain('npm run build --workspace=@husk/console');
+    expect(res.body).toContain('npm run build --workspace=@husk-ai/console');
     expect(res.body).toContain('/v1/doctor');
   });
 });

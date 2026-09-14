@@ -6,7 +6,7 @@
  * a stream parser that is never tested.
  */
 
-import type { ToolCallPart } from '@husk/core';
+import type { ToolCallPart } from '@husk-ai/core';
 
 export type ByteSource = AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>;
 

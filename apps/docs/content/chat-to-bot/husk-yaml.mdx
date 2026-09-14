@@ -346,7 +346,7 @@ two keys into it, both from distillation:
 | `distillerNotes` | string[] | what it had to guess at, and why |
 
 These names are the contract. Every path that distils — `husk distill`,
-`POST /v1/sessions/distill`, and `toSpec` in `@husk/sessions` directly — goes through
+`POST /v1/sessions/distill`, and `toSpec` in `@husk-ai/sessions` directly — goes through
 the one mapper and writes these two. Nothing writes `distillConfidence` or
 `distillNotes`; if you are reading a husk.yaml written by an older build, those are the
 same two values under the old spellings.

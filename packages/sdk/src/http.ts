@@ -1,4 +1,4 @@
-import { HUSK_USER_AGENT, HuskError } from '@husk/core';
+import { HUSK_USER_AGENT, HuskError } from '@husk-ai/core';
 import { errorFromResponse, transportError } from './errors.js';
 import { decodeEvents } from './sse.js';
 
@@ -79,7 +79,7 @@ export class Http {
 
     const f = opts.fetch ?? (globalThis.fetch as FetchLike | undefined);
     if (!f) {
-      throw new Error('global fetch is missing -- @husk/sdk needs Node >= 20.10 or a fetch polyfill');
+      throw new Error('global fetch is missing -- @husk-ai/sdk needs Node >= 20.10 or a fetch polyfill');
     }
     this.fetchImpl = f;
   }

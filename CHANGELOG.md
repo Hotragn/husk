@@ -46,7 +46,7 @@ The first version that does the two things on the tin.
 
 ### MCP
 
-- `claude mcp add husk -- npx -y @husk/mcp` gives Claude Code a computer mid-conversation.
+- `claude mcp add husk -- npx -y @husk-ai/mcp` gives Claude Code a computer mid-conversation.
   Seven tools over stdio or streamable HTTP, and the first tool result states plainly
   that a `local` computer is not a sandbox.
 

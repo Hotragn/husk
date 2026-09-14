@@ -1,10 +1,10 @@
-import { HuskError } from '@husk/core';
-import type { HuskErrorCode } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
+import type { HuskErrorCode } from '@husk-ai/core';
 
 /**
  * The wire shape of a control-plane failure.
  *
- * Every non-2xx response from `@husk/server` carries this body. Anything that
+ * Every non-2xx response from `@husk-ai/server` carries this body. Anything that
  * does not is either a proxy, a crash, or the wrong port, and the SDK says so
  * rather than pretending it understood.
  */

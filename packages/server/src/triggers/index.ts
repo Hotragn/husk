@@ -1,4 +1,4 @@
-import type { HuskSpec, Trigger } from '@husk/core';
+import type { HuskSpec, Trigger } from '@husk-ai/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ctxOf } from '../context.js';
 import type { ServerContext } from '../context.js';

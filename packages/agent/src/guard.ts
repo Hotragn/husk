@@ -1,5 +1,5 @@
-import { HuskError } from '@husk/core';
-import type { Guardrails } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
+import type { Guardrails } from '@husk-ai/core';
 
 export interface CommandDecision {
   allowed: boolean;
@@ -19,7 +19,7 @@ function test(pattern: string, text: string): boolean {
 /**
  * Apply this husk's own command guardrails.
  *
- * `@husk/runtime` owns the universal deny list (fork bombs, `mkfs`, `rm -rf /`)
+ * `@husk-ai/runtime` owns the universal deny list (fork bombs, `mkfs`, `rm -rf /`)
  * and applies it inside every provider. This function only enforces the
  * per-husk rules from `husk.yaml`, which the runtime never sees.
  *

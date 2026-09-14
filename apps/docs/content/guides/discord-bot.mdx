@@ -9,11 +9,11 @@ order: 3
 `husk.yaml` distilled from a real conversation you already had.
 
 **What you will learn:** how `husk import` and `husk distill` turn a chat into a spec,
-how the control plane runs it, and how `@husk/adapters` connects the two.
+how the control plane runs it, and how `@husk-ai/adapters` connects the two.
 
 **Prerequisites**
 
-- [ ] Husk installed (`npm install -g @husk/cli`) and `husk doctor` showing a reachable
+- [ ] Husk installed (`npm install -g @husk-ai/cli`) and `husk doctor` showing a reachable
       model.
 - [ ] A transcript worth distilling — a Claude Code session, a ChatGPT export, a Cursor
       chat, or a markdown file.
@@ -27,7 +27,7 @@ branches for `http`, `webhook` and `cron` only, so a husk declaring
 
 The Discord *adapter* is complete and tested — a raw gateway client with resume,
 heartbeat tracking, rate limiting and idempotency. It is simply not wired into
-`@husk/server`. Step 5 is the glue that connects them, and it is about 40 lines.
+`@husk-ai/server`. Step 5 is the glue that connects them, and it is about 40 lines.
 </Warning>
 
 ---
@@ -283,18 +283,18 @@ Mode** in Discord, then right-click the channel → **Copy Channel ID**.
 
 ## Step 6: The glue
 
-`@husk/adapters` needs an `AdapterContext` — a logger, an abort signal, an environment,
+`@husk-ai/adapters` needs an `AdapterContext` — a logger, an abort signal, an environment,
 and a `run(input, opts)` function. The server does not supply one, so here it is.
 
 ```bash
 mkdir husk-discord && cd husk-discord
 npm init -y && npm pkg set type=module
-npm install @husk/adapters @husk/core
+npm install @husk-ai/adapters @husk-ai/core
 ```
 
 ```js title="bot.mjs"
-import { DiscordAdapter } from '@husk/adapters';
-import { createLogger } from '@husk/core';
+import { DiscordAdapter } from '@husk-ai/adapters';
+import { createLogger } from '@husk-ai/core';
 
 const HUSK_URL = process.env.HUSK_URL ?? 'http://127.0.0.1:7377';
 const HUSK_NAME = process.env.HUSK_NAME ?? 'support-bot';
@@ -411,7 +411,7 @@ The same shape. `createAdapter(kind, options)` builds any of the four, and they 
 the same `AdapterContext`:
 
 ```js
-import { createAdapter } from '@husk/adapters';
+import { createAdapter } from '@husk-ai/adapters';
 const adapter = createAdapter('telegram', { });   // reads TELEGRAM_BOT_TOKEN
 ```
 

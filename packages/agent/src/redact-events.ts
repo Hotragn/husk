@@ -1,4 +1,4 @@
-import { redact } from '@husk/core';
+import { redact } from '@husk-ai/core';
 import type { AgentRunEvent } from './types.js';
 
 /**

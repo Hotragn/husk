@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
-import type { Computer } from '@husk/core';
-import { HuskError } from '@husk/core';
+import type { Computer } from '@husk-ai/core';
+import { HuskError } from '@husk-ai/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ctxOf } from '../context.js';
 import { notFound } from '../errors.js';

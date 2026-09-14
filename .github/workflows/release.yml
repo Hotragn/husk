@@ -1,7 +1,7 @@
 name: release
 
 # Publishing is the last gap between "this works on my machine and in CI" and
-# `npx -y @husk/mcp` working for someone who has never cloned the repo -- which
+# `npx -y @husk-ai/mcp` working for someone who has never cloned the repo -- which
 # is the command the README, the docs and every MCP onboarding flow already
 # tell people to run.
 #
@@ -56,7 +56,7 @@ jobs:
           tag="${GITHUB_REF_NAME#v}"
           pkg="$(node -p "require('./packages/core/package.json').version")"
           if [ "$tag" != "$pkg" ]; then
-            echo "tag $tag does not match @husk/core $pkg" >&2
+            echo "tag $tag does not match @husk-ai/core $pkg" >&2
             exit 1
           fi
 
@@ -85,8 +85,8 @@ jobs:
         run: |
           set -euo pipefail
           for pkg in core runtime models browser sessions agent adapters mcp server sdk cli; do
-            echo "publishing @husk/$pkg"
-            npm publish --workspace="@husk/$pkg" --access public --provenance
+            echo "publishing @husk-ai/$pkg"
+            npm publish --workspace="@husk-ai/$pkg" --access public --provenance
           done
 
       - name: dry run summary

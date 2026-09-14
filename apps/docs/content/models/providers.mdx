@@ -5,7 +5,7 @@ description: Eleven providers, the exact environment variable each one reads, wh
 order: 2
 ---
 
-Eleven providers ship in `@husk/models`. Three have their own wire format and their own
+Eleven providers ship in `@husk-ai/models`. Three have their own wire format and their own
 file; the rest speak OpenAI's `/v1/chat/completions` dialect and are configuration
 rather than code.
 
@@ -131,7 +131,7 @@ low rate limit. Pro is not.
 Gemini is genuinely a different wire format, not a dialect: `contents` instead of
 `messages`, `model` instead of `assistant`, function results keyed by **name** rather
 than by call id, and a JSON Schema subset that rejects half of draft-07. Each of those
-is a translation `@husk/models` owns.
+is a translation `@husk-ai/models` owns.
 
 <Note>
 Google prices Gemini 2.5 Pro in two tiers, above and below a 200k-token prompt.

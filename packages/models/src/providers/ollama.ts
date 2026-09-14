@@ -19,8 +19,8 @@ import type {
   StreamEvent,
   ToolCallPart,
   Usage,
-} from '@husk/core';
-import { mapLimit } from '@husk/core';
+} from '@husk-ai/core';
+import { mapLimit } from '@husk-ai/core';
 import { findModel } from '../catalog.js';
 import { httpError, jsonHeaders, networkError, type ErrorContext } from '../http.js';
 import { ToolCallAccumulator, readNDJSON } from '../wire.js';

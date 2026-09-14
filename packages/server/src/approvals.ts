@@ -1,5 +1,5 @@
-import { id } from '@husk/core';
-import type { ToolCallPart } from '@husk/core';
+import { id } from '@husk-ai/core';
+import type { ToolCallPart } from '@husk-ai/core';
 import { notFound } from './errors.js';
 
 export interface PendingApproval {

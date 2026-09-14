@@ -1,5 +1,5 @@
-import { createLogger, ensurePaths } from '@husk/core';
-import type { Logger, ModelProvider } from '@husk/core';
+import { createLogger, ensurePaths } from '@husk-ai/core';
+import type { Logger, ModelProvider } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
 import type { CreateAppOptions } from './app.js';
@@ -40,23 +40,23 @@ export async function createDefaultDeps(
 
   let manager: ManagerLike;
   try {
-    const { ComputerManager } = await import('@husk/runtime');
+    const { ComputerManager } = await import('@husk-ai/runtime');
     manager = new ComputerManager({ maxComputers: config.maxComputers, logger: log.child('runtime') });
   } catch (err) {
-    log.error(`@husk/runtime failed to load: ${(err as Error).message}`);
+    log.error(`@husk-ai/runtime failed to load: ${(err as Error).message}`);
     manager = unavailableManager((err as Error).message);
   }
 
   let router: RouterLike;
   let modelProviders: ModelProvider[] = [];
   try {
-    const models = (await import('@husk/models')) as Record<string, unknown>;
+    const models = (await import('@husk-ai/models')) as Record<string, unknown>;
     const RouterCtor = models['ModelRouter'] as (new () => RouterLike) | undefined;
-    if (!RouterCtor) throw new Error('@husk/models does not export ModelRouter');
+    if (!RouterCtor) throw new Error('@husk-ai/models does not export ModelRouter');
     router = new RouterCtor();
     modelProviders = instantiateModelProviders(models, log);
   } catch (err) {
-    log.error(`@husk/models failed to load: ${(err as Error).message}`);
+    log.error(`@husk-ai/models failed to load: ${(err as Error).message}`);
     router = unavailableRouter((err as Error).message);
   }
 

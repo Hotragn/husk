@@ -1,5 +1,5 @@
 {
-  "name": "@husk/models",
+  "name": "@husk-ai/models",
   "version": "0.1.0",
   "description": "One model surface for Husk: Anthropic, OpenAI, Gemini, Ollama and every OpenAI-compatible gateway, with routing, fallback and cost accounting. No SDKs.",
   "license": "Apache-2.0",
@@ -26,6 +26,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@husk/core": "0.1.0"
+    "@husk-ai/core": "0.1.0"
   }
 }

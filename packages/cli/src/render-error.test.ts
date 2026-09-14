@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HuskError } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
 import { UsageError } from './args.js';
 import { renderError } from './render-error.js';
 import * as ui from './ui.js';
@@ -54,7 +54,7 @@ describe('HuskError rendering', () => {
   });
 
   it('recognises a HuskError by shape, so one crossing a package boundary still renders', () => {
-    // Duck-typed on purpose: importing @husk/core into the renderer would put
+    // Duck-typed on purpose: importing @husk-ai/core into the renderer would put
     // zod on the startup path of `husk --help`.
     const foreign = Object.assign(new Error('from another realm'), {
       name: 'HuskError',
@@ -115,7 +115,7 @@ describe('common node errors get a husk-shaped answer', () => {
   });
 
   it('turns a missing build into the build command', () => {
-    renderError(Object.assign(new Error("Cannot find package '@husk/server'"), { code: 'ERR_MODULE_NOT_FOUND' }));
+    renderError(Object.assign(new Error("Cannot find package '@husk-ai/server'"), { code: 'ERR_MODULE_NOT_FOUND' }));
     expect(stderr()).toContain('npm run build');
   });
 

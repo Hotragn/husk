@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ComputerSpec } from '@husk/core';
+import type { ComputerSpec } from '@husk-ai/core';
 import {
   type OciConfig,
   buildCopyIntoArgs,

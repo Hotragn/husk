@@ -1,4 +1,4 @@
-import { HuskError } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
 import { describe, expect, it } from 'vitest';
 import { assertUrlAllowed, hostMatches, isHostAllowed, isPrivateHost, urlHost } from './net.js';
 

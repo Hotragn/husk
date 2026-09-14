@@ -1,5 +1,5 @@
 /**
- * @husk/server -- the control plane and the bot host.
+ * @husk-ai/server -- the control plane and the bot host.
  *
  * `createApp(deps)` builds the Fastify instance with everything injected, so it can
  * be driven with `app.inject()` and no sockets. `serve()` wires the real packages,

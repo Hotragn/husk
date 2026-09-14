@@ -10,12 +10,12 @@
 
 import type { DisplayError } from '../api/client';
 import type { SnapshotNode } from '../api/wire';
-import { sharesHostNetwork } from '@husk/core';
+import { sharesHostNetwork } from '@husk-ai/core';
 
 /**
  * Refs `click` and `type` can actually resolve.
  *
- * `flattenAxTree` in `@husk/browser` mints two kinds: `e<backendDOMNodeId>` for
+ * `flattenAxTree` in `@husk-ai/browser` mints two kinds: `e<backendDOMNodeId>` for
  * a node it can point CDP at, and `a<n>` for one it cannot. `backendNodeIdOf`
  * returns null for the second kind and `Page.click` then throws
  * `E_TOOL_ERROR: <ref> is not a clickable element`. Filtering here means the
@@ -129,7 +129,7 @@ export interface BrowserFailure {
  *
  * The server's `code`, `message` and `hint` are rendered verbatim by
  * `ErrorBlock` either way; this only decides what goes next to them. Codes come
- * from `packages/browser/src/*.ts` and `assertUrlAllowed` in `@husk/core`.
+ * from `packages/browser/src/*.ts` and `assertUrlAllowed` in `@husk-ai/core`.
  */
 export function classifyBrowserError(err: DisplayError): BrowserFailure {
   switch (err.code) {

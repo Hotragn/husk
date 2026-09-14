@@ -7,7 +7,7 @@
  * unchanged.
  */
 
-import type { ModelInfo, Usage } from '@husk/core';
+import type { ModelInfo, Usage } from '@husk-ai/core';
 
 const PER_MTOK = 1_000_000;
 

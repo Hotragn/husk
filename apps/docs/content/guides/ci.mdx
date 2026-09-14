@@ -44,7 +44,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: npm }
 
-      - run: npm install -g @husk/cli
+      - run: npm install -g @husk-ai/cli
 
       # Read this in the log before anything else fails mysteriously.
       - name: what can this runner do
@@ -132,7 +132,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: npm }
 
-      - run: npm install -g @husk/cli
+      - run: npm install -g @husk-ai/cli
 
       - name: the diff
         run: git diff --unified=3 "origin/${{ github.base_ref }}...HEAD" > /tmp/diff.patch
@@ -302,7 +302,7 @@ Nothing here is GitHub-specific. Husk is a Node CLI with no daemon and no accoun
 husk:
   image: node:22
   script:
-    - npm install -g @husk/cli
+    - npm install -g @husk-ai/cli
     - husk doctor
     - husk up ci --provider local
     - husk exec ci -- npm test

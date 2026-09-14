@@ -1,4 +1,4 @@
-import { defaultSpec } from '@husk/core';
+import { defaultSpec } from '@husk-ai/core';
 import type {
   ChatRequest,
   ChatResponse,
@@ -16,7 +16,7 @@ import type {
   ToolCallPart,
   Usage,
   WriteFileOptions,
-} from '@husk/core';
+} from '@husk-ai/core';
 import type { ComputerSource, RouterLike } from './types.js';
 
 /** Test doubles. Not exported from the package entry point. */

@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
-import { browserFor, closeBrowserFor, findInstalledChromium } from '@husk/browser';
-import type { Computer } from '@husk/core';
+import { browserFor, closeBrowserFor, findInstalledChromium } from '@husk-ai/browser';
+import type { Computer } from '@husk-ai/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ctxOf } from '../context.js';

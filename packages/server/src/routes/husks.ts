@@ -1,4 +1,4 @@
-import { safeParseSpec } from '@husk/core';
+import { safeParseSpec } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { parse as parseYaml } from 'yaml';
 import { ctxOf } from '../context.js';

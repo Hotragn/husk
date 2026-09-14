@@ -1,4 +1,4 @@
-import type { ModelMessage } from '@husk/core';
+import type { ModelMessage } from '@husk-ai/core';
 import { describe, expect, it } from 'vitest';
 import {
   danglingToolCalls,

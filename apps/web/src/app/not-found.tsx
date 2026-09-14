@@ -72,7 +72,7 @@ export default function NotFound() {
               the page you were looking for:
             </p>
             <div style={{ marginTop: "var(--space-3)", maxWidth: "36rem" }}>
-              <CommandBlock command="npx -y @husk/cli doctor" />
+              <CommandBlock command="npx -y @husk-ai/cli doctor" />
             </div>
           </div>
         </div>

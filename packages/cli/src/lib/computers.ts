@@ -1,6 +1,6 @@
-import { HuskError, formatDuration } from '@husk/core';
-import type { Computer, ComputerInfo } from '@husk/core';
-import { ComputerManager } from '@husk/runtime';
+import { HuskError, formatDuration } from '@husk-ai/core';
+import type { Computer, ComputerInfo } from '@husk-ai/core';
+import { ComputerManager } from '@husk-ai/runtime';
 import * as ui from '../ui.js';
 
 /**

@@ -4,7 +4,7 @@ import type { NetworkPolicy } from './types/computer.js';
 /**
  * Network policy, in one place.
  *
- * This lived in three copies -- `@husk/runtime`, `@husk/agent`, and by
+ * This lived in three copies -- `@husk-ai/runtime`, `@husk-ai/agent`, and by
  * implication the docs -- and they drifted: one blocked the cloud metadata
  * endpoint in `mode: 'full'` and one did not. A security check with two answers
  * is not a security check, so it lives here and everything re-exports it.

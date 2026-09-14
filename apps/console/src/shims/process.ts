@@ -1,17 +1,17 @@
 /**
- * A minimal `process` global, installed before anything imports `@husk/sdk`.
+ * A minimal `process` global, installed before anything imports `@husk-ai/sdk`.
  *
- * `@husk/core`'s barrel ends with:
+ * `@husk-ai/core`'s barrel ends with:
  *
  *   export const log = createLogger({ scope: 'husk' });
  *
  * and `createLogger` reads `process.env.HUSK_LOG_LEVEL`,
  * `process.env.HUSK_LOG_JSON`, `process.stderr.isTTY` and captures
  * `process.stderr.write` as its default sink — all at module-evaluation time.
- * Because every `@husk/sdk` module imports that barrel, the browser throws
+ * Because every `@husk-ai/sdk` module imports that barrel, the browser throws
  * `ReferenceError: process is not defined` before the console renders a pixel.
  *
- * Verified against @husk/core 0.1.0. Like `node-builtins.ts`, this belongs
+ * Verified against @husk-ai/core 0.1.0. Like `node-builtins.ts`, this belongs
  * upstream: a contracts package should not construct a stderr logger as a side
  * effect of being imported. Until it stops doing that, the console supplies the
  * three fields that logger touches and nothing more.

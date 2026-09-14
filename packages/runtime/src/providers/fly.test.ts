@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { HuskError } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
 import { FLY_API, FlyProvider, buildMachineConfig, declaredPorts, flyError } from './fly.js';
 
 /**

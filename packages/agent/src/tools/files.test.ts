@@ -1,4 +1,4 @@
-import { HuskError, createLogger } from '@husk/core';
+import { HuskError, createLogger } from '@husk-ai/core';
 import { describe, expect, it } from 'vitest';
 import { FakeComputer, specFor } from '../test-support.js';
 import type { AgentTool, AgentToolContext } from '../types.js';

@@ -3,7 +3,7 @@
  *
  * This is the third time the same shape of bug has been found: a tool exists,
  * works, is tested, and is invisible to one caller because a list somewhere was
- * not updated. `listBuiltinTools()` in `@husk/agent` was missing six. This
+ * not updated. `listBuiltinTools()` in `@husk-ai/agent` was missing six. This
  * package was missing all five browser tools, which meant the MCP client -- the
  * integration husk exists for -- was the only caller that could not open a page
  * in the browser running inside its own computer.
@@ -14,7 +14,7 @@
 import { describe, expect, it } from 'vitest';
 import { TOOLS, callTool } from './tools.js';
 import { BROWSER_TOOLS } from './browser-tools.js';
-import type { Computer } from '@husk/core';
+import type { Computer } from '@husk-ai/core';
 
 /** Never reached: every assertion here stops at the dispatcher. */
 const noComputer = {} as Computer;

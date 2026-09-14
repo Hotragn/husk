@@ -1,4 +1,4 @@
-import { HUSK_VERSION } from '@husk/core';
+import { HUSK_VERSION } from '@husk-ai/core';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import { assertBindIsSafe, installAuth } from './auth.js';

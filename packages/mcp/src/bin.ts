@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { HuskMcpServer } from './server.js';
-import type { ComputerSpec, Flavor } from '@husk/core';
+import type { ComputerSpec, Flavor } from '@husk-ai/core';
 
 /**
- * `npx -y @husk/mcp`
+ * `npx -y @husk-ai/mcp`
  *
  * The whole onboarding for Claude Code, Cursor, Zed, and anything else that
  * speaks MCP. It must start fast, print nothing to stdout, and never require
@@ -14,7 +14,7 @@ import type { ComputerSpec, Flavor } from '@husk/core';
 const HELP = `husk mcp -- give your agent a Linux computer, over MCP
 
 usage
-  npx -y @husk/mcp [options]
+  npx -y @husk-ai/mcp [options]
 
 options
   --session <key>     reuse one machine across calls (default: "mcp")
@@ -27,7 +27,7 @@ options
   -h, --help
 
 install into claude code
-  claude mcp add husk -- npx -y @husk/mcp
+  claude mcp add husk -- npx -y @husk-ai/mcp
 
 Logs go to stderr; stdout is the MCP protocol.
 `;

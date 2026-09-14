@@ -63,7 +63,7 @@ README written by someone who has already read the README.
 > `husk doctor` tells you which one you got. No account, no card, no telemetry.
 >
 > ```bash
-> claude mcp add husk -- npx -y @husk/mcp
+> claude mcp add husk -- npx -y @husk-ai/mcp
 > ```
 >
 > Apache-2.0 · works with Claude Code, Cursor, Zed, or anything speaking MCP
@@ -79,7 +79,7 @@ important 20 lines of copy in the product: it is where the free path either
 proves itself or does not.
 
 ```
-$ npx -y @husk/cli
+$ npx -y @husk-ai/cli
 
 husk 0.1.0 · first run · ~/.husk created
 
@@ -104,7 +104,7 @@ selected      local + ollama/gemma3       free, on this machine, no account
 next
   husk run "list the files in this directory"    run an agent on that computer
   husk import <transcript>                       turn a chat into a husk.yaml
-  claude mcp add husk -- npx -y @husk/mcp        give Claude Code a computer
+  claude mcp add husk -- npx -y @husk-ai/mcp        give Claude Code a computer
   husk doctor                                    this report, any time
 
 no telemetry. nothing left this machine.
@@ -200,7 +200,7 @@ E_PATH_DENIED  the agent tried to write outside its workspace
 > is the same path everything else is built on.
 >
 > ```bash
-> claude mcp add husk -- npx -y @husk/mcp
+> claude mcp add husk -- npx -y @husk-ai/mcp
 > ```
 
 ---
@@ -239,7 +239,7 @@ E_PATH_DENIED  the agent tried to write outside its workspace
 > files, ports — on hardware you already own:
 >
 > ```
-> claude mcp add husk -- npx -y @husk/mcp
+> claude mcp add husk -- npx -y @husk-ai/mcp
 > ```
 >
 > No account. No card. No telemetry.

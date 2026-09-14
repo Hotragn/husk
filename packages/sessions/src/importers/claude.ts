@@ -1,8 +1,8 @@
 import { homedir } from 'node:os';
 import { basename, join, dirname, extname } from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { HuskError, id } from '@husk/core';
-import type { ImportInput, Transcript, TranscriptImporter, TranscriptMessage } from '@husk/core';
+import { HuskError, id } from '@husk-ai/core';
+import type { ImportInput, Transcript, TranscriptImporter, TranscriptMessage } from '@husk-ai/core';
 import { isDirectory, listFiles, listDirs } from './fsutil.js';
 import { stripScaffolding } from '../scaffold.js';
 

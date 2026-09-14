@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
-import { redact as redactSecrets } from '@husk/core';
-import type { DistilledAgent, Transcript, TranscriptMessage } from '@husk/core';
+import { redact as redactSecrets } from '@husk-ai/core';
+import type { DistilledAgent, Transcript, TranscriptMessage } from '@husk-ai/core';
 
 /**
  * Everything that leaves this package -- to disk, to a model, to a log -- goes
@@ -22,7 +22,7 @@ export interface RedactOptions {
   homePaths?: boolean;
   /** Replace email addresses with `[email]`. */
   emails?: boolean;
-  /** Run `redact()` from @husk/core over credential-shaped strings. */
+  /** Run `redact()` from @husk-ai/core over credential-shaped strings. */
   secrets?: boolean;
 }
 

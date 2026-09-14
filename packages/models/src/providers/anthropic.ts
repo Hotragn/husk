@@ -22,8 +22,8 @@ import type {
   StreamEvent,
   ToolCallPart,
   Usage,
-} from '@husk/core';
-import { HuskError } from '@husk/core';
+} from '@husk-ai/core';
+import { HuskError } from '@husk-ai/core';
 import { catalogFor, findModel, unknownModel } from '../catalog.js';
 import { costOf } from '../cost.js';
 import { httpError, jsonHeaders, missingKey, networkError, type ErrorContext } from '../http.js';

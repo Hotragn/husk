@@ -1,13 +1,13 @@
 import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import type { TranscriptSource } from '@husk/core';
+import type { TranscriptSource } from '@husk-ai/core';
 
 /**
  * Find transcripts without being told where they are.
  *
  * `TranscriptImporter.defaultLocations()` is optional on the contract and no
- * importer in `@husk/sessions` implements it yet, so discovery lives here. When
+ * importer in `@husk-ai/sessions` implements it yet, so discovery lives here. When
  * they do, this collapses into asking them -- the shape below is deliberately
  * the same.
  *

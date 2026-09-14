@@ -1,14 +1,14 @@
-import type { HuskSpec } from '@husk/core';
+import type { HuskSpec } from '@husk-ai/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildTestApp } from '../testing.js';
 import type { TestApp } from '../testing.js';
 
 /**
- * `POST /v1/sessions/distill` maps through `@husk/sessions.toSpec`.
+ * `POST /v1/sessions/distill` maps through `@husk-ai/sessions.toSpec`.
  *
  * The route used to carry its own copy of the mapping, which wrote
  * `metadata.distillConfidence` / `metadata.distillNotes` while the CLI and
- * `@husk/sessions` wrote `metadata.distilledConfidence` / `distillerNotes`.
+ * `@husk-ai/sessions` wrote `metadata.distilledConfidence` / `distillerNotes`.
  * The keys are documented, so the server's spelling meant a husk imported over
  * HTTP had provenance nothing would read.
  */

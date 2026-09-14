@@ -25,7 +25,7 @@ so a script that checks the exit code still gets parseable output on both paths.
 
 ## The codes
 
-Twenty are declared in `@husk/core`. The server declares five more.
+Twenty are declared in `@husk-ai/core`. The server declares five more.
 
 Two of the twenty are **reserved**: `E_EXEC_TIMEOUT` and `E_STEP_LIMIT`, listed
 together in the exported `RESERVED_ERROR_CODES`. Husk never throws them, because both
@@ -368,7 +368,7 @@ A sibling package would not load, or a capability genuinely does not exist for t
 provider.
 
 ```text
-error could not load @husk/server: Cannot find module '@husk/server'
+error could not load @husk-ai/server: Cannot find module '@husk-ai/server'
 hint:  run `npm install && npm run build` at the repo root
 ```
 
@@ -424,7 +424,7 @@ Re-run with `--debug` for the stack and the `cause` chain before filing.
 
 ## Server-only codes
 
-Declared in `@husk/server` rather than `@husk/core`, because the API needs a distinct
+Declared in `@husk-ai/server` rather than `@husk-ai/core`, because the API needs a distinct
 404 family and core only has `E_COMPUTER_NOT_FOUND`.
 
 | Code | Message | Hint |
@@ -443,7 +443,7 @@ plane is up.
 </Note>
 
 <Warning>
-`@husk/sdk` does not know the five server-only codes. Its `KNOWN_CODES` set is the
+`@husk-ai/sdk` does not know the five server-only codes. Its `KNOWN_CODES` set is the
 twenty from core, so a 404 carrying `E_HUSK_NOT_FOUND` is reconstructed as
 `E_COMPUTER_NOT_FOUND` — the status-derived fallback for 404. The original is preserved
 in `details.serverCode`. Branch on that if you need to tell a missing husk from a
@@ -453,7 +453,7 @@ missing computer.
 ## Handling them
 
 ```ts
-import { HuskError, isHuskError } from '@husk/core';
+import { HuskError, isHuskError } from '@husk-ai/core';
 
 try {
   await manager.create({ flavor: 'python' });

@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { basename, resolve as resolvePath } from 'node:path';
-import { HuskError, formatBytes } from '@husk/core';
+import { HuskError, formatBytes } from '@husk-ai/core';
 import { UsageError, parse, required, splitRemote } from '../args.js';
 import { resolve } from '../lib/computers.js';
 import * as ui from '../ui.js';

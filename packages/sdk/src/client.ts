@@ -8,7 +8,7 @@ import type {
   RunEvent,
   RunResult,
   StreamEvent,
-} from '@husk/core';
+} from '@husk-ai/core';
 import { openEventStream } from './events.js';
 import type { EventStreamOptions, HuskEventStream } from './events.js';
 import { Http } from './http.js';

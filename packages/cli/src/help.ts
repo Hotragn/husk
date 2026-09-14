@@ -211,7 +211,7 @@ export const COMMANDS: HelpEntry[] = [
     usage: 'husk mcp',
     details:
       'This is what an MCP client launches. stdout is the protocol channel and carries\nnothing else; logs go to stderr.',
-    examples: ['claude mcp add husk -- npx -y @husk/mcp', 'husk mcp'],
+    examples: ['claude mcp add husk -- npx -y @husk-ai/mcp', 'husk mcp'],
   },
   {
     name: 'models',

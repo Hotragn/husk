@@ -20,7 +20,7 @@ import type {
   ToolCallPart,
   ToolSchema,
   Usage,
-} from '@husk/core';
+} from '@husk-ai/core';
 import { catalogFor, findModel, unknownModel, type CatalogModel } from '../catalog.js';
 import { costOf } from '../cost.js';
 import { httpError, jsonHeaders, missingKey, networkError, type ErrorContext } from '../http.js';

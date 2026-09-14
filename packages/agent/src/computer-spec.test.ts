@@ -1,4 +1,4 @@
-import { createLogger, parseSpec } from '@husk/core';
+import { createLogger, parseSpec } from '@husk-ai/core';
 import { describe, expect, it } from 'vitest';
 import { Agent, computerSpecFor } from './loop.js';
 import { FakeComputerSource, FakeRouter, toolCall } from './test-support.js';

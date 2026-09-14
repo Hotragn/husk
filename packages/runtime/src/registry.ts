@@ -1,7 +1,7 @@
 import { readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { ensurePaths } from '@husk/core';
-import type { ComputerInfo, ProviderName } from '@husk/core';
+import { ensurePaths } from '@husk-ai/core';
+import type { ComputerInfo, ProviderName } from '@husk-ai/core';
 
 /**
  * The on-disk record of computers whose provider cannot answer "what exists?"

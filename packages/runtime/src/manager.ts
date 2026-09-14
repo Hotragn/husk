@@ -1,6 +1,6 @@
 import { readFile, mkdir, rename, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { HuskError, createLogger, ensurePaths, notifyComputerDestroyed } from '@husk/core';
+import { HuskError, createLogger, ensurePaths, notifyComputerDestroyed } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -9,7 +9,7 @@ import type {
   ComputerSpec,
   Logger,
   ProviderName,
-} from '@husk/core';
+} from '@husk-ai/core';
 import { LocalProvider } from './providers/local.js';
 import { DockerProvider } from './providers/docker.js';
 import { PodmanProvider } from './providers/podman.js';

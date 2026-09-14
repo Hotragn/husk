@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { homedir } from 'node:os';
 import { redactText, redactTranscript, redactDistilled } from './redactor.js';
-import type { Transcript } from '@husk/core';
+import type { Transcript } from '@husk-ai/core';
 
 describe('redactText', () => {
   it('masks an Anthropic key via core redact()', () => {

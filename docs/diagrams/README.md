@@ -35,7 +35,7 @@ the diagram follows the code.
 | 10 | [Use cases](10-use-cases.html) | Actors and the goals they reach |
 | 11 | [High-level design](11-hld-runtime.html) | Processes, ports and boundaries |
 | 12 | [Low-level design](12-lld-mcp-shell-call.html) | One MCP `shell` call, end to end |
-| 13 | [UML — core contracts](13-uml-core-contracts.html) | The types in `@husk/core` |
+| 13 | [UML — core contracts](13-uml-core-contracts.html) | The types in `@husk-ai/core` |
 | 14 | [UML — provider hierarchy](14-uml-provider-hierarchy.html) | `OciProvider` and the five providers |
 | 15 | [Computer lifecycle](15-computer-lifecycle.html) | The `ComputerState` machine |
 | 16 | [Test topology](16-test-topology.html) | 78 test files, two vitest configs |
@@ -57,7 +57,7 @@ both themes.
 
 ## One place the code and the docs disagree
 
-`docs/ARCHITECTURE.md` describes `@husk/mcp` as "stdio + streamable HTTP" and
+`docs/ARCHITECTURE.md` describes `@husk-ai/mcp` as "stdio + streamable HTTP" and
 says the same server runs over streamable HTTP for remote clients. It does not.
 `packages/mcp/src/server.ts:139` constructs a `StdioServerTransport` and that is
 the only transport in the package; `docs/SPEC-remote-mcp.md` records the remote

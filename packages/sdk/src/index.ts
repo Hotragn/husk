@@ -1,7 +1,7 @@
 /**
- * @husk/sdk -- the typed client for the Husk control plane.
+ * @husk-ai/sdk -- the typed client for the Husk control plane.
  *
- * Dependency-free: global `fetch`, and `@husk/core` for the shared contracts.
+ * Dependency-free: global `fetch`, and `@husk-ai/core` for the shared contracts.
  * The endpoints it speaks are documented in `docs/API.md` and implemented in
  * `packages/server/src/routes/`. Where the two ever disagree, the routes win --
  * and `src/contract.test.ts` drives this client against the real server to keep
@@ -27,4 +27,4 @@ export { decodeEvents, parseFrame, readFrames } from './sse.js';
 export type { SseFrame } from './sse.js';
 export * from './types.js';
 
-export { HuskError, isHuskError } from '@husk/core';
+export { HuskError, isHuskError } from '@husk-ai/core';

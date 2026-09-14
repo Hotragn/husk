@@ -1,10 +1,10 @@
-# @husk/cli
+# @husk-ai/cli
 
 The `husk` command line. Gives your agent a disposable Linux computer, and turns
 a chat into a bot.
 
 ```bash
-npm install -g @husk/cli
+npm install -g @husk-ai/cli
 ```
 
 Node >= 20.10. No native modules, so `npm install` is clean on Windows.
@@ -176,7 +176,7 @@ directory to reset husk completely.
 ## MCP
 
 ```bash
-claude mcp add husk -- npx -y @husk/mcp
+claude mcp add husk -- npx -y @husk-ai/mcp
 ```
 
 That gives Claude Code — or Cursor, or Zed, or anything speaking MCP — a Linux

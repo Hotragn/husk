@@ -1,4 +1,4 @@
-import { HuskError } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
 import { assertCommandAllowed } from '../guard.js';
 import { defineTool } from '../types.js';
 import type { AgentTool } from '../types.js';

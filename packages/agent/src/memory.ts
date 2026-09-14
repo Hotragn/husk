@@ -1,5 +1,5 @@
-import { messageText } from '@husk/core';
-import type { ContentPart, ModelMessage } from '@husk/core';
+import { messageText } from '@husk-ai/core';
+import type { ContentPart, ModelMessage } from '@husk-ai/core';
 
 /**
  * Conversation trimming.

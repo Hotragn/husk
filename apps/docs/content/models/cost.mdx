@@ -31,7 +31,7 @@ appears on a bill. Anthropic does charge for it, and the catalog spells out the 
 per model.
 
 ```ts
-import { breakdown, costOf, formatUsd } from '@husk/models';
+import { breakdown, costOf, formatUsd } from '@husk-ai/models';
 
 const usage = { inputTokens: 12_000, outputTokens: 800, cacheReadTokens: 40_000 };
 costOf(info, usage);      // 0.0546

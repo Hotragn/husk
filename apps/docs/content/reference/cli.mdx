@@ -480,7 +480,7 @@ husk mcp [--provider <p>] [--session-key <k>] [--keep]
 stdout carries JSON-RPC and nothing else; logs go to stderr.
 
 <Note>
-`husk mcp` and `npx @husk/mcp` are two different front ends with two different flag
+`husk mcp` and `npx @husk-ai/mcp` are two different front ends with two different flag
 sets. The standalone binary takes `--session`, `--flavor`, `--network`, `--memory` and
 `--cpus` as well; `husk mcp` takes only the three above, and spells the session flag
 `--session-key`. [MCP setup](/mcp) documents the standalone binary, which is the one an
@@ -513,10 +513,10 @@ Identical to `<command> --help`.
 | --- | --- | --- |
 | `HUSK_HOME` | everything | State directory. Default `~/.husk` |
 | `HUSK_HOST`, `HUSK_PORT` | `husk serve` | Bind address and port |
-| `HUSK_TOKEN` | `husk serve`, `@husk/sdk` | Bearer token |
+| `HUSK_TOKEN` | `husk serve`, `@husk-ai/sdk` | Bearer token |
 | `HUSK_LOG_LEVEL`, `HUSK_LOG_JSON` | everything | Logger verbosity and format |
 | `NO_COLOR`, `HUSK_NO_COLOR`, `FORCE_COLOR` | the CLI | Colour |
-| `HUSK_SESSION` | `@husk/mcp` | Default session key |
+| `HUSK_SESSION` | `@husk-ai/mcp` | Default session key |
 | `HUSK_REGISTRY`, `HUSK_IMAGE_TAG` | container providers | Override the Husk image pair |
 | `HUSK_SSH_TARGET`, `HUSK_SSH_KEY` | the `ssh` provider | Remote host and key |
 | `FLY_API_TOKEN` (or `FLY_ACCESS_TOKEN`) | the `fly` provider | Fly credentials |

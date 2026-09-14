@@ -1,7 +1,7 @@
 /**
- * @husk/browser -- a real Chromium, inside the agent's computer, over CDP.
+ * @husk-ai/browser -- a real Chromium, inside the agent's computer, over CDP.
  *
- * `browseInComputer` in `@husk/core` fetches HTML and strips the tags. That is
+ * `browseInComputer` in `@husk-ai/core` fetches HTML and strips the tags. That is
  * the right zero-dependency floor and it stays, but it cannot see a page that
  * only exists after JavaScript runs, cannot log in, and cannot click. This can.
  */

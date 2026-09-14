@@ -1,7 +1,7 @@
 /**
  * Wire shapes for the Husk control plane.
  *
- * Every interface here mirrors what `@husk/server` actually returns, verbatim --
+ * Every interface here mirrors what `@husk-ai/server` actually returns, verbatim --
  * including the single-key envelopes (`{ computers: [...] }`). The SDK does not
  * unwrap them: a client that reshapes the wire is a second contract, and two
  * contracts is what broke this package the first time. The document of record is
@@ -29,7 +29,7 @@ import type {
   Transcript,
   TranscriptSource,
   Usage,
-} from '@husk/core';
+} from '@husk-ai/core';
 
 // -- health and capability ---------------------------------------------------
 

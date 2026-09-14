@@ -1,24 +1,24 @@
 /**
  * The wire shapes this console actually receives.
  *
- * The rule is: import the type from `@husk/sdk` wherever the SDK and the
+ * The rule is: import the type from `@husk-ai/sdk` wherever the SDK and the
  * running server agree, and restate it here only where they still do not —
  * with a comment saying what the SDK claims instead. Every remaining
  * restatement was checked against `packages/server/src/routes/*.ts` on
- * `@husk/server` 0.1.0, and the full list is in `apps/console/README.md`.
+ * `@husk-ai/server` 0.1.0, and the full list is in `apps/console/README.md`.
  *
  * `GET /v1/doctor` used to be the largest of those. It is not any more: the
  * server, `docs/API.md` and the SDK now describe one shape, so the doctor types
  * below are the SDK's, not ours.
  *
- * One import below comes from `@husk/core` instead. `POST /browse` returns a
+ * One import below comes from `@husk-ai/core` instead. `POST /browse` returns a
  * `BrowsePage`, and the SDK neither calls that route nor re-exports its types,
  * so borrowing the SDK's copy is not an option and restating the shape would be
  * worse than depending on the package the server itself returns.
  */
 
-import type { SnapshotNode } from '@husk/browser';
-import type { BrowseRequest } from '@husk/core';
+import type { SnapshotNode } from '@husk-ai/browser';
+import type { BrowseRequest } from '@husk-ai/core';
 import type {
   ComputerInfo,
   ComputerSpec,
@@ -31,7 +31,7 @@ import type {
   HuskSpec,
   ModelInfo,
   RunEvent,
-} from '@husk/sdk';
+} from '@husk-ai/sdk';
 
 export type {
   ComputerInfo,
@@ -69,7 +69,7 @@ export type IsolationKind = 'kernel' | 'machine' | 'guardrails';
  * `isolationKind`: in `packages/sdk/src/types.ts` that field was landed inside
  * `DoctorReport['selection']` instead of on the provider. The server puts it on
  * each provider (`routes/doctor.ts`, from `ProviderStatus.isolationKind` in
- * `@husk/core`) and never sends it on `selection`, and `husk doctor` reads it
+ * `@husk-ai/core`) and never sends it on `selection`, and `husk doctor` reads it
  * per provider. So: extend the SDK type by exactly one optional field rather
  * than fork it, and drop this the moment the SDK moves the field.
  */
@@ -80,7 +80,7 @@ export interface DoctorProvider extends SdkDoctorProvider {
 /** `GET /v1/doctor`. The SDK's report, with the provider fix above applied. */
 export type DoctorReport = Omit<SdkDoctorReport, 'providers'> & { providers: DoctorProvider[] };
 
-/** `GET /v1/computers` — an object, not the bare array `@husk/sdk` types. */
+/** `GET /v1/computers` — an object, not the bare array `@husk-ai/sdk` types. */
 export interface ComputerListResponse {
   computers: ComputerInfo[];
 }
@@ -93,7 +93,7 @@ export interface DirListResponse {
 /**
  * `POST /v1/computers/:id/browse` -> `BrowsePage`.
  *
- * These come straight from `@husk/core`, not from `@husk/sdk`: the SDK has no
+ * These come straight from `@husk-ai/core`, not from `@husk-ai/sdk`: the SDK has no
  * browse surface at all — no client method, and its `types.ts` re-export list
  * does not include the browse types — so this is the one place the console
  * reaches past the SDK to the package the route actually returns. Nothing here
@@ -103,20 +103,20 @@ export interface DirListResponse {
  * handle rather than a wire field. The route's zod schema is `.strict()`, so
  * serialising it would 422.
  */
-export type { BrowseLink, BrowsePage } from '@husk/core';
+export type { BrowseLink, BrowsePage } from '@husk-ai/core';
 export type BrowseRequestBody = Omit<BrowseRequest, 'signal'>;
 
 /**
  * `POST /v1/computers/:id/browser/*` — the real Chromium.
  *
- * `SnapshotNode` is `@husk/browser`'s, for the same reason `BrowsePage` is
- * `@husk/core`'s: the SDK models none of these routes, so the package the
+ * `SnapshotNode` is `@husk-ai/browser`'s, for the same reason `BrowsePage` is
+ * `@husk-ai/core`'s: the SDK models none of these routes, so the package the
  * server returns the shape from is the only honest place to get it. The
  * dependency is type-only and erases at build.
  *
  * The three envelopes below are restated because the handlers in
  * `packages/server/src/routes/browser.ts` build their bodies inline and export
- * no interface to import. Checked against that file on `@husk/server` 0.1.0:
+ * no interface to import. Checked against that file on `@husk-ai/server` 0.1.0:
  * `goto` -> `{ url, loaded, title }`; `snapshot`, `click` and `type` all ->
  * `{ url, nodes }`. `goto` returning no nodes is why the panel snapshots after
  * it navigates and not after a click.
@@ -143,7 +143,7 @@ export interface BrowserSnapshotResult {
 /**
  * `POST /v1/computers/:id/exec/stream`.
  *
- * The payload field is `data`, not the `text` that `@husk/sdk`'s `ExecEvent`
+ * The payload field is `data`, not the `text` that `@husk-ai/sdk`'s `ExecEvent`
  * declares. The trailing `event: done` frame arrives as a bare `{}`, which the
  * SDK's `decodeEvents` yields rather than swallowing, so `type` is optional.
  */

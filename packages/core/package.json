@@ -1,5 +1,5 @@
 {
-  "name": "@husk/core",
+  "name": "@husk-ai/core",
   "version": "0.1.0",
   "description": "Shared contracts, types and primitives for Husk.",
   "license": "Apache-2.0",

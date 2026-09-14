@@ -1,8 +1,8 @@
 import { Buffer } from 'node:buffer';
-import { browserFor, findInstalledChromium } from '@husk/browser';
-import type { SnapshotNode } from '@husk/browser';
-import type { Computer } from '@husk/core';
-import { redact } from '@husk/core';
+import { browserFor, findInstalledChromium } from '@husk-ai/browser';
+import type { SnapshotNode } from '@husk-ai/browser';
+import type { Computer } from '@husk-ai/core';
+import { redact } from '@husk-ai/core';
 import type { ToolDef, ToolResult } from './tools.js';
 
 /**
@@ -15,7 +15,7 @@ import type { ToolDef, ToolResult } from './tools.js';
  * Chromium inside the same computer as the shell and the filesystem, so a login
  * survives across pages and the agent reads the page a person would see.
  *
- * These have existed in `@husk/agent` and in the console since the browser
+ * These have existed in `@husk-ai/agent` and in the console since the browser
  * landed, and were missing from here -- so the integration husk is named for,
  * an MCP client like Claude Code, was the one caller that could not reach them.
  *

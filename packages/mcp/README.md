@@ -1,9 +1,9 @@
-# @husk/mcp
+# @husk-ai/mcp
 
 Give any MCP client a Linux computer.
 
 ```bash
-claude mcp add husk -- npx -y @husk/mcp
+claude mcp add husk -- npx -y @husk-ai/mcp
 ```
 
 That is the whole setup. No account, no config file, no API key. Claude Code now has a
@@ -15,7 +15,7 @@ Works the same in Cursor, Zed, or anything else that speaks MCP:
 ```json
 {
   "mcpServers": {
-    "husk": { "command": "npx", "args": ["-y", "@husk/mcp"] }
+    "husk": { "command": "npx", "args": ["-y", "@husk-ai/mcp"] }
   }
 }
 ```
@@ -50,8 +50,8 @@ probing it with `uname`, `nproc`, `df` and `which python3`.
 Two projects, two machines:
 
 ```bash
-claude mcp add husk-api  -- npx -y @husk/mcp --session api  --flavor python
-claude mcp add husk-web  -- npx -y @husk/mcp --session web  --flavor node
+claude mcp add husk-api  -- npx -y @husk-ai/mcp --session api  --flavor python
+claude mcp add husk-web  -- npx -y @husk-ai/mcp --session web  --flavor node
 ```
 
 ## What kind of machine you get
@@ -82,7 +82,7 @@ that registers seven tool schemas and waits — no container, no directory, no n
 ## Verify your install
 
 ```bash
-npx -y @husk/mcp --help      # options, to stderr
+npx -y @husk-ai/mcp --help      # options, to stderr
 node dist/smoke.js           # drives every tool against a real machine
 ```
 

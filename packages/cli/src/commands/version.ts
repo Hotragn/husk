@@ -1,4 +1,4 @@
-import { huskHome } from '@husk/core';
+import { huskHome } from '@husk-ai/core';
 import { parse } from '../args.js';
 import { VERSION } from '../version.js';
 import * as ui from '../ui.js';

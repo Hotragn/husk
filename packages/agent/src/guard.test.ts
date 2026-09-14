@@ -1,4 +1,4 @@
-import { HuskError } from '@husk/core';
+import { HuskError } from '@husk-ai/core';
 import { describe, expect, it } from 'vitest';
 import { assertCommandAllowed, evaluateCommand } from './guard.js';
 

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import { clampText, HuskError, id } from '@husk/core';
-import type { ImportInput, Transcript, TranscriptImporter, TranscriptMessage } from '@husk/core';
+import { clampText, HuskError, id } from '@husk-ai/core';
+import type { ImportInput, Transcript, TranscriptImporter, TranscriptMessage } from '@husk-ai/core';
 import type { ChatLike } from '../chat.js';
 import { parseMarkdownChat } from './markdown.js';
 

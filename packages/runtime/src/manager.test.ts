@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createLogger } from '@husk/core';
-import type { Availability, Computer, ComputerInfo, ComputerProvider, ComputerSpec } from '@husk/core';
+import { createLogger } from '@husk-ai/core';
+import type { Availability, Computer, ComputerInfo, ComputerProvider, ComputerSpec } from '@husk-ai/core';
 import { ComputerManager, defaultProviders } from './manager.js';
 
 /**

@@ -10,7 +10,7 @@
  * alike, and it is the failure mode every naive "drop the oldest message" loop hits.
  */
 
-import { clampText, estimateTokens, type ContentPart, type ModelMessage, type ToolSchema } from '@husk/core';
+import { clampText, estimateTokens, type ContentPart, type ModelMessage, type ToolSchema } from '@husk-ai/core';
 
 /** Per-message framing the provider adds around content. Roughly right everywhere. */
 const MESSAGE_OVERHEAD_TOKENS = 4;

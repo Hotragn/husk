@@ -1,4 +1,4 @@
-import type { Approver } from '@husk/core';
+import type { Approver } from '@husk-ai/core';
 import type {
   ChatRequest,
   ChatResponse,
@@ -13,13 +13,13 @@ import type {
   StreamEvent,
   Tool,
   ToolContext,
-} from '@husk/core';
+} from '@husk-ai/core';
 
 /**
  * The model surface this package needs, declared structurally.
  *
- * `@husk/agent` depends on `@husk/core` and nothing else in the workspace, so the
- * router is handed in rather than imported. `@husk/models`' ModelRouter satisfies
+ * `@husk-ai/agent` depends on `@husk-ai/core` and nothing else in the workspace, so the
+ * router is handed in rather than imported. `@husk-ai/models`' ModelRouter satisfies
  * this shape; so does a twenty-line fake in a test.
  */
 export interface RouterLike {
@@ -37,7 +37,7 @@ export interface ComputerSource {
 /**
  * Incremental output from a long-running tool.
  *
- * `RunEvent` in @husk/core has no way to say "this shell command printed a line",
+ * `RunEvent` in @husk-ai/core has no way to say "this shell command printed a line",
  * and `text_delta` belongs to the model's own token stream. Rather than corrupt
  * that stream we add one member here and report the gap upstream.
  */
@@ -52,7 +52,7 @@ export interface ToolDeltaEvent {
 export type AgentRunEvent = RunEvent | ToolDeltaEvent;
 
 // The canonical shape lives in core so the server and the CLI agree with the loop.
-export type { ApprovalRequest, Approver } from '@husk/core';
+export type { ApprovalRequest, Approver } from '@husk-ai/core';
 
 
 export interface AgentRunOptions extends RunOptions {

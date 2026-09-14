@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { defaultSpec, parseSpec } from '@husk/core';
+import { defaultSpec, parseSpec } from '@husk-ai/core';
 import { parseSpecYaml, readSpec, stringifySpec, writeSpec } from './serialize.js';
 
 const SPEC = parseSpec({

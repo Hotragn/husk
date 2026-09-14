@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isHuskError } from '@husk/core';
+import { isHuskError } from '@husk-ai/core';
 import {
   PLAYWRIGHT_CHROMIUM_REVISION,
   downloadPlanFor,
