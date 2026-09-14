@@ -79,9 +79,9 @@ jobs:
       # a publish, and a package published before its dependency is a version
       # nobody can install for as long as it takes to notice.
       #
-      # Auth: Trusted Publishing (OIDC). The husk-ai npm org trusts this repo's
-      # release workflow — no long-lived token needed. The id-token: write
-      # permission lets npm verify the workflow identity.
+      # Auth: Trusted Publishing (OIDC) once packages exist on npm. For the
+      # initial publish use scripts/publish-first.sh locally with OTP, then
+      # configure Trusted Publishing per-package on npmjs.com.
       - name: publish, in dependency order
         if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
         run: |
