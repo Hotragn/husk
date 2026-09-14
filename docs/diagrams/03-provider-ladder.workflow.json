@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Provider selection — the scoring ladder",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "ask", "label": "The ask" },
+    { "id": "probe", "label": "Probe in priority order — first to answer wins" },
+    { "id": "floor", "label": "The floor — always available", "variant": "exception" },
+    { "id": "out", "label": "What you get" }
+  ],
+  "mainPath": ["start", "docker", "podman", "ssh", "fly", "local"],
+  "nodes": [
+    { "id": "start", "lane": "ask", "col": 0, "type": "external", "label": "husk up · MCP call", "sublabel": "provider: auto", "width": 140 },
+    { "id": "docker", "lane": "probe", "col": 1, "type": "cloud", "label": "docker · 20", "sublabel": "kernel isolation", "width": 132 },
+    { "id": "podman", "lane": "probe", "col": 2, "type": "cloud", "label": "podman · 18", "sublabel": "kernel, rootless", "width": 132 },
+    { "id": "ssh", "lane": "probe", "col": 3, "type": "cloud", "label": "ssh · 16", "sublabel": "a box you own", "width": 132 },
+    { "id": "fly", "lane": "probe", "col": 4, "type": "cloud", "label": "fly · 14", "sublabel": "microVM, metered", "width": 132 },
+    { "id": "local", "lane": "floor", "col": 4, "type": "security", "label": "local · 10", "sublabel": "guardrails only", "width": 132 },
+    { "id": "isolated", "lane": "out", "col": 5, "type": "backend", "label": "isolated: true", "sublabel": "kernel or machine boundary", "width": 148 },
+    { "id": "guarded", "lane": "floor", "col": 5, "type": "security", "label": "isolated: false", "sublabel": "real Linux, not a sandbox", "width": 148 }
+  ],
+  "edges": [
+    { "id": "e-start", "from": "start", "to": "docker", "label": "resolveProvider('auto')", "variant": "emphasis", "role": "main" },
+    { "id": "e-docker", "from": "docker", "to": "podman", "label": "no daemon", "role": "main" },
+    { "id": "e-podman", "from": "podman", "to": "ssh", "label": "not installed", "role": "main" },
+    { "id": "e-ssh", "from": "ssh", "to": "fly", "label": "no host set", "role": "main" },
+    { "id": "e-fly", "from": "fly", "to": "local", "label": "no API token", "role": "main" },
+    { "id": "e-local", "from": "local", "to": "guarded", "label": "WSL2 + unshare -mr", "variant": "emphasis", "role": "main" },
+    { "id": "e-win", "from": "docker", "to": "isolated", "label": "first to answer wins", "variant": "dashed", "role": "branch" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "The free path is the default path", "items": ["Every rung is free except fly, which is metered", "An explicit --provider is never silently downgraded — it errors instead"] },
+    { "dot": "amber", "title": "No Docker? You still get a real Linux computer", "items": ["local pins cwd to a workspace, scrubs credential-shaped env, and refuses a deny list", "On Windows it runs in WSL2 under unshare -mr, so /work is a real mount"] },
+    { "dot": "rose", "title": "Guarded is not isolated", "items": ["local shares your kernel, network and user account", "husk doctor prints isolated: false, and the MCP server tells the model so"] }
+  ]
+}

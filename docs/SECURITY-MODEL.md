@@ -1,5 +1,7 @@
 # Husk — the security model
 
+> **[Interactive trust-boundary diagram](../docs/diagrams/05-trust-boundaries.html)** — open locally for pan/zoom, relationship tracing and PNG/SVG export.
+
 What Husk protects you from, what it does not, and how to tell which mode you are in.
 
 Most sandbox products are vague here. Vagueness is how people end up believing they have

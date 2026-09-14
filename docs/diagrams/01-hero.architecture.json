@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Husk — give your agent a computer",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/Hotragn/husk",
+      "provider": "github",
+      "link_mode": "local-only",
+      "revision": "a0865c10e98cb4616d5e9d0c587e17a8d3684755"
+    }
+  },
+  "components": [
+    {
+      "id": "chat",
+      "type": "external",
+      "label": "Claude Code · Cursor · Zed",
+      "sublabel": "the AI tool you already use",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        180,
+        72
+      ]
+    },
+    {
+      "id": "mcp",
+      "type": "backend",
+      "label": "@husk/mcp",
+      "sublabel": "npx -y @husk/mcp",
+      "pos": [
+        300,
+        300
+      ],
+      "size": [
+        170,
+        72
+      ],
+      "sources": [
+        {
+          "path": "packages/mcp/src/server.ts",
+          "label": "server.ts"
+        }
+      ]
+    },
+    {
+      "id": "runtime",
+      "type": "cloud",
+      "label": "@husk/runtime",
+      "sublabel": "docker · podman · ssh · fly · local",
+      "pos": [
+        550,
+        300
+      ],
+      "size": [
+        200,
+        72
+      ],
+      "sources": [
+        {
+          "path": "packages/runtime/src/manager.ts",
+          "label": "manager.ts"
+        }
+      ]
+    },
+    {
+      "id": "shell",
+      "type": "backend",
+      "label": "shell",
+      "sublabel": "a real Linux kernel",
+      "pos": [
+        850,
+        300
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "files",
+      "type": "backend",
+      "label": "/work",
+      "sublabel": "files that persist per session",
+      "pos": [
+        850,
+        160
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "browser",
+      "type": "backend",
+      "label": "Chromium",
+      "sublabel": "driven over CDP from inside",
+      "pos": [
+        850,
+        440
+      ],
+      "size": [
+        160,
+        64
+      ],
+      "sources": [
+        {
+          "path": "packages/browser/src/driver.py",
+          "label": "driver.py"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "one disposable Linux computer — no Docker required",
+      "wraps": [
+        "shell",
+        "files",
+        "browser"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "chat-mcp",
+      "from": "chat",
+      "to": "mcp",
+      "label": "MCP over stdio",
+      "variant": "emphasis"
+    },
+    {
+      "id": "mcp-runtime",
+      "from": "mcp",
+      "to": "runtime",
+      "label": "ensure(session)"
+    },
+    {
+      "id": "runtime-shell",
+      "from": "runtime",
+      "to": "shell",
+      "label": "exec",
+      "variant": "emphasis"
+    },
+    {
+      "id": "shell-files",
+      "from": "shell",
+      "to": "files",
+      "label": "same filesystem",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "shell-browser",
+      "from": "shell",
+      "to": "browser",
+      "label": "same machine, same egress IP",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Works with what you have",
+      "items": [
+        "One line: claude mcp add husk -- npx -y @husk/mcp",
+        "No account, no config file, no signup"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "No Docker required",
+      "items": [
+        "Five providers, highest available wins",
+        "On Windows, local gives a real /work via WSL2"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "One machine, three views",
+      "items": [
+        "Terminal, filesystem and browser are the same box",
+        "Throw it away when you are done"
+      ]
+    }
+  ]
+}

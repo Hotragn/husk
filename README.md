@@ -17,6 +17,8 @@
 
 Husk gives AI agents disposable Linux computers — a shell, a filesystem, network, ports — that they can drive and you can throw away. It also turns any AI chat transcript into a reusable bot you can read, edit, and run as a service.
 
+> **[Interactive architecture diagram](docs/diagrams/01-hero.html)** — open locally, no server needed. Pan, zoom, dark mode, PNG/SVG export.
+
 Free. Runs on your hardware. No account required.
 
 ## Quick start
@@ -134,6 +136,7 @@ apps/
 - **[Build contract](docs/BUILD-CONTRACT.md)** — conventions every package obeys
 - **[Security model](docs/SECURITY-MODEL.md)** — what is isolated and what is not
 - **[Examples](examples/)** — six ready-to-run `husk.yaml` recipes
+- **[Diagrams](docs/diagrams/)** — 16 interactive architecture, dataflow and design diagrams (open the `.html` files locally)
 
 ## Development
 

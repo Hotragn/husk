@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": { "title": "DFD level 3 — one shell call on the local provider", "quality_profile": "showcase", "viewBox": [1075, 580] },
+  "stages": [{ "label": "The call" }, { "label": "Command policy" }, { "label": "Path jail" }, { "label": "Execution" }, { "label": "Return" }],
+  "nodes": [
+    { "id": "call", "type": "external", "label": "shell(cmd)", "sublabel": "MCP or agent", "stage": 0, "row": 1 },
+    { "id": "deny", "type": "security", "label": "command check", "sublabel": "anchored rules", "stage": 1, "row": 1 },
+    { "id": "rules", "type": "database", "label": "DEFAULT_DENY", "sublabel": "rm -rf /, mkfs, sudo", "stage": 1, "row": 2 },
+    { "id": "path", "type": "security", "label": "mapPath", "sublabel": "realpath, no escape", "stage": 2, "row": 1 },
+    { "id": "normalise", "type": "backend", "label": "normaliseGuestPath", "sublabel": "/work-relative", "stage": 2, "row": 0 },
+    { "id": "exec", "type": "cloud", "label": "spawn", "sublabel": "unshare -mr, detached", "stage": 3, "row": 1 },
+    { "id": "scrub", "type": "security", "label": "scrubEnv", "sublabel": "allow-list only", "stage": 3, "row": 0 },
+    { "id": "caps", "type": "security", "label": "OutputBuffer", "sublabel": "256 KiB per stream", "stage": 3, "row": 2 },
+    { "id": "redact", "type": "security", "label": "redact()", "sublabel": "before the model", "stage": 4, "row": 1 },
+    { "id": "audit", "type": "database", "label": "audited()", "sublabel": "one NDJSON line", "stage": 4, "row": 2 }
+  ],
+  "flows": [
+    { "id": "h1", "from": "call", "to": "deny", "label": "the command", "variant": "emphasis", "route": "straight", "labelAt": [207, 271] },
+    { "id": "h2", "from": "deny", "to": "path", "label": "allowed", "classification": "else E_EXEC_DENIED", "variant": "emphasis", "route": "straight", "labelAt": [422, 271] },
+    { "id": "h3", "from": "path", "to": "exec", "label": "host cwd", "classification": "else E_FS_DENIED", "variant": "emphasis", "route": "straight", "labelAt": [637, 271] },
+    { "id": "h4", "from": "exec", "to": "redact", "label": "stdout + stderr", "variant": "emphasis", "route": "straight", "labelAt": [852, 271] },
+    { "id": "h5", "from": "rules", "to": "deny", "label": "deny list", "labelAt": [240, 330] },
+    { "id": "h6", "from": "normalise", "to": "path", "label": "guest path", "labelAt": [450, 212] },
+    { "id": "h7", "from": "scrub", "to": "exec", "label": "the environment", "labelAt": [665, 212] },
+    { "id": "h8", "from": "caps", "to": "exec", "label": "output ceiling", "labelAt": [665, 330] },
+    { "id": "h9", "from": "redact", "to": "audit", "label": "fire-and-forget", "variant": "dashed", "labelAt": [880, 330] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "The real order, from local.ts", "items": ["Command policy runs first, then the path jail, then the environment scrub", "Only then is anything spawned"] },
+    { "dot": "emerald", "title": "Why the deny list is short", "items": ["rm -rf ./build is allowed; rm -rf / is not", "Rules anchor to command position — after ;, |, &&, ||, $(, then, do — so grep -r \"sudo\" . still works"] },
+    { "dot": "rose", "title": "Failure modes are bounded", "items": ["A timeout kills the whole detached process group, not just the shell", "A runaway process cannot exhaust memory through captured output"] }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "UML — the provider hierarchy",
+    "quality_profile": "showcase",
+    "repository": { "url": "https://github.com/Hotragn/husk", "provider": "github", "link_mode": "local-only", "revision": "a0865c10e98cb4616d5e9d0c587e17a8d3684755" }
+  },
+  "layout": { "mode": "grid", "origin": [60, 70], "cols": 5, "cellW": 160, "cellH": 68, "gapX": 44, "gapY": 100 },
+  "components": [
+    { "id": "iface", "type": "security", "label": "interface ComputerProvider", "sublabel": "name · description · priority · isAvailable() · create() · get() · list() · reap?()", "row": 0, "col": 0, "size": [976, 68], "sources": [{ "path": "packages/core/src/types/computer.ts", "label": "computer.ts" }] },
+    { "id": "oci", "type": "backend", "label": "abstract OciProvider", "sublabel": "shared container logic", "row": 1, "col": 0, "size": [364, 68], "sources": [{ "path": "packages/runtime/src/providers/oci-common.ts", "line": 825, "label": "oci-common.ts" }] },
+    { "id": "local", "type": "cloud", "label": "LocalProvider · 10", "sublabel": "guardrails only", "row": 1, "col": 2, "size": [160, 68], "sources": [{ "path": "packages/runtime/src/providers/local.ts", "line": 881, "label": "local.ts" }] },
+    { "id": "ssh", "type": "cloud", "label": "SshProvider · 16", "sublabel": "a box you own", "row": 1, "col": 3, "size": [160, 68], "sources": [{ "path": "packages/runtime/src/providers/ssh.ts", "line": 985, "label": "ssh.ts" }] },
+    { "id": "fly", "type": "cloud", "label": "FlyProvider · 14", "sublabel": "microVM, metered", "row": 1, "col": 4, "size": [160, 68], "sources": [{ "path": "packages/runtime/src/providers/fly.ts", "line": 579, "label": "fly.ts" }] },
+    { "id": "docker", "type": "cloud", "label": "DockerProvider · 20", "sublabel": "kernel isolation", "row": 2, "col": 0, "size": [160, 68], "sources": [{ "path": "packages/runtime/src/providers/docker.ts", "line": 20, "label": "docker.ts" }] },
+    { "id": "podman", "type": "cloud", "label": "PodmanProvider · 18", "sublabel": "rootless, daemonless", "row": 2, "col": 1, "size": [160, 68], "sources": [{ "path": "packages/runtime/src/providers/podman.ts", "line": 29, "label": "podman.ts" }] }
+  ],
+  "connections": [
+    { "id": "u1", "from": "oci", "to": "iface", "label": "implements", "fromSide": "top", "toSide": "bottom" },
+    { "id": "u2", "from": "local", "to": "iface", "label": "implements", "fromSide": "top", "toSide": "bottom" },
+    { "id": "u3", "from": "ssh", "to": "iface", "label": "implements", "fromSide": "top", "toSide": "bottom" },
+    { "id": "u4", "from": "fly", "to": "iface", "label": "implements", "fromSide": "top", "toSide": "bottom" },
+    { "id": "u5", "from": "docker", "to": "oci", "label": "extends", "variant": "emphasis", "fromSide": "top", "toSide": "bottom" },
+    { "id": "u6", "from": "podman", "to": "oci", "label": "extends", "variant": "emphasis", "fromSide": "top", "toSide": "bottom" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Only the container pair share a base", "items": ["OciProvider holds the logic Docker and Podman genuinely have in common", "local, ssh and fly implement the interface directly — no forced abstraction"] },
+    { "dot": "emerald", "title": "Priority is data on the class", "items": ["docker 20 · podman 18 · ssh 16 · fly 14 · local 10", "getProviders() sorts by it; auto walks the sorted list"] },
+    { "dot": "rose", "title": "Availability carries the honesty", "items": ["isolationKind is kernel, machine, or guardrails — a boolean lied", "ssh is isolated from your laptop but the agent still holds your shell on the far end"] }
+  ]
+}

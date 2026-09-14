@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": { "title": "LLD — one MCP shell call, end to end", "quality_profile": "showcase", "column_fit": "spread", "viewBox": [1060, 540] },
+  "participants": [
+    { "id": "client", "type": "external", "label": "Claude Code", "sublabel": "MCP client" },
+    { "id": "mcp", "type": "backend", "label": "HuskMcpServer", "sublabel": "stdio" },
+    { "id": "audit", "type": "security", "label": "audited()", "sublabel": "wraps every call" },
+    { "id": "mgr", "type": "backend", "label": "ComputerManager", "sublabel": "ensure(key)" },
+    { "id": "provider", "type": "cloud", "label": "LocalProvider", "sublabel": "guarded exec" },
+    { "id": "wsl", "type": "cloud", "label": "WSL2", "sublabel": "unshare -mr" },
+    { "id": "redact", "type": "security", "label": "redact()", "sublabel": "result filter" }
+  ],
+  "segments": [
+    { "from": 155, "to": 235, "label": "Admit" },
+    { "from": 245, "to": 340, "label": "Execute" },
+    { "from": 350, "to": 450, "label": "Clamp, redact, record" }
+  ],
+  "messages": [
+    { "id": "l1", "from": "client", "to": "mcp", "y": 170, "label": "tools/call shell", "variant": "emphasis" },
+    { "id": "l2", "from": "mcp", "to": "audit", "y": 200, "label": "wrap the call", "variant": "security", "note": "Every tool passes through one place, so the audit log cannot grow holes as tools are added." },
+    { "id": "l3", "from": "audit", "to": "mgr", "y": 232, "label": "ensure(sessionKey)" },
+    { "id": "l4", "from": "mgr", "to": "provider", "y": 264, "label": "exec(req)", "variant": "emphasis" },
+    { "id": "l5", "from": "provider", "to": "wsl", "y": 296, "label": "spawn detached, after the deny list and the jail" },
+    { "id": "l6", "from": "wsl", "to": "provider", "y": 328, "label": "stdout, stderr, exit code", "variant": "return" },
+    { "id": "l7", "from": "provider", "to": "redact", "y": 364, "label": "clamped to 256 KiB per stream", "variant": "security" },
+    { "id": "l8", "from": "redact", "to": "client", "y": 400, "label": "text result — sk-ant-…[redacted]", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "mcp", "from": 165, "to": 406, "type": "backend" },
+    { "participant": "audit", "from": 195, "to": 400, "type": "security" },
+    { "participant": "mgr", "from": 227, "to": 270, "type": "backend" },
+    { "participant": "provider", "from": 259, "to": 370, "type": "cloud" },
+    { "participant": "wsl", "from": 291, "to": 334, "type": "cloud" },
+    { "participant": "redact", "from": 359, "to": 406, "type": "security" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "One machine per session", "items": ["ensure(sessionKey) binds a Claude Code session id to a computer", "So /work persists across separate tool calls without the client tracking ids"] },
+    { "dot": "emerald", "title": "The audit wrapper is the outermost layer", "items": ["audited() sits at the single point every MCP tool passes through", "Fire-and-forget: a full disk costs you the record, not the work"] },
+    { "dot": "rose", "title": "The model never sees the secret", "items": ["An agent that cats a .env sees the file; the model sees sk-ant-…[redacted]", "Redaction happens before the result re-enters the conversation"] }
+  ]
+}

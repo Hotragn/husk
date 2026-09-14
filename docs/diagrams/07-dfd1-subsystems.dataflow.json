@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "DFD level 1 — the subsystems",
+    "quality_profile": "showcase",
+    "viewBox": [
+      880,
+      580
+    ]
+  },
+  "stages": [
+    {
+      "label": "Entry"
+    },
+    {
+      "label": "Orchestration"
+    },
+    {
+      "label": "Resolution"
+    },
+    {
+      "label": "Backends"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "entry",
+      "type": "backend",
+      "label": "entry layer",
+      "sublabel": "mcp · cli · server",
+      "stage": 0,
+      "row": 1
+    },
+    {
+      "id": "agentloop",
+      "type": "backend",
+      "label": "agent loop",
+      "sublabel": "steps, budgets, approval",
+      "stage": 1,
+      "row": 1
+    },
+    {
+      "id": "sessions",
+      "type": "backend",
+      "label": "sessions",
+      "sublabel": "chat → husk.yaml",
+      "stage": 1,
+      "row": 2
+    },
+    {
+      "id": "router",
+      "type": "cloud",
+      "label": "model router",
+      "sublabel": "aliases, fallback, cost",
+      "stage": 2,
+      "row": 0
+    },
+    {
+      "id": "compmgr",
+      "type": "cloud",
+      "label": "computer manager",
+      "sublabel": "probe, ensure, reap",
+      "stage": 2,
+      "row": 1
+    },
+    {
+      "id": "modelapi",
+      "type": "external",
+      "label": "model providers",
+      "sublabel": "anthropic … ollama",
+      "stage": 3,
+      "row": 0
+    },
+    {
+      "id": "computer",
+      "type": "cloud",
+      "label": "the computer",
+      "sublabel": "docker … local",
+      "stage": 3,
+      "row": 1
+    }
+  ],
+  "flows": [
+    {
+      "id": "e1",
+      "from": "entry",
+      "to": "agentloop",
+      "label": "run",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelAt": [
+        200,
+        271
+      ]
+    },
+    {
+      "id": "e2",
+      "from": "entry",
+      "to": "sessions",
+      "label": "import + distill",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "via": [
+        [
+          100,
+          330
+        ],
+        [
+          315,
+          330
+        ]
+      ],
+      "labelAt": [
+        200,
+        330
+      ]
+    },
+    {
+      "id": "e3",
+      "from": "agentloop",
+      "to": "compmgr",
+      "label": "computer tools",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelAt": [
+        422,
+        271
+      ]
+    },
+    {
+      "id": "e4",
+      "from": "agentloop",
+      "to": "router",
+      "label": "chat + tools",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "via": [
+        [
+          315,
+          212
+        ],
+        [
+          530,
+          212
+        ]
+      ],
+      "labelAt": [
+        420,
+        212
+      ]
+    },
+    {
+      "id": "e5",
+      "from": "router",
+      "to": "modelapi",
+      "label": "HTTPS",
+      "route": "straight",
+      "labelAt": [
+        637,
+        157
+      ]
+    },
+    {
+      "id": "e6",
+      "from": "compmgr",
+      "to": "computer",
+      "label": "exec",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelAt": [
+        637,
+        271
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Five subsystems, one contract",
+      "items": [
+        "Entry, agent loop, sessions, model router, computer manager",
+        "All five speak only the types in @husk/core"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "The agent never learns where it is",
+      "items": [
+        "Computer is a narrow, complete interface; translation lives in the provider",
+        "So a husk written against Docker runs unchanged on ssh or local"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Falling back is announced",
+      "items": [
+        "A 429, a dead Ollama or an expired key walks fallbackModels with jittered backoff",
+        "It emits a warning event — silently answering with a weaker model is worse than failing"
+      ]
+    }
+  ]
+}

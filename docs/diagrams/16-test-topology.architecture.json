@@ -1,0 +1,261 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Test topology — 78 test files, two configs",
+    "quality_profile": "showcase"
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [
+      60,
+      70
+    ],
+    "cols": 4,
+    "cellW": 180,
+    "cellH": 54,
+    "gapX": 48,
+    "gapY": 46
+  },
+  "components": [
+    {
+      "id": "workspace",
+      "type": "backend",
+      "label": "vitest.workspace.ts",
+      "sublabel": "the root run means the repo",
+      "row": 0,
+      "col": 0,
+      "size": [
+        180,
+        54
+      ]
+    },
+    {
+      "id": "consolecfg",
+      "type": "backend",
+      "label": "apps/console config",
+      "sublabel": "jsdom + react plugin",
+      "row": 0,
+      "col": 1,
+      "size": [
+        180,
+        54
+      ]
+    },
+    {
+      "id": "console",
+      "type": "frontend",
+      "label": "apps/console · 1",
+      "sublabel": "React components",
+      "row": 0,
+      "col": 2,
+      "size": [
+        180,
+        54
+      ]
+    },
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "server · 11",
+      "sublabel": "routes, sse, auth, cron",
+      "row": 1,
+      "col": 0,
+      "size": [
+        180,
+        54
+      ]
+    },
+    {
+      "id": "sessions",
+      "type": "backend",
+      "label": "sessions · 11",
+      "sublabel": "importers, distil, redact",
+      "row": 1,
+      "col": 1,
+      "size": [
+        180,
+        54
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "agent · 10",
+      "sublabel": "loop, budget, guard, net",
+      "row": 1,
+      "col": 2,
+      "size": [
+        180,
+        54
+      ]
+    },
+    {
+      "id": "models",
+      "type": "cloud",
+      "label": "models · 9",
+      "sublabel": "router, wire, cost, tokens",
+      "row": 1,
+      "col": 3,
+      "size": [
+        180,
+        54
+      ]
+    },
+    {
+      "id": "core",
+      "type": "security",
+      "label": "core · 9",
+      "sublabel": "net, ssrf, redact, audit",
+      "row": 2,
+      "col": 0,
+      "size": [
+        180,
+        54
+      ]
+    },
+    {
+      "id": "runtime",
+      "type": "cloud",
+      "label": "runtime · 8",
+      "sublabel": "policy, manager, orphans",
+      "row": 2,
+      "col": 1,
+      "size": [
+        180,
+        54
+      ]
+    },
+    {
+      "id": "browser",
+      "type": "cloud",
+      "label": "browser · 7",
+      "sublabel": "cdp, page, provision",
+      "row": 2,
+      "col": 2,
+      "size": [
+        180,
+        54
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "backend",
+      "label": "cli · 7",
+      "sublabel": "args, smoke, yaml, ui",
+      "row": 2,
+      "col": 3,
+      "size": [
+        180,
+        54
+      ]
+    },
+    {
+      "id": "sdk",
+      "type": "backend",
+      "label": "sdk · 3",
+      "sublabel": "client, contract, sse",
+      "row": 3,
+      "col": 0,
+      "size": [
+        180,
+        54
+      ]
+    },
+    {
+      "id": "mcp",
+      "type": "backend",
+      "label": "mcp · 1",
+      "sublabel": "tools",
+      "row": 3,
+      "col": 1,
+      "size": [
+        180,
+        54
+      ]
+    },
+    {
+      "id": "adapters",
+      "type": "backend",
+      "label": "adapters · 1",
+      "sublabel": "shared",
+      "row": 3,
+      "col": 2,
+      "size": [
+        180,
+        54
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "packages/* — bare vitest defaults, 77 files across 11 packages",
+      "wraps": [
+        "server",
+        "sessions",
+        "agent",
+        "models",
+        "core",
+        "runtime",
+        "browser",
+        "cli",
+        "sdk",
+        "mcp",
+        "adapters"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "y1",
+      "from": "workspace",
+      "to": "consolecfg",
+      "label": "second entry",
+      "labelDy": -26
+    },
+    {
+      "id": "y2",
+      "from": "consolecfg",
+      "to": "console",
+      "label": "transforms",
+      "labelDy": -26
+    },
+    {
+      "id": "y3",
+      "from": "workspace",
+      "to": "server",
+      "label": "collects packages/*",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 22
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Why the workspace file exists",
+      "items": [
+        "A root run would otherwise collect the console with bare defaults",
+        "They then fail for reasons unrelated to what they assert"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Where the weight sits",
+      "items": [
+        "server and sessions lead at 11 files each, then agent at 10",
+        "core covers net, ssrf, redact and audit"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "The thin spots",
+      "items": [
+        "mcp: 1 test file against 7 source modules; adapters: 1 against 8",
+        "MCP is the main way husk is used — the gap to watch"
+      ]
+    }
+  ]
+}

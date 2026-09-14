@@ -1,0 +1,191 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "chat → bot — transcript to a running husk",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [
+      1060,
+      520
+    ]
+  },
+  "participants": [
+    {
+      "id": "transcript",
+      "type": "external",
+      "label": "Transcript",
+      "sublabel": "5 chat tools"
+    },
+    {
+      "id": "importer",
+      "type": "backend",
+      "label": "importer",
+      "sublabel": "detect → parse"
+    },
+    {
+      "id": "distiller",
+      "type": "backend",
+      "label": "distiller",
+      "sublabel": "heuristic | model"
+    },
+    {
+      "id": "router",
+      "type": "cloud",
+      "label": "model router",
+      "sublabel": "@husk/models"
+    },
+    {
+      "id": "redactor",
+      "type": "security",
+      "label": "redactDistilled",
+      "sublabel": "strips secrets"
+    },
+    {
+      "id": "yaml",
+      "type": "database",
+      "label": "husk.yaml",
+      "sublabel": "readable, diffable"
+    },
+    {
+      "id": "runner",
+      "type": "backend",
+      "label": "husk run",
+      "sublabel": "agent + computer"
+    }
+  ],
+  "segments": [
+    {
+      "from": 155,
+      "to": 215,
+      "label": "Import"
+    },
+    {
+      "from": 225,
+      "to": 295,
+      "label": "Distil"
+    },
+    {
+      "from": 305,
+      "to": 400,
+      "label": "Redact, write, run"
+    }
+  ],
+  "messages": [
+    {
+      "id": "m1",
+      "from": "transcript",
+      "to": "importer",
+      "y": 170,
+      "label": "a path, a directory, or pasted text",
+      "variant": "default"
+    },
+    {
+      "id": "m2",
+      "from": "importer",
+      "to": "distiller",
+      "y": 202,
+      "label": "Transcript — thread walked back from the last leaf",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m3",
+      "from": "distiller",
+      "to": "router",
+      "y": 238,
+      "label": "map/reduce over windows",
+      "variant": "dashed",
+      "note": "Only when a key is reachable. A 429 or a missing key falls back to the heuristic distiller rather than failing."
+    },
+    {
+      "id": "m4",
+      "from": "router",
+      "to": "distiller",
+      "y": 270,
+      "label": "candidate JSON, validated against the schema",
+      "variant": "return"
+    },
+    {
+      "id": "m5",
+      "from": "distiller",
+      "to": "redactor",
+      "y": 310,
+      "label": "DistilledAgent — persona, examples, tools, confidence",
+      "variant": "default"
+    },
+    {
+      "id": "m6",
+      "from": "redactor",
+      "to": "yaml",
+      "y": 342,
+      "label": "written with a provenance header",
+      "variant": "security"
+    },
+    {
+      "id": "m7",
+      "from": "yaml",
+      "to": "runner",
+      "y": 374,
+      "label": "husk run — triggers make it a bot",
+      "variant": "emphasis"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "importer",
+      "from": 165,
+      "to": 208,
+      "type": "backend"
+    },
+    {
+      "participant": "distiller",
+      "from": 197,
+      "to": 316,
+      "type": "backend"
+    },
+    {
+      "participant": "router",
+      "from": 233,
+      "to": 276,
+      "type": "cloud"
+    },
+    {
+      "participant": "redactor",
+      "from": 305,
+      "to": 348,
+      "type": "security"
+    },
+    {
+      "participant": "yaml",
+      "from": 337,
+      "to": 380,
+      "type": "database"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Importers normalise, they do not interpret",
+      "items": [
+        "Claude Code JSONL, ChatGPT exports, Cursor, Gemini and markdown become one Transcript",
+        "Branched threads are rebuilt by walking parentUuid from the last leaf — not every dead end"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "The heuristic path has to be good",
+      "items": [
+        "It is the mode that runs with no API key at all",
+        "It mines recurring instructions, prefers exemplars the user did not correct, and reports honest confidence"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "The husk.yaml is the product",
+      "items": [
+        "Optimised for human review: deliberate key order, block scalars, provenance header",
+        "Secrets are stripped before the file is written, not after"
+      ]
+    }
+  ]
+}

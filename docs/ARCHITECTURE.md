@@ -1,5 +1,7 @@
 # Husk — architecture
 
+> **[Interactive diagram](../docs/diagrams/02-system-architecture.html)** — open locally for pan/zoom, relationship tracing and PNG/SVG export.
+
 ## The two sentences
 
 A **computer** is a disposable Linux machine an agent can drive. A **husk** is an agent
