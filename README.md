@@ -9,7 +9,7 @@
 
   <p>
     <a href="https://github.com/Hotragn/husk/actions/workflows/ci.yml"><img src="https://github.com/Hotragn/husk/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-    <a href="https://www.npmjs.com/package/@husk/cli"><img src="https://img.shields.io/npm/v/@husk/cli?label=npm&color=cb3837" alt="npm"></a>
+    <a href="https://github.com/Hotragn/husk/releases/tag/v0.1.0"><img src="https://img.shields.io/badge/release-v0.1.0-blue" alt="v0.1.0"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License"></a>
     <a href="https://github.com/Hotragn/husk/stargazers"><img src="https://img.shields.io/github/stars/Hotragn/husk?style=social" alt="GitHub stars"></a>
   </p>
