@@ -78,14 +78,13 @@ jobs:
       # The dependency order is the build order. npm does not work it out for
       # a publish, and a package published before its dependency is a version
       # nobody can install for as long as it takes to notice.
-      #
-      # Auth: Trusted Publishing (OIDC) once packages exist on npm. For the
-      # initial publish use scripts/publish-first.sh locally with OTP, then
-      # configure Trusted Publishing per-package on npmjs.com.
       - name: publish, in dependency order
         if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          npm whoami --registry https://registry.npmjs.org || { echo "npm auth failed — check NPM_TOKEN secret"; exit 1; }
           for pkg in core runtime models browser sessions agent adapters mcp server sdk cli; do
             echo "publishing @husk-ai/$pkg"
             npm publish --workspace="@husk-ai/$pkg" --access public --provenance
