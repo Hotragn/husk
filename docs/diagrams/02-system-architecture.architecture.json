@@ -1,0 +1,414 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Husk — system architecture",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/Hotragn/husk",
+      "provider": "github",
+      "link_mode": "local-only",
+      "revision": "a0865c10e98cb4616d5e9d0c587e17a8d3684755"
+    }
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [
+      60,
+      70
+    ],
+    "cols": 5,
+    "cellW": 180,
+    "cellH": 68,
+    "gapX": 48,
+    "gapY": 92
+  },
+  "components": [
+    {
+      "id": "mcp",
+      "type": "backend",
+      "label": "@husk/mcp",
+      "sublabel": "stdio only",
+      "row": 0,
+      "col": 0,
+      "sources": [
+        {
+          "path": "packages/mcp/src/server.ts",
+          "line": 139,
+          "label": "StdioServerTransport"
+        }
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "backend",
+      "label": "@husk/cli",
+      "sublabel": "up · run · doctor",
+      "row": 0,
+      "col": 1,
+      "sources": [
+        {
+          "path": "packages/cli/src/bin.ts",
+          "label": "bin.ts"
+        }
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "@husk/server",
+      "sublabel": "Fastify, loopback",
+      "row": 0,
+      "col": 3,
+      "sources": [
+        {
+          "path": "packages/server/src/app.ts",
+          "label": "app.ts"
+        }
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "adapters",
+      "type": "backend",
+      "label": "@husk/adapters",
+      "sublabel": "chat front ends",
+      "row": 0,
+      "col": 2,
+      "sources": [
+        {
+          "path": "packages/adapters/src/index.ts",
+          "label": "index.ts"
+        }
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "sdk",
+      "type": "backend",
+      "label": "@husk/sdk",
+      "sublabel": "typed HTTP client",
+      "row": 0,
+      "col": 4,
+      "sources": [
+        {
+          "path": "packages/sdk/src/client.ts",
+          "label": "client.ts"
+        }
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "@husk/agent",
+      "sublabel": "the tool-calling loop",
+      "row": 1,
+      "col": 1,
+      "sources": [
+        {
+          "path": "packages/agent/src/loop.ts",
+          "label": "loop.ts"
+        }
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "sessions",
+      "type": "backend",
+      "label": "@husk/sessions",
+      "sublabel": "chat → husk.yaml",
+      "row": 1,
+      "col": 2,
+      "sources": [
+        {
+          "path": "packages/sessions/src/distill.ts",
+          "label": "distill.ts"
+        }
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "console",
+      "type": "frontend",
+      "label": "apps/console",
+      "sublabel": "Vite + React",
+      "row": 1,
+      "col": 4,
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "runtime",
+      "type": "cloud",
+      "label": "@husk/runtime",
+      "sublabel": "5 providers, scored",
+      "row": 2,
+      "col": 0,
+      "sources": [
+        {
+          "path": "packages/runtime/src/manager.ts",
+          "label": "manager.ts"
+        }
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "models",
+      "type": "cloud",
+      "label": "@husk/models",
+      "sublabel": "10 providers, no SDKs",
+      "row": 2,
+      "col": 2,
+      "sources": [
+        {
+          "path": "packages/models/src/router.ts",
+          "label": "router.ts"
+        }
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "browser",
+      "type": "cloud",
+      "label": "@husk/browser",
+      "sublabel": "Chromium via CDP",
+      "row": 2,
+      "col": 3,
+      "sources": [
+        {
+          "path": "packages/browser/src/cdp.ts",
+          "label": "cdp.ts"
+        }
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "huskdir",
+      "type": "database",
+      "label": "~/.husk",
+      "sublabel": "JSON files only",
+      "row": 2,
+      "col": 1,
+      "sources": [
+        {
+          "path": "packages/runtime/src/registry.ts",
+          "label": "registry.ts"
+        }
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "core",
+      "type": "security",
+      "label": "@husk/core",
+      "sublabel": "contracts · zod spec · network policy · redact · audit",
+      "row": 3,
+      "col": 0,
+      "size": [
+        864,
+        74
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/index.ts",
+          "label": "index.ts"
+        }
+      ]
+    },
+    {
+      "id": "docsapp",
+      "type": "frontend",
+      "label": "apps/docs",
+      "sublabel": "Next.js static",
+      "row": 2,
+      "col": 4,
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "webapp",
+      "type": "frontend",
+      "label": "apps/web",
+      "sublabel": "Next.js static",
+      "row": 3,
+      "col": 4,
+      "size": [
+        180,
+        68
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "static sites — build independently of the workspace",
+      "wraps": [
+        "docsapp",
+        "webapp"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "mcp-runtime",
+      "from": "mcp",
+      "to": "runtime",
+      "label": "ensure(sessionKey)",
+      "variant": "emphasis",
+      "labelDy": 24,
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "cli-agent",
+      "from": "cli",
+      "to": "agent",
+      "label": "husk run",
+      "labelDy": 24,
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "server-adapters",
+      "from": "server",
+      "to": "adapters",
+      "label": "mounts triggers",
+      "labelAt": [
+        620,
+        164
+      ]
+    },
+    {
+      "id": "server-sessions",
+      "from": "server",
+      "to": "sessions",
+      "label": "import + distill"
+    },
+    {
+      "id": "sdk-server",
+      "from": "sdk",
+      "to": "server",
+      "label": "HTTP + SSE",
+      "labelAt": [
+        948,
+        160
+      ]
+    },
+    {
+      "id": "console-sdk",
+      "from": "console",
+      "to": "sdk",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "agent-models",
+      "from": "agent",
+      "to": "models",
+      "label": "chat + fallback"
+    },
+    {
+      "id": "agent-runtime",
+      "from": "agent",
+      "to": "runtime",
+      "label": "computer tools"
+    },
+    {
+      "id": "runtime-huskdir",
+      "from": "runtime",
+      "to": "huskdir",
+      "label": "write-then-rename",
+      "labelAt": [
+        320,
+        476
+      ]
+    },
+    {
+      "id": "runtime-core",
+      "from": "runtime",
+      "to": "core",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "models-core",
+      "from": "models",
+      "to": "core",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "browser-core",
+      "from": "browser",
+      "to": "core",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Four entry points",
+      "items": [
+        "@husk/mcp — stdio only; streamable HTTP is specced, not built",
+        "@husk/cli, @husk/server (loopback), @husk/adapters"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Dependencies run downhill",
+      "items": [
+        "All 10 packages import @husk/core; core imports nothing from the workspace",
+        "Nothing imports @husk/cli"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Lazy edges are real edges",
+      "items": [
+        "cli → server and cli → mcp are dynamic imports, not package deps",
+        "server → agent likewise, so the server starts without the agent built"
+      ]
+    }
+  ]
+}

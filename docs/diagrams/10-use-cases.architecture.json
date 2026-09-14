@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": { "title": "Use cases — who reaches which goal", "quality_profile": "showcase" },
+  "layout": { "mode": "grid", "origin": [60, 70], "cols": 4, "cellW": 180, "cellH": 68, "gapX": 48, "gapY": 100 },
+  "components": [
+    { "id": "dev", "type": "external", "label": "developer in a chat", "sublabel": "Claude Code, Cursor", "row": 0, "col": 0, "size": [180, 68] },
+    { "id": "getcomputer", "type": "backend", "label": "get a Linux computer", "sublabel": "no account, no Docker", "row": 0, "col": 1, "size": [180, 68] },
+    { "id": "drivebrowser", "type": "backend", "label": "drive a real browser", "sublabel": "same machine, same IP", "row": 0, "col": 2, "size": [180, 68] },
+    { "id": "inspect", "type": "backend", "label": "watch the machine", "sublabel": "terminal, files, browser", "row": 0, "col": 3, "size": [180, 68] },
+
+    { "id": "op", "type": "external", "label": "operator", "sublabel": "at a terminal", "row": 1, "col": 0, "size": [180, 68] },
+    { "id": "distil", "type": "backend", "label": "turn a chat into a bot", "sublabel": "husk distill", "row": 1, "col": 1, "size": [180, 68] },
+    { "id": "runhusk", "type": "backend", "label": "run the husk", "sublabel": "husk run", "row": 1, "col": 2, "size": [180, 68] },
+    { "id": "serve", "type": "backend", "label": "serve it as a bot", "sublabel": "husk serve, loopback", "row": 1, "col": 3, "size": [180, 68] },
+
+    { "id": "enduser", "type": "external", "label": "chat end-user", "sublabel": "discord, slack", "row": 2, "col": 0, "size": [180, 68] },
+    { "id": "talk", "type": "backend", "label": "talk to the bot", "sublabel": "a trigger fires a run", "row": 2, "col": 1, "size": [180, 68] },
+    { "id": "approve", "type": "security", "label": "approve a call", "sublabel": "absent approver denies", "row": 2, "col": 2, "size": [180, 68] },
+    { "id": "approver", "type": "external", "label": "approver", "sublabel": "a human, in ask mode", "row": 2, "col": 3, "size": [180, 68] }
+  ],
+  "connections": [
+    { "id": "w1", "from": "dev", "to": "getcomputer", "variant": "emphasis" },
+    { "id": "w2", "from": "getcomputer", "to": "drivebrowser", "label": "«include»", "labelDy": -28 },
+    { "id": "w3", "from": "drivebrowser", "to": "inspect", "label": "«extend»", "variant": "dashed", "labelDy": -28 },
+    { "id": "w4", "from": "op", "to": "distil", "variant": "emphasis" },
+    { "id": "w5", "from": "distil", "to": "runhusk", "label": "produces husk.yaml", "labelDy": -28 },
+    { "id": "w6", "from": "runhusk", "to": "serve", "label": "«extend»", "variant": "dashed", "labelDy": -28 },
+    { "id": "w7", "from": "enduser", "to": "talk", "variant": "emphasis" },
+    { "id": "w8", "from": "talk", "to": "approve", "label": "«extend» if dangerous", "variant": "security", "labelDy": -28 },
+    { "id": "w9", "from": "approver", "to": "approve", "label": "answers", "labelDy": -28 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "The wedge is one line", "items": ["claude mcp add husk -- npx -y @husk/mcp", "No account, no config file, no signup — the developer already has the model"] },
+    { "dot": "emerald", "title": "The second product is a file", "items": ["A transcript becomes a husk.yaml a human can read, diff and edit", "Triggers — http, cron, discord, slack, telegram, webhook, cli — make it a bot"] },
+    { "dot": "rose", "title": "Approval is a real actor", "items": ["In ask mode, dangerous tools pause for a human", "With no approver wired the call is denied, not allowed"] }
+  ]
+}

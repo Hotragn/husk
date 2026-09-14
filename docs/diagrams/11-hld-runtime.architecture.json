@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "High-level design — processes, ports and boundaries",
+    "quality_profile": "showcase"
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [
+      60,
+      70
+    ],
+    "cols": 4,
+    "cellW": 180,
+    "cellH": 68,
+    "gapX": 48,
+    "gapY": 100
+  },
+  "components": [
+    {
+      "id": "editor",
+      "type": "external",
+      "label": "your editor",
+      "sublabel": "Claude Code, Cursor",
+      "row": 0,
+      "col": 0,
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "mcpproc",
+      "type": "backend",
+      "label": "npx @husk/mcp",
+      "sublabel": "a child of the editor",
+      "row": 0,
+      "col": 1,
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "computerproc",
+      "type": "cloud",
+      "label": "the computer",
+      "sublabel": "container, WSL2 or ssh",
+      "row": 0,
+      "col": 2,
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "huskdir",
+      "type": "database",
+      "label": "~/.husk",
+      "sublabel": "JSON, write-then-rename",
+      "row": 0,
+      "col": 3,
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "chatplat",
+      "type": "external",
+      "label": "chat platform",
+      "sublabel": "discord, slack, cron",
+      "row": 1,
+      "col": 0,
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "serveproc",
+      "type": "backend",
+      "label": "husk serve",
+      "sublabel": "127.0.0.1:7377",
+      "row": 1,
+      "col": 1,
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "consoleui",
+      "type": "frontend",
+      "label": "the console",
+      "sublabel": "served by the server",
+      "row": 1,
+      "col": 2,
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "modelapi",
+      "type": "external",
+      "label": "model provider",
+      "sublabel": "the configured one only",
+      "row": 2,
+      "col": 1,
+      "size": [
+        180,
+        68
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "loopback only — no HUSK_TOKEN, no non-loopback bind",
+      "wraps": [
+        "serveproc",
+        "consoleui"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "x1",
+      "from": "editor",
+      "to": "mcpproc",
+      "label": "spawns; stdio",
+      "variant": "emphasis",
+      "labelDy": -28
+    },
+    {
+      "id": "x2",
+      "from": "mcpproc",
+      "to": "computerproc",
+      "label": "exec, files, ports",
+      "variant": "emphasis",
+      "labelDy": -28
+    },
+    {
+      "id": "x3",
+      "from": "computerproc",
+      "to": "huskdir",
+      "label": "registry",
+      "labelDy": -28
+    },
+    {
+      "id": "x4",
+      "from": "chatplat",
+      "to": "serveproc",
+      "label": "webhook or poll",
+      "labelAt": [
+        264,
+        322
+      ]
+    },
+    {
+      "id": "x5",
+      "from": "serveproc",
+      "to": "consoleui",
+      "label": "serves it",
+      "labelAt": [
+        492,
+        322
+      ]
+    },
+    {
+      "id": "x6",
+      "from": "serveproc",
+      "to": "modelapi",
+      "label": "HTTPS",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "id": "x7",
+      "from": "serveproc",
+      "to": "computerproc",
+      "label": "same manager",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The MCP process is passive",
+      "items": [
+        "It never starts a server — it is a child of someone's editor",
+        "It looks for a live console and hands over a deep link, or the one command that creates one"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "One machine, three views",
+      "items": [
+        "The console's terminal, file browser and web browser all point at the same computer",
+        "Because the browser runs inside it, the page the human sees is the page the agent got"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Nothing listens by default",
+      "items": [
+        "husk serve binds loopback and refuses a non-loopback address without HUSK_TOKEN",
+        "No credential storage: keys are read from the environment, never written to ~/.husk"
+      ]
+    }
+  ]
+}

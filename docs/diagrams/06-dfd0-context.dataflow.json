@@ -1,0 +1,209 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "DFD level 0 — context",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1060,
+      560
+    ]
+  },
+  "stages": [
+    {
+      "label": "External actors"
+    },
+    {
+      "label": "The Husk process"
+    },
+    {
+      "label": "The computer"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "mcpclient",
+      "type": "external",
+      "label": "MCP client",
+      "sublabel": "Claude Code, Cursor",
+      "stage": 0,
+      "row": 0
+    },
+    {
+      "id": "operator",
+      "type": "external",
+      "label": "operator",
+      "sublabel": "the husk CLI",
+      "stage": 0,
+      "row": 1
+    },
+    {
+      "id": "chatuser",
+      "type": "external",
+      "label": "chat platform",
+      "sublabel": "discord, slack",
+      "stage": 0,
+      "row": 2
+    },
+    {
+      "id": "husk",
+      "type": "backend",
+      "label": "Husk",
+      "sublabel": "one process, no account",
+      "stage": 1,
+      "row": 1
+    },
+    {
+      "id": "modelapi",
+      "type": "cloud",
+      "label": "model provider",
+      "sublabel": "anthropic … ollama",
+      "stage": 1,
+      "row": 0
+    },
+    {
+      "id": "computer",
+      "type": "cloud",
+      "label": "the computer",
+      "sublabel": "docker … local",
+      "stage": 2,
+      "row": 1
+    },
+    {
+      "id": "huskdir",
+      "type": "database",
+      "label": "~/.husk",
+      "sublabel": "JSON files only",
+      "stage": 1,
+      "row": 2
+    }
+  ],
+  "flows": [
+    {
+      "id": "f1",
+      "from": "mcpclient",
+      "to": "husk",
+      "label": "tool calls",
+      "classification": "MCP over stdio",
+      "variant": "emphasis",
+      "toSide": "top",
+      "fromSide": "right",
+      "via": [
+        [
+          238,
+          157
+        ],
+        [
+          238,
+          212
+        ],
+        [
+          315,
+          212
+        ]
+      ],
+      "labelAt": [
+        210,
+        212
+      ]
+    },
+    {
+      "id": "f2",
+      "from": "operator",
+      "to": "husk",
+      "label": "commands",
+      "classification": "CLI",
+      "labelAt": [
+        207,
+        271
+      ]
+    },
+    {
+      "id": "f3",
+      "from": "chatuser",
+      "to": "husk",
+      "label": "messages",
+      "classification": "webhook or poll",
+      "toSide": "bottom",
+      "fromSide": "right",
+      "via": [
+        [
+          176,
+          385
+        ],
+        [
+          176,
+          332
+        ],
+        [
+          315,
+          332
+        ]
+      ],
+      "labelAt": [
+        212,
+        332
+      ]
+    },
+    {
+      "id": "f4",
+      "from": "husk",
+      "to": "modelapi",
+      "label": "chat completions",
+      "classification": "the only outbound call",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [
+        445,
+        200
+      ]
+    },
+    {
+      "id": "f6",
+      "from": "husk",
+      "to": "huskdir",
+      "label": "registry + audit",
+      "classification": "write-then-rename",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        445,
+        360
+      ]
+    },
+    {
+      "id": "f5",
+      "from": "husk",
+      "to": "computer",
+      "label": "exec, files, ports",
+      "classification": "provider API",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "There is no database",
+      "items": [
+        "State is JSON files under ~/.husk, written with write-then-rename",
+        "No native modules, so a Windows npm install stays clean"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "There is no control plane",
+      "items": [
+        "No account, no signup, no hosted tier in the path",
+        "The only outbound calls are the model provider you configured and an image registry"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "There is no telemetry",
+      "items": [
+        "Not off by default — absent",
+        "No analytics, no crash reporter, no phone-home"
+      ]
+    }
+  ]
+}

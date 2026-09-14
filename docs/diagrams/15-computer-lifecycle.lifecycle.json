@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Computer lifecycle — the ComputerState machine",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      566
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Lifecycle"
+    },
+    {
+      "id": "pause",
+      "label": "Interruptions"
+    }
+  ],
+  "states": [
+    {
+      "id": "creating",
+      "type": "start",
+      "label": "creating",
+      "sublabel": "lazy create",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "running",
+      "type": "active",
+      "label": "running",
+      "sublabel": "exec, files, ports",
+      "lane": "main",
+      "col": 1,
+      "step": "02"
+    },
+    {
+      "id": "reaping",
+      "type": "decision",
+      "label": "reaper tick",
+      "sublabel": "idle + lifetime",
+      "lane": "main",
+      "col": 2,
+      "step": "03"
+    },
+    {
+      "id": "destroyed",
+      "type": "success",
+      "label": "destroyed",
+      "sublabel": "entry forgotten",
+      "lane": "main",
+      "col": 3,
+      "step": "04"
+    },
+    {
+      "id": "stopped",
+      "type": "waiting",
+      "label": "stopped",
+      "sublabel": "start() resumes",
+      "lane": "pause",
+      "col": 0
+    }
+  ],
+  "transitions": [
+    {
+      "id": "t1",
+      "from": "creating",
+      "to": "running",
+      "label": "created",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelDy": -25
+    },
+    {
+      "id": "t2",
+      "from": "running",
+      "to": "reaping",
+      "label": "budget check",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelDy": -25
+    },
+    {
+      "id": "t3",
+      "from": "reaping",
+      "to": "destroyed",
+      "label": "exhausted",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelDy": -25
+    },
+    {
+      "id": "t4",
+      "from": "running",
+      "to": "stopped",
+      "label": "stop()",
+      "route": "drop",
+      "labelDx": -52
+    },
+    {
+      "id": "t6",
+      "from": "stopped",
+      "to": "running",
+      "label": "start()",
+      "variant": "emphasis",
+      "labelDx": 56
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Create is lazy",
+      "items": [
+        "Nothing spins up until a tool needs a machine",
+        "ensure(key) keeps one chat on one filesystem"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "The registry survives a crash",
+      "items": [
+        "JSON under ~/.husk/computers, write-then-rename",
+        "husk ps works from another process"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Two states you will not see commanded",
+      "items": [
+        "paused is reported by docker and fly, never commanded",
+        "error is terminal: E_PROVIDER_UNAVAILABLE"
+      ]
+    }
+  ]
+}

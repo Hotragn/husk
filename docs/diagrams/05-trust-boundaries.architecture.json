@@ -1,0 +1,311 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Trust boundaries — what crosses which line",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/Hotragn/husk",
+      "provider": "github",
+      "link_mode": "local-only",
+      "revision": "a0865c10e98cb4616d5e9d0c587e17a8d3684755"
+    }
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [
+      60,
+      70
+    ],
+    "cols": 5,
+    "cellW": 180,
+    "cellH": 68,
+    "gapX": 48,
+    "gapY": 96
+  },
+  "components": [
+    {
+      "id": "model",
+      "type": "external",
+      "label": "the model",
+      "sublabel": "may be prompt-injected",
+      "row": 0,
+      "col": 0,
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "toolcall",
+      "type": "backend",
+      "label": "tool call",
+      "sublabel": "shell · write_file · browse",
+      "row": 0,
+      "col": 1,
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "pathjail",
+      "type": "security",
+      "label": "path jail",
+      "sublabel": "realpath, rejects escapes",
+      "row": 0,
+      "col": 2,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/runtime/src/policy.ts",
+          "label": "policy.ts"
+        }
+      ]
+    },
+    {
+      "id": "denylist",
+      "type": "security",
+      "label": "command policy",
+      "sublabel": "anchored deny list",
+      "row": 0,
+      "col": 3,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/runtime/src/deny.ts",
+          "line": 26,
+          "label": "DEFAULT_DENY"
+        }
+      ]
+    },
+    {
+      "id": "envscrub",
+      "type": "security",
+      "label": "env scrub",
+      "sublabel": "allow-list, drops the rest",
+      "row": 0,
+      "col": 4,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/runtime/src/policy.ts",
+          "line": 203,
+          "label": "scrubEnv"
+        }
+      ]
+    },
+    {
+      "id": "internalfloor",
+      "type": "security",
+      "label": "internal-host floor",
+      "sublabel": "blocked even in mode: full",
+      "row": 1,
+      "col": 2,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/net.ts",
+          "line": 78,
+          "label": "isInternalHost"
+        }
+      ]
+    },
+    {
+      "id": "netpolicy",
+      "type": "security",
+      "label": "network policy",
+      "sublabel": "none · egress · full",
+      "row": 1,
+      "col": 3,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/net.ts",
+          "line": 200,
+          "label": "assertUrlAllowed"
+        }
+      ]
+    },
+    {
+      "id": "machine",
+      "type": "cloud",
+      "label": "the computer",
+      "sublabel": "/work · shell · Chromium",
+      "row": 1,
+      "col": 4,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/runtime/src/manager.ts",
+          "label": "manager.ts"
+        }
+      ]
+    },
+    {
+      "id": "audit",
+      "type": "database",
+      "label": "audit log",
+      "sublabel": "one NDJSON line per call",
+      "row": 2,
+      "col": 2,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/audit.ts",
+          "line": 99,
+          "label": "audited()"
+        }
+      ]
+    },
+    {
+      "id": "redact",
+      "type": "security",
+      "label": "redact()",
+      "sublabel": "before the model sees it",
+      "row": 2,
+      "col": 3,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/util.ts",
+          "line": 180,
+          "label": "redact"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "kernel boundary — docker · podman · fly only",
+      "wraps": [
+        "machine"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "model",
+      "to": "toolcall",
+      "label": "a tool call",
+      "variant": "emphasis",
+      "labelDy": -28
+    },
+    {
+      "id": "c2",
+      "from": "toolcall",
+      "to": "pathjail",
+      "label": "every path",
+      "labelDy": -28
+    },
+    {
+      "id": "c3",
+      "from": "pathjail",
+      "to": "denylist",
+      "label": "every command",
+      "labelDy": -28
+    },
+    {
+      "id": "c4",
+      "from": "denylist",
+      "to": "envscrub",
+      "label": "the environment",
+      "labelDy": -28
+    },
+    {
+      "id": "c5",
+      "from": "envscrub",
+      "to": "machine",
+      "label": "what actually runs",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "id": "c6",
+      "from": "machine",
+      "to": "netpolicy",
+      "label": "every outbound host",
+      "labelAt": [
+        860,
+        316
+      ]
+    },
+    {
+      "id": "c7",
+      "from": "netpolicy",
+      "to": "internalfloor",
+      "label": "169.254.169.254",
+      "variant": "security",
+      "labelDy": -28
+    },
+    {
+      "id": "c8",
+      "from": "machine",
+      "to": "redact",
+      "label": "every tool result"
+    },
+    {
+      "id": "c9",
+      "from": "redact",
+      "to": "audit",
+      "label": "fire-and-forget",
+      "variant": "dashed",
+      "labelDy": -28
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Holds in every mode, including local",
+      "items": [
+        "Path jail, command deny list, env scrub, output caps, process-tree kill",
+        "redact() on every tool result; audited() on every MCP call"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "What local does NOT give you",
+      "items": [
+        "No kernel boundary — it shares your kernel, your network and your user account",
+        "The deny list is a deny list: it stops accidents, not an adversary",
+        "husk doctor reports isolated: false, and the MCP server tells the model so"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "The honest limits",
+      "items": [
+        "mode: egress is enforced at the tool layer, not by a firewall — a raw socket is not stopped",
+        "An empty allow-list permits nothing; approval with no approver wired denies, not allows"
+      ]
+    }
+  ]
+}

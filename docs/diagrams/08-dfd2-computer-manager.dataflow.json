@@ -1,0 +1,235 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "DFD level 2 — inside the computer manager",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1075,
+      580
+    ]
+  },
+  "stages": [
+    {
+      "label": "Request"
+    },
+    {
+      "label": "Admission"
+    },
+    {
+      "label": "Selection"
+    },
+    {
+      "label": "Provider"
+    },
+    {
+      "label": "Registry"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "caller",
+      "type": "external",
+      "label": "ensure(key, spec)",
+      "sublabel": "MCP or agent",
+      "stage": 0,
+      "row": 1
+    },
+    {
+      "id": "binding",
+      "type": "database",
+      "label": "binding lookup",
+      "sublabel": "key → computer id",
+      "stage": 1,
+      "row": 0
+    },
+    {
+      "id": "quota",
+      "type": "security",
+      "label": "assertQuota",
+      "sublabel": "8 live machines",
+      "stage": 1,
+      "row": 1
+    },
+    {
+      "id": "probe",
+      "type": "backend",
+      "label": "probe cache",
+      "sublabel": "30s TTL",
+      "stage": 2,
+      "row": 0
+    },
+    {
+      "id": "resolve",
+      "type": "backend",
+      "label": "resolveProvider",
+      "sublabel": "priority order",
+      "stage": 2,
+      "row": 1
+    },
+    {
+      "id": "create",
+      "type": "cloud",
+      "label": "provider.create",
+      "sublabel": "docker … local",
+      "stage": 3,
+      "row": 1
+    },
+    {
+      "id": "reaper",
+      "type": "backend",
+      "label": "reaper",
+      "sublabel": "idle + lifetime",
+      "stage": 3,
+      "row": 2
+    },
+    {
+      "id": "registry",
+      "type": "database",
+      "label": "~/.husk/computers",
+      "sublabel": "one JSON per machine",
+      "stage": 4,
+      "row": 1
+    }
+  ],
+  "flows": [
+    {
+      "id": "g1",
+      "from": "caller",
+      "to": "quota",
+      "label": "create request",
+      "classification": "in-flight deduped",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "id": "g2",
+      "from": "quota",
+      "to": "resolve",
+      "label": "admitted",
+      "classification": "else E_QUOTA",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelAt": [
+        422,
+        271
+      ]
+    },
+    {
+      "id": "g3",
+      "from": "binding",
+      "to": "resolve",
+      "label": "miss",
+      "classification": "hit reuses it",
+      "labelAt": [
+        452,
+        212
+      ],
+      "fromSide": "right",
+      "toSide": "top",
+      "via": [
+        [
+          385,
+          157
+        ],
+        [
+          385,
+          212
+        ],
+        [
+          530,
+          212
+        ]
+      ]
+    },
+    {
+      "id": "g4",
+      "from": "probe",
+      "to": "resolve",
+      "label": "isAvailable()",
+      "classification": "cached 30s",
+      "labelAt": [
+        620,
+        212
+      ]
+    },
+    {
+      "id": "g5",
+      "from": "resolve",
+      "to": "create",
+      "label": "first available",
+      "classification": "no downgrade",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelAt": [
+        638,
+        271
+      ]
+    },
+    {
+      "id": "g6",
+      "from": "create",
+      "to": "registry",
+      "label": "persistInfo",
+      "route": "straight",
+      "labelAt": [
+        852,
+        271
+      ]
+    },
+    {
+      "id": "g7",
+      "from": "reaper",
+      "to": "registry",
+      "label": "expired()",
+      "classification": "sweep",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "via": [
+        [
+          815,
+          385
+        ],
+        [
+          815,
+          330
+        ],
+        [
+          960,
+          330
+        ]
+      ],
+      "labelAt": [
+        884,
+        330
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "One conversation, one machine",
+      "items": [
+        "ensure(key) maps a stable key to a machine, so /work survives across tool calls",
+        "Concurrent callers with the same key share one in-flight create"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Probes are cached because agents are chatty",
+      "items": [
+        "docker version on a cold daemon costs ~800ms",
+        "An agent may create four machines in a row"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Never a silent downgrade",
+      "items": [
+        "An explicit --provider that is unavailable is an error, not a fallback to local",
+        "Substituting weaker isolation is how a surprise becomes an incident"
+      ]
+    }
+  ]
+}

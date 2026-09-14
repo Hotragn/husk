@@ -1,0 +1,309 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "UML — the @husk/core contracts",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/Hotragn/husk",
+      "provider": "github",
+      "link_mode": "local-only",
+      "revision": "a0865c10e98cb4616d5e9d0c587e17a8d3684755"
+    }
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [
+      60,
+      70
+    ],
+    "cols": 4,
+    "cellW": 180,
+    "cellH": 68,
+    "gapX": 48,
+    "gapY": 100
+  },
+  "components": [
+    {
+      "id": "avail",
+      "type": "security",
+      "label": "Availability",
+      "sublabel": "isolated · isolationKind",
+      "row": 0,
+      "col": 0,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/types/computer.ts",
+          "label": "Availability"
+        }
+      ]
+    },
+    {
+      "id": "provider",
+      "type": "backend",
+      "label": "ComputerProvider",
+      "sublabel": "isAvailable · create · list",
+      "row": 0,
+      "col": 1,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/types/computer.ts",
+          "label": "ComputerProvider"
+        }
+      ]
+    },
+    {
+      "id": "computer",
+      "type": "backend",
+      "label": "Computer",
+      "sublabel": "exec · files · exposePort",
+      "row": 0,
+      "col": 2,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/types/computer.ts",
+          "label": "Computer"
+        }
+      ]
+    },
+    {
+      "id": "info",
+      "type": "database",
+      "label": "ComputerInfo",
+      "sublabel": "id · state · ports",
+      "row": 0,
+      "col": 3,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/types/computer.ts",
+          "label": "ComputerInfo"
+        }
+      ]
+    },
+    {
+      "id": "huskspec",
+      "type": "database",
+      "label": "HuskSpec",
+      "sublabel": "the zod-checked yaml",
+      "row": 1,
+      "col": 0,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/spec.ts",
+          "line": 119,
+          "label": "HuskSpecSchema"
+        }
+      ]
+    },
+    {
+      "id": "spec",
+      "type": "database",
+      "label": "ComputerSpec",
+      "sublabel": "flavor · network · limits",
+      "row": 1,
+      "col": 1,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/types/computer.ts",
+          "label": "ComputerSpec"
+        }
+      ]
+    },
+    {
+      "id": "ctx",
+      "type": "backend",
+      "label": "ToolContext",
+      "sublabel": "computer · emit · confirm",
+      "row": 1,
+      "col": 2,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/types/agent.ts",
+          "label": "ToolContext"
+        }
+      ]
+    },
+    {
+      "id": "tool",
+      "type": "backend",
+      "label": "Tool",
+      "sublabel": "parameters · handler",
+      "row": 1,
+      "col": 3,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/types/agent.ts",
+          "label": "Tool"
+        }
+      ]
+    },
+    {
+      "id": "model",
+      "type": "cloud",
+      "label": "ModelProvider",
+      "sublabel": "chat · stream · models",
+      "row": 2,
+      "col": 0,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/types/model.ts",
+          "label": "ModelProvider"
+        }
+      ]
+    },
+    {
+      "id": "approver",
+      "type": "security",
+      "label": "Approver",
+      "sublabel": "absent means deny",
+      "row": 2,
+      "col": 3,
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "packages/core/src/types/agent.ts",
+          "label": "Approver"
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "v1",
+      "from": "provider",
+      "to": "avail",
+      "label": "isAvailable()",
+      "labelDy": -28
+    },
+    {
+      "id": "v2",
+      "from": "provider",
+      "to": "computer",
+      "label": "create()",
+      "variant": "emphasis",
+      "labelDy": -28
+    },
+    {
+      "id": "v3",
+      "from": "computer",
+      "to": "info",
+      "label": "refresh()",
+      "labelDy": -28
+    },
+    {
+      "id": "v4",
+      "from": "provider",
+      "to": "spec",
+      "label": "consumes",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "id": "v5",
+      "from": "huskspec",
+      "to": "spec",
+      "label": "computer:",
+      "labelDy": -28
+    },
+    {
+      "id": "v6",
+      "from": "ctx",
+      "to": "computer",
+      "label": "holds",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "v7",
+      "from": "tool",
+      "to": "ctx",
+      "label": "receives",
+      "labelDy": -28
+    },
+    {
+      "id": "v8",
+      "from": "tool",
+      "to": "approver",
+      "label": "dangerous → gated",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "id": "v9",
+      "from": "huskspec",
+      "to": "model",
+      "label": "model:",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "One place for shared types",
+      "items": [
+        "If a type belongs to more than one package, it belongs in @husk/core",
+        "core imports nothing from the workspace, so the graph stays acyclic"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Computer is narrow and complete",
+      "items": [
+        "exec, files, ports, lifecycle — plus optional snapshot/restore you must feature-detect",
+        "So an agent never learns which provider it is running on"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Approver fails closed",
+      "items": [
+        "Returning false, throwing, and not being supplied at all must all deny",
+        "A headless server running an ask-mode husk denies rather than behaving as auto"
+      ]
+    }
+  ]
+}
