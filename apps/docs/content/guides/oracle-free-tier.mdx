@@ -1,0 +1,284 @@
+---
+title: A genuinely free remote computer
+navTitle: Oracle free tier
+description: An Oracle Cloud Always Free ARM instance plus the ssh provider — a Linux box for your agent that costs nothing and is not your laptop.
+order: 2
+---
+
+The `local` provider is free and shares your machine. The container providers isolate
+properly and need Docker. The `ssh` provider is the third option: a Linux box you own,
+somewhere else, for zero dollars.
+
+Oracle Cloud's Always Free tier is the only mainstream cloud that gives you a
+persistent ARM VM indefinitely rather than for a trial period. This guide gets one
+running and points Husk at it.
+
+**What you will have at the end:** `husk doctor` reporting `✓ ssh`, and
+`husk up remote --provider ssh` giving your agent a machine that is not your laptop.
+
+**Time:** about 30 minutes, most of it Oracle's console.
+
+<Warning>
+Read [what `ssh` isolation actually means](#what-this-does-and-does-not-protect) before
+you point an agent at a box that matters. `isolated: true` here means *isolated from
+your laptop*, not *isolated from that box*.
+</Warning>
+
+## What Oracle actually gives you
+
+Verified against Oracle's own documentation. Cloud free tiers change; check
+[Always Free Resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)
+before you plan around any of these numbers.
+
+| | |
+| --- | --- |
+| Compute | 1,500 OCPU hours and 9,000 GB hours per month on `VM.Standard.A1.Flex` — Oracle states this is "equivalent to **2 OCPUs and 12 GB of memory**" for an Always Free tenancy |
+| Splitting | One instance with all of it, or up to two instances of 1 OCPU each |
+| Storage | 200 GB of Block Volume total, boot and block combined, plus five volume backups |
+| Boot volume | Minimum 47 GB per instance; the console defaults to 50 GB |
+| Egress | 10 TB per month outbound |
+| Images | Oracle Linux, Oracle Linux Cloud Developer (needs ≥ 8 GB), or Ubuntu |
+| Region | Always Free compute must be in your **home region** |
+
+<Note>
+The widely-repeated "4 OCPU / 24 GB" figure is out of date. Oracle's current
+documentation says 2 OCPUs and 12 GB, and warns that a tenancy holding more than that
+across its A1 instances will have **all of them disabled and then deleted after 30
+days** unless it is upgraded to a paid account.
+
+That is still a genuinely useful machine: two ARM cores and 12 GB of RAM is more than
+most people's development container.
+</Note>
+
+### Two things that will bite you
+
+**Capacity.** Oracle documents an "out of host capacity" error for Always Free shapes
+and tells you to try a different availability domain or wait. A1 capacity in popular
+regions is reported by users as intermittently unavailable for days at a time. Oracle
+publishes no capacity data and makes no availability promise, so treat a successful
+launch as luck rather than as a plan. Upgrading to Pay As You Go unlocks *more shape
+types*; Oracle does not state that it improves A1 host capacity.
+
+**Idle reclamation.** Oracle "may reclaim" an Always Free compute instance when, over a
+7-day period, **all** of these are true:
+
+- CPU utilisation at the 95th percentile is below 20%
+- network utilisation is below 20%
+- memory utilisation is below 20% (A1 shapes only)
+
+An agent box that sits idle most of the week qualifies. Oracle does not document what
+reclamation does — stop or terminate — or whether you are notified. Keep anything you
+care about in `git`, not on the boot volume.
+
+---
+
+## Step 1: Create the instance
+
+1. Sign up at [oracle.com/cloud/free](https://www.oracle.com/cloud/free/). A card is
+   required for identity verification; the Always Free resources are not charged.
+   **Note your home region** — you cannot change it, and Always Free compute must live
+   there.
+2. In the console: **Compute → Instances → Create instance**.
+3. **Image and shape → Change shape → Ampere**, pick `VM.Standard.A1.Flex`, and set
+   **2 OCPUs / 12 GB**.
+4. **Image**: Ubuntu 24.04 (the plain Ubuntu image, not Minimal Ubuntu — Oracle
+   documents Minimal as unsupported on Arm shapes).
+5. **Add SSH keys**: paste your public key. Generate one first if you need to:
+
+   ```bash
+   ssh-keygen -t ed25519 -C husk -f ~/.ssh/husk_oracle
+   cat ~/.ssh/husk_oracle.pub
+   ```
+
+6. Leave networking at the defaults — a new VCN with a public subnet and a public IPv4
+   address.
+7. **Create**. If you get *Out of host capacity*, change the availability domain and try
+   again, or come back later.
+
+## Step 2: Get in
+
+The default username depends on the image: `ubuntu` for Ubuntu, `opc` for Oracle Linux.
+
+```bash
+ssh -i ~/.ssh/husk_oracle ubuntu@<public-ip>
+```
+
+The VCN's default security list already allows inbound TCP 22, so SSH works out of the
+box. Nothing else does — see [step 5](#step-5-if-you-want-to-reach-a-port) if you plan
+to use `expose_port`.
+
+Give the box the handful of tools an agent expects:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git curl jq ripgrep fd-find python3-venv build-essential
+```
+
+<Note>
+The `ssh` provider does **not** use flavors or images — there is no container. The
+remote box has whatever you installed on it, and `computer.flavor` and
+`computer.packages` are ignored. Install what your husks need, once, here.
+</Note>
+
+## Step 3: Make the connection non-interactive
+
+Husk runs every `ssh` invocation with `BatchMode=yes`, so it never prompts — which
+means a passphrase-protected key must already be in an agent, and an unknown host key
+must already be accepted. Husk passes `StrictHostKeyChecking=accept-new`, so the first
+connection records the key rather than failing, but doing it by hand once is clearer:
+
+```bash
+ssh -i ~/.ssh/husk_oracle ubuntu@<public-ip> 'echo ok'      # accept the host key
+ssh-add ~/.ssh/husk_oracle                                   # if the key has a passphrase
+```
+
+A `~/.ssh/config` entry keeps the rest tidy:
+
+```text title="~/.ssh/config"
+Host husk-oracle
+  HostName 203.0.113.10
+  User ubuntu
+  IdentityFile ~/.ssh/husk_oracle
+  ServerAliveInterval 30
+```
+
+## Step 4: Point Husk at it
+
+```bash
+export HUSK_SSH_TARGET=ubuntu@203.0.113.10        # or ubuntu@host:2222
+export HUSK_SSH_KEY=~/.ssh/husk_oracle            # optional; the agent is used otherwise
+husk doctor
+```
+
+<Terminal title="husk doctor, with ssh configured">
+{`COMPUTERS
+  ✓ ssh      isolated from this machine
+      A Linux box you already own, reached over ssh. Free if the box is.
+      via ssh · ubuntu@203.0.113.10 (Linux aarch64)
+      commands run as your user on that box -- isolated from this machine, not from itself`}
+</Terminal>
+
+The probe is a real command, not a TCP connect: Husk runs
+`echo husk-ssh-ok; uname -sm` and reports the remote `uname` back to you. If the
+architecture line says `aarch64`, you are on the ARM instance.
+
+```bash
+husk up remote --provider ssh
+husk exec remote -- 'uname -sm; nproc; free -h | head -2'
+husk exec remote -- 'git clone https://github.com/org/repo /work/repo && ls /work/repo'
+```
+
+Per-husk, the same two settings live in the spec's labels rather than the environment —
+but note that `husk.yaml` has [no `labels` field](/reference/husk-yaml#computer), so
+this is reachable only through `POST /v1/computers`:
+
+```json
+{ "provider": "ssh",
+  "labels": { "husk.ssh": "ubuntu@203.0.113.10", "husk.ssh.key": "/home/me/.ssh/husk_oracle" } }
+```
+
+### How it works, briefly
+
+- One SSH **ControlMaster** is opened per computer and reused, so forty tool calls cost
+  one handshake instead of forty. The socket outlives suspends and network changes; if
+  it dies, every exec falls back to `ControlMaster=auto` and simply opens a new
+  connection.
+- Workspaces live at `$HOME/.husk-work/<id>/`, with `work` and `tmp` subdirectories,
+  both `chmod 700`. `$HOME` is resolved on the remote rather than assumed.
+- File transfers use `scp`.
+- The path jail is compiled into the remote command itself: `readlink -f` resolves the
+  target and the guard exits **77** if it lands outside the workspace. A local
+  `realpath` would cost a round trip per operation.
+
+## Step 5: If you want to reach a port
+
+`expose_port` publishes a port from the machine. On a cloud VM two firewalls stand in
+the way and both must be opened.
+
+1. **The VCN security list.** Console → the instance's subnet → its security list → add
+   an ingress rule for the TCP port. Oracle's default list allows only SSH and a couple
+   of ICMP types.
+2. **The host firewall.** Oracle's platform images ship their own rules; opening a port
+   in the console is not enough. Oracle's documentation is explicit that you must check
+   the network security groups, the subnet's security lists **and** the instance's own
+   firewall rules.
+
+   ```bash
+   # Ubuntu on OCI — Oracle warns not to use ufw here, it can leave the box unbootable.
+   sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 8000 -j ACCEPT
+   sudo netfilter-persistent save
+   ```
+
+   ```bash
+   # Oracle Linux
+   sudo firewall-cmd --zone=public --permanent --add-port=8000/tcp
+   sudo firewall-cmd --reload
+   ```
+
+<Danger>
+Do not use `ufw` on an OCI Ubuntu image. Oracle documents that editing rules with UFW
+"might cause an instance not to boot". Use `iptables` directly.
+
+Do not remove the rules restricting `169.254.0.2:3260` and `169.254.2.0/24:3260` to
+root — those are the iSCSI endpoints the boot volume is attached over.
+</Danger>
+
+An honest simpler option: if you only need to reach a dev server, forward the port over
+SSH instead of opening it to the internet.
+
+```bash
+ssh -N -L 8000:127.0.0.1:8000 husk-oracle
+```
+
+## Step 6: Keep it cheap and keep it alive
+
+- **Stay inside Always Free.** One A1 instance at 2 OCPU / 12 GB, one boot volume under
+  200 GB, in your home region. Anything beyond that bills.
+- **Set a budget alert anyway.** Console → Billing → Budgets, at $1. It costs nothing
+  and it catches the mistake.
+- **Do not fight the idle reclamation with a busy-loop.** Burning CPU to look busy is
+  against the spirit of the thing and costs you the CPU. Keep the box's state in `git`
+  and accept that you may have to rebuild it.
+
+## What this does and does not protect
+
+```text
+✓ ssh      isolated from this machine
+    commands run as your user on that box -- isolated from this machine, not from itself
+```
+
+Husk reports `isolationKind: 'machine'` rather than a plain green `isolated`, and the
+distinction is the whole point.
+
+**It does protect your laptop.** A prompt-injected agent on the Oracle box cannot touch
+your home directory, your SSH keys, or your other machines. For "an agent will read a
+scraped page and I do not want it near my laptop", this is a real boundary and it is
+free.
+
+**It does not protect the Oracle box.** The agent runs as `ubuntu`, with `ubuntu`'s
+reach: every file that user owns, `sudo` if it is passwordless (it is, by default, on
+OCI images), and the box's network position inside your VCN.
+
+<Warning>
+The instance metadata service at `169.254.169.254` is reachable from the box.
+[Husk's network floor](/security/network#the-floor) refuses it from `fetch_url` and
+`http_request` — but not from `curl` run through `shell`, because the shell is not
+filtered by the network policy on any provider.
+
+If that matters, install Docker on the Oracle box and use the `docker` provider from
+there instead of pointing `ssh` at it directly. Two commands:
+
+```bash
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker ubuntu
+```
+
+Then run Husk *on* the box rather than *at* it, and you get kernel isolation on free
+hardware.
+</Warning>
+
+## Next
+
+- [Self-hosting](/guides/self-hosting) — run `husk serve` on that same box.
+- [Isolation](/security/isolation#ssh) — the full provider comparison.
+- [Providers](/computers/providers#ssh) — every `ssh` setting.

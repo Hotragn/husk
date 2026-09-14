@@ -1,0 +1,326 @@
+---
+title: husk.yaml schema index
+navTitle: husk.yaml schema
+description: Every field of HuskSpec as a flat lookup — path, type, exact zod constraint, default — followed by one fully annotated file.
+order: 2
+---
+
+This is the lookup table: every leaf path in `HuskSpecSchema`, with the constraint the
+validator actually enforces. For the prose walkthrough — what each block is *for*, with
+worked examples — read [husk.yaml](/chat-to-bot/husk-yaml) instead.
+
+`name` is the only required field. Everything else has a default, so the smallest valid
+file is one line:
+
+```yaml
+name: my-bot
+```
+
+## Top level
+
+| Path | Type | Constraint | Default |
+| --- | --- | --- | --- |
+| `apiVersion` | literal | `"husk/v1"` | `husk/v1` |
+| `name` | string | 1–64 chars, `^[a-z0-9][a-z0-9-]*$` | **required** |
+| `displayName` | string | ≤ 96 chars | — |
+| `version` | string | — | `0.1.0` |
+| `description` | string | ≤ 280 chars | `""` |
+| `model` | string | — | `auto` |
+| `fallbackModels` | string[] | — | `[]` |
+| `temperature` | number | 0–2 | — |
+| `persona` | string | — | `""` |
+| `knowledge` | object[] | see below | `[]` |
+| `examples` | object[] | see below | `[]` |
+| `tools` | string[] | — | `["computer"]` |
+| `computer` | object | see below | all defaults |
+| `limits` | object | see below | all defaults |
+| `guardrails` | object | see below | all defaults |
+| `memory` | object | see below | all defaults |
+| `triggers` | array | discriminated on `type` | `[{ type: cli }]` |
+| `metadata` | record | any values | `{}` |
+| `origin` | object | see below | — |
+
+### `knowledge[]`
+
+| Path | Type | Constraint | Default |
+| --- | --- | --- | --- |
+| `knowledge[].title` | string | — | **required** |
+| `knowledge[].content` | string | — | **required** |
+| `knowledge[].source` | string | — | — |
+
+No length cap on either required field. At run time each item is appended to the system
+prompt under `## Reference` as a `### <title>` block.
+
+### `examples[]`
+
+| Path | Type | Constraint | Default |
+| --- | --- | --- | --- |
+| `examples[].user` | string | — | **required** |
+| `examples[].assistant` | string | — | **required** |
+
+### `origin`
+
+Provenance, written by `husk distill`. Optional as a whole; `source` is required once
+the block exists.
+
+| Path | Type | Default |
+| --- | --- | --- |
+| `origin.source` | string | **required** |
+| `origin.transcriptId` | string | — |
+| `origin.importedAt` | string | — |
+| `origin.messageCount` | number | — |
+
+## `computer`
+
+| Path | Type | Constraint | Default |
+| --- | --- | --- | --- |
+| `computer.enabled` | boolean | — | `true` |
+| `computer.provider` | string | not validated against the provider list | best available |
+| `computer.flavor` | enum | `base` \| `python` \| `node` \| `full` | `base` |
+| `computer.image` | string | overrides `flavor` | — |
+| `computer.cpus` | number | > 0, ≤ 64 | provider default (2) |
+| `computer.memoryMb` | integer | > 0, ≤ 131072 | provider default (2048) |
+| `computer.diskMb` | integer | > 0 | provider default (2048) |
+| `computer.idleTimeoutSec` | integer | ≥ 0; `0` disables | `900` |
+| `computer.maxLifetimeSec` | integer | ≥ 0; `0` disables | `0` |
+| `computer.packages` | string[] | — | `[]` |
+| `computer.setup` | string | — | — |
+| `computer.env` | record of string | — | `{}` |
+| `computer.workdir` | string | — | `/work` |
+| `computer.persist` | boolean | — | `false` |
+| `computer.network.mode` | enum | `none` \| `egress` \| `full` | `egress` |
+| `computer.network.allow` | string[] | one leading `*.` wildcard supported | — |
+| `computer.network.deny` | string[] | applied even in `full` | — |
+| `computer.mounts[].source` | string | host path | **required** |
+| `computer.mounts[].target` | string | path in the machine | **required** |
+| `computer.mounts[].readonly` | boolean | — | `true` |
+
+<Note>
+`ComputerSpec` — the runtime-level type used by `husk up` and
+`POST /v1/computers` — also has `name`, `user` and `labels`. `ComputerConfigSchema`
+does not, so **none of those three can be set from a `husk.yaml`**. The machine's name
+is always the husk's `name`, the user is always the provider default (`1000:1000` on
+containers), and labels are not settable from the file. That also means the `ssh` and
+`fly` per-husk label overrides — `husk.ssh`, `husk.fly.app` — are reachable only
+through the API, not through the spec.
+
+The full list of `computer.*` keys the agent forwards to the runtime is: `provider`,
+`image`, `flavor`, `cpus`, `memoryMb`, `diskMb`, `idleTimeoutSec`, `maxLifetimeSec`,
+`network`, `env`, `mounts`, `workdir`, `persist`, `setup`, `packages`. `enabled` is
+consumed by the agent itself.
+</Note>
+
+## `limits`
+
+| Path | Type | Constraint | Default |
+| --- | --- | --- | --- |
+| `limits.maxSteps` | integer | 1–500 | `24` |
+| `limits.maxCostUsd` | number | ≥ 0 | `0.5` |
+| `limits.maxTokens` | integer | > 0 | `200000` |
+| `limits.timeoutSec` | integer | > 0 | `300` |
+| `limits.execTimeoutSec` | integer | > 0 | `120` |
+| `limits.maxOutputBytes` | integer | > 0 | `262144` |
+
+Every ceiling is checked before the next model call, not after. See
+[Cost and budgets](/models/cost#where-the-ceiling-is-enforced).
+
+## `guardrails`
+
+| Path | Type | Constraint | Default |
+| --- | --- | --- | --- |
+| `guardrails.approvalMode` | enum | `auto` \| `ask` \| `readonly` | `auto` |
+| `guardrails.denyCommands` | string[] | regex, falls back to substring | `[]` |
+| `guardrails.allowCommands` | string[] | regex, falls back to substring | `[]` |
+| `guardrails.refuse` | string[] | free text | `[]` |
+| `guardrails.redactSecrets` | boolean | — | `true` |
+
+`allowCommands` is checked first and beats both `denyCommands` and the built-in deny
+list. See [Isolation](/security/isolation#the-command-deny-list) and
+[Approvals](/security/approvals).
+
+## `memory`
+
+| Path | Type | Constraint | Default |
+| --- | --- | --- | --- |
+| `memory.enabled` | boolean | — | `false` |
+| `memory.backend` | enum | `sqlite` \| `memory` \| `file` | `sqlite` |
+| `memory.windowTurns` | integer | > 0 | `20` |
+| `memory.summarise` | boolean | — | `true` |
+
+<NotYet>
+`memory.backend` is validated, defaulted and then ignored. Nothing in any package reads
+it, there is no persistence layer, and trimming happens entirely in memory over the
+current run's message array. Husk ships no SQLite driver at all.
+</NotYet>
+
+## `triggers[]`
+
+A discriminated union on `type`. Seven variants; three are mounted by the server.
+
+| `type` | Field | Type | Default |
+| --- | --- | --- | --- |
+| `http` | `path` | string | `/` |
+| | `auth` | `none` \| `token` | `token` |
+| `cron` | `schedule` | string | **required** |
+| | `prompt` | string | **required** |
+| `webhook` | `path` | string | **required** |
+| | `secret` | string | — |
+| `discord` | `channels` | string[] | `[]` |
+| | `mentionOnly` | boolean | `true` |
+| `slack` | `channels` | string[] | `[]` |
+| | `mentionOnly` | boolean | `true` |
+| `telegram` | `allowlist` | string[] | `[]` |
+| `cli` | — | — | — |
+
+`discord`, `slack` and `telegram` parse and validate and are never mounted. See
+[Triggers](/chat-to-bot/triggers#what-is-actually-mounted). `http`'s `auth` field is
+stored and never checked.
+
+## `tools[]`
+
+Bundle names expand; individual tool names are also accepted.
+
+| Bundle | Expands to |
+| --- | --- |
+| `computer` | `shell`, `expose_port`, `computer_info` |
+| `files` | `read_file`, `write_file`, `edit_file`, `list_dir`, `search_files`, `move`, `delete` |
+| `web` | `fetch_url`, plus `web_search` when `TAVILY_API_KEY` or `BRAVE_API_KEY` is set |
+| `http` | `http_request` |
+
+A tool that cannot work is skipped rather than registered-and-broken. Tools needing a
+machine are dropped when `computer.enabled` is `false`, and `http_request` is opt-in —
+naming the `http` bundle counts as naming it. An unknown tool name is dropped silently
+(at debug log level).
+
+## One annotated file
+
+```yaml title="husk.yaml"
+# The schema version. Bumped only on a breaking change.
+apiVersion: husk/v1
+
+# Required. Lowercase alphanumerics and dashes, 1-64 chars. This is the URL
+# segment, the CLI handle, and the computer's name.
+name: ci-triage
+displayName: CI Triage        # <= 96 chars, human label
+version: 0.2.0                # yours, not husk's
+description: Reads failing CI logs and says what broke, in one paragraph.
+
+# An alias or a provider/model id. `auto`, `free` and `local` are strategies.
+model: sonnet
+# Only honoured on the control-plane path; `husk run` pins one model.
+fallbackModels: [flash, gemma]
+temperature: 0.2              # omit to use the provider's default
+
+# The system prompt. {{name}} placeholders come from `husk run --var name=…`.
+persona: |
+  You triage CI failures for a TypeScript monorepo.
+
+  Always read the failing job's log before forming an opinion. Quote the first
+  line that actually failed -- not the last line, which is usually the runner
+  giving up.
+
+  Answer in one paragraph. No preamble.
+
+# Appended to the prompt under "## Reference".
+knowledge:
+  - title: Repository layout
+    content: |
+      packages/* are libraries, apps/* are deployables. Any change under
+      packages/core forces a full rebuild.
+    source: https://github.com/org/repo/blob/main/README.md
+
+# Few-shot pairs. Both sides required.
+examples:
+  - user: main is red
+    assistant: The `build (node 20)` job failed at `packages/core` with TS2345.
+
+# Bundles, individual tool names, or both.
+tools: [computer, files]
+
+computer:
+  enabled: true               # false removes the machine and every tool needing one
+  flavor: node                # base | python | node | full
+  # image: ghcr.io/me/custom:1   # overrides flavor
+  cpus: 2
+  memoryMb: 2048
+  diskMb: 2048
+  idleTimeoutSec: 600         # destroy after 10 min with no exec; 0 disables
+  maxLifetimeSec: 0           # hard ceiling regardless of activity; 0 disables
+  workdir: /work
+  persist: false              # true keeps the filesystem across restarts
+  packages: [pnpm]            # installed on first boot by the flavor's manager
+  setup: mkdir -p /work/out   # one shell snippet, once, after creation
+  env:
+    GITHUB_TOKEN: ${GITHUB_TOKEN}   # explicit values survive the env scrub
+  mounts:
+    - source: ./fixtures
+      target: /work/fixtures
+      readonly: true          # the default; set false deliberately or not at all
+  network:
+    mode: egress              # none | egress | full
+    allow: ['*.github.com', 'objects.githubusercontent.com']
+    deny: ['telemetry.example.com']   # refused even in `full`
+
+limits:
+  maxSteps: 20                # 1-500
+  maxCostUsd: 0.25            # 0 means "local models only"
+  maxTokens: 200000
+  timeoutSec: 240             # wall clock for the whole run
+  execTimeoutSec: 120         # per exec inside the machine
+  maxOutputBytes: 262144      # per tool result, before redaction
+
+guardrails:
+  approvalMode: auto          # auto | ask | readonly; `ask` fails closed
+  denyCommands:
+    - 'git\s+(push|commit|reset\s+--hard)'
+  allowCommands: []           # beats denyCommands AND the built-in list
+  refuse:
+    - deploying, reverting, or merging anything
+  redactSecrets: true
+
+memory:
+  enabled: false              # the only gate; off means history is never trimmed
+  windowTurns: 20
+  summarise: true
+
+triggers:
+  - type: http                # ALL /v1/t/ci-triage
+  - type: cron
+    schedule: '*/15 * * * *'
+    prompt: Any red builds on main in the last 15 minutes? If none, reply "clear".
+
+# Free-form, carried through untouched.
+metadata:
+  owner: platform-team
+
+# Written by `husk distill`. `source` is required once the block exists.
+origin:
+  source: claude-code
+  transcriptId: tr_01hxyz
+  importedAt: 2026-09-01T10:00:00.000Z
+  messageCount: 214
+```
+
+## Validation
+
+```bash
+husk validate                 # ./husk.yaml
+husk validate support.yaml
+husk validate --json
+```
+
+Every problem at once, each as `path: message`:
+
+```text
+error husk.yaml is not a valid husk
+  ✗ name: name must be lowercase alphanumeric with dashes
+  ✗ limits.maxSteps: Number must be less than or equal to 500
+  ✗ triggers.0.schedule: Required
+hint:  `husk init --force` regenerates a valid file, or see `husk help init`
+```
+
+`parseSpec` throws `E_SPEC_INVALID` carrying the same list in `details.issues`.
+`safeParseSpec` returns `{ ok: false, issues }` instead of throwing.
+
+Over HTTP, `POST /v1/husks/validate` returns `{ ok, issues? }` with HTTP 200 either way
+— it is a validator, not an operation that can fail.

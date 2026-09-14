@@ -17,6 +17,10 @@
     "test": "npm run test --workspaces --if-present",
     "clean": "node scripts/clean.mjs"
   },
+  "overrides": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
   "devDependencies": {
     "@fastify/cors": "^11.3.0",
     "@fastify/static": "^10.1.3",

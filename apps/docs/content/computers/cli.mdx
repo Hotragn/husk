@@ -1,0 +1,204 @@
+---
+title: The computer commands
+navTitle: CLI commands
+description: up, ps, exec, shell, cp, rm, stop and start — every flag the parser actually accepts.
+order: 3
+---
+
+Eight commands drive a machine. Every flag below is what `parse()` accepts in the
+command's source; where `husk help <command>` disagrees, that is called out.
+
+Five global flags work everywhere: `--json`, `-q/--quiet`, `--no-color`, `--debug`,
+`-h/--help`. `-y/--yes` is also global, which is why `husk rm --yes` works even though
+`rm` declares no `yes` option of its own.
+
+Exit codes are an API and are frozen: `0` ok, `1` error, `2` usage, `130` interrupted.
+`husk exec` is the one deliberate exception — it exits with the child's own code.
+
+## husk up
+
+```bash
+husk up [name] [flags]
+```
+
+Creates a computer. With no name, Husk generates one. Nothing runs inside it until you
+`exec`.
+
+| Flag | Values |
+| --- | --- |
+| `--provider <p>` | `docker`, `podman`, `local`, `ssh`, `fly`. Default: best available |
+| `--flavor <f>` | `base`, `python`, `node`, `full`. Default: `base` |
+| `--memory <size>` | `2g`, `512m`, or a plain number of MB |
+| `--cpus <n>` | A positive number |
+| `--network <mode>` | `none`, `egress`, `full`. Default: `egress` |
+| `--persist` | Keep the filesystem across restarts |
+| `--env K=V` | Set a variable inside the machine. Repeatable |
+| `--idle-timeout <sec>` | Destroy after this long idle. `0` disables |
+| `--json` | Print the computer record instead of the summary |
+
+<Note>
+`--env` and `--idle-timeout` are accepted by the parser but missing from
+`husk help up`.
+</Note>
+
+`--memory` accepts `2g`, `2gb`, `512m`, `512mb` or a bare number of MB, and rejects
+anything else with a usage error rather than guessing.
+
+```bash
+husk up
+husk up scratch --provider local
+husk up builder --flavor python --memory 2g --network full
+husk up api --env PORT=8000 --idle-timeout 3600
+```
+
+## husk ps
+
+```bash
+husk ps [--all] [--json]
+```
+
+Tab-separated, so `cut` works:
+
+<Terminal>
+{`$ husk ps
+name	id	provider	state	workdir	age
+scratch	cmp_5j8svxeqer9p	local	running	/work	51s`}
+</Terminal>
+
+```bash
+husk ps --json | jq -r '.[].name'
+husk ps | cut -f1,4
+```
+
+`--all` (or `-a`) includes stopped machines.
+
+## husk exec
+
+```bash
+husk exec <name|id> -- <command...>
+```
+
+Everything after `--` belongs to the command, flags included. That boundary is preserved
+before parsing, so `husk exec box -- ls -la` passes `-la` to `ls` rather than rejecting
+it as an unknown Husk flag.
+
+| Flag | What it does |
+| --- | --- |
+| `--cwd <path>` | Working directory inside the machine. Default `/work` |
+| `--timeout <sec>` | Kill the process tree after this long. Default 120 |
+| `--env K=V` | Set a variable for this command. Repeatable |
+| `--stdin <text>` | Text piped to the command on stdin |
+| `--json` | Buffer and print the full `ExecResult` instead of streaming |
+
+<Note>
+`--stdin` is accepted by the parser but missing from `husk help exec`.
+</Note>
+
+stdout and stderr stream live, and Husk exits with the command's own exit code:
+
+```bash
+husk exec scratch -- uname -sr
+husk exec scratch -- 'echo hi > /work/a.txt; cat /work/a.txt'
+husk exec scratch -- test -f /work/a.txt && echo present
+husk exec scratch --json -- ls /work | jq .exitCode
+```
+
+A timed-out command exits `124`, which is what `timeout(1)` uses, and `ExecResult.timedOut`
+is `true` so a caller does not have to key off the number.
+
+## husk shell
+
+```bash
+husk shell <name|id> [--cwd <path>]
+```
+
+A readline loop, **not a pty**. Each line is a separate `exec`, so Husk tracks `cd` for
+you, but full-screen programs — `vim`, `top`, `less` — and anything that checks `isatty`
+will not work. Leave with `exit`, `quit`, or Ctrl-D.
+
+<Note>
+`--cwd` is accepted but missing from `husk help shell`.
+</Note>
+
+## husk cp
+
+```bash
+husk cp <src> <dst>
+```
+
+Either side may be `name:/path`. Directories are copied recursively.
+
+```bash
+husk cp ./report.csv scratch:/work/report.csv
+husk cp scratch:/work/out.json ./out.json
+husk cp ./src scratch:/work/src
+```
+
+A single-character prefix before the colon is always a Windows drive letter, never a
+computer name — no computer name is one character — so `husk cp C:\data\x.csv
+scratch:/work/` does what a Windows user expects. A path starting `//` after the colon is
+treated as a URL scheme separator and left alone, so `http://…` does not parse as a
+computer called `http`.
+
+Both sides go through the path jail. Copying out of `/etc` is refused.
+
+## husk rm
+
+```bash
+husk rm <name|id> [--all] [--yes]
+```
+
+<Danger>
+Destroys the machine and its filesystem. There is no undo. Husk asks first unless
+`--yes` is given or `--json` is set — with `--json` there is nobody at the terminal to
+answer.
+</Danger>
+
+| Flag | What it does |
+| --- | --- |
+| `--all` | Destroy every computer |
+| `--yes`, `-y` | Skip the confirmation (global flag) |
+| `--force`, `-f` | Also skips the confirmation |
+
+<Note>
+`--force`/`-f` is accepted by the parser but missing from `husk help rm`, which
+documents only `--yes`.
+</Note>
+
+## husk stop and husk start
+
+```bash
+husk stop <name|id>
+husk start <name|id>
+```
+
+No flags beyond the globals. `stop` keeps the filesystem; `rm` does not.
+
+## Errors
+
+One red line and one dim hint. Never a stack trace unless you ask:
+
+<Terminal>
+{`$ husk exec ghost -- ls
+error no computer named "ghost"
+hint:  there are no computers yet — create one with \`husk up\``}
+</Terminal>
+
+Every error is a `HuskError` carrying a machine-readable `code` and a one-line `hint`
+that says what to do next. `--debug` prints the stack.
+
+## Piping
+
+`--json` is on every read command and is the only thing on stdout when set. Spinners,
+progress, warnings and the one-time orientation block all go to stderr, so this is safe:
+
+```bash
+husk doctor --json 2>/dev/null | jq -r .selection.isolated
+```
+
+Colour follows `NO_COLOR`, `FORCE_COLOR`, `TERM=dumb` and `--no-color`, and turns itself
+off when stdout is not a terminal.
+
+Ctrl-C aborts in-flight work rather than killing the process, so a run stops between
+steps and a machine is never left half-created. A second Ctrl-C leaves immediately.
+Writing to a closed pipe — `husk ps | head -1` — is normal and exits `0`.

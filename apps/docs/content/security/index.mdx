@@ -1,0 +1,153 @@
+---
+title: The threat model
+navTitle: Threat model
+description: What Husk protects you from, what it does not, and how to tell in one command which of the two you are running.
+order: 1
+---
+
+Most sandbox documentation is vague here. Vagueness is how people end up believing they
+have containment they do not have, so this section is specific to the point of being
+unflattering.
+
+## Who the adversary is
+
+You are not defending against a malicious user. You are the user. You are defending
+against **your own agent doing something irreversible**, for one of three reasons:
+
+1. **Accident.** The model writes `rm -rf $BUILD_DIR` and `BUILD_DIR` is empty.
+2. **Confusion.** It believes it is in `/work` and is actually in your home directory.
+3. **Prompt injection.** It read a file, a web page, a dependency's README or an issue
+   comment that told it to do something, and it complied.
+
+Guardrails handle (1) and (2). Only isolation handles (3).
+
+That third case is the one that matters, and it is the reason the rest of this section
+exists. An injected model is not making a mistake. It is following instructions
+competently, toward someone else's goal, using every tool you gave it. A deny list
+written for accidents does not survive an adversary who can read the deny list.
+
+## The two modes, in one command
+
+```bash
+husk doctor
+```
+
+<Terminal title="husk doctor, computers section">
+{`COMPUTERS
+  ✗ docker   isolated
+      Kernel-level isolation via Docker
+      docker is installed but the daemon is not reachable
+      fix: start Docker Desktop (or \`sudo systemctl start docker\`), then re-run \`husk doctor\`
+  ✗ podman   isolated
+      Kernel-level isolation via Podman, rootless and daemonless
+      the podman CLI is not on PATH
+  ✗ ssh      isolated from this machine
+      A Linux box you already own, reached over ssh. Free if the box is.
+      no remote host is configured
+  ✗ fly      isolated
+      A Fly.io microVM per computer. Real isolation, metered by the second.
+      FLY_API_TOKEN is not set
+  ✓ local    not isolated
+      A guarded working directory on this machine. Free, always available, not isolated.
+      via WSL2 (Ubuntu)
+      guarded working directory -- process guardrails, not a sandbox
+
+SELECTION  what husk would use right now
+  computer   local  highest-priority available provider (10)
+  isolation  guardrails only
+  model      ollama/qwen2.5:1.5b  first reachable model on Ollama
+
+WARNINGS
+  ! The "local" provider gives guardrails, not isolation. A prompt-injected model is
+    closer to an adversary than to an accident — start Docker before running anything
+    you did not write.
+  ! Docker is installed but its daemon is not running, so husk is falling back to
+    weaker isolation.`}
+</Terminal>
+
+`isolated` is a field on the provider interface, not a footnote. `husk doctor` prints it,
+the MCP server states it in its first tool result, and `GET /v1/doctor` returns it.
+
+[Isolation by provider](/security/isolation) is the full table of what each of the five
+providers actually guarantees.
+
+## The controls, and where each one lives
+
+| Control | Scope | Page |
+| --- | --- | --- |
+| Kernel isolation | `docker`, `podman`, `fly` | [Isolation](/security/isolation) |
+| Path jail | Filesystem **API** on every provider | [Isolation](/security/isolation#the-path-jail) |
+| Command deny list | Every provider, every exec | [Isolation](/security/isolation#the-command-deny-list) |
+| Environment scrub | Every provider, every exec | [Secrets](/security/secrets) |
+| Output redaction | Every tool result, before the model sees it | [Secrets](/security/secrets#redaction) |
+| Network policy | `fetch_url` and `http_request`; `none` also at the kernel on containers | [Network](/security/network) |
+| Internal-host floor | Every mode, including `full` | [Network](/security/network#the-floor) |
+| Approvals | `dangerous` tools | [Approvals](/security/approvals) |
+| Output caps | Every exec and every tool result | [Isolation](/security/isolation#output-caps) |
+| Bearer auth, loopback bind | `husk serve` | [Self-hosting](/guides/self-hosting#step-2-the-token) |
+
+## Choosing a mode
+
+Use `local` for your own code on your own machine.
+
+Use `docker` or `podman` the moment an agent will read anything you did not write: a
+scraped page, a dependency, an issue body, a PDF, a CI log from a fork.
+
+Husk never silently substitutes a weaker provider for the one you asked for. Requesting
+`--provider docker` with the daemon down is an error, not a downgrade:
+
+<Terminal>
+{`$ husk up boom --provider docker
+creating boom...
+error provider "docker" is not usable: docker is installed but the daemon is not reachable
+hint:  start Docker Desktop (or \`sudo systemctl start docker\`), then re-run \`husk doctor\``}
+</Terminal>
+
+Falling back to something with weaker isolation than you asked for is exactly the kind of
+surprise that turns into a security incident.
+
+## What Husk deliberately does not do
+
+- **No telemetry.** Not off by default — absent. There is no analytics call, no crash
+  reporter and no phone-home in the codebase. The only outbound requests are to the
+  model provider you configured, and to a container registry when a flavor's image is
+  not already pulled.
+- **No credential storage.** Keys are read from the process environment. No command
+  writes one to `~/.husk`.
+- **No remote execution by default.** `husk serve` binds `127.0.0.1`, and it **refuses to
+  start** on a non-loopback address without `HUSK_TOKEN`:
+
+  ```text
+  error refusing to bind 0.0.0.0 without an auth token: this API can execute shell commands
+  hint:  set HUSK_TOKEN=$(openssl rand -hex 32) before `husk serve --host 0.0.0.0`, or bind 127.0.0.1
+  ```
+
+- **No privilege escalation.** Husk runs as you and never asks for more. When it hits a
+  permissions problem it says so and stops:
+
+  ```text
+  error permission denied: /srv/data/report.csv
+  hint:  husk runs as you; it will not escalate. Fix the permissions or pick another path.
+  ```
+
+## Known gaps, stated plainly
+
+These are real and they are documented rather than hidden. Each links to the page that
+explains it.
+
+- The path jail covers the **filesystem API**, not shell commands. On `local`, a command
+  run through `shell` or `husk exec` sees the whole filesystem your user can see.
+  [Details](/security/isolation#what-the-path-jail-does-not-cover).
+- `network.mode: egress` is enforced in the **tools**, not by a firewall. `curl` run
+  through `shell` is not filtered. [Details](/security/network#where-each-mode-is-enforced).
+- The internal-host floor matches on the hostname string, so DNS rebinding and
+  alternative IP encodings pass. [Details](/security/network#what-the-floor-does-not-catch).
+- Redaction is a pattern list. A credential in a format it does not know reaches the
+  model. [Details](/security/secrets#what-redaction-misses).
+- An HTTP trigger's `auth` field is stored and never checked.
+  [Details](/chat-to-bot/triggers#http).
+
+## Reporting a vulnerability
+
+Open a private security advisory on the repository rather than a public issue. Include
+the provider, the version from `husk version`, and a reproduction.

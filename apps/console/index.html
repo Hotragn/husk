@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="The live state of the Husk control plane on this machine." />
+    <title>Husk console</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      The Husk console is a live view of a local control plane, so it needs JavaScript. The same data is available
+      without it: <code>curl http://127.0.0.1:7377/v1/doctor</code>.
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,198 @@
+---
+title: Reading husk doctor
+navTitle: husk doctor
+description: The command you run when something is confusing, and what every line of its report means.
+order: 4
+---
+
+`husk doctor` answers four questions in order: what can run a computer, what can run a
+model, what would Husk pick right now, and what is wrong. Every unavailable thing carries
+the reason and the one command that fixes it, because a report that says "not available"
+and stops has wasted your time.
+
+It never fails. The exit code is always `0`, even when nothing works — a script asking
+"is Docker up?" should read the JSON, not infer it from an exit code that also means
+"husk crashed".
+
+```bash
+husk doctor
+husk doctor --json | jq .selection
+```
+
+| Flag | What it does |
+| --- | --- |
+| `--json` | The full `DoctorReport` as JSON, and the only thing on stdout |
+| `--force` | Re-probe every provider, ignoring the 30-second cache |
+
+<Note>
+`--force` is real and works, but `husk help doctor` does not list it. The help text
+shows only `--json`.
+</Note>
+
+## The header
+
+```text
+husk 0.1.0  node 24.14.0 · win32-arm64
+state: C:\Users\me\.husk
+```
+
+The version, the Node version and the platform triple. `state` is `$HUSK_HOME` if you set
+it, otherwise `~/.husk`. On a first run it reads `state: … (not created yet)` — the
+directory is not created until something needs it.
+
+## COMPUTERS
+
+One row per provider, sorted by priority, highest first. All five are always listed even
+when four of them cannot run.
+
+```text
+  ✗ docker   isolated
+      Kernel-level isolation via Docker
+      docker is installed but the daemon is not reachable
+      fix: start Docker Desktop (or `sudo systemctl start docker`), then re-run `husk doctor`
+  ✓ local    not isolated
+      A guarded working directory on this machine. Free, always available, not isolated.
+      via WSL2 (Ubuntu)
+      guarded working directory -- process guardrails, not a sandbox
+```
+
+| Line | What it is |
+| --- | --- |
+| `✓` / `✗` | Whether the provider can create a machine right now |
+| `isolated` / `not isolated` | `Availability.isolated`. A kernel boundary, or not |
+| Second line | The provider's fixed one-line description |
+| `via …` | `Availability.version`. For `local` this is the shell it found |
+| Third line | Why, in one sentence |
+| `fix:` | Printed only when the provider is unavailable |
+
+The two words that matter most are `isolated` and `not isolated`, and they are reported
+independently of availability. Docker reports `isolated: true` even while its daemon is
+down, because the field describes what the provider *is*, not what it can do this second.
+
+"Docker is installed but the daemon is not reachable" and "the docker CLI is not on PATH"
+are different rows with different fixes. Conflating them sends people to a download page
+they do not need.
+
+## MODELS
+
+One row per model provider. Eleven are declared and all eleven are implemented; the CLI
+asks `@husk/models` for its own list rather than carrying a hardcoded one.
+
+```text
+  ✓ ollama
+      ollama/qwen2.5:1.5b, ollama/qwen2.5:7b, ollama/llama3.2:latest
+  ✗ anthropic
+      ANTHROPIC_API_KEY is not set
+      fix: Set ANTHROPIC_API_KEY for Claude, or run `ollama pull gemma3` for a free local model.
+```
+
+An available provider lists up to four model ids, then `+N more`. An unavailable one
+gives the reason and the fix.
+
+Two probe styles sit behind those ticks, and the difference matters when you are
+debugging:
+
+- **Key-only providers** — anthropic, openai, google, and every OpenAI-compatible
+  gateway with an `envKey`. A tick means the variable is set. It does **not** mean the
+  key is valid; nothing calls the API until you do.
+- **Network providers** — ollama and lmstudio have no key, so Husk actually connects,
+  with a 2-second timeout. Ollama additionally reports "Ollama is running but has no
+  models pulled" as a separate state from "not running".
+
+If a provider is ever missing an implementation, the row says `(not implemented)`
+explicitly rather than being omitted — a user with a `GROQ_API_KEY` sitting right there
+should not have to wonder why Husk cannot see it.
+
+## SELECTION
+
+```text
+SELECTION  what husk would use right now
+  computer   local  highest-priority available provider (10)
+  isolation  guardrails only
+  model      ollama/qwen2.5:1.5b  first reachable model on Ollama
+```
+
+This is the block to read first when a run behaved unexpectedly. It carries the *reason*
+next to the choice, because "husk picked local" is not actionable on its own.
+
+`isolation` is one of `kernel-level`, `guardrails only`, or `unknown`.
+
+## WARNINGS
+
+Warnings are conditions, not errors. The report generates them for:
+
+- No usable computer provider. This should be impossible: `local` is always available.
+- The selected provider reports `isolated: false`.
+- Docker is installed and its daemon is down, so you are on weaker isolation than the
+  machine can offer.
+- No model is reachable at all — computers still work, and `husk distill --no-model`
+  still works.
+- Node below 20.10.
+- Windows with no WSL, where the `local` provider runs commands in the Windows shell and
+  is not a Linux computer at all.
+
+## The JSON shape
+
+`husk doctor --json` prints the same `DoctorReport` the control plane serves from
+`GET /v1/doctor`. One shape, three consumers.
+
+```json
+{
+  "version": "0.1.0",
+  "node": "v24.14.0",
+  "platform": "win32-arm64",
+  "huskHome": "C:\\Users\\me\\.husk",
+  "firstRun": false,
+  "providers": [
+    {
+      "name": "docker",
+      "description": "Kernel-level isolation via Docker",
+      "priority": 20,
+      "available": false,
+      "isolated": true,
+      "reason": "docker is installed but the daemon is not reachable",
+      "hint": "start Docker Desktop (or `sudo systemctl start docker`), then re-run `husk doctor`"
+    }
+  ],
+  "models": [
+    {
+      "id": "ollama",
+      "displayName": "Ollama",
+      "priority": 40,
+      "available": true,
+      "envKey": "OLLAMA_HOST",
+      "implemented": true,
+      "models": ["ollama/qwen2.5:7b"]
+    }
+  ],
+  "selection": {
+    "provider": "local",
+    "providerReason": "highest-priority available provider (10)",
+    "isolated": false,
+    "model": "ollama/qwen2.5:7b",
+    "modelReason": "first reachable model on Ollama"
+  },
+  "warnings": []
+}
+```
+
+Useful one-liners:
+
+```bash
+husk doctor --json | jq -r '.selection.isolated'
+husk doctor --json | jq -r '.providers[] | select(.available) | .name'
+husk doctor --json | jq -r '.models[] | select(.available) | .models[]'
+```
+
+<Note>
+The CLI's report includes `implemented` on each model row. The control plane's
+`GET /v1/doctor` returns the same shape without that field, and it ignores the
+`?force=true` query parameter — the server always calls the manager with `force: false`,
+so a `/v1/doctor` request can serve an answer up to 30 seconds stale.
+</Note>
+
+## Why probes are cached for 30 seconds
+
+A cold `docker info` takes about 800 ms. An agent that creates four machines in a row
+would pay that four times. `ComputerManager` caches each probe result for 30 s
+(`probeTtlMs`), so the cost is paid once. `--force` bypasses it.

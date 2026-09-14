@@ -1,0 +1,80 @@
+---
+title: Ports
+description: Publishing a port a machine is listening on, and what "reachable" means per provider.
+order: 6
+---
+
+Start the server inside the machine first, then publish the port. `exposePort` does not
+start anything; it makes an already-listening port reachable from the host.
+
+```bash
+husk exec dev -- 'cd /work && python3 -m http.server 8000 &'
+```
+
+From an agent, the tool is `expose_port`:
+
+```json
+{ "port": 8000 }
+```
+
+which answers:
+
+```text
+port 8000 is reachable at http://127.0.0.1:52431
+```
+
+The host port is not the guest port. Port `0` is passed to the OS so it picks a free one,
+which means two computers can both expose `8000` without colliding.
+
+## Per provider
+
+| Provider | How | What you get |
+| --- | --- | --- |
+| `docker`, `podman` | A TCP proxy on the host, bound to `127.0.0.1:0`, piping to the container | `http://127.0.0.1:<random>` |
+| `local` | Nothing to forward — the process already bound the host's own stack | `http://127.0.0.1:<the same port>` |
+| `ssh` | An ssh tunnel to the remote box | `http://127.0.0.1:<random>` |
+| `fly` | The machine's own address | A Fly URL |
+
+On the container providers the forwarder is a Node TCP server created on demand and
+`unref`'d, so it never holds the CLI open. It is closed when the machine is destroyed.
+
+`PortBinding` carries `hostPort`, `url`, and an optional `publicUrl` set only by
+providers that can offer a public tunnel. The `expose_port` tool prints `publicUrl` when
+it exists and `url` otherwise.
+
+`exposePort` is idempotent: calling it twice for the same port returns the same binding
+rather than allocating a second forwarder.
+
+## The local provider caveat
+
+On `local` there is no forwarding because there is no boundary to forward across. A
+server the agent starts on port 8000 is listening on **your** machine's port 8000, in
+your network namespace, reachable by anything else on your machine — and, if it binds
+`0.0.0.0`, by your LAN.
+
+That is the same trade the rest of the `local` provider makes, stated once here so it is
+not a surprise. If an agent is going to bind a port and you care who can reach it, use
+Docker.
+
+## Ports in `husk ps --json`
+
+Published ports are recorded on the computer under `ports`, keyed by the in-machine port:
+
+```json
+{
+  "ports": {
+    "8000": { "hostPort": 52431, "url": "http://127.0.0.1:52431" }
+  }
+}
+```
+
+## Over the control plane
+
+```bash
+curl -s -X POST localhost:7377/v1/computers/cmp_x/ports \
+  -H 'content-type: application/json' \
+  -d '{"port":8000}'
+```
+
+The body is validated strictly: `port` must be an integer between 1 and 65535, and any
+other key is a 422.

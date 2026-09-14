@@ -1,0 +1,193 @@
+---
+title: Approvals
+description: auto, ask and readonly — which tools are dangerous, how a human answers, and why a missing approver denies rather than allows.
+order: 5
+---
+
+```yaml title="husk.yaml"
+guardrails:
+  approvalMode: ask     # auto | ask | readonly
+```
+
+```bash
+husk run husk.yaml "clean up /work" --approve ask
+```
+
+The command-line flag overrides the file; the file overrides the default of `auto`.
+Over HTTP, `approvalMode` in the run body does the same.
+
+| Mode | A `dangerous` tool call |
+| --- | --- |
+| `auto` | runs |
+| `ask` | pauses for an approver. **With no approver wired, it is denied** |
+| `readonly` | is denied, approver or not |
+
+## Which tools are dangerous
+
+`dangerous` is a flag on the tool definition, not a heuristic applied to the arguments.
+
+| Dangerous | Not dangerous |
+| --- | --- |
+| `shell` | `read_file` |
+| `write_file` | `list_dir` |
+| `edit_file` | `search_files` |
+| `move` | `computer_info` |
+| `delete` | `fetch_url` |
+| `expose_port` | `web_search` |
+| `http_request` | |
+
+`http_request` is additionally **opt-in**: it is not registered at all unless the
+`husk.yaml` names the `http` bundle or the tool itself.
+
+`shell` being on the list is the important one. It is a single string parameter, so
+there is no way to classify what a given invocation will do — every shell call is
+treated as capable of changing state, because it is.
+
+## `ask` fails closed
+
+```ts
+if (this.approvalMode === 'ask') {
+  if (!this.opts.onApproval) {
+    return deny(`${tool.name} needs approval and no approver is wired to this run`);
+  }
+  ...
+}
+```
+
+Approval is a security boundary, and absent means no. Returning `false`, throwing, and
+not being supplied at all must all deny — otherwise `ask` mode is a comment rather than
+a control, and a headless server quietly behaves as though it were in `auto`.
+
+An approver that throws is logged and treated as a refusal:
+
+```text
+warn  the approver threw; treating that as a refusal
+```
+
+The model is told, in the tool result, exactly what happened:
+
+```text
+Denied: shell needs approval and no approver is wired to this run
+Denied: the operator declined shell
+Denied: delete can change state and this run is in readonly mode
+```
+
+Each denial is also emitted as a `tool_denied` run event, so a UI can show it without
+parsing the result text.
+
+## Answering, at the terminal
+
+`husk run --approve ask` prints the call and waits. The prompt defaults to **no**, so
+hitting Enter refuses:
+
+<Terminal title="husk run --approve ask">
+{`⚠ the agent wants to run shell
+  Allow shell?
+  command: rm -rf /work/build
+allow it? [y/N]`}
+</Terminal>
+
+At most four arguments are shown, each truncated to 140 characters.
+
+`--approve ask` refuses to start without a terminal to ask on, rather than starting and
+then denying everything:
+
+```text
+error --approve ask needs a terminal to ask on; use auto or readonly in a script
+hint:  husk help run
+```
+
+## Answering, over HTTP
+
+When a run is started with `approvalMode: "ask"`, the control plane wires an approver
+that raises the request onto the stream and blocks.
+
+The stream emits:
+
+```json
+{ "type": "approval_required",
+  "approvalId": "apr_01hxyz",
+  "request": {
+    "runId": "run_01hxyz", "huskId": "triage", "tool": "shell",
+    "callId": "call_1", "args": { "command": "rm -rf /work/build" },
+    "prompt": "Allow shell?", "dangerous": true } }
+```
+
+Answer it:
+
+```bash
+curl -X POST localhost:7377/v1/approvals/apr_01hxyz \
+  -H 'content-type: application/json' \
+  -d '{"approve": true, "remember": false}'
+```
+
+```json
+{ "approvalId": "apr_01hxyz", "approved": true, "remembered": false }
+```
+
+List what is outstanding:
+
+```bash
+curl -s localhost:7377/v1/approvals | jq
+```
+
+```json
+{ "approvals": [
+  { "approvalId": "apr_01hxyz", "runId": "run_01hxyz", "husk": "triage",
+    "call": { "type": "tool_call", "id": "call_1", "name": "shell", "args": {} },
+    "createdAt": "2026-09-10T09:00:00.000Z",
+    "expiresAt": "2026-09-10T09:02:00.000Z" } ] }
+```
+
+<Note>
+`docs/API.md` shows the streamed event as `{"type":"approval_required","approvalId":"apr_x","call":{...}}`.
+The event the server actually emits carries `request`, an `ApprovalRequest`, not `call`.
+The code is the contract here; `call` is what the `PendingApproval` in
+`GET /v1/approvals` carries.
+</Note>
+
+### Timeouts
+
+An unanswered approval is **denied** after 120 seconds. An operator who walks away from
+the terminal must not silently authorise a `rm -rf` two minutes later.
+
+Aborting the run denies every approval it is blocked on. Shutting the server down calls
+`denyAll()`, so no run is left blocked on a socket that no longer exists.
+
+### `remember`
+
+`{"approve": true, "remember": true}` records `<husk>:<toolName>` and auto-approves that
+pair for the rest of the process. It is remembered only when the answer is `true` —
+there is no "remember no".
+
+<Warning>
+`remember` is keyed on the husk and the tool **name only**, not on the arguments.
+Remembering `shell` for a husk approves every future `shell` call from that husk,
+whatever it runs, until the server restarts. It is in-memory and per-process; it is not
+written to disk.
+</Warning>
+
+## `ctx.confirm`
+
+A tool can ask a free-form question rather than relying on the `dangerous` flag:
+
+```ts
+const ok = await ctx.confirm('Overwrite 412 files in /work/src?', { count: 412 });
+```
+
+It follows the mode: `auto` resolves `true` immediately, `readonly` resolves `false`
+immediately, and `ask` raises a real approval. Over HTTP the approval queue is keyed on
+a tool call, so a free-form confirm gets a synthetic one named `confirm` rather than a
+separate code path.
+
+## Choosing a mode
+
+- **`auto`** for a husk you wrote, running against your own code, in a container.
+- **`ask`** when you are watching, and the husk touches something that matters.
+- **`readonly`** to see what a model *would* do without letting it do anything. It is
+  also the fastest way to debug a small local model that is behaving oddly: the plan is
+  visible and nothing happens.
+
+`readonly` is not the same as "no computer". The agent still gets `read_file`,
+`list_dir`, `search_files`, `computer_info` and `fetch_url`, so it can investigate
+thoroughly and change nothing. Use `--no-computer` when you want no machine at all.

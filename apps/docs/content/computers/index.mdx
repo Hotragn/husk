@@ -1,0 +1,183 @@
+---
+title: Concepts
+description: What a computer is, how one gets created, and the small interface every provider has to satisfy.
+order: 1
+---
+
+A **computer** is a disposable Linux machine an agent can drive. It has an id, a name, a
+provider, a state, a working directory, and a small set of things you can do to it.
+
+The interface is deliberately narrow, and completeness matters more than surface area:
+if the shell tool behaved differently on Docker than on SSH, every `husk.yaml` would
+become provider-specific and the abstraction would be worth nothing.
+
+## The interface
+
+Everything a caller can do to a machine:
+
+```ts
+interface Computer {
+  readonly id: string;
+  readonly info: ComputerInfo;
+
+  refresh(): Promise<ComputerInfo>;
+  exec(req: ExecRequest): Promise<ExecResult>;
+
+  writeFile(path, content, opts?): Promise<void>;
+  readFile(path): Promise<Uint8Array>;
+  readTextFile(path, maxBytes?): Promise<string>;
+  listDir(path): Promise<DirEntry[]>;
+  stat(path): Promise<DirEntry | null>;
+  remove(path, opts?): Promise<void>;
+
+  upload(hostPath, targetPath): Promise<void>;
+  download(path, hostPath): Promise<void>;
+
+  exposePort(port): Promise<PortBinding>;
+
+  stop(): Promise<void>;
+  start(): Promise<void>;
+  destroy(): Promise<void>;
+
+  // Optional. Callers feature-detect rather than catching.
+  snapshot?(name?): Promise<{ id: string; sizeBytes?: number }>;
+  restore?(snapshotId): Promise<void>;
+}
+```
+
+`snapshot` and `restore` are optional because not every backend can do them. They are
+implemented on the container providers (docker and podman, through the shared `OciComputer`
+base) and absent elsewhere. Feature-detect with `if (computer.snapshot)`; a `catch` around
+a missing method is a bug waiting to be misread as a runtime failure.
+
+## States
+
+`creating`, `running`, `paused`, `stopped`, `destroyed`, `error`.
+
+`husk ps` shows running machines; `husk ps --all` includes stopped ones. A destroyed
+machine disappears from the list rather than lingering as a tombstone.
+
+## Creation is lazy
+
+Nothing runs inside a machine until something needs it. `husk up` allocates the workspace
+or starts the container and writes the record; the first process starts on the first
+`exec`.
+
+That matters most for MCP: adding the server to Claude Code has to cost nothing, or
+people uninstall it. `@husk/mcp` creates no machine at startup and none on `tools/list`.
+The first `shell` call is what brings one up.
+
+## One conversation, one machine
+
+`ComputerManager.ensure(key, spec)` maps a stable key to a machine:
+
+```ts
+const computer = await manager.ensure('mcp', { flavor: 'python' });
+```
+
+Call it again with the same key and you get the same machine, with the same filesystem
+and the same installed packages. That is what lets a Claude Code session keep its `/work`
+across forty tool calls without the caller tracking ids.
+
+The mapping lives in `~/.husk/computers/bindings.json`. Two concurrent `ensure` calls with
+the same key share one in-flight create rather than racing into two machines, and a
+binding whose machine has been destroyed is cleared and recreated.
+
+## The quota
+
+Eight live machines, by default. Creating a ninth throws:
+
+```text
+error already running 8 computers (limit 8)
+hint:  destroy one with `husk rm <name>`, or raise maxComputers in ~/.husk/config.json
+```
+
+`maxComputers` in `~/.husk/config.json` raises it. Only `running` and `creating` machines
+count.
+
+## The spec
+
+Every field a computer can be created with. In a `husk.yaml` these live under
+`computer:`; see the [full reference](/chat-to-bot/husk-yaml#computer).
+
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `name` | string | generated id | Human label, and the container name when unique |
+| `provider` | string | best available | `docker`, `podman`, `local`, `ssh`, `fly` |
+| `image` | string | from `flavor` | Explicit image reference. Overrides `flavor` |
+| `flavor` | enum | `base` | `base`, `python`, `node`, `full`. The rendered browser needs `full` — see below |
+| `cpus` | number | `2` | CPU allocation |
+| `memoryMb` | number | `2048` | Memory ceiling |
+| `diskMb` | number | `2048` | Size of the writable `/work` layer |
+| `idleTimeoutSec` | number | `900` | Destroy after this long with no exec. `0` disables |
+| `maxLifetimeSec` | number | `0` | Hard ceiling regardless of activity. `0` disables |
+| `network` | object | `{ mode: 'egress' }` | See [Networking](/computers/networking) |
+| `env` | record | `{}` | Variables passed in explicitly |
+| `mounts` | array | `[]` | Host paths. Read-only unless `readonly: false` |
+| `workdir` | string | `/work` | Default working directory |
+| `user` | string | `1000:1000` | The unprivileged user inside the machine |
+| `persist` | boolean | `false` | Keep the filesystem across restarts |
+| `packages` | array | `[]` | Installed on first boot by the flavor's package manager |
+| `setup` | string | — | A shell snippet run once after creation |
+| `labels` | record | — | Free-form metadata, carried on the machine |
+
+## Flavors
+
+A flavor is a prebuilt image. Every one has a Husk image and a public fallback, because
+nobody has pulled `ghcr.io/husk-sh/*` on a fresh install and a first run that dies on a
+registry 404 is a first run that does not happen twice.
+
+| Flavor | Husk image | Public fallback | Contains |
+| --- | --- | --- | --- |
+| `base` | `ghcr.io/husk-sh/husk-base:0.1.0` | `debian:bookworm-slim` | git, curl, jq, ripgrep, fd, less, procps |
+| `python` | `ghcr.io/husk-sh/husk-python:0.1.0` | `python:3.12-slim` | base + Python 3.11, uv, requests, httpx, rich |
+| `node` | `ghcr.io/husk-sh/husk-node:0.1.0` | `node:22-slim` | base + Node 22, npm, corepack |
+| `full` | `ghcr.io/husk-sh/husk-full:0.1.0` | `debian:bookworm` | python + Node, build-essential, ffmpeg, imagemagick, poppler |
+
+The provider tries the Husk image first — local inspect, then pull — and falls back to
+the public one. `HUSK_REGISTRY` and `HUSK_IMAGE_TAG` override the first pair.
+
+On a fallback image you lose `huskinfo` and the non-root guarantees the Husk images bake
+in. The container still runs as uid 1000, because `-u 1000:1000` is passed regardless.
+
+Package installation is per-flavor:
+
+- `base` and `full`: `apt-get install -y --no-install-recommends $PKGS`
+- `python`: `uv pip install --system $PKGS` when uv is present, `pip install` otherwise
+- `node`: `npm install -g $PKGS`
+
+uv rather than bare pip because an agent installing a package should wait two seconds,
+not forty.
+
+## huskinfo
+
+The Husk images ship a `huskinfo` script so an agent can learn where it is in one call
+instead of five:
+
+<Terminal title="huskinfo">
+{`husk 0.1.0 (flavor: python)
+os        Debian GNU/Linux 12 (bookworm)
+kernel    6.10.14-linuxkit
+arch      x86_64
+user      husk (uid 1000)
+workdir   /work
+cpus      2
+memory    1024MB
+disk      58G free on /work
+network   egress reachable
+tools     git curl jq rg fd python3`}
+</Terminal>
+
+The `computer_info` tool runs `huskinfo` when it exists and assembles the same facts from
+`uname`, `id`, `nproc` and `df` when it does not.
+
+## Where the records live
+
+| Provider | Where "what exists" is stored |
+| --- | --- |
+| `docker`, `podman` | Container labels. The engine is the registry |
+| `local`, `ssh`, `fly` | JSON files under `~/.husk/computers/`, one per machine |
+
+The JSON files are written with write-then-rename, so `husk ps` works from another
+process and a crash mid-write cannot corrupt the registry. A corrupt entry is skipped
+rather than crashing the listing.

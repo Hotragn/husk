@@ -1,0 +1,163 @@
+---
+title: Network policy and the internal-host floor
+navTitle: Network
+description: Three modes, the layer each is enforced at, and the floor that refuses loopback, link-local and RFC1918 even when the mode is full.
+order: 3
+---
+
+Network policy is declared per husk and defaults to `egress`.
+
+```yaml
+computer:
+  network:
+    mode: egress
+    allow: ['*.github.com', 'pypi.org']
+    deny: ['telemetry.example.com']
+```
+
+| Mode | Meaning |
+| --- | --- |
+| `none` | No egress at all |
+| `egress` | The allow-list, and nothing else. **An empty allow-list permits nothing** |
+| `full` | Unrestricted, minus explicit denies and minus the floor below |
+
+An `egress` policy with no `allow` list allows nothing. Reading an under-specified
+policy as "everything" is the interpretation that leaks data, so it is not the one Husk
+picks.
+
+[Networking](/computers/networking) is the feature page — pattern syntax, check order,
+what Husk itself talks to. This page is the security framing.
+
+## Where each mode is enforced
+
+| Mode | Docker / Podman | Tool layer (`fetch_url`, `http_request`) |
+| --- | --- | --- |
+| `none` | `--network=none`, enforced by the kernel | Refused |
+| `egress` | **Not enforced.** The container has normal networking | Enforced by hostname |
+| `full` | Not enforced, by design | Enforced only by the floor and by `deny` |
+
+Neither Docker nor Podman can allow-list hostnames, so `egress` is enforced where the
+hostname is actually known: in the tools.
+
+<Warning>
+`mode: egress` constrains the agent's `fetch_url` and `http_request` tools. It does not
+constrain `curl` run through `shell`, or a Python script the agent writes, or any
+process inside the machine that opens a socket.
+
+If the distinction matters for your threat model, `none` and `full` are the honest
+choices. `none` is a kernel-enforced boundary on the container providers. `full` is an
+admission that there is no boundary.
+</Warning>
+
+On `local` and `ssh` there is no kernel enforcement at all, in any mode. The machine
+shares your network. `mode: none` on the `local` provider stops the tools and nothing
+else.
+
+## The floor
+
+`isHostAllowed` refuses loopback, link-local and RFC1918 hosts **even in `mode: full`**,
+unless the operator names them in `allow`. The check runs *before* the mode is
+consulted, so `full` cannot override it.
+
+### Why 169.254.169.254 is the reason
+
+`169.254.169.254` is the cloud instance metadata service. On AWS, GCP, Azure, Oracle and
+DigitalOcean it hands out instance identity, user-data, and — the part that matters —
+short-lived IAM credentials, to anything on the box that asks. No authentication. A
+single unauthenticated `GET`.
+
+An agent that has been prompt-injected will ask. That is not hypothetical: server-side
+request forgery against the metadata endpoint is the single most productive move
+available to anyone who gets code or a URL into a cloud workload, and it is the
+mechanism behind several of the largest cloud breaches on record.
+
+`mode: full` means the internet. It does not mean "and also the credential vending
+machine sitting on a link-local address inside my VPC".
+
+Loopback and the private ranges are the same problem one hop further out: the host's own
+admin panels, an unauthenticated database on the Docker bridge, the router's web UI, the
+Kubernetes API on `10.x`.
+
+### What is refused by default, in every mode
+
+| | |
+| --- | --- |
+| Names | `localhost`, `*.localhost`, `*.local`, `*.internal`, `metadata.google.internal` |
+| IPv6 | `::1`, `::`, `fe80:*` (link-local), `fc*` / `fd*` (unique-local) |
+| IPv4 | `0.0.0.0/8`, `10.0.0.0/8`, `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` (CGNAT) |
+
+```text
+error refused private address 169.254.169.254
+hint:  loopback, link-local and RFC1918 hosts must be named in computer.network.allow
+```
+
+The check runs on the URL you passed **and again on `res.url` after redirects**, so a
+302 to `http://169.254.169.254/` is caught on the second pass.
+
+### Opening one deliberately
+
+```yaml
+computer:
+  network:
+    mode: egress
+    allow: ['192.168.1.50']
+```
+
+Explicit beats implicit, and the decision is now in the file where a reviewer can see
+it and a diff can catch it.
+
+## What the floor does not catch
+
+The floor matches on the **hostname string**. There is no DNS resolution before the
+request, so:
+
+- **DNS rebinding.** A public name that resolves to `169.254.169.254` passes the check.
+  This is the classic bypass and Husk does not stop it.
+- **Alternative IPv4 encodings.** `http://2130706433/` is `127.0.0.1` as a 32-bit
+  integer, and does not match the dotted-quad pattern. Nor do octal or hex forms.
+- **IPv4-mapped IPv6.** `::ffff:127.0.0.1` is not matched by the private-host check.
+  (It *is* matched by the control plane's separate loopback check, which is a different
+  function for a different job.)
+- **`allow: ['*']`.** A `*` entry satisfies the explicit-allow test and therefore
+  reopens the entire private range. Do not write it and expect the floor to hold.
+- **Anything that is not `fetch_url` or `http_request`.** `web_search` talks to Tavily
+  or Brave directly and is not filtered by the husk's policy. Neither is `curl` in a
+  shell.
+
+If you are running an agent on a cloud instance with an instance profile attached, the
+floor is a speed bump, not a boundary. Remove the instance profile, or use IMDSv2 with
+a hop limit of 1 and run the agent in a container, or both.
+
+## Two implementations, kept in step by hand
+
+The floor exists twice: `isInternalHost` in `@husk/runtime`, and `isPrivateHost` in
+`@husk/agent`. The duplication is deliberate — dependencies run strictly downhill,
+`agent` sits above `runtime`, and `agent` may only import `core`.
+
+Both copies are tested, and they are close but not identical. `isInternalHost` also
+rejects a bare `0.0.0.0`-family first octet and `metadata.google.internal` by name;
+`isPrivateHost` additionally rejects `::`. A host refused in one place should be refused
+in the other, and keeping that true is a manual job.
+
+## Protocols
+
+`fetch_url` and `http_request` accept `http:` and `https:` only.
+
+```text
+error refused file: URL
+hint:  only http and https are fetchable from a husk
+```
+
+`file:`, `ftp:`, `data:` and `gopher:` are refused with `E_EXEC_DENIED`. `http_request`
+additionally strips a set of blocked request headers before sending.
+
+## Order of checks
+
+For both network tools, in this order:
+
+1. The URL parses. Otherwise `E_TOOL_ERROR`, `not a valid URL`.
+2. The scheme is `http:` or `https:`. Otherwise `E_EXEC_DENIED`.
+3. `deny`, then `mode` — `isHostAllowed`.
+4. The private-address floor.
+
+Then the whole sequence again on the post-redirect URL.

@@ -1,0 +1,137 @@
+---
+title: The filesystem
+description: /work and /tmp, what persists, where the bytes actually live, and where the path jail applies.
+order: 4
+---
+
+Every computer presents the same two writable places, whatever is underneath.
+
+| Path | What it is |
+| --- | --- |
+| `/work` | The working directory. The default `cwd` for every command |
+| `/tmp` | Scratch. Cleared with the machine |
+
+That uniformity is the point of the abstraction: an agent writing to `/work/out.csv`
+does not need to know whether it is in a container, on a remote box, or in a directory
+on your laptop.
+
+## What is underneath
+
+| Provider | `/work` | `/tmp` |
+| --- | --- | --- |
+| `docker`, `podman` | tmpfs, `<diskMb or 2048>m`, `rw,exec,nosuid`. A named volume `husk-<id>` when `persist: true` | tmpfs, 512m |
+| `local` | `~/.husk/workspaces/<id>/root`, bind-mounted onto `/work` inside `unshare -mr` on WSL | `~/.husk/workspaces/<id>/tmp` |
+| `ssh` | A directory on the remote box | A directory on the remote box |
+| `fly` | The microVM's own filesystem | The microVM's own filesystem |
+
+On the container providers the root filesystem is mounted **read-only**. Anything written
+outside `/work`, `/tmp` and `/run` fails loudly rather than mutating an image layer that
+is about to disappear.
+
+On `local` with WSL, the bind mount is created per exec inside a user and mount
+namespace, so two computers can both have a `/work` without seeing each other's files.
+The one prerequisite is an empty `/work` directory to mount onto, which cannot be created
+from inside the namespace — Husk creates it once, as root, and says so.
+
+If WSL is unavailable, the `local` provider cannot present a `/work` at all, so it
+reports the real host path as the workdir instead. A fictional workdir is worse than an
+ugly one.
+
+## Persistence
+
+By default nothing survives the machine. `husk rm` takes the filesystem with it and there
+is no snapshot taken on your behalf.
+
+```yaml
+computer:
+  persist: true
+```
+
+On the container providers that swaps the `/work` tmpfs for a named Docker volume, so
+the filesystem survives `husk stop` and `husk start`. It does not survive `husk rm`.
+
+## Getting files in and out
+
+```bash
+husk cp ./report.csv scratch:/work/report.csv
+husk cp scratch:/work/out.json ./out.json
+husk cp ./src scratch:/work/src
+```
+
+Directories are copied recursively. Both directions go through the path jail.
+
+For an agent, the same job is done by the `write_file`, `read_file` and `edit_file`
+tools, or by the equivalent MCP tools.
+
+## The path jail
+
+Every filesystem-API call resolves its target and rejects anything outside `/work` and
+`/tmp`. There are two checks and they do different jobs:
+
+- **Lexical**, in `toHostPath`. Normalises the guest path, maps it onto the host
+  directory, and refuses a result that is not inside. Correct for `..` traversal and for
+  absolute paths pointing elsewhere on the machine.
+- **Resolved**, in `assertInJail`. Calls `realpath` and confirms the real target is still
+  inside, so a symlink created *inside* the workspace that points out of it is caught
+  before any operation that would follow it. It checks the nearest existing ancestor
+  rather than the leaf, so it works for a path that is about to be created.
+
+```text
+error path escapes the workspace: /work/../../secrets
+hint:  paths must stay inside /work or /tmp
+
+error path is outside the machine's writable area: /etc/passwd
+hint:  this computer exposes /work and /tmp; use a path under one of them
+
+error path resolves outside the workspace through a symlink
+hint:  husk refuses to follow links that leave the machine
+```
+
+<Warning>
+The jail constrains the filesystem API. It does **not** constrain a shell command. On
+the `local` provider, `husk exec box -- cat /etc/passwd` succeeds, because the command
+runs in your WSL distro or on your host with your user's reach. On the container
+providers the same command is confined by the container, not by the jail.
+
+The jail stops an agent's `read_file` tool from wandering. It is not a boundary you can
+lean on when the agent also has a shell.
+</Warning>
+
+## Output caps
+
+Captured output is clamped so a runaway process cannot exhaust memory. The default is
+256 KiB per stream; `limits.maxOutputBytes` in a `husk.yaml` changes it, and the control
+plane caps a caller's request at 16 MiB.
+
+Clamping keeps the head and the tail, splitting the budget 60/40 in favour of the head,
+and says how much it dropped:
+
+```text
+<first 60% of the output>
+... [1048576 bytes elided by husk] ...
+<last 40% of the output>
+```
+
+The middle of a runaway build log is never the interesting part; the command that started
+it and the error that ended it are.
+
+## Timeouts
+
+`exec` defaults to 120 seconds. On a timeout Husk kills the whole process group rather
+than just the shell — a `detached` child on POSIX gets its own process group, and on
+Windows `taskkill /T /F` walks the tree. The result reports `exitCode: 124` and
+`timedOut: true`.
+
+## Snapshots
+
+`snapshot()` and `restore()` are optional methods on `Computer`, implemented by the
+container providers and absent from `local`, `ssh` and `fly`. Feature-detect:
+
+```ts
+if (computer.snapshot) {
+  const { id } = await computer.snapshot('before-migration');
+}
+```
+
+There is no `husk snapshot` command. The capability is reachable through the library, not
+the CLI.

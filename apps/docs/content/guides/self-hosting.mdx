@@ -1,0 +1,381 @@
+---
+title: Self-hosting the control plane
+navTitle: Self-hosting
+description: Run husk serve on a box you own — the token, binding past loopback, a reverse proxy that does not break SSE, and a systemd unit.
+order: 1
+---
+
+`husk serve` is a single Node process that exposes the control plane, mounts every
+`http`, `webhook` and `cron` trigger your husks declare, and serves the console at `/`.
+This guide puts it on a machine you own and keeps it there.
+
+**What you will have at the end:** a control plane reachable over TLS at a hostname you
+control, protected by a bearer token, restarted automatically on reboot, with its state
+in a directory you can back up.
+
+**Prerequisites**
+
+- A Linux box you can `ssh` into, with Node 20.10 or newer.
+- A DNS name pointing at it, if you want TLS.
+- 15 minutes.
+
+## Step 1: Install and check
+
+```bash
+npm install -g @husk/cli
+husk doctor
+```
+
+`husk doctor` is the honest inventory. Read the `COMPUTERS` section before you go
+further: on a fresh VPS with no Docker you will get the `local` provider, which is
+[guardrails and not a sandbox](/security/isolation#local). If this box will run
+anything you did not write, install Docker first.
+
+```bash
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker "$USER"     # log out and back in
+husk doctor                          # docker should now be ✓ isolated
+```
+
+## Step 2: The token
+
+This API can execute shell commands. Husk will not let you bind it to a public
+interface without authentication:
+
+<Terminal>
+{`$ husk serve --host 0.0.0.0
+error refusing to bind 0.0.0.0 without an auth token: this API can execute shell commands
+hint:  set HUSK_TOKEN=$(openssl rand -hex 32) before \`husk serve --host 0.0.0.0\`, or bind 127.0.0.1`}
+</Terminal>
+
+Generate one and keep it out of your shell history:
+
+```bash
+umask 077
+mkdir -p /etc/husk
+openssl rand -hex 32 > /etc/husk/token
+printf 'HUSK_TOKEN=%s\n' "$(cat /etc/husk/token)" > /etc/husk/husk.env
+chmod 600 /etc/husk/husk.env
+```
+
+Every request outside `/health` then needs the token:
+
+```bash
+curl -s -H "Authorization: Bearer $(cat /etc/husk/token)" localhost:7377/v1/doctor | jq .selection
+```
+
+Comparison is constant-time. `/health` stays open so a load balancer can probe it.
+
+<Note>
+Browsers cannot set headers on `EventSource` or `WebSocket`. For those two transports
+only — detected by `Accept: text/event-stream` or `Upgrade: websocket` — Husk also
+accepts `?token=` or `?access_token=` in the query string. Everything else must use the
+header.
+</Note>
+
+## Step 3: Decide how it is exposed
+
+You have two sane options and one bad one.
+
+| | |
+| --- | --- |
+| **Loopback + SSH tunnel** | Simplest and safest. `husk serve` stays on `127.0.0.1`, you tunnel in |
+| **Loopback + reverse proxy** | What you want for a team. TLS terminates at the proxy |
+| Binding `0.0.0.0` directly | No TLS, so the bearer token crosses the network in clear text. Do not |
+
+### The tunnel, if it is just you
+
+```bash
+# on the server
+husk serve
+
+# on your laptop
+ssh -N -L 7377:127.0.0.1:7377 user@yourbox
+open http://127.0.0.1:7377
+```
+
+Nothing else in this guide is needed. Skip to [step 5](#step-5-the-systemd-unit).
+
+### The reverse proxy, if it is a team
+
+Keep Husk on loopback and let the proxy own TLS:
+
+```bash
+husk serve --host 127.0.0.1 --port 7377
+```
+
+## Step 4: A reverse proxy that does not break the streams
+
+Two things go wrong with a naive proxy config: SSE gets buffered, and WebSocket
+upgrades get dropped. Husk sends `X-Accel-Buffering: no` for exactly the first problem,
+but the rest is on you.
+
+```nginx title="/etc/nginx/sites-available/husk"
+server {
+  listen 443 ssl http2;
+  server_name husk.example.com;
+
+  ssl_certificate     /etc/letsencrypt/live/husk.example.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/husk.example.com/privkey.pem;
+
+  # An agent run can stream for minutes. The defaults are 60s.
+  proxy_read_timeout  1h;
+  proxy_send_timeout  1h;
+
+  location / {
+    proxy_pass http://127.0.0.1:7377;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # WebSocket: /v1/events and /v1/computers/:id/terminal
+    proxy_set_header Upgrade    $http_upgrade;
+    proxy_set_header Connection "upgrade";
+
+    # SSE: do not buffer, do not gzip, do not chunk-collapse.
+    proxy_buffering off;
+    proxy_cache     off;
+    gzip            off;
+  }
+}
+```
+
+Caddy needs almost none of that:
+
+```caddyfile title="Caddyfile"
+husk.example.com {
+  reverse_proxy 127.0.0.1:7377 {
+    flush_interval -1        # never buffer; required for SSE
+    transport http {
+      read_timeout 1h
+    }
+  }
+}
+```
+
+<Warning>
+Husk sets `trustProxy: false`. It does **not** read `X-Forwarded-For`, so every request
+appears to come from the proxy in its logs. That is deliberate — trusting the header by
+default would let anyone spoof their address — but it means your access log, not
+Husk's, is the one with the client IP in it.
+</Warning>
+
+### CORS
+
+CORS is **off** by default, and there is no `husk serve` flag to turn it on.
+`ServerConfig.corsOrigins` exists and is only reachable by calling `serve()` from your
+own Node process:
+
+```ts title="serve.mjs"
+import { serve } from '@husk/server';
+
+await serve({
+  host: '127.0.0.1',
+  port: 7377,
+  corsOrigins: ['https://app.example.com'],
+});
+```
+
+If you are serving the bundled console from the same origin — which is what `GET /`
+does — you do not need CORS at all.
+
+## Step 5: The systemd unit
+
+```ini title="/etc/systemd/system/husk.service"
+[Unit]
+Description=Husk control plane
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=husk
+Group=husk
+WorkingDirectory=/home/husk
+
+# HUSK_TOKEN lives here, mode 0600, owned by husk.
+EnvironmentFile=/etc/husk/husk.env
+Environment=HUSK_HOME=/var/lib/husk
+Environment=HUSK_HOST=127.0.0.1
+Environment=HUSK_PORT=7377
+Environment=HUSK_LOG_JSON=1
+# Model keys, if this box runs agents rather than only computers.
+# Environment=ANTHROPIC_API_KEY=...
+
+ExecStart=/usr/bin/husk serve
+Restart=on-failure
+RestartSec=5
+
+# Husk shuts down in order: triggers, scheduler, reaper, in-flight runs, store.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/lib/husk
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo useradd --system --create-home --home-dir /home/husk husk
+sudo usermod -aG docker husk          # only if you want the docker provider
+sudo install -d -o husk -g husk -m 700 /var/lib/husk
+sudo systemctl daemon-reload
+sudo systemctl enable --now husk
+sudo systemctl status husk
+journalctl -u husk -f
+```
+
+`HUSK_HOST` and `HUSK_PORT` are read by the server, so the unit needs no flags.
+`HUSK_LOG_JSON=1` makes the log lines structured, which `journalctl -o json` and every
+log shipper prefer.
+
+<Warning>
+`ProtectHome=read-only` and `ProtectSystem=full` are safe with `HUSK_HOME` pointed at
+`/var/lib/husk`. If you leave `HUSK_HOME` at its default of `~/.husk`, the `local`
+provider's workspaces live under the home directory and will fail to write. Set
+`HUSK_HOME` or loosen the hardening — not neither.
+</Warning>
+
+### Shutdown
+
+On `SIGTERM` or `SIGINT`, once and only once however many signals arrive, Husk:
+
+1. stops the trigger host and the cron scheduler,
+2. stops the computer reaper,
+3. aborts every in-flight run — so no container is left spinning,
+4. closes the HTTP server,
+5. drains the store's write queue.
+
+`TimeoutStopSec=30` gives it room. A run cancelled this way ends with
+`stopReason: 'aborted'` and is still readable at `GET /v1/runs/:id`.
+
+## Step 6: Verify
+
+```bash
+T=$(cat /etc/husk/token)
+H="Authorization: Bearer $T"
+
+curl -s https://husk.example.com/health
+# {"ok":true,"version":"0.1.0","uptimeSec":41}
+
+curl -s -H "$H" https://husk.example.com/v1/doctor | jq '.selection, .warnings'
+
+curl -s -H "$H" https://husk.example.com/v1/computers \
+  -H 'content-type: application/json' \
+  -d '{"name":"smoke","flavor":"base"}' | jq -r .id
+```
+
+Then check the streams actually stream, which is the thing a proxy breaks:
+
+```bash
+curl -N -H "$H" -H 'content-type: application/json' \
+  https://husk.example.com/v1/computers/cmp_x/exec/stream \
+  -d '{"cmd":"for i in 1 2 3; do echo $i; sleep 1; done"}'
+```
+
+You should see three `data:` frames one second apart. All three arriving at once means
+the proxy is buffering.
+
+## Operating it
+
+### State
+
+Everything is under `HUSK_HOME`, mode `0700`:
+
+```text
+/var/lib/husk/
+  config.json      settings, model aliases
+  husks/           registered husk.yaml files    ← back this up
+  computers/       machine metadata, bindings.json
+  workspaces/      the local provider's filesystems
+  runs/            summaries and events.ndjson   ← may contain secrets
+  transcripts/     imported chats                ← may contain secrets
+  data/  cache/
+```
+
+`husks/` is the part with your work in it. `runs/` and `transcripts/` hold unredacted
+tool output and raw conversations — see [Secrets](/security/secrets#redaction) — so back
+them up accordingly or prune them.
+
+### Limits
+
+```json title="/var/lib/husk/config.json"
+{
+  "maxComputers": 8,
+  "maxCostUsd": 5,
+  "model": "auto",
+  "provider": "auto",
+  "modelAliases": {}
+}
+```
+
+`maxComputers` is the hard cap on live machines; a ninth returns `E_QUOTA` with 429.
+`maxCostUsd` is the router's per-call ceiling, independent of each husk's own
+`limits.maxCostUsd`.
+
+### The reaper
+
+`husk serve` starts a sweep every 60 seconds that destroys machines past their
+`idleTimeoutSec` or `maxLifetimeSec`.
+
+<Warning>
+`reap()` is implemented by `local`, `ssh` and `fly`, and **not** by the shared container
+base class. Docker and Podman containers are never reaped, whatever `idleTimeoutSec`
+says. On a long-lived server this leaks containers. Until it is fixed, a cron entry is
+the workaround:
+
+```bash title="/usr/local/bin/husk-reap-containers"
+#!/bin/sh
+# Destroy husk-created containers that have been running for over two hours.
+# Every one carries a `husk.provider` label, set by the runtime at create time.
+docker ps -q --filter label=husk.provider=docker | while read -r id; do
+  started=$(docker inspect -f '{{.State.StartedAt}}' "$id")
+  age=$(( $(date +%s) - $(date -d "$started" +%s) ))
+  [ "$age" -gt 7200 ] && docker rm -f "$id"
+done
+```
+
+[Lifetimes](/computers/lifetimes) has the detail.
+</Warning>
+
+### Upgrades
+
+```bash
+sudo -u husk npm install -g @husk/cli@latest
+sudo systemctl restart husk
+```
+
+The store is JSON files on disk with no migrations, so a restart is the whole upgrade.
+In-flight runs are aborted, not resumed.
+
+## Hardening checklist
+
+- [ ] `HUSK_TOKEN` set, 32 bytes of entropy, mode `0600`, not in shell history
+- [ ] Bound to `127.0.0.1`; TLS terminated at the proxy
+- [ ] Docker installed and the `local` provider not the selected one
+      (`husk doctor` → `SELECTION`)
+- [ ] `HUSK_HOME` on a path the unit can write, and backed up
+- [ ] Every husk's `computer.network.mode` set deliberately —
+      [the floor](/security/network#the-floor) is not a firewall
+- [ ] `guardrails.approvalMode` reviewed per husk; `ask`
+      [fails closed](/security/approvals#ask-fails-closed) with no approver wired
+- [ ] Webhook triggers carry a `secret`; an unsigned one is
+      [reported as UNSIGNED](/chat-to-bot/triggers#webhook)
+- [ ] Model keys scoped as narrowly as the provider allows
+
+## What this does not give you
+
+There is no multi-tenancy. One `husk serve` is one user's control plane: one token, one
+`HUSK_HOME`, one set of husks. There are no accounts, no per-user quotas and no
+authorization beyond "has the token or does not".
+
+If several people need this, give each of them their own process, their own
+`HUSK_HOME`, their own port and their own token.

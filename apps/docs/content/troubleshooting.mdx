@@ -1,0 +1,548 @@
+---
+title: Troubleshooting
+description: The failure modes people actually hit, the exact string Husk prints for each, and the fix.
+order: 2
+---
+
+Run this first. It answers most of the page:
+
+```bash
+husk doctor
+```
+
+It reports every computer provider with its availability, isolation and fix; every
+model provider; what Husk would pick right now; and any warnings. If something is
+confusing, the answer is usually already in that output.
+
+Everything below is a real string from the source. Search this page for the line you
+got.
+
+---
+
+## Docker
+
+### `docker is installed but the daemon is not reachable`
+
+```text
+error provider "docker" is not usable: docker is installed but the daemon is not reachable
+hint:  start Docker Desktop (or `sudo systemctl start docker`), then re-run `husk doctor`
+```
+
+The CLI is there; the daemon is not answering `docker info`.
+
+```bash
+# macOS / Windows
+open -a Docker            # or launch Docker Desktop from the Start menu
+# Linux
+sudo systemctl start docker
+docker info               # should print a Server section
+husk doctor
+```
+
+Husk will not silently fall back to the `local` provider when you named `docker` —
+falling back to weaker isolation than you asked for is exactly the surprise that turns
+into an incident. Drop `--provider docker` if you genuinely want the fallback.
+
+### `the docker CLI is not on PATH`
+
+```text
+✗ docker   isolated
+    the docker CLI is not on PATH
+    fix: install Docker Desktop or Docker Engine, then re-run `husk doctor`
+```
+
+Different problem, different fix. Husk separates the two on purpose so nobody is sent
+to a download page they do not need.
+
+### `the docker socket refused this user`
+
+```text
+✗ docker   isolated
+    the docker socket refused this user
+    fix: add yourself to the docker group (`sudo usermod -aG docker $USER`), then log back in
+```
+
+```bash
+sudo usermod -aG docker "$USER"
+# log out and back in — `newgrp docker` works for the current shell only
+husk doctor
+```
+
+Husk never escalates — that is a design rule, not a missing feature. Any other
+permission problem it hits surfaces the same way, naming the path:
+
+```text
+error permission denied: /srv/data/report.csv
+hint:  husk runs as you; it will not escalate. Fix the permissions or pick another path.
+```
+
+### `podman is running as root`
+
+```text
+✓ podman   isolated
+    podman is running as root -- containers get kernel isolation, but an escape lands on root
+    fix: run husk as an unprivileged user to get rootless containers
+```
+
+Still kernel isolation, just not the isolation the provider advertises. Run Husk as
+yourself rather than under `sudo`.
+
+---
+
+## Windows and WSL
+
+### `Windows host shell (no WSL) -- commands are NOT Linux`
+
+```text
+✓ local    not isolated
+    via Windows host shell (no WSL) -- commands are NOT Linux
+    guarded working directory -- and with no WSL, commands run in the Windows shell, not Linux
+    fix: run `wsl --install` for a real Linux shell, or start Docker for actual isolation
+```
+
+Husk still works, and `uname` will not. Every command an agent writes assuming Linux —
+`ls -la`, `grep`, `cat /etc/os-release` — behaves like whatever `cmd.exe` does with it,
+which is usually "not that".
+
+```powershell
+wsl --install          # then reboot
+wsl -l -v              # should list a distro in state Running, version 2
+```
+
+Then `husk doctor` should say `via WSL2 (Ubuntu)`. Starting Docker Desktop is the other
+fix, and the better one — you get real isolation as well as real Linux.
+
+### A WSL distro is listed but Husk ignores it
+
+Being listed is not the same as working. A distro can be registered and still fail with
+`Catastrophic failure` or `Wsl/Service/E_UNEXPECTED` while `wsl.exe` **exits 0**, so
+Husk trusts an echoed marker rather than the exit code and skips any distro that cannot
+echo it.
+
+Check by hand:
+
+```powershell
+wsl -d Ubuntu -e echo husk-wsl-ok
+```
+
+No output, or an error, is the problem. The usual fixes, in order:
+
+```powershell
+wsl --shutdown          # then run the echo again; this fixes most of it
+wsl --update
+wsl --terminate Ubuntu
+```
+
+If `wsl --shutdown` does not clear it, restart the `LxssManager` service or reboot.
+A distro that has run out of disk on its virtual disk also fails this way.
+
+### WSL died mid-session
+
+```text
+Windows host shell -- WSL stopped responding (<reason>); commands are NOT Linux
+```
+
+WSL can die underneath a long-running process. Rather than failing every subsequent
+`husk up`, Husk downgrades to the host shell and says so once. Fix WSL, then restart the
+Husk process — the shell detection is cached for the life of the process.
+
+### `/work` is not where the agent thinks it is
+
+On WSL, Husk bind-mounts the workspace onto `/work` inside a per-exec user and mount
+namespace (`unshare -mr`). That needs an empty `/work` directory to mount onto, which
+it creates once, as root, in the distro. If that fails, the workdir falls back to the
+translated Windows path and Husk reports the real one rather than a fictional `/work`.
+
+`husk ps` shows the actual `workdir`. Trust it over the docs.
+
+---
+
+## Models
+
+### `no model provider is reachable`
+
+```text
+error no model provider is reachable
+hint:  set ANTHROPIC_API_KEY or OPENAI_API_KEY, or run `ollama serve` for a free local model
+```
+
+Nothing is configured. `husk models --all` shows every provider and why each one is
+out:
+
+<Terminal>
+{`$ husk models --all
+…
+not shown: anthropic (ANTHROPIC_API_KEY is not set), openai (OPENAI_API_KEY is not set),
+google (GOOGLE_API_KEY is not set), groq (GROQ_API_KEY is not set), … , lmstudio
+(http://127.0.0.1:1234/v1 is not listening) — use --all
+
+The free path: install Ollama, run \`ollama pull llama3.2\`, and try again.
+Computers work with no model at all — \`husk up\` needs nothing.`}
+</Terminal>
+
+The cheapest real path is Ollama. The cheapest hosted paths are `GOOGLE_API_KEY` from
+aistudio.google.com and `GROQ_API_KEY` from console.groq.com, both of which have free
+tiers. [Providers](/models/providers) has all eleven.
+
+Note the last line: **computers work with no model at all.** `husk up` and `husk exec`
+need nothing configured.
+
+### Ollama is running but Husk says no model provider is reachable
+
+This one is real and non-obvious. Husk probes Ollama's `/api/tags` with a **2-second**
+timeout. A daemon that is busy loading a large model into memory can take longer than
+that, and Husk reports it as unreachable for the duration.
+
+```bash
+curl -s -o /dev/null -w '%{time_total}\n' http://127.0.0.1:11434/api/tags
+```
+
+Under 2 seconds and `husk models` will see it. If the request is slow, wait for the
+load to finish and try again — or keep a small model resident so the daemon is never
+cold.
+
+### `no Ollama server at http://127.0.0.1:11434`
+
+```text
+✗ ollama
+    no Ollama server at http://127.0.0.1:11434
+    fix: Install Ollama from ollama.com, then run `ollama pull gemma3` for a free local model.
+```
+
+```bash
+ollama serve          # or start the Ollama app
+curl -s http://127.0.0.1:11434/api/tags
+```
+
+If Ollama is on another machine or port, `export OLLAMA_HOST=http://host:11434`.
+
+### `Ollama is running but has no models pulled`
+
+```text
+✗ ollama
+    Ollama is running but has no models pulled
+    fix: Run `ollama pull gemma3` — about 3 GB, and then Husk works with no API key at all.
+```
+
+Husk lists what is actually on disk, never a catalogue you would have to download
+first. `ollama list` should agree with `husk models`.
+
+### `Unknown model "sonet"`
+
+```text
+error Unknown model "sonet"
+hint:  Use provider/model, or one of: opus, sonnet, haiku, gpt, gemini, flash, gemma, llama, qwen, local, free, auto.
+```
+
+A typo, or a bare model name that more than one provider offers. Use the fully-qualified
+`provider/model` form.
+
+### `no reachable model matches "opus"`
+
+```text
+error no reachable model matches "opus"
+hint:  try one of: ollama/qwen2.5:7b, ollama/llama3.2:latest
+```
+
+The alias resolved, and that provider is not configured. The hint lists what is.
+
+### The model answers with nothing
+
+```text
+warning ollama/qwen2.5:1.5b finished without saying anything and without calling a tool
+hint:  small local models often do this with tools attached — try a larger model, or --approve readonly to see its plan
+```
+
+A small local model with ten tool schemas in its prompt. Cut `tools:` to what the job
+needs, or use a bigger model. [Local models](/models/local#what-a-7b-model-can-actually-do-as-an-agent)
+has the detail and a worked example.
+
+### `returned 401`
+
+```text
+error Anthropic (claude-sonnet-5) returned 401: invalid x-api-key
+hint:  ANTHROPIC_API_KEY is missing or rejected. Re-check the value, or run `husk doctor` to see what else is reachable.
+```
+
+Never retried — a 401 does not improve on a second attempt. Check for a trailing
+newline or a shell-quoting problem in the export.
+
+### `returned 429`
+
+Rate limiting. Husk backs off and falls back to the next candidate, so you only see the
+error when every candidate is exhausted. Adding a free local model gives the fallback
+somewhere to go:
+
+```bash
+ollama pull gemma3
+```
+
+<Note>
+The 429 hint suggests `husk config set model free`. There is no `husk config` command.
+Use `--model free`, `model:` in the `husk.yaml`, or `"model": "free"` in
+`~/.husk/config.json`.
+</Note>
+
+---
+
+## Computers
+
+### `already running 8 computers (limit 8)`
+
+```text
+error already running 8 computers (limit 8)
+hint:  destroy one with `husk rm <name>`, or raise maxComputers in ~/.husk/config.json
+```
+
+```bash
+husk ps --all
+husk rm <name>
+```
+
+Only `running` and `creating` machines count. `husk stop` does not free a slot in the
+sense you might expect — a stopped machine no longer counts, but it still occupies
+disk.
+
+Raise the cap in `~/.husk/config.json`:
+
+```json
+{ "maxComputers": 16 }
+```
+
+### `no computer named "x"`
+
+```text
+error no computer named "nope"
+hint:  running now: console-demo, docsbox
+```
+
+The hint lists what is running. `husk ps --all` includes stopped machines.
+
+### `"box" matches 3 computers`
+
+```text
+error "box" matches 3 computers
+hint:  use the id — `husk ps` shows them
+```
+
+Names are not unique. Use the `cmp_…` id.
+
+### `path is outside the machine's writable area`
+
+```text
+error path is outside the machine's writable area: /etc/passwd
+hint:  this computer exposes /work and /tmp; use a path under one of them
+```
+
+The path jail, working as intended. It covers the filesystem API — `husk cp`,
+`read_file`, `write_file` — and not shell commands. See
+[Isolation](/security/isolation#the-path-jail).
+
+### `refused: privilege escalation`
+
+```text
+error refused: privilege escalation
+hint:  add a pattern to guardrails.allowCommands in husk.yaml if this is intentional
+```
+
+The built-in command deny list. If you really do want `sudo` inside a container:
+
+```yaml
+guardrails:
+  allowCommands:
+    - '^sudo apt-get install'
+```
+
+`allowCommands` beats both your deny list and the built-in one. [The full
+list](/security/isolation#the-command-deny-list).
+
+### Containers are never destroyed
+
+`reap()` is implemented by `local`, `ssh` and `fly`, and **not** by the shared container
+base class, so `idleTimeoutSec` has no effect on Docker and Podman machines. They stay
+up until `husk rm` or an engine restart. [Lifetimes](/computers/lifetimes) and a cron
+workaround in [Self-hosting](/guides/self-hosting#the-reaper).
+
+### `vim` and `top` do not work in `husk shell`
+
+They will not. `husk shell` is a readline loop, not a pty: each line is a separate
+exec, so `cd` is tracked and anything checking `isatty` is not fooled. Husk ships no
+native modules, and a pty needs one.
+
+---
+
+## The remote providers
+
+### `no remote host is configured`
+
+```text
+✗ ssh      isolated from this machine
+    no remote host is configured
+    fix: export HUSK_SSH_TARGET=user@host (an Oracle Cloud Always Free ARM instance costs nothing)
+```
+
+[The Oracle guide](/guides/oracle-free-tier) is the free version of that suggestion.
+
+### SSH connects by hand and not from Husk
+
+Husk runs every `ssh` with `BatchMode=yes`, so it never prompts. A key with a
+passphrase must be in an agent already. The diagnostics name the specific failure:
+
+| Reason | Fix |
+| --- | --- |
+| `the ssh client is not on PATH` | install `openssh-client`; on Windows, Settings → Apps → Optional Features → OpenSSH Client |
+| `<host> did not answer in time` | check the host is up and port 22 is open to you — a cloud security list is the usual culprit |
+| `<host> refused the key` | set `HUSK_SSH_KEY`, or add the key to your ssh-agent; check the key file is mode 600 |
+| `cannot resolve <host>` | check the hostname, or use the IP |
+| `<host> refused the connection` | check `sshd` is running on the port you gave |
+| `<host> presented a different host key than last time` | if you rebuilt the box, remove its line from `~/.ssh/known_hosts`; otherwise stop and investigate |
+
+### `FLY_API_TOKEN is not set` / `no app is configured`
+
+```text
+✗ fly
+    FLY_API_TOKEN is not set
+    fix: run `fly auth token` and export it as FLY_API_TOKEN (fly machines are metered, not free)
+```
+
+```text
+a fly token is present but no app is configured
+fix: run `fly apps create husk` and export HUSK_FLY_APP=husk
+```
+
+Two states with two fixes, reported separately on purpose. This is the one provider
+that costs money.
+
+---
+
+## The control plane
+
+### `that port is already in use`
+
+```text
+error that port is already in use
+hint:  pass --port with a free one, or stop whatever is holding it
+```
+
+```bash
+husk serve --port 7378
+# or find the holder
+lsof -i :7377          # macOS / Linux
+netstat -ano | findstr :7377    # Windows
+```
+
+An earlier `husk serve` you backgrounded and forgot is the usual answer.
+
+### `refusing to bind 0.0.0.0 without an auth token`
+
+```text
+error refusing to bind 0.0.0.0 without an auth token: this API can execute shell commands
+hint:  set HUSK_TOKEN=$(openssl rand -hex 32) before `husk serve --host 0.0.0.0`, or bind 127.0.0.1
+```
+
+Working as intended. [Self-hosting](/guides/self-hosting#step-2-the-token) does this
+properly, with TLS.
+
+### `401 missing Authorization: Bearer <token>`
+
+`HUSK_TOKEN` is set on the server. Send it:
+
+```bash
+curl -H "Authorization: Bearer $HUSK_TOKEN" localhost:7377/v1/doctor
+```
+
+Browsers cannot set headers on `EventSource` or `WebSocket`; for those two only, a
+`?token=` query parameter is accepted.
+
+### A stream arrives all at once at the end
+
+A reverse proxy is buffering. Husk sends `X-Accel-Buffering: no` and disables Nagle,
+but nginx needs `proxy_buffering off` and `gzip off`, and Caddy needs
+`flush_interval -1`. [The proxy section](/guides/self-hosting#step-4-a-reverse-proxy-that-does-not-break-the-streams)
+has both configs.
+
+### A stream stops after 60 seconds
+
+A client that stops draining the socket for 60 seconds is treated as gone: the stream
+closes and the run it was driving is aborted. If the client is alive, the proxy is not
+forwarding — see above. Proxy read timeouts also default to 60 s in nginx; an agent run
+can stream for minutes.
+
+### `no route for GET /v1/…`
+
+```json
+{ "error": { "code": "E_ROUTE_NOT_FOUND", "message": "no route for GET /v1/nope",
+             "hint": "see docs/API.md for the endpoints this server serves" } }
+```
+
+If you are using `@husk/sdk`, this is expected for twelve of its twenty methods — the
+SDK and the server disagree about a dozen paths in 0.1.0. See
+[SDK](/reference/sdk#what-does-not-work) for the list and the workaround.
+[HTTP API](/reference/api) is the routes that exist.
+
+---
+
+## Installation
+
+### `a husk package is missing or was not built`
+
+```text
+error a husk package is missing or was not built: Cannot find module '@husk/server'
+hint:  run `npm install && npm run build` at the repo root
+```
+
+In a monorepo checkout, `husk serve`, `husk mcp` and the SDK are optional dependencies
+loaded lazily. Build them:
+
+```bash
+npm install && npm run build
+```
+
+### `unknown flag --jsno`
+
+```text
+error unknown flag --jsno -- run with --help to see what this command accepts
+hint:  husk help ps
+```
+
+Parsing is strict on purpose. Guessing what `--jsno` meant is how a script quietly
+stops emitting JSON and nobody notices for a week.
+
+### `unknown command "doctorr"`
+
+```text
+error unknown command "doctorr" -- did you mean `husk doctor`?
+hint:  husk --help
+```
+
+### `refusing to destroy N computers without confirmation on a non-interactive stdin`
+
+Add `--yes`. Same for `husk init` in a script.
+
+### `--approve ask needs a terminal to ask on`
+
+```text
+error --approve ask needs a terminal to ask on; use auto or readonly in a script
+hint:  husk help run
+```
+
+`ask` [fails closed](/security/approvals#ask-fails-closed): with no approver, every
+dangerous call is denied. Refusing to start is more useful than starting and denying
+everything.
+
+---
+
+## Still stuck
+
+```bash
+husk doctor --json > doctor.json
+husk version
+husk <the failing command> --debug
+```
+
+`--debug` prints the stack and the `cause` chain, which is what a maintainer needs.
+`husk doctor --json` is the machine state without any of your keys in it — the reasons
+and hints are passed through `redact()` before they are printed.
+
+Open an issue with those three. For a security problem, open a private advisory
+instead.

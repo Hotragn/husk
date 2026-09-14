@@ -1,0 +1,141 @@
+---
+title: Networking and the egress policy
+navTitle: Networking
+description: Three modes, where each one is enforced, and the floor that blocks link-local and RFC1918 even in mode full.
+order: 5
+---
+
+Network policy is declared per husk and defaults to `egress`.
+
+```yaml
+computer:
+  network:
+    mode: egress
+    allow: ['*.github.com', 'pypi.org']
+    deny: ['telemetry.example.com']
+```
+
+| Mode | Meaning |
+| --- | --- |
+| `none` | No egress at all |
+| `egress` | The allow-list, and nothing else. **An empty allow-list permits nothing** |
+| `full` | Unrestricted, minus explicit denies and minus the floor below |
+
+An `egress` policy with no `allow` list allows nothing. Reading an under-specified policy
+as "everything" is the interpretation that leaks data, so it is not the one Husk picks.
+
+## Where each mode is enforced
+
+This is the part most sandbox documentation is vague about, and vagueness here is how
+people end up believing they have containment they do not have.
+
+| Mode | Docker / Podman | Tool layer (`fetch_url`, `http_request`) |
+| --- | --- | --- |
+| `none` | `--network=none`, enforced by the kernel | Refused |
+| `egress` | **Not enforced.** The container has normal networking | Enforced by hostname |
+| `full` | Not enforced, by design | Enforced only by the floor and by `deny` |
+
+Neither Docker nor Podman can allow-list hostnames, so `egress` is enforced where the
+hostname is actually known: in the tools. A process inside the machine that opens a raw
+socket, or runs `curl` in a shell, is not stopped by an `egress` policy.
+
+<Warning>
+`mode: egress` constrains the agent's `fetch_url` and `http_request` tools. It does not
+constrain `curl` run through `shell`. If the distinction matters for your threat model,
+`none` and `full` are the honest choices: `none` is a kernel-enforced boundary on the
+container providers, and `full` is an admission that there is no boundary.
+</Warning>
+
+## The floor
+
+`isHostAllowed` refuses loopback, link-local and RFC1918 hosts **even in `mode: full`**,
+unless the operator names them in `allow`.
+
+`mode: full` means the internet. It does not mean the cloud metadata service at
+`169.254.169.254` that hands IAM credentials to anything that asks — and an agent that
+has been prompt-injected will ask. Loopback and the private ranges are the same problem
+one hop further out: the host's own admin panels, and the LAN.
+
+Refused by default, in every mode:
+
+| | |
+| --- | --- |
+| Names | `localhost`, `*.localhost`, `*.local`, `*.internal`, `metadata.google.internal` |
+| IPv6 | `::1`, `::`, `fe80:*` (link-local), `fc*`/`fd*` (unique-local) |
+| IPv4 | `0.0.0.0/8`, `10.0.0.0/8`, `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` (CGNAT) |
+
+```text
+error refused private address 169.254.169.254
+hint:  loopback, link-local and RFC1918 hosts must be named in computer.network.allow
+```
+
+To reach one deliberately, name it:
+
+```yaml
+computer:
+  network:
+    mode: egress
+    allow: ['192.168.1.50']
+```
+
+Explicit beats implicit, and now the decision is in the file where a reviewer can see it.
+
+Both `@husk/runtime` and `@husk/agent` implement the floor. The agent package
+re-implements it rather than importing the runtime, because dependencies run downhill and
+`agent` sits above `runtime` — which means the two copies have to be kept in step by
+hand.
+
+### What the floor does not catch
+
+It matches on the hostname string. There is no DNS resolution, so:
+
+- A public name that resolves to `169.254.169.254` passes. Classic DNS rebinding.
+- Alternative IPv4 encodings — `http://2130706433/` for `127.0.0.1` — do not match the
+  dotted-quad pattern.
+- IPv4-mapped IPv6 forms such as `::ffff:127.0.0.1` are not matched by the private-host
+  check. (They *are* matched by the control plane's separate loopback check, which is a
+  different function for a different job.)
+
+A `*` entry in `allow` satisfies the match and therefore reopens the whole private range.
+Do not write `allow: ['*']` and expect the floor to hold.
+
+## Pattern matching
+
+One wildcard form, a leading `*.`:
+
+| Pattern | Matches | Does not match |
+| --- | --- | --- |
+| `github.com` | `github.com` | `api.github.com` |
+| `*.github.com` | `api.github.com`, `raw.github.com` | `github.com` |
+| `*` | everything | — |
+
+`*.example.com` deliberately does not match bare `example.com`: a suffix match requires
+at least one more character. Both sides are lower-cased and lose a trailing dot.
+
+`deny` is checked **before** `mode`, so a denied host is refused even in `full`.
+
+## Order of checks
+
+For `fetch_url` and `http_request`, in this order:
+
+1. The URL parses. Otherwise `E_TOOL_ERROR`, `not a valid URL`.
+2. The protocol is `http:` or `https:`. `file:`, `ftp:`, `data:` and `gopher:` are
+   refused with `E_EXEC_DENIED`, `refused <scheme> URL`.
+3. `isHostAllowed(host, policy)` — `deny`, then `mode`.
+4. The private-address floor.
+
+Every check runs **twice**: once on the URL you passed, and again on `res.url` after
+redirects. A 302 to `http://169.254.169.254/` is caught on the second pass.
+
+`web_search` calls neither check. It talks to Tavily or Brave directly and is not
+filtered by the husk's network policy.
+
+## Requests Husk itself makes
+
+Only two kinds, and you can name both:
+
+- The model provider you configured.
+- A container registry, when a flavor's image is not already pulled.
+
+There is no telemetry, no analytics, and no crash reporter — absent from the codebase,
+not disabled by a flag.
