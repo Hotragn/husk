@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-09-14
+
+### Changed
+
+- npm scope renamed from `@husk/` to `@husk-ai/` — this is the first version published to npm
+- README rewritten with plain-language description and interactive diagram links
+- 16 interactive architecture diagrams added to `docs/diagrams/`
+- CLAUDE.md and CODEOWNERS added for contributor onboarding
+- Added `build:packages` and `preflight` scripts to root package.json
+
 ## [0.1.0] - 2026-09-14
 
 The first version that does the two things on the tin.

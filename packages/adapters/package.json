@@ -1,6 +1,6 @@
 {
   "name": "@husk-ai/adapters",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Chat front ends for Husk: Discord, Slack, Telegram, generic webhook.",
   "license": "Apache-2.0",
   "type": "module",
@@ -21,7 +21,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@husk-ai/core": "0.1.0",
+    "@husk-ai/core": "0.1.1",
     "ws": "^8.21.3"
   },
   "devDependencies": {
