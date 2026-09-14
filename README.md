@@ -5,21 +5,21 @@
     <img src="brand/logo/lockup-horizontal.svg" alt="Husk" height="72">
   </picture>
 
-  <p><strong>Give your agent a computer.</strong></p>
+  <p><strong>Give your AI chat a real computer of its own.</strong></p>
 
   <p>
     <a href="https://github.com/Hotragn/husk/actions/workflows/ci.yml"><img src="https://github.com/Hotragn/husk/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-    <a href="https://github.com/Hotragn/husk/releases/tag/v0.1.0"><img src="https://img.shields.io/badge/release-v0.1.0-blue" alt="v0.1.0"></a>
+    <a href="https://www.npmjs.com/package/@husk/cli"><img src="https://img.shields.io/npm/v/@husk/cli?label=npm&color=cb3837" alt="npm"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License"></a>
     <a href="https://github.com/Hotragn/husk/stargazers"><img src="https://img.shields.io/github/stars/Hotragn/husk?style=social" alt="GitHub stars"></a>
   </p>
 </div>
 
-Husk gives AI agents disposable Linux computers — a shell, a filesystem, network, ports — that they can drive and you can throw away. It also turns any AI chat transcript into a reusable bot you can read, edit, and run as a service.
+Husk gives your AI chat a real computer of its own: files, a browser, and somewhere to run code. It can build things, look stuff up online and keep your work between chats. Turn a chat you already had into a bot that does the job again tomorrow.
 
-> **[Interactive architecture diagram](docs/diagrams/01-hero.html)** — open locally, no server needed. Pan, zoom, dark mode, PNG/SVG export.
+Free to start. Runs on your hardware. No account required.
 
-Free. Runs on your hardware. No account required.
+> **See how it fits together** — open the [interactive architecture diagram](docs/diagrams/01-hero.html) locally. Pan, zoom, dark/light mode, PNG/SVG export, no server needed.
 
 ## Quick start
 
@@ -63,23 +63,28 @@ computer:
 limits: { maxSteps: 24, maxCostUsd: 0.25 }
 ```
 
-## Features
+> **[How the distiller works](docs/diagrams/04-chat-to-bot.html)** — interactive sequence diagram.
 
-- **5 computer providers** — Docker, Podman, local (WSL2/POSIX), SSH, Fly
-- **10+ model providers** — Ollama, Anthropic, OpenAI, Google, Groq, DeepSeek, Mistral, Together, LM Studio, and more
-- **MCP server** — expose a computer as a tool for any MCP-compatible client
-- **Chat-to-bot pipeline** — import transcripts, distill to `husk.yaml`, run or serve
-- **Adapters** — Discord, Slack, Telegram, webhook out of the box
-- **Browser automation** — Chromium lifecycle, CDP, screenshots, click/type/scroll
-- **Zero config path** — no Docker, no API key, no account: everything still runs
-- **No telemetry** — not "off by default" — absent. No analytics, no crash reporter, no phone-home
-- **No native modules** — `npm install` is clean on Windows without a C++ toolchain
+## Why Husk
+
+| What you get | What that means |
+| --- | --- |
+| **A real computer per chat** | Files, shell, browser, ports — not a code interpreter, an actual Linux machine |
+| **Five providers, one interface** | Docker, Podman, local, SSH, Fly — highest available wins automatically |
+| **Works with what you have** | No Docker? No API key? No account? It still runs |
+| **Chat-to-bot pipeline** | Import a transcript, distill it to YAML, run it tomorrow |
+| **10+ model providers** | Ollama, Anthropic, OpenAI, Google, Groq, DeepSeek, Mistral, Together, LM Studio |
+| **MCP server** | One line to give any MCP client a sandboxed computer |
+| **Adapters built in** | Discord, Slack, Telegram, webhook — out of the box |
+| **Browser automation** | Chromium lifecycle, CDP, screenshots, click/type/scroll |
+| **No telemetry** | Not "off by default" — absent. No analytics, no crash reporter, no phone-home |
+| **No native modules** | `npm install` is clean on Windows without a C++ toolchain |
 
 ## Models
 
 Bring whatever you have. Aliases resolve across providers so the same husk runs on Opus or on a local Gemma.
 
-| | |
+| Tier | Providers |
 | --- | --- |
 | **Free, local** | Ollama (`gemma`, `llama`, `qwen`), LM Studio |
 | **Free tier** | Groq, Google AI Studio, OpenRouter `:free` models, Cerebras |
@@ -99,6 +104,8 @@ This is the part most tools are vague about, so here it is plainly.
 | `fly` | microVM | Metered | Bursty parallel work |
 
 > **The `local` provider is not a sandbox.** It stops accidents, not adversaries. `husk doctor` reports `isolated: false` for it. See [SECURITY.md](SECURITY.md) for the full model.
+>
+> **[Trust-boundary diagram](docs/diagrams/05-trust-boundaries.html)** — interactive view of what is isolated and what is not.
 
 ## Install
 
@@ -129,6 +136,8 @@ apps/
   web          marketing site (Next.js + Three.js)
 ```
 
+> **[Full system architecture](docs/diagrams/02-system-architecture.html)** — interactive diagram showing how every package connects.
+
 ## Documentation
 
 - **[Architecture](docs/ARCHITECTURE.md)** — why it is shaped this way
@@ -136,7 +145,7 @@ apps/
 - **[Build contract](docs/BUILD-CONTRACT.md)** — conventions every package obeys
 - **[Security model](docs/SECURITY-MODEL.md)** — what is isolated and what is not
 - **[Examples](examples/)** — six ready-to-run `husk.yaml` recipes
-- **[Diagrams](docs/diagrams/)** — 16 interactive architecture, dataflow and design diagrams (open the `.html` files locally)
+- **[Diagrams](docs/diagrams/)** — 16 interactive architecture, dataflow and design diagrams
 
 ## Development
 
