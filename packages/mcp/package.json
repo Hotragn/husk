@@ -22,9 +22,9 @@
     "smoke": "node dist/smoke.js"
   },
   "dependencies": {
-    "@husk-ai/browser": "0.1.0",
-    "@husk-ai/core": "0.1.0",
-    "@husk-ai/runtime": "0.1.0",
+    "@husk-ai/browser": "0.1.1",
+    "@husk-ai/core": "0.1.1",
+    "@husk-ai/runtime": "0.1.1",
     "@modelcontextprotocol/sdk": "^1.30.0"
   },
   "bin": {

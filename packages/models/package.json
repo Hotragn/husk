@@ -26,6 +26,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@husk-ai/core": "0.1.0"
+    "@husk-ai/core": "0.1.1"
   }
 }

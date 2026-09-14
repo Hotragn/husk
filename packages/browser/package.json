@@ -23,7 +23,7 @@
     "embed-driver": "node scripts/embed-driver.mjs"
   },
   "dependencies": {
-    "@husk-ai/core": "0.1.0"
+    "@husk-ai/core": "0.1.1"
   },
   "devDependencies": {
     "jsdom": "^25.0.1"
