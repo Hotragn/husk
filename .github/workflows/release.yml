@@ -1,0 +1,94 @@
+name: release
+
+# Publishing is the last gap between "this works on my machine and in CI" and
+# `npx -y @husk/mcp` working for someone who has never cloned the repo -- which
+# is the command the README, the docs and every MCP onboarding flow already
+# tell people to run.
+#
+# Deliberately manual and tag-driven. Nothing publishes on a push to main: a
+# package manager is the one place where an accidental release cannot be taken
+# back, only superseded.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Pack and check everything, publish nothing.
+        type: boolean
+        default: true
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Lets npm record where the tarball was built, so a consumer can verify
+      # this repo produced it.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+      - run: npm run build:packages
+      - run: npm run typecheck
+      - run: npm test
+
+      # Same checks you can run locally with `npm run preflight`, so a release
+      # never fails on something that was knowable before the tag existed.
+      - run: npm run preflight
+
+      # A tag that disagrees with package.json produces a release nobody can
+      # reason about later. Checked before anything leaves the machine.
+      - name: the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./packages/core/package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag $tag does not match @husk/core $pkg" >&2
+            exit 1
+          fi
+
+      # Every package ships only `dist`. If a build was skipped, this is where
+      # it shows up -- as an empty tarball rather than as a broken install.
+      - name: every package packs something
+        run: |
+          set -euo pipefail
+          for dir in packages/*/; do
+            name="$(node -p "require('./${dir}package.json').name")"
+            size="$(cd "$dir" && npm pack --dry-run --json | node -p "JSON.parse(require('fs').readFileSync(0)).at(0).unpackedSize")"
+            echo "$name: $size bytes"
+            if [ "$size" -lt 2000 ]; then
+              echo "$name packs almost nothing; did its build run?" >&2
+              exit 1
+            fi
+          done
+
+      # The dependency order is the build order. npm does not work it out for
+      # a publish, and a package published before its dependency is a version
+      # nobody can install for as long as it takes to notice.
+      - name: publish, in dependency order
+        if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for pkg in core runtime models browser sessions agent adapters mcp server sdk cli; do
+            echo "publishing @husk/$pkg"
+            npm publish --workspace="@husk/$pkg" --access public --provenance
+          done
+
+      - name: dry run summary
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: echo "Everything built, packed and checked. Nothing was published."

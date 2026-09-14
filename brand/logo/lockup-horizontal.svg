@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 288 76" width="288" height="76" role="img" aria-labelledby="husk-lockup-h-title">
+  <title id="husk-lockup-h-title">Husk</title>
+  <style>
+    .husk-shell { fill: var(--husk-mark-shell, #deb076); }
+    .husk-core  { fill: var(--husk-mark-core,  #42d0cf); }
+    .husk-word  { stroke: var(--husk-word, #f8f5f1); }
+    @media (prefers-color-scheme: light) {
+      .husk-shell { fill: var(--husk-mark-shell, #623d00); }
+      .husk-core  { fill: var(--husk-mark-core,  #005251); }
+      .husk-word  { stroke: var(--husk-word, #252019); }
+    }
+  </style>
+
+  <!-- Mark at 2.621x and trimmed to its ink box, so the gap is measured from ink
+       rather than from the mark's own viewBox padding. Ink: 76 x 76. -->
+  <g transform="translate(-3.93 -3.93) scale(2.621)">
+    <path class="husk-shell" d="M13 1.5 L3.5 9 L1.5 19 L9 30.5 L17 28 L13.5 22 L12.5 15.5 L15.5 8.5 L20 4 Z"/>
+    <path class="husk-shell" d="M23.5 3 L30 10 L30.5 20 L26 27.5 L23.5 20 L23.8 11 Z"/>
+    <path class="husk-core" d="M18.2 9.5 L21 15 L18.8 26.5 L15.5 15.5 Z"/>
+  </g>
+
+  <!-- Wordmark, optically centred on the mark's ink height. Gap is 30 units,
+       just under half the mark's width. -->
+  <g class="husk-word" transform="translate(106 4)" fill="none" stroke-width="9" stroke-linecap="butt" stroke-linejoin="bevel">
+    <path d="M4.5 0 L4.5 68"/>
+    <path d="M4.5 40 L13 28.5 L28 28.5 L36.5 40 L36.5 68"/>
+    <path d="M58.5 24 L58.5 52 L67 63.5 L82 63.5 L90.5 52 L90.5 24"/>
+    <path d="M136 28.5 L113 28.5 L129 63.5 L106 63.5"/>
+    <path d="M153.5 0 L153.5 68"/>
+    <path d="M179 27.9 L152.5 43 L179 64.5"/>
+  </g>
+</svg>
