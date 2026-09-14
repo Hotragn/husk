@@ -1,0 +1,128 @@
+# Sprout — the husk that tests Husk.
+#
+# What grows out of a husk. This one exists to dogfood the product: it gets its
+# own computer, browses the open web from inside that computer, and writes files
+# there. If Sprout can do a real job unattended, the runtime works.
+#
+#   husk run examples/sprout.yaml "collect today's good news"
+#
+# It is also a worked example of designing a husk *down* to a small local model.
+# The first version handed qwen2.5:7b ten tools, a 1.6 KB persona and 90 KB of
+# raw RSS, and it fabricated its entire output. Everything deterministic now
+# happens in `computer.setup`; the model is left with the one judgement call it
+# is actually good at — picking five stories out of a short list.
+apiVersion: husk/v1
+name: sprout
+displayName: Sprout
+version: 0.2.0
+description: A news-gathering bot that browses from inside its own computer.
+
+model: ollama/qwen2.5:7b
+fallbackModels:
+  - ollama/llama3.2:latest
+temperature: 0.1
+
+persona: |
+  You are Sprout. You have a Linux computer. /work is your disk.
+
+  You browse only by running commands on that computer. You have no other
+  browser. You never invent a headline, a summary or a URL.
+
+  Fetching is already automated for you. To get the news, run exactly:
+
+      python3 /work/digest.py
+
+  That writes /work/candidates.txt: a short numbered list of real stories, each
+  with a TITLE, a URL and a DATE. Read that file, choose from it, and copy the
+  titles and URLs out of it character for character.
+
+knowledge:
+  - title: What counts as good news
+    content: |
+      A concrete thing that happened and left someone better off: a medical
+      result, a conservation win, a rescue, a scientific advance, a law that
+      helps people. Not opinion, not listicles, not product launches.
+
+# Three tools, not ten. Every extra schema costs a small local model attention
+# it cannot spare: with the full computer+files bundles attached, qwen2.5:7b
+# returned an empty turn and gave up without calling anything.
+tools:
+  - shell
+  - read_file
+  - write_file
+
+computer:
+  enabled: true
+  flavor: base
+  workdir: /work
+  idleTimeoutSec: 3600
+  maxLifetimeSec: 0
+  # Fetching and XML-shredding are deterministic, so they belong in a script laid
+  # down at boot -- not in a prompt a 7B model has to reproduce correctly.
+  setup: |
+    cat > /work/digest.py <<'DIGEST'
+    import re, html, subprocess, datetime
+    FEEDS = {
+      "GoodNewsNetwork": "https://www.goodnewsnetwork.org/feed/",
+      "PositiveNews": "https://www.positive.news/feed/",
+      "ReasonsToBeCheerful": "https://reasonstobecheerful.world/feed/",
+    }
+    def tag(block, name):
+        m = re.search(r"<" + name + r"[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</" + name + r">", block, re.S)
+        return html.unescape(m.group(1)).strip() if m else ""
+    out, n = [], 0
+    for source, url in FEEDS.items():
+        try:
+            xml = subprocess.run(["curl", "-sS", "-m", "30", "-A", "husk-sprout/0.1", url],
+                                 capture_output=True, text=True, timeout=45).stdout
+        except Exception as e:
+            out.append("FEED FAILED: " + source + " (" + str(e) + ")")
+            continue
+        items = re.findall(r"<item>(.*?)</item>", xml, re.S)
+        if not items:
+            out.append("FEED EMPTY: " + source)
+            continue
+        for block in items[:6]:
+            n += 1
+            out.append("[" + str(n) + "] " + source)
+            out.append("    TITLE: " + tag(block, "title")[:140])
+            out.append("    URL:   " + tag(block, "link")[:200])
+            out.append("    DATE:  " + tag(block, "pubDate")[:40])
+            out.append("")
+    out.append("Generated: " + datetime.datetime.now().isoformat(timespec="seconds"))
+    open("/work/candidates.txt", "w", encoding="utf-8").write("\n".join(out))
+    print("wrote /work/candidates.txt with " + str(n) + " candidates")
+    DIGEST
+    echo "digest.py seeded"
+  # The local provider cannot enforce this at the OS level -- it is applied by
+  # the `web` tool, and Sprout fetches with curl instead. Recorded so the intent
+  # is reviewable, not because it is a firewall. See docs/security/network.
+  network:
+    mode: egress
+    allow:
+      - '*.goodnewsnetwork.org'
+      - '*.positive.news'
+      - '*.reasonstobecheerful.world'
+
+limits:
+  maxSteps: 20
+  maxCostUsd: 0
+  maxTokens: 60000
+  timeoutSec: 3600
+  execTimeoutSec: 90
+  maxOutputBytes: 40000
+
+guardrails:
+  approvalMode: auto
+  redactSecrets: true
+  denyCommands:
+    # Sprout reads the web and writes /work. It has no reason to push anywhere.
+    - '\bgit\s+push\b'
+    - '\bnpm\s+publish\b'
+
+triggers:
+  - type: cli
+
+metadata:
+  purpose: dogfooding the husk runtime end to end
+  browser: curl inside its own computer -- never a host browser

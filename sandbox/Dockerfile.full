@@ -1,0 +1,91 @@
+# husk full flavor
+#
+# Python, Node and a C toolchain in one machine. Roughly 3x the base image, so it is
+# never the default -- but an agent asked to "build and test this repo" needs it, and
+# discovering that mid-run costs more than the pull did.
+#
+# This is also the only flavor that can run the rendered browser. `@husk/browser`
+# downloads a headless Chromium at runtime, but a browser binary is useless without
+# the two dozen shared libraries it links against, and the slim images have none of
+# them -- measured: "Chromium is missing 20 shared libraries" on python:3.12-slim,
+# after a perfectly successful 111 MB download. They cannot be added later either,
+# because container computers mount their root filesystem read-only on purpose. So
+# they are baked in here, where the weight is already the point.
+ARG HUSK_VERSION=0.1.0
+FROM ghcr.io/husk-sh/husk-python:${HUSK_VERSION} AS base
+
+LABEL org.opencontainers.image.title="husk-full" \
+      husk.flavor="full"
+
+USER root
+ARG NODE_MAJOR=22
+ENV HUSK_FLAVOR=full \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_AUDIT=false
+
+RUN mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+        | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
+        > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        nodejs \
+        build-essential \
+        pkg-config \
+        libssl-dev \
+        sqlite3 \
+        make \
+        cmake \
+        vim \
+        tmux \
+        rsync \
+        ffmpeg \
+        imagemagick \
+        poppler-utils \
+        # Chromium's runtime dependencies, one package per soname it asks for.
+        #
+        # Named individually rather than installing the `chromium` package,
+        # which would add a second browser binary husk never runs and would not
+        # match the build it downloads.
+        #
+        # Every one is listed even when another package already depends on it.
+        # Six of these (glib, dbus, expat, x11, xcb, xext) used to arrive only
+        # because libatk and libatspi happened to pull them in -- which means a
+        # dependency change upstream could have removed them silently, and the
+        # failure would surface as a browser that will not start after a
+        # successful 111 MB download. The list is derived from what Chromium
+        # actually reported missing on a slim image, not from a blog post.
+        libglib2.0-0 \
+        libdbus-1-3 \
+        libexpat1 \
+        libx11-6 \
+        libxcb1 \
+        libxext6 \
+        libnss3 \
+        libnspr4 \
+        libatk1.0-0 \
+        libatk-bridge2.0-0 \
+        libcups2 \
+        libdrm2 \
+        libxkbcommon0 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxfixes3 \
+        libxrandr2 \
+        libgbm1 \
+        libpango-1.0-0 \
+        libcairo2 \
+        libasound2 \
+        libatspi2.0-0 \
+        fonts-liberation \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable
+
+RUN mkdir -p /home/husk/.npm-global && chown -R husk:husk /home/husk/.npm-global
+ENV NPM_CONFIG_PREFIX=/home/husk/.npm-global \
+    PATH=/home/husk/.npm-global/bin:$PATH
+
+USER husk
+WORKDIR /work
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/husk-entrypoint"]
+CMD ["idle"]

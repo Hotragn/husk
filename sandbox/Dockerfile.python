@@ -1,0 +1,46 @@
+# husk python flavor
+#
+# Python plus uv. uv is here rather than bare pip because an agent installing a
+# package should wait two seconds, not forty -- and a slow install is a wasted turn.
+ARG HUSK_VERSION=0.1.0
+FROM ghcr.io/husk-sh/husk-base:${HUSK_VERSION} AS base
+
+LABEL org.opencontainers.image.title="husk-python" \
+      husk.flavor="python"
+
+USER root
+ENV HUSK_FLAVOR=python \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_SYSTEM_PYTHON=1 \
+    UV_LINK_MODE=copy
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
+        python3-venv \
+        python3-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python
+
+# Pinned by digest-free tag on purpose: the installer is small, and pinning a uv
+# version here would silently rot faster than the base image does.
+RUN curl -fsSL https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh \
+    && uv --version
+
+# The libraries an agent reaches for before it thinks to install anything.
+# Everything else is one `uv pip install` away.
+RUN uv pip install --system --break-system-packages \
+        requests \
+        httpx \
+        rich \
+        pyyaml \
+        python-dateutil \
+    && rm -rf /root/.cache
+
+USER husk
+WORKDIR /work
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/husk-entrypoint"]
+CMD ["idle"]

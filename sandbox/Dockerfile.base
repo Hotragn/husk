@@ -1,0 +1,75 @@
+# husk base image
+#
+# The smallest machine that still feels like a computer: a shell, the tools an
+# agent reaches for in its first ten commands, and nothing that costs a layer we
+# do not need. Everything heavier lives in a flavor built on top of this.
+FROM debian:bookworm-slim
+
+ARG HUSK_VERSION=0.1.0
+LABEL org.opencontainers.image.title="husk-base" \
+      org.opencontainers.image.description="A disposable Linux computer for AI agents." \
+      org.opencontainers.image.source="https://github.com/husk-sh/husk" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${HUSK_VERSION}" \
+      husk.flavor="base"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=UTC \
+    HUSK=1 \
+    HUSK_FLAVOR=base \
+    PAGER=cat \
+    TERM=xterm-256color
+
+# One layer, no recommends, no apt lists left behind. `less` and `procps` are here
+# because an agent that cannot page output or see its own processes gets stuck.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        wget \
+        git \
+        jq \
+        ripgrep \
+        fd-find \
+        less \
+        procps \
+        psmisc \
+        file \
+        unzip \
+        xz-utils \
+        tar \
+        gzip \
+        bzip2 \
+        nano \
+        tini \
+        openssl \
+        tzdata \
+        iproute2 \
+        dnsutils \
+        netcat-openbsd \
+    && ln -s "$(command -v fdfind)" /usr/local/bin/fd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Unprivileged by construction. Nothing in a husk ever runs as root, and the image
+# ships without a root password or a sudoers entry so nothing can escalate to it.
+RUN groupadd --gid 1000 husk \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash husk \
+    && mkdir -p /work \
+    && chown -R husk:husk /work /home/husk \
+    && passwd --lock root
+
+COPY --chmod=0755 entrypoint.sh /usr/local/bin/husk-entrypoint
+COPY --chmod=0755 huskinfo.sh /usr/local/bin/huskinfo
+
+USER husk
+WORKDIR /work
+
+# A HEALTHCHECK lets the runtime tell "still booting" apart from "wedged" without
+# shelling in and guessing.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=2s --retries=3 \
+    CMD test -w /work || exit 1
+
+# tini reaps the zombies that a long-lived exec host inevitably accumulates.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/husk-entrypoint"]
+CMD ["idle"]
