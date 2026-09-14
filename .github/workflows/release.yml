@@ -84,6 +84,8 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
+          npm whoami --registry https://registry.npmjs.org || { echo "npm auth failed"; exit 1; }
           for pkg in core runtime models browser sessions agent adapters mcp server sdk cli; do
             echo "publishing @husk-ai/$pkg"
             npm publish --workspace="@husk-ai/$pkg" --access public --provenance
