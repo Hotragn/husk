@@ -3,6 +3,14 @@
   "version": "0.1.1",
   "description": "Typed, dependency-free client for the Husk control plane.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hotragn/husk.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/Hotragn/husk/tree/main/packages/sdk#readme",
+  "bugs": "https://github.com/Hotragn/husk/issues",
+  "keywords": ["husk", "ai-agent", "sdk", "client", "typescript"],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

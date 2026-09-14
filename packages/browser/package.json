@@ -3,6 +3,17 @@
   "version": "0.1.1",
   "description": "A real Chromium inside a Husk computer, driven over CDP.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hotragn/husk.git",
+    "directory": "packages/browser"
+  },
+  "homepage": "https://github.com/Hotragn/husk/tree/main/packages/browser#readme",
+  "bugs": "https://github.com/Hotragn/husk/issues",
+  "keywords": ["husk", "ai-agent", "browser-automation", "chromium", "cdp", "puppeteer"],
+  "engines": {
+    "node": ">=20.10"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

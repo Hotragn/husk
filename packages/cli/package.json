@@ -3,6 +3,14 @@
   "version": "0.1.1",
   "description": "The husk command line: give your agent a computer, and turn a chat into a bot.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hotragn/husk.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/Hotragn/husk/tree/main/packages/cli#readme",
+  "bugs": "https://github.com/Hotragn/husk/issues",
+  "keywords": ["husk", "ai-agent", "cli", "developer-tools", "npx"],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
