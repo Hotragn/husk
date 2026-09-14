@@ -33,6 +33,48 @@ export function hostMatches(host: string, pattern: string): boolean {
  * An operator who genuinely wants one of these names it in `allow`, where a
  * reviewer reading the husk.yaml can see the decision.
  */
+/**
+ * Normalise the many spellings of one IPv4 address.
+ *
+ * `127.1`, `2130706433` and `0x7f000001` are all `127.0.0.1` to every resolver
+ * that matters -- curl, the browser, and Python's urllib all accept them --
+ * and a rule that only understands four dotted octets waves each of them
+ * through. Measured: `isInternalHost('127.1')` returned false while
+ * `isInternalHost('127.0.0.1')` returned true.
+ *
+ * Returns the four octets, or null when this is not an IPv4 literal at all.
+ */
+function ipv4Octets(host: string): [number, number, number, number] | null {
+  const parts = host.split('.');
+  if (parts.length > 4 || parts.some((p) => p === '')) return null;
+
+  // Each part may be decimal, octal (leading zero) or hex (0x). inet_aton
+  // accepts all three, so refusing to understand them is not a defence.
+  const nums: number[] = [];
+  for (const part of parts) {
+    let value: number;
+    if (/^0[xX][0-9a-fA-F]+$/.test(part)) value = parseInt(part, 16);
+    else if (/^0[0-7]+$/.test(part)) value = parseInt(part, 8);
+    else if (/^[0-9]+$/.test(part)) value = Number(part);
+    else return null;
+    if (!Number.isFinite(value) || value < 0) return null;
+    nums.push(value);
+  }
+
+  // The last part absorbs the remaining octets: `127.1` is 127.0.0.1 and
+  // `2130706433` is the whole address in one number.
+  const last = nums.pop();
+  if (last === undefined) return null;
+  const width = 4 - nums.length;
+  if (last >= 256 ** width) return null;
+  if (nums.some((n) => n > 255)) return null;
+
+  const tail: number[] = [];
+  for (let i = width - 1; i >= 0; i--) tail.push((last >>> (8 * i)) & 0xff);
+  const all = [...nums, ...tail];
+  return all.length === 4 ? (all as [number, number, number, number]) : null;
+}
+
 export function isInternalHost(host: string): boolean {
   const h = host.toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '');
 
@@ -41,10 +83,10 @@ export function isInternalHost(host: string): boolean {
   if (h === '::1' || h === '0:0:0:0:0:0:0:1') return true;
   if (/^f[cd][0-9a-f]{2}:/.test(h) || /^fe80:/.test(h)) return true;
 
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  const v4 = ipv4Octets(h);
   if (v4) {
-    const a = Number(v4[1]);
-    const b = Number(v4[2]);
+    const a = v4[0];
+    const b = v4[1];
     if (a === 127 || a === 0 || a === 10) return true;
     if (a === 169 && b === 254) return true; // link-local, incl. the metadata endpoint
     if (a === 172 && b >= 16 && b <= 31) return true;
@@ -59,8 +101,8 @@ export function isLoopbackHost(host: string): boolean {
   const h = host.toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '');
   if (h === 'localhost' || h.endsWith('.localhost')) return true;
   if (h === '::1' || h === '0:0:0:0:0:0:0:1') return true;
-  const v4 = /^(\d{1,3})\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.exec(h);
-  return v4 !== null && (Number(v4[1]) === 127 || Number(v4[1]) === 0);
+  const v4 = ipv4Octets(h);
+  return v4 !== null && (v4[0] === 127 || v4[0] === 0);
 }
 
 /**

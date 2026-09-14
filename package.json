@@ -20,7 +20,8 @@
     "husk": "node packages/cli/dist/bin.js",
     "dev:web": "npm run dev --workspace=@husk/web",
     "dev:console": "npm run dev --workspace=@husk/console",
-    "preflight": "node scripts/preflight.mjs"
+    "preflight": "node scripts/preflight.mjs",
+    "secrets": "node scripts/secret-scan.mjs"
   },
   "devDependencies": {
     "@fastify/cors": "^11.3.0",

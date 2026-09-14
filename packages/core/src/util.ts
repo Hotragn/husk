@@ -155,13 +155,25 @@ export async function withTimeout<T>(p: Promise<T>, ms: number, message = 'timed
 /** Anything that looks like a credential, before it reaches a log or a model. */
 const SECRET_PATTERNS: RegExp[] = [
   /\b(sk-ant-[A-Za-z0-9_-]{20,})/g,
-  /\b(sk-[A-Za-z0-9]{20,})/g,
+  // The class must include `-` and `_`: OpenAI project keys are `sk-proj-...`,
+  // and [A-Za-z0-9] stops at the second dash, leaving 7 characters that never
+  // reach the 20-char minimum. Measured: a full sk-proj- key passed through
+  // redact() completely untouched.
+  /\b(sk-[A-Za-z0-9_-]{20,})/g,
   /\b(gsk_[A-Za-z0-9]{20,})/g,
   /\b(AIza[0-9A-Za-z_-]{30,})/g,
   /\b(ghp_[A-Za-z0-9]{30,})/g,
   /\b(github_pat_[A-Za-z0-9_]{30,})/g,
   /\b(xox[baprs]-[A-Za-z0-9-]{10,})/g,
   /\b(AKIA[0-9A-Z]{16})\b/g,
+  /\b(npm_[A-Za-z0-9]{30,})/g,
+  /\b(fo1_[A-Za-z0-9_-]{20,})/g,
+  /\b(xai-[A-Za-z0-9]{20,})/g,
+  // A bearer token has no prefix of its own -- the only thing marking it is
+  // the header it arrives in. Without this, any provider husk has no pattern
+  // for leaks in full the moment a request is logged or an error echoes its
+  // headers back.
+  /((?:Authorization|Proxy-Authorization)\s*:\s*(?:Bearer|Basic|Token)\s+)[A-Za-z0-9._~+/=-]{16,}/gi,
   /(-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----)[\s\S]*?(-----END [^-]*-----)/g,
 ];
 
@@ -173,6 +185,12 @@ export function redact(input: string): string {
 
 function mask(s: string): string {
   if (s.includes('PRIVATE KEY')) return '[redacted private key]';
+
+  // For a header match the name and scheme are not the secret, and keeping
+  // them is the difference between "Authorization: Bearer [redacted]" and a
+  // bare "[redacted]" that leaves a reader guessing which header leaked.
+  const header = /^((?:Authorization|Proxy-Authorization)\s*:\s*(?:Bearer|Basic|Token)\s+)/i.exec(s);
+  if (header) return `${header[1]}[redacted]`;
   const keep = Math.min(6, Math.floor(s.length / 4));
   return `${s.slice(0, keep)}...[redacted]`;
 }
