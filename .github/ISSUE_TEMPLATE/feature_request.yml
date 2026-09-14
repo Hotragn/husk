@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest something Husk should do that it does not do today.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case. What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How do you think this should work? A CLI invocation, a `husk.yaml` snippet, or a description is fine.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else have you tried, or what workaround are you using today?
+    validations:
+      required: false

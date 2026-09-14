@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-labelledby="husk-social-title">
+  <title id="husk-social-title">Husk — give your agent a computer</title>
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&amp;display=swap');
+    </style>
+  </defs>
+
+  <!-- Background: dark theme bg -->
+  <rect width="1280" height="640" fill="#0f0b07"/>
+
+  <!-- Subtle border -->
+  <rect x="1" y="1" width="1278" height="638" fill="none" stroke="#36312a" stroke-width="1"/>
+
+  <!-- Mark, centred top -->
+  <g transform="translate(592, 100) scale(4.5)">
+    <path fill="#deb076" d="M13 1.5 L3.5 9 L1.5 19 L9 30.5 L17 28 L13.5 22 L12.5 15.5 L15.5 8.5 L20 4 Z"/>
+    <path fill="#deb076" d="M23.5 3 L30 10 L30.5 20 L26 27.5 L23.5 20 L23.8 11 Z"/>
+    <path fill="#42d0cf" d="M18.2 9.5 L21 15 L18.8 26.5 L15.5 15.5 Z"/>
+  </g>
+
+  <!-- Tagline -->
+  <text x="640" y="370" text-anchor="middle" fill="#f8f5f1" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="48" font-weight="600" letter-spacing="-0.02em">Give your agent a computer.</text>
+
+  <!-- One-liner -->
+  <text x="640" y="430" text-anchor="middle" fill="#bdb8b1" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="24" font-weight="400">Disposable Linux machines for AI agents. Free. No account. No telemetry.</text>
+
+  <!-- Command -->
+  <rect x="340" y="475" width="600" height="48" rx="5" fill="#1b1611" stroke="#36312a" stroke-width="1"/>
+  <text x="360" y="506" fill="#9e9992" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="18">$</text>
+  <text x="385" y="506" fill="#42d0cf" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="18">claude mcp add husk -- npx -y @husk/mcp</text>
+
+  <!-- Footer -->
+  <text x="640" y="580" text-anchor="middle" fill="#655f58" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="18">Apache-2.0 · github.com/Hotragn/husk</text>
+</svg>

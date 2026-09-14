@@ -1,0 +1,64 @@
+name: Bug report
+description: Something broke, or does not work the way the docs say it should.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: |
+        1. Ran `husk up demo --provider local`
+        2. Expected a computer to start
+        3. Got error: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor-output
+    attributes:
+      label: "`husk doctor` output"
+      description: Paste the full output of `npx @husk/cli doctor --json`.
+      render: json
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "Windows 11, Ubuntu 24.04, macOS 15, etc."
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      placeholder: "22.x"
+    validations:
+      required: true
+
+  - type: input
+    id: husk-version
+    attributes:
+      label: Husk version
+      description: Output of `npx @husk/cli --version`.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Computer provider
+      options:
+        - docker
+        - podman
+        - "local (WSL2)"
+        - "local (POSIX)"
+        - ssh
+        - fly
+        - "not applicable"
+    validations:
+      required: true

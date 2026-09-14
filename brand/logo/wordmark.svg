@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 182 68" width="182" height="68" role="img" aria-labelledby="husk-wordmark-title">
+  <title id="husk-wordmark-title">husk</title>
+  <!-- Monolinear faceted logotype, drawn on the same straight-segment grid as the
+       mark. Stroke 9 against a 44-unit x-height gives a 0.205 stem ratio: a bold
+       grotesque, matched to the weight of the mark's facets.
+
+       Bevel joins, not miter. Every corner is a chamfer, which is the mark's
+       language, and it also guarantees no join spike overshoots the x-height
+       line the way a miter on the s would.
+
+       Metrics: ascender top y=0, x-height top y=24, baseline y=68.
+       Sidebearings: h 0..41, u 54..95, s 106..136, k 149..182.
+       Optical gaps: h-u 13, u-s 11 (the s diagonal opens its own space),
+       s-k 13. -->
+  <g fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="butt" stroke-linejoin="bevel">
+    <!-- h : stem + chamfered shoulder into the second stem -->
+    <path d="M4.5 0 L4.5 68"/>
+    <path d="M4.5 40 L13 28.5 L28 28.5 L36.5 40 L36.5 68"/>
+    <!-- u : the h inverted through the x-height band -->
+    <path d="M58.5 24 L58.5 52 L67 63.5 L82 63.5 L90.5 52 L90.5 24"/>
+    <!-- s : three segments. An angular s, not a curved one drawn badly. -->
+    <path d="M136 28.5 L113 28.5 L129 63.5 L106 63.5"/>
+    <!-- k : stem + arm and leg meeting inside the stem at the x-height midpoint -->
+    <path d="M153.5 0 L153.5 68"/>
+    <path d="M179 27.9 L152.5 43 L179 64.5"/>
+  </g>
+</svg>
