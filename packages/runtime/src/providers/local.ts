@@ -470,6 +470,11 @@ class LocalComputer implements Computer {
         });
       });
 
+      // The child may exit before stdin is fully written; swallow the EPIPE
+      // rather than letting it surface as an uncaught exception.
+      child.stdin?.on('error', (e: NodeJS.ErrnoException) => {
+        if (e.code !== 'EPIPE') throw e;
+      });
       if (req.stdin !== undefined && child.stdin) child.stdin.end(req.stdin);
       else child.stdin?.end();
     });
