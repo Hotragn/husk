@@ -1,0 +1,1195 @@
+/* =============================================================================
+   Husk marketing site — site stylesheet
+
+   tokens.css is a byte-identical copy of brand/tokens.css and is never edited
+   here. Re-sync it with:  cp brand/tokens.css apps/web/src/styles/tokens.css
+
+   Every value below resolves to a token. There is no literal hex in this file
+   or in any component, per UI-PRINCIPLES.md §9.
+
+   FONTS. The three brand faces are not vendored in this repo (see
+   public/fonts/README.md). No @font-face rule is emitted and no third-party
+   font origin is contacted, so the fallback stacks declared in tokens.css are
+   what renders. Dropping the three woff2 files into public/fonts and importing
+   ../styles/fonts.css is the only change needed to complete self-hosting.
+   ========================================================================== */
+
+@import "../styles/tokens.css";
+
+/* -----------------------------------------------------------------------------
+   1. Base
+-------------------------------------------------------------------------------- */
+
+html {
+  /* The sticky header is 57px tall; anchored sections must clear it. */
+  scroll-padding-top: var(--space-20);
+}
+
+body {
+  min-height: 100%;
+  overflow-x: hidden;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--font-weight-display);
+  text-wrap: balance;
+}
+
+p,
+ul,
+ol,
+dl,
+figure,
+pre,
+table {
+  margin: 0;
+}
+
+ul,
+ol {
+  padding-inline-start: 0;
+  list-style: none;
+}
+
+a {
+  color: inherit;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+/* -----------------------------------------------------------------------------
+   2. Layout primitives
+-------------------------------------------------------------------------------- */
+
+.container {
+  width: 100%;
+  max-width: var(--container-xl);
+  margin-inline: auto;
+  padding-inline: var(--gutter-inline);
+}
+
+.container-lg {
+  max-width: var(--container-lg);
+}
+
+.container-md {
+  max-width: var(--container-md);
+}
+
+.container-2xl {
+  max-width: var(--container-2xl);
+}
+
+@media (min-width: 48rem) {
+  .container {
+    padding-inline: var(--gutter-inline-wide);
+  }
+}
+
+.grid12 {
+  display: grid;
+  grid-template-columns: repeat(var(--grid-columns), minmax(0, 1fr));
+  gap: var(--grid-gap);
+}
+
+.col-4 {
+  grid-column: span 4;
+}
+
+.col-5 {
+  grid-column: span 5;
+}
+
+.col-7 {
+  grid-column: span 7;
+}
+
+.col-8 {
+  grid-column: span 8;
+}
+
+/* Below 1024px every 12-column block collapses to one column. Asymmetry is a
+   wide-viewport affordance; on a phone it is an awkward wrap. */
+@media (max-width: 63.99rem) {
+  .grid12 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .grid12 > * {
+    grid-column: auto !important;
+  }
+}
+
+/* Source order puts the terminal first in the chat-to-bot block so it sits on
+   the left at desktop width; on a phone the heading must come first. */
+@media (max-width: 63.99rem) {
+  .order-first-sm {
+    order: -1;
+  }
+
+  .grid12:has(> .order-first-sm) {
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+.section {
+  padding-block: var(--space-section);
+  border-top: var(--border-width-hairline) solid var(--color-border);
+}
+
+.section-tight {
+  padding-block: var(--space-section-tight);
+}
+
+.section-head {
+  max-width: var(--measure-prose);
+  margin-bottom: var(--space-12);
+}
+
+.stack-4 > * + * {
+  margin-top: var(--space-4);
+}
+
+.stack-6 > * + * {
+  margin-top: var(--space-6);
+}
+
+.stack-8 > * + * {
+  margin-top: var(--space-8);
+}
+
+.stack-16 > * + * {
+  margin-top: var(--space-16);
+}
+
+.prose {
+  max-width: var(--measure-prose);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+}
+
+.prose p + p,
+.prose p + ul,
+.prose ul + p {
+  margin-top: var(--space-6);
+}
+
+.prose strong {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.prose h2,
+.prose h3 {
+  margin-top: var(--space-12);
+  margin-bottom: var(--space-4);
+  color: var(--color-text);
+}
+
+.prose a,
+.link {
+  color: var(--color-text-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  transition: text-decoration-thickness var(--duration-1) var(--ease-move);
+}
+
+.prose a:hover,
+.link:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* -----------------------------------------------------------------------------
+   3. Type scale
+-------------------------------------------------------------------------------- */
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+  margin-bottom: var(--space-4);
+}
+
+.h-hero {
+  font-size: var(--font-size-hero);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-8xl);
+  font-variation-settings: var(--font-variation-hero);
+}
+
+.h-page {
+  font-size: var(--font-size-4xl);
+  line-height: var(--leading-snug);
+  letter-spacing: var(--tracking-4xl);
+  font-variation-settings: var(--font-variation-h1);
+}
+
+.h-section {
+  font-size: var(--font-size-2xl);
+  line-height: var(--leading-heading);
+  letter-spacing: var(--tracking-2xl);
+  font-variation-settings: var(--font-variation-h2);
+}
+
+@media (min-width: 48rem) {
+  .h-section {
+    font-size: var(--font-size-3xl);
+    line-height: var(--leading-snug);
+    letter-spacing: var(--tracking-3xl);
+  }
+}
+
+.h-sub {
+  font-size: var(--font-size-xl);
+  line-height: var(--leading-heading);
+  letter-spacing: var(--tracking-xl);
+  font-variation-settings: var(--font-variation-h3);
+}
+
+.lead {
+  font-size: var(--font-size-lg);
+  line-height: var(--leading-normal);
+  letter-spacing: var(--tracking-lg);
+  color: var(--color-text-muted);
+  max-width: var(--measure-lead);
+}
+
+.small {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-subtle);
+}
+
+.meta {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-subtle);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: var(--font-features-mono);
+}
+
+code.inline {
+  background: var(--color-sunken);
+  border: var(--border-width-hairline) solid var(--color-border);
+  border-radius: var(--radius-xs);
+  padding: 0.1em 0.34em;
+  color: var(--color-text);
+}
+
+/* At heading sizes the chip is heavier than the words around it. Drop the box
+   and let the colour and the mono face carry the "this is machine speech"
+   signal instead. --color-text-primary is 9.87:1 on bg. */
+h1 code.inline,
+h2 code.inline,
+h3 code.inline {
+  background: transparent;
+  border-color: transparent;
+  padding: 0;
+  font-size: 0.84em;
+  color: var(--color-text-primary);
+}
+
+/* -----------------------------------------------------------------------------
+   3b. The mark
+
+   The wiring recommended in brand/logo/USAGE.md: bind the three custom
+   properties to the tokens once, globally. --color-text-primary and
+   --color-text-accent already resolve to primary-300 / accent-300 in dark and
+   primary-700 / accent-700 in light, which are exactly the values the mark
+   wants — and unlike the SVG's own prefers-color-scheme query they follow the
+   page's theme rather than the operating system's.
+-------------------------------------------------------------------------------- */
+
+:root {
+  --husk-mark-shell: var(--color-text-primary);
+  --husk-mark-core: var(--color-text-accent);
+  --husk-word: var(--color-text);
+}
+
+.husk-shell {
+  fill: var(--husk-mark-shell);
+}
+
+.husk-core {
+  fill: var(--husk-mark-core);
+}
+
+.husk-word {
+  stroke: var(--husk-word);
+}
+
+.lockup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  text-decoration: none;
+  border-radius: var(--radius-xs);
+  /* One quarter of the asset's own height of clear space, per USAGE.md. */
+  padding: var(--space-2) var(--space-2) var(--space-2) 0;
+}
+
+/* -----------------------------------------------------------------------------
+   4. Skip link
+-------------------------------------------------------------------------------- */
+
+.skip-link {
+  position: fixed;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: var(--z-max);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-raised);
+  color: var(--color-text);
+  border: var(--border-width-hairline) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transform: translateY(calc(-100% - var(--space-6)));
+  transition: transform var(--duration-2) var(--ease-enter);
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+/* -----------------------------------------------------------------------------
+   5. Buttons — the nine states of UI-PRINCIPLES.md §4
+-------------------------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-md);
+  padding-inline: var(--space-4);
+  border: var(--border-width-hairline) solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--leading-flat);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: var(--transition-colors), transform var(--duration-2) var(--ease-move);
+}
+
+.btn-lg {
+  min-height: var(--control-height-lg);
+  padding-inline: var(--space-6);
+}
+
+.btn-primary {
+  background: var(--color-primary-fill);
+  color: var(--color-primary-on-fill);
+}
+
+.btn-primary:hover {
+  background: var(--color-primary-200);
+}
+
+.btn-primary:active {
+  background: var(--color-primary-400);
+  transform: translateY(1px);
+}
+
+.btn-secondary {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.btn-secondary:hover {
+  background: var(--color-raised);
+  border-color: var(--color-text-subtle);
+}
+
+.btn-secondary:active {
+  background: var(--color-surface);
+  transform: translateY(1px);
+}
+
+.btn-ghost {
+  color: var(--color-text-muted);
+}
+
+.btn-ghost:hover {
+  background: var(--color-raised);
+  color: var(--color-text);
+}
+
+.btn-ghost:active {
+  background: var(--color-surface);
+}
+
+.btn[aria-pressed="true"] {
+  background: var(--color-raised);
+  border-color: var(--color-border-focus);
+  color: var(--color-text);
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn:disabled:hover,
+.btn[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
+.btn-icon {
+  min-width: var(--control-height-md);
+  padding-inline: var(--space-2);
+}
+
+/* The label changes ("Copy" -> "Copied") but the box must not. */
+.copy-btn {
+  min-width: 6.5rem;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* -----------------------------------------------------------------------------
+   6. Terminal and code surfaces
+-------------------------------------------------------------------------------- */
+
+.frame {
+  background: var(--color-sunken);
+  border: var(--border-width-hairline) solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.frame-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  background: var(--color-surface);
+  border-bottom: var(--border-width-hairline) solid var(--color-border);
+  min-height: var(--control-height-lg);
+}
+
+.frame-title {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+}
+
+.frame-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.term {
+  font-family: var(--font-mono);
+  font-feature-settings: var(--font-mono-terminal);
+  font-variant-ligatures: none;
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-code);
+  color: var(--color-text-muted);
+  background: var(--color-sunken);
+  padding: var(--space-4);
+  overflow-x: auto;
+  white-space: pre;
+  tab-size: 2;
+}
+
+@media (min-width: 48rem) {
+  .term {
+    padding: var(--space-6);
+  }
+}
+
+/* Only the full-bleed replay has the width to hold 16px mono without
+   scrolling. Terminals inside a grid column stay at 13.33px, which is the
+   difference between "a terminal" and "a terminal with a scrollbar". */
+@media (min-width: 64rem) {
+  .term-wide {
+    font-size: var(--font-size-md);
+  }
+}
+
+.term-line {
+  display: block;
+  min-height: 1lh;
+}
+
+.term-prompt {
+  color: var(--color-text-primary);
+}
+
+.term-cmd {
+  color: var(--color-text);
+}
+
+.term-out {
+  color: var(--color-text-muted);
+}
+
+.term-dim {
+  color: var(--color-text-subtle);
+}
+
+.term-ok {
+  color: var(--color-success);
+}
+
+.term-err {
+  color: var(--color-danger);
+}
+
+.term-key {
+  color: var(--color-text-accent);
+}
+
+/* The reveal is opacity-only: the full transcript is laid out at first paint,
+   so nothing reflows and assistive tech reads the complete text immediately. */
+.term-veil {
+  opacity: 0;
+}
+
+/* -- copyable command block ---------------------------------------------------- */
+
+.cmd {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+  background: var(--color-sunken);
+  border: var(--border-width-hairline) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+}
+
+.cmd-text {
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-feature-settings: var(--font-mono-terminal);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-code);
+  color: var(--color-text);
+  white-space: pre;
+  padding-block: var(--space-1);
+}
+
+@media (min-width: 48rem) {
+  .cmd-text {
+    font-size: var(--font-size-md);
+  }
+}
+
+@media (min-width: 64rem) {
+  .cmd-lg .cmd-text {
+    font-size: var(--font-size-lg);
+  }
+}
+
+.cmd-sigil {
+  color: var(--color-text-primary);
+  user-select: none;
+}
+
+/* On a phone the most important line on the page should not be behind a
+   horizontal scrollbar. Let it wrap and put the copy control under it; the
+   copied string is unaffected by where the line breaks. */
+@media (max-width: 39.99rem) {
+  .cmd {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-3) var(--space-2);
+  }
+
+  .cmd-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow-x: visible;
+  }
+
+  .cmd .copy-btn {
+    align-self: flex-end;
+  }
+}
+
+/* -- highlighted code ---------------------------------------------------------- */
+
+.code {
+  font-family: var(--font-mono);
+  font-feature-settings: var(--font-features-mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-code);
+  color: var(--color-text);
+  background: var(--color-sunken);
+  padding: var(--space-4);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+@media (min-width: 48rem) {
+  .code {
+    padding: var(--space-6);
+  }
+}
+
+.tok-comment {
+  color: var(--color-text-subtle);
+}
+
+.tok-key {
+  color: var(--color-text-primary);
+}
+
+.tok-string {
+  color: var(--color-text);
+}
+
+.tok-literal {
+  color: var(--color-text-accent);
+}
+
+.tok-punct {
+  color: var(--color-text-subtle);
+}
+
+/* -----------------------------------------------------------------------------
+   7. Tables
+-------------------------------------------------------------------------------- */
+
+.table-scroll {
+  overflow-x: auto;
+  border: var(--border-width-hairline) solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+table.data {
+  width: 100%;
+  min-width: 46rem;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  font-feature-settings: var(--font-features-tabular);
+}
+
+table.data caption {
+  text-align: left;
+  padding: var(--space-3) var(--space-3) var(--space-4);
+  color: var(--color-text-subtle);
+  font-size: var(--font-size-sm);
+}
+
+table.data th,
+table.data td {
+  text-align: left;
+  vertical-align: top;
+  padding: var(--space-3);
+  border-bottom: var(--border-width-hairline) solid var(--color-border);
+}
+
+table.data thead th {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+  background: var(--color-surface);
+  white-space: nowrap;
+}
+
+table.data tbody th {
+  font-family: var(--font-mono);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+table.data tbody tr:last-child th,
+table.data tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+table.data tbody tr:hover {
+  background: var(--color-raised);
+}
+
+/* Isolation is never carried by colour alone: a glyph, a word, and a hue. */
+.iso {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.iso-glyph {
+  font-family: var(--font-mono);
+}
+
+.iso-word {
+  font-weight: var(--font-weight-medium);
+}
+
+.iso-kernel .iso-glyph,
+.iso-kernel .iso-word {
+  color: var(--color-success);
+}
+
+.iso-none .iso-glyph,
+.iso-none .iso-word {
+  color: var(--color-warn);
+}
+
+.iso-unknown .iso-glyph,
+.iso-unknown .iso-word {
+  color: var(--color-info);
+}
+
+/* -----------------------------------------------------------------------------
+   8. Header and footer
+-------------------------------------------------------------------------------- */
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-header);
+  /* Opaque fallback first; the sticky header is the one element allowed a blur. */
+  background: var(--color-bg);
+  border-bottom: var(--border-width-hairline) solid var(--color-border);
+}
+
+@supports (backdrop-filter: blur(1px)) {
+  .site-header {
+    background: color-mix(in srgb, var(--color-bg) 88%, transparent);
+    backdrop-filter: blur(var(--blur-md));
+  }
+}
+
+.site-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-block: var(--space-2);
+}
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-height-md);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  text-decoration: none;
+  transition: var(--transition-colors);
+}
+
+.nav-link:hover {
+  background: var(--color-raised);
+  color: var(--color-text);
+}
+
+.nav-link[aria-current="page"] {
+  color: var(--color-text);
+  background: var(--color-raised);
+}
+
+@media (max-width: 39.99rem) {
+  .nav-link {
+    padding-inline: var(--space-2);
+  }
+
+  .nav-hide-sm {
+    display: none;
+  }
+}
+
+.site-footer {
+  border-top: var(--border-width-hairline) solid var(--color-border);
+  padding-block: var(--space-16) var(--space-12);
+  margin-top: var(--space-section);
+}
+
+.footer-grid {
+  display: grid;
+  gap: var(--space-10);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 48rem) {
+  .footer-grid {
+    grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr));
+    gap: var(--space-8);
+  }
+}
+
+.footer-heading {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+  margin-bottom: var(--space-4);
+}
+
+.footer-list li + li {
+  margin-top: var(--space-2);
+}
+
+.footer-list a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--target-min);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  text-decoration: none;
+  border-radius: var(--radius-xs);
+}
+
+.footer-list a:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.footer-legal {
+  margin-top: var(--space-12);
+  padding-top: var(--space-6);
+  border-top: var(--border-width-hairline) solid var(--color-border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-6);
+  justify-content: space-between;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-subtle);
+}
+
+/* -----------------------------------------------------------------------------
+   9. Hero
+-------------------------------------------------------------------------------- */
+
+.hero {
+  padding-block: var(--space-16) var(--space-section);
+}
+
+@media (min-width: 64rem) {
+  .hero {
+    padding-block: var(--space-24) var(--space-section);
+  }
+}
+
+.hero-copy {
+  grid-column: span 7;
+}
+
+.hero-figure {
+  grid-column: span 5;
+  align-self: start;
+}
+
+@media (max-width: 39.99rem) {
+  /* One of the three places centring is allowed: the hero headline and its
+     subhead under 640px. */
+  .hero-copy h1,
+  .hero-copy .lead {
+    text-align: center;
+    margin-inline: auto;
+  }
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+/* -----------------------------------------------------------------------------
+   10. The isolation viewer (HuskCore)
+-------------------------------------------------------------------------------- */
+
+/* The placeholder, the SVG fallback and the WebGL canvas share this box
+   exactly, so swapping the lazy chunk in cannot shift layout. */
+.core-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-height: 24rem;
+  background: var(--color-surface);
+  border-bottom: var(--border-width-hairline) solid var(--color-border);
+  overflow: hidden;
+  touch-action: pan-y;
+}
+
+.core-stage canvas {
+  display: block;
+  outline: none;
+}
+
+.core-stage:focus-visible {
+  outline: var(--border-width-thick) solid var(--color-border-focus);
+  outline-offset: -4px;
+}
+
+.core-svg {
+  width: 100%;
+  height: 100%;
+}
+
+.core-readout {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.core-readout-row {
+  display: flex;
+  gap: var(--space-4);
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.core-readout-label {
+  color: var(--color-text-subtle);
+}
+
+.core-readout dd {
+  margin: 0;
+  color: var(--color-text);
+}
+
+.core-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+}
+
+.core-controls .btn {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  padding-inline: var(--space-3);
+}
+
+.core-hint {
+  margin-top: var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-subtle);
+  line-height: var(--leading-normal);
+}
+
+/* -----------------------------------------------------------------------------
+   11. Lists, callouts, misc
+-------------------------------------------------------------------------------- */
+
+.rule-list li {
+  padding-block: var(--space-3);
+  border-bottom: var(--border-width-hairline) solid var(--color-border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  align-items: baseline;
+}
+
+.rule-list li:first-child {
+  border-top: var(--border-width-hairline) solid var(--color-border);
+}
+
+.rl-term {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  flex: 0 0 auto;
+  min-width: 8.5rem;
+}
+
+.rl-desc {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  flex: 1 1 16rem;
+}
+
+.callout {
+  border-left: var(--border-width-heavy) solid var(--color-warn-border);
+  background: var(--color-warn-subtle);
+  padding: var(--space-4) var(--space-5);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.callout p {
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-normal);
+}
+
+.callout-code {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+  display: block;
+  margin-bottom: var(--space-2);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-xs);
+  color: var(--color-text-subtle);
+}
+
+.dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--radius-full);
+  background: var(--color-success);
+  flex: 0 0 auto;
+}
+
+/* Full-bleed is earned once per page: the transcript replay. */
+.bleed {
+  width: 100vw;
+  max-width: 100vw;
+  margin-inline: calc(50% - 50vw);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* -----------------------------------------------------------------------------
+   12. Scroll-driven animation
+
+   Two of them on the whole site, both position-driven rather than time-driven,
+   so neither is a reveal and neither runs on its own. Progressive enhancement:
+   without `animation-timeline` support the header keeps its static border and
+   the progress rule stays at zero width, and nothing else changes.
+-------------------------------------------------------------------------------- */
+
+.read-progress {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 2px;
+  z-index: var(--z-dropdown);
+  pointer-events: none;
+}
+
+.read-progress > span {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: var(--color-accent-fill);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+}
+
+@supports (animation-timeline: scroll()) {
+  /* The header stops being flush with the top of the document. That is a
+     state change the reader caused by scrolling, and it is the only thing
+     either of these animations says. */
+  .site-header {
+    animation: husk-header-settle linear both;
+    animation-timeline: scroll(root block);
+    animation-range: 0 6rem;
+  }
+
+  @keyframes husk-header-settle {
+    from {
+      border-bottom-color: transparent;
+      box-shadow: none;
+    }
+    to {
+      border-bottom-color: var(--color-border);
+      box-shadow: var(--shadow-sm);
+    }
+  }
+
+  .read-progress > span {
+    animation: husk-read-progress linear both;
+    animation-timeline: scroll(root block);
+  }
+
+  @keyframes husk-read-progress {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
+  }
+
+  /* tokens.css collapses every animation to 1ms under reduced motion, which
+     is right for time-based animation and wrong for a scroll timeline: these
+     two are positions, not durations, and they must keep tracking the
+     scrollbar rather than snapping to their end state. */
+  @media (prefers-reduced-motion: reduce) {
+    .site-header,
+    .read-progress > span {
+      animation-duration: auto !important;
+    }
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   13. Forced colors
+-------------------------------------------------------------------------------- */
+
+@media (forced-colors: active) {
+  .frame,
+  .cmd,
+  .core-stage,
+  .table-scroll,
+  .callout,
+  .btn {
+    border: 1px solid CanvasText;
+  }
+}

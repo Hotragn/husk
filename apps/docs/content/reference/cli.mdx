@@ -1,0 +1,527 @@
+---
+title: CLI reference
+navTitle: CLI
+description: Every command, every flag it actually parses, its exit code, and the flags that exist in the parser but not in --help.
+order: 1
+---
+
+```bash
+husk <command> [flags]
+```
+
+`husk` with no arguments prints the top-level help and exits **0** — a question, not a
+mistake, so probing for the binary in a script does not look like a failure.
+
+<Terminal title="husk --help">
+{`husk 0.1.0 — give your agent a computer, and turn a chat into a bot.
+
+USAGE
+  husk <command> [flags]
+
+COMPUTERS
+  up        Create a Linux computer
+  ps        List your computers
+  rm        Destroy a computer and its filesystem
+  stop      Stop a computer without destroying it
+  start     Start a stopped computer
+  exec      Run a command inside a computer
+  shell     An interactive prompt against a computer
+  cp        Copy files in or out of a computer
+
+AGENTS
+  init      Scaffold a husk.yaml
+  run       Run an agent
+  validate  Check a husk.yaml
+
+CHATS
+  import    Find and import a chat transcript
+  distill   Turn a chat into a husk.yaml
+
+SYSTEM
+  doctor    Show exactly what this machine can and cannot do
+  serve     Start the control plane and any bots the husk declares
+  mcp       Run the MCP server on stdio
+  models    List the models you can actually reach
+  version   Print the version
+  help      Show help for a command`}
+</Terminal>
+
+## Global flags
+
+Every command accepts these. Their meaning never changes between commands.
+
+| Flag | Effect |
+| --- | --- |
+| `--json` | Machine-readable output, and the only thing on stdout |
+| `-q`, `--quiet` | Errors only |
+| `--no-color` | Plain text. Also automatic when piped, and with `NO_COLOR` |
+| `--color` | Force colour on, even when piped |
+| `--debug` | Full stack traces, including `cause` chains |
+| `-y`, `--yes` | Answer every confirmation with yes |
+| `-h`, `--help` | Help for any command |
+
+`--color` and `-y`/`--yes` are parsed by every command but are only listed in the help
+for the commands that use them. `--version` and `-V` work only on the bare `husk`
+invocation, not after a subcommand.
+
+Parsing is strict: a typo'd flag is a usage error, not a silently ignored string.
+
+```text
+error unknown flag --jsno -- run with --help to see what this command accepts
+hint:  husk help ps
+```
+
+## Exit codes
+
+Frozen, because scripts and CI key off them.
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success |
+| `1` | Error |
+| `2` | Usage mistake |
+| `130` | Interrupted (Ctrl-C) |
+
+`husk exec` is the one deliberate exception: it exits with the child command's own code,
+so `husk exec box -- test -f /work/x && echo yes` behaves the way you expect.
+
+## Command aliases
+
+| You type | You get |
+| --- | --- |
+| `ls`, `list` | `ps` |
+| `create` | `up` |
+| `destroy`, `delete` | `rm` |
+| `sh` | `shell` |
+| `check` | `doctor` |
+
+<Note>
+`husk ls` lists **computers**, not husks. Some error hints in the control plane say
+"run `husk ls` to list husks", which is wrong on two counts — that alias goes to `ps`,
+and there is no CLI command that lists registered husks. Use `curl -s
+localhost:7377/v1/husks` while `husk serve` is running.
+</Note>
+
+---
+
+## Computers
+
+### `husk up`
+
+```bash
+husk up [name] [flags]
+```
+
+With no name, Husk generates one (`box-a1b2c`). The machine is lazy: nothing runs inside
+it until you `exec`.
+
+| Flag | Value | Default |
+| --- | --- | --- |
+| `--provider` | `docker` \| `podman` \| `local` \| `ssh` \| `fly` | best available |
+| `--flavor` | `base` \| `python` \| `node` \| `full` | `base` |
+| `--memory` | `2g`, `512m`, or a plain number of MB | provider default |
+| `--cpus` | a positive number | provider default |
+| `--network` | `none` \| `egress` \| `full` | `egress` |
+| `--persist` | boolean | off |
+| `--env` | `KEY=VALUE`, repeatable | — |
+| `--idle-timeout` | seconds | `900` |
+| `--json` | print the `ComputerInfo` record | — |
+
+`--env` and `--idle-timeout` are parsed but are **not** in `husk help up`.
+
+<Terminal>
+{`$ husk up docsbox
+creating docsbox...
+warn  [runtime] using the local provider: guarded working directory -- process guardrails, not a sandbox
+✓ docsbox is up
+
+  id         cmp_hmqrgjny3m83
+  provider   local  (WSL2 (Ubuntu))
+  isolation  guardrails only — not a sandbox
+  workdir    /work
+  network    egress
+
+  Try it:
+  $ husk exec docsbox -- uname -sr
+  $ husk shell docsbox
+  $ husk cp ./file.txt docsbox:/work/file.txt
+  $ husk rm docsbox`}
+</Terminal>
+
+A named provider is never silently substituted:
+
+```text
+error provider "docker" is not usable: docker is installed but the daemon is not reachable
+hint:  start Docker Desktop (or `sudo systemctl start docker`), then re-run `husk doctor`
+```
+
+### `husk ps`
+
+```bash
+husk ps [--all] [--json]
+```
+
+| Flag | Effect |
+| --- | --- |
+| `-a`, `--all` | Include stopped machines |
+| `--json` | Print the full `ComputerInfo` records |
+
+<Terminal>
+{`$ husk ps
+name          id                provider  state    workdir  age
+console-demo  cmp_ynr9fqqr5c4s  local     running  /work    55s
+docsbox       cmp_hmqrgjny3m83  local     running  /work    3m`}
+</Terminal>
+
+Piped output is tab-separated with no colour and no truncation, so
+`husk ps | cut -f2` works. An empty list exits **0**, not 1.
+
+### `husk rm`
+
+```bash
+husk rm <name|id> [--all] [--yes]
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--all` | Destroy every computer |
+| `-y`, `--yes` | Skip the confirmation |
+| `-f`, `--force` | The same as `--yes` |
+
+<Danger>
+Destructive and not recoverable. The filesystem goes with the machine.
+</Danger>
+
+Asks first unless `--yes`, `--force` or `--json` is given. On a non-interactive stdin
+without one of those it refuses rather than guessing:
+
+```text
+error refusing to destroy 3 computers without confirmation on a non-interactive stdin
+```
+
+`-f`/`--force` is parsed but is not in `husk help rm`.
+
+### `husk stop` and `husk start`
+
+```bash
+husk stop <name|id>
+husk start <name|id>
+```
+
+No flags beyond the global set. `stop` keeps the filesystem:
+
+```text
+✓ stopped docsbox — the filesystem is kept; `husk start` brings it back
+```
+
+### `husk exec`
+
+```bash
+husk exec <name|id> [flags] -- <command...>
+```
+
+| Flag | Value | Default |
+| --- | --- | --- |
+| `--cwd` | path inside the machine | `/work` |
+| `--timeout` | seconds; the process tree is killed | `120` |
+| `--env` | `KEY=VALUE`, repeatable | — |
+| `--stdin` | text piped to the command | — |
+| `--json` | buffer and print the full `ExecResult` | stream |
+
+`--stdin` is parsed but is not in `husk help exec`.
+
+Everything after `--` belongs to the command, flags included. Without `--`, leftover
+positionals are still accepted, so `husk exec box ls` works — but `--` is the only form
+that can carry flags safely.
+
+stdout and stderr stream live, and Husk exits with the command's own exit code.
+
+```bash
+husk exec docsbox -- uname -sr
+husk exec docsbox -- 'echo hi > /work/a.txt; cat /work/a.txt'
+husk exec docsbox --json -- ls /work | jq .exitCode
+```
+
+### `husk shell`
+
+```bash
+husk shell <name|id> [--cwd <path>]
+```
+
+`--cwd` is parsed but is not in `husk help shell`.
+
+<Warning>
+A readline loop, **not** a pty. Each line is a separate exec, so Husk tracks `cd` for
+you, but full-screen programs — `vim`, `top`, `less` — and anything that checks `isatty`
+will not work. `exit`, `quit`, or Ctrl-D to leave.
+</Warning>
+
+### `husk cp`
+
+```bash
+husk cp <src> <dst>
+```
+
+Either side may be `name:/path`, and exactly one of them must be. Directories are
+copied recursively.
+
+```bash
+husk cp ./report.csv docsbox:/work/report.csv
+husk cp docsbox:/work/out.json ./out.json
+husk cp ./src docsbox:/work/src
+```
+
+A single-letter prefix is a Windows drive, not a computer — no computer name is one
+character — so `husk cp C:\data\x.csv box:/work/` does what a Windows user expects.
+A `//` after the colon is a URL scheme, not a path, and is treated as local.
+
+Both sides naming a computer is a usage error with the two-step fix in it.
+
+---
+
+## Agents
+
+### `husk init`
+
+```bash
+husk init [name] [--out husk.yaml] [--force] [--yes]
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--out` | Where to write. Default `husk.yaml` |
+| `--force` | Overwrite an existing file |
+| `-y`, `--yes` | Accept every default without asking |
+
+Asks a few questions on a terminal; with `--yes`, or when piped, it writes defaults.
+
+<Terminal title="the file husk init --yes writes">
+{`# husk.yaml — created by \`husk init\` on 2026-09-10
+# Docs: husk help run
+
+apiVersion: husk/v1
+name: demo-bot
+displayName: Demo Bot
+description: A husk.
+
+model: auto
+
+persona: "You are a careful, concise assistant with access to a Linux computer."
+
+tools:
+  - computer
+  - files`}
+</Terminal>
+
+### `husk run`
+
+```bash
+husk run <husk.yaml|name> [prompt] [flags]
+```
+
+| Flag | Value | Default |
+| --- | --- | --- |
+| `--model` | alias or `provider/model` | from the spec |
+| `--max-steps` | positive integer | `limits.maxSteps` |
+| `--max-cost` | USD | `limits.maxCostUsd` |
+| `--approve` | `auto` \| `ask` \| `readonly` | `guardrails.approvalMode` |
+| `--no-computer` | boolean | off |
+| `--var` | `KEY=VALUE`, repeatable, for `{{var}}` in the persona | — |
+| `--json` | print the `RunResult` instead of streaming | — |
+
+`--max-cost` and `--var` are parsed but are not in `husk help run`.
+
+The prompt is the remaining positionals, or piped stdin:
+
+```bash
+husk run husk.yaml "summarise /work/notes.md"
+echo "why is main red?" | husk run ci-triage
+```
+
+The first positional is resolved as a path first, then as
+`~/.husk/husks/<name>/husk.yaml`. Neither existing is an error naming both:
+
+```text
+error no husk named "triage", and no file at /home/me/triage
+hint:  run `husk init` to create one, or `husk distill <transcript>` to generate one from a chat
+```
+
+Model text goes to **stdout**; steps, tool calls and warnings go to **stderr**, so
+`husk run husk.yaml "…" > answer.txt` captures the answer and nothing else.
+
+Ctrl-C stops the run cleanly and leaves the computer alone — nothing is destroyed — and
+exits 130.
+
+<Warning>
+`--max-cost` is not validated. It goes through a bare `Number()`, so `--max-cost abc`
+becomes `NaN` and silently disables the cost ceiling for that run. `--max-steps` is
+validated and rejects `0` with a usage error; `--max-cost` is not. Pass a number.
+</Warning>
+
+<Note>
+`husk run` pins one model and does not read `fallbackModels`. See
+[the router page](/models#fallback).
+</Note>
+
+### `husk validate`
+
+```bash
+husk validate [file] [--json]
+```
+
+Defaults to `./husk.yaml`. Prints every problem at once, not just the first. Exits 1 on
+an invalid file, and `--json` still emits `{ valid: false, path, issues }`.
+
+---
+
+## Chats
+
+### `husk import`
+
+```bash
+husk import [path] [--source <s>] [--pick <n>] [--limit <n>]
+```
+
+| Flag | Value | Default |
+| --- | --- | --- |
+| `--source` | `claude-code` \| `chatgpt` \| `cursor` \| `gemini` \| `markdown` \| `universal` | detected |
+| `--pick` | choose by number without being asked | — |
+| `--limit` | how many candidates to list | `20` |
+| `--json` | the discovered list, or the imported transcript | — |
+
+With no path, Husk searches its own list of locations, lists what it found, and asks you
+to choose:
+
+```text
+husk looked in:
+  ~/.claude/projects   Claude Code sessions
+  ~/Downloads          ChatGPT and Gemini exports
+  ~/.cursor            Cursor chat history
+  ./                   markdown and jsonl
+```
+
+Every transcript found in the chosen file is written to
+`~/.husk/transcripts/<id>.json`, unredacted.
+
+### `husk distill`
+
+```bash
+husk distill <transcript-id|path> [flags]
+```
+
+| Flag | Value | Default |
+| --- | --- | --- |
+| `--model` | the model to distill **with** | `auto` |
+| `--no-model` | force the free heuristic path | off |
+| `--out` | where to write | `husk.yaml` |
+| `--name` | override the generated husk name | from the transcript |
+| `--force` | overwrite an existing file | off |
+| `--json` | print `{ path, confidence, agent, spec }` | — |
+
+<Note>
+`--model` selects the model that does the distilling. It does **not** set the `model:`
+field of the husk it writes — that comes from the transcript's own metadata when Husk
+recognises it, and is `auto` otherwise.
+</Note>
+
+The heuristic path is free, deterministic and needs no API key. If no model is
+reachable, `husk distill` degrades to it rather than failing.
+
+---
+
+## System
+
+### `husk doctor`
+
+```bash
+husk doctor [--json] [--force]
+```
+
+`--force` bypasses the 30-second availability-probe cache. It is parsed but is not in
+`husk help doctor`.
+
+The first thing to run when something is confusing. [Reading the report](/start/doctor)
+walks through the output.
+
+### `husk models`
+
+```bash
+husk models [--all] [--json]
+```
+
+`--all` includes models from providers with no credentials, marked `offline`.
+
+### `husk serve`
+
+```bash
+husk serve [--port 7377] [--host 127.0.0.1]
+```
+
+| Flag | Default |
+| --- | --- |
+| `--port` | `7377`, or `HUSK_PORT` |
+| `--host` | `127.0.0.1`, or `HUSK_HOST` — loopback only unless you change it |
+
+Binding a non-loopback host without `HUSK_TOKEN` is a hard error, because this API can
+execute shell commands. [Self-hosting](/guides/self-hosting) is the full setup.
+
+### `husk mcp`
+
+```bash
+husk mcp [--provider <p>] [--session-key <k>] [--keep]
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--provider` | Force a computer provider |
+| `--session-key` | Reuse one machine across calls |
+| `--keep` | Leave the machine running after the client disconnects |
+
+stdout carries JSON-RPC and nothing else; logs go to stderr.
+
+<Note>
+`husk mcp` and `npx @husk/mcp` are two different front ends with two different flag
+sets. The standalone binary takes `--session`, `--flavor`, `--network`, `--memory` and
+`--cpus` as well; `husk mcp` takes only the three above, and spells the session flag
+`--session-key`. [MCP setup](/mcp) documents the standalone binary, which is the one an
+MCP client launches.
+</Note>
+
+### `husk version`
+
+```bash
+husk version [--json]
+```
+
+Bare `husk version` prints one parseable line on stdout — that is what a release script
+greps for. The node version, platform and state directory go to stderr where they
+cannot break it.
+
+### `husk help`
+
+```bash
+husk help [command]
+```
+
+Identical to `<command> --help`.
+
+---
+
+## Environment variables
+
+| Variable | Read by | Effect |
+| --- | --- | --- |
+| `HUSK_HOME` | everything | State directory. Default `~/.husk` |
+| `HUSK_HOST`, `HUSK_PORT` | `husk serve` | Bind address and port |
+| `HUSK_TOKEN` | `husk serve`, `@husk/sdk` | Bearer token |
+| `HUSK_LOG_LEVEL`, `HUSK_LOG_JSON` | everything | Logger verbosity and format |
+| `NO_COLOR`, `HUSK_NO_COLOR`, `FORCE_COLOR` | the CLI | Colour |
+| `HUSK_SESSION` | `@husk/mcp` | Default session key |
+| `HUSK_REGISTRY`, `HUSK_IMAGE_TAG` | container providers | Override the Husk image pair |
+| `HUSK_SSH_TARGET`, `HUSK_SSH_KEY` | the `ssh` provider | Remote host and key |
+| `FLY_API_TOKEN` (or `FLY_ACCESS_TOKEN`) | the `fly` provider | Fly credentials |
+| `HUSK_FLY_APP` (or `FLY_APP_NAME`), `HUSK_FLY_REGION` (or `FLY_REGION`), `HUSK_FLY_API` | the `fly` provider | App, region, API base |
+| `TAVILY_API_KEY`, `BRAVE_API_KEY` (or `BRAVE_SEARCH_API_KEY`) | the `web` bundle | Enables `web_search`; Tavily wins if both are set |
+| `CLAUDE_CONFIG_DIR` | the Claude Code importer | Where to look for sessions |
+
+Model provider keys are listed on [Providers](/models/providers).

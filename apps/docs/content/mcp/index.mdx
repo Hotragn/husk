@@ -1,0 +1,176 @@
+---
+title: Giving an MCP client a computer
+navTitle: Setup
+description: "One line of config, seven tools, and no account. Also: what the model is told about its own containment."
+order: 1
+---
+
+```bash
+claude mcp add husk -- npx -y @husk/mcp
+```
+
+That is the whole install. There is no second step, no account, and no config file to
+edit by hand.
+
+Restart Claude Code and the model has a Linux machine: a shell, a filesystem that
+persists across tool calls, and a way to publish a port.
+
+## Verify it
+
+```bash
+npx -y @husk/mcp --help      # options, printed to stderr
+```
+
+The protocol itself is easy to check by hand — the server speaks JSON-RPC over stdio, so
+two lines of input list its tools:
+
+<Terminal>
+{`$ printf '%s\\n%s\\n' \\
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' \\
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \\
+  | npx -y @husk/mcp 2>/dev/null | jq -r 'select(.id==2) | .result.tools[].name'
+shell
+read_file
+write_file
+edit_file
+list_dir
+expose_port
+computer_info`}
+</Terminal>
+
+## Transports
+
+Stdio. That is the whole list.
+
+<NotYet>
+`docs/ARCHITECTURE.md` and `docs/BUILD-CONTRACT.md` both describe `@husk/mcp` as
+"stdio + streamable HTTP". The package imports one transport, `StdioServerTransport`,
+and exposes one connect method, `connectStdio()`.
+
+There is a `get server()` accessor on `HuskMcpServer`, commented "for embedding in an
+existing HTTP server", which hands you the raw protocol server so you can attach a
+transport of your own. No HTTP server ships in the package, and there is no HTTP
+framework in its dependencies.
+</NotYet>
+
+## Nothing is created until it is used
+
+Adding the server has to cost nothing, or people uninstall it. So:
+
+- No machine at startup.
+- No machine on `tools/list`.
+- The first tool call creates one, and only one even under concurrent calls.
+
+The machine is named `mcp-<session>` and created with `idleTimeoutSec: 3600`. When the
+client disconnects — SIGINT, SIGTERM, or stdin closing — the machine is destroyed, unless
+you passed `--keep`.
+
+## What the model is told
+
+The first tool result of a session is prefixed with one honest line about the machine.
+A model that believes it is contained when it is not will take risks it otherwise would
+not, so this is not optional and not buried.
+
+On a container provider:
+
+```text
+[husk] docker container cmp_8v9z, isolated from the host. /work persists for this session.
+```
+
+On the `local` provider:
+
+```text
+[husk] local computer cmp_8v9z on real Linux via wsl:Ubuntu. This is a guarded working
+directory, NOT a sandbox: /work is jailed and destructive commands are refused, but it
+shares the host kernel and network. Start Docker for real isolation.
+```
+
+On anything else:
+
+```text
+[husk] computer cmp_8v9z on ssh. /work persists for this session.
+```
+
+The server also sends MCP `instructions` at initialisation:
+
+> Husk gives you a Linux computer. Use `shell` for anything a command line can do; the
+> filesystem at `/work` persists across calls in this session. Call `computer_info` once
+> before assuming a runtime or tool is installed.
+
+## Options
+
+```text
+--session <key>     reuse one machine across calls (default: "mcp")
+--provider <name>   docker | podman | local | ssh | fly  (default: best available)
+--flavor <name>     base | python | node | full          (default: base)
+--network <mode>    none | egress | full                 (default: egress)
+--memory <mb>       memory ceiling
+--cpus <n>          cpu ceiling
+--keep              leave the machine running after the client disconnects
+-h, --help
+```
+
+`--session` also reads `$HUSK_SESSION`. Two sessions, two machines, two filesystems, one
+client:
+
+```bash
+claude mcp add husk-api -- npx -y @husk/mcp --session api --flavor python
+claude mcp add husk-web -- npx -y @husk/mcp --session web --flavor node
+```
+
+<Note>
+`--provider`, `--flavor` and `--network` are passed through without validation. A typo
+such as `--flavor pyhton` is not rejected by the MCP binary; it reaches the runtime,
+where it falls back to the `base` image plan. The CLI's own `husk up --flavor` does
+validate, and rejects it with a usage error.
+</Note>
+
+## stdout is the protocol
+
+stdout carries JSON-RPC and nothing else. Every log line goes to stderr. A stray
+`console.log` corrupts the stream and the client dies silently, which is why
+`HuskMcpServer` takes its logger by injection and defaults it to a stderr logger.
+
+If you are debugging, read stderr:
+
+```bash
+npx -y @husk/mcp 2>/tmp/husk-mcp.log
+```
+
+## Which provider you get
+
+Whatever `auto` picks, unless you name one. Run `husk doctor` to see which that is before
+you wonder why the model is reporting a Windows path.
+
+If Docker is running, you get a container and the isolation note says so. If it is not,
+you get the `local` provider and the note says that instead — which is the point of the
+note.
+
+## Other clients
+
+Any MCP client that can launch a stdio server works the same way. Cursor and Zed take a
+JSON block rather than a CLI command:
+
+```json title="mcp.json"
+{
+  "mcpServers": {
+    "husk": {
+      "command": "npx",
+      "args": ["-y", "@husk/mcp", "--session", "cursor", "--flavor", "python"]
+    }
+  }
+}
+```
+
+The seven tools listed above are the whole surface, whatever the client. Their
+behaviour, their `dangerous` flags and their arguments are the same ones the agent loop
+uses — see [tools in a husk.yaml](/reference/husk-yaml#tools) and
+[Approvals](/security/approvals#which-tools-are-dangerous).
+
+## Next
+
+- [Isolation](/security/isolation) — what the machine the model just got is actually
+  worth.
+- [Concepts](/computers) — the interface behind those seven tools.
+- [CLI reference](/reference/cli#husk-mcp) — the `husk mcp` subcommand, which takes a
+  different flag set from the standalone binary.

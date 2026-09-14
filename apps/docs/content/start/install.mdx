@@ -1,0 +1,129 @@
+---
+title: Install
+description: Global install, the npx path, what lands on disk, and how to remove all of it.
+order: 3
+---
+
+Husk is published as npm packages. There is no installer, no daemon to enable, and no
+account step.
+
+## Requirements
+
+| | |
+| --- | --- |
+| Node | 20.10 or newer (`engines.node: ">=20.10"`) |
+| Platform | Linux, macOS, Windows |
+| Everything else | optional |
+
+There are no native modules anywhere in the tree, which is a build-contract rule rather
+than an accident: `better-sqlite3` and `node-pty` are both banned. A Windows machine
+with no C++ toolchain gets a clean `npm install`.
+
+## The three ways in
+
+### Run it without installing
+
+```bash
+npx -y @husk/cli doctor
+```
+
+Good for a first look. Every invocation pays npm's resolution cost, so it is not what
+you want for day-to-day use.
+
+### Install the CLI globally
+
+```bash
+npm install -g @husk/cli
+husk doctor
+```
+
+The binary is `husk`. `husk --help` costs about 16 ms on top of Node's own startup,
+because every command sits behind a dynamic `import()` and the help text loads none of
+them.
+
+### Install the MCP server only
+
+If all you want is a computer inside Claude Code, you do not need the CLI at all:
+
+```bash
+claude mcp add husk -- npx -y @husk/mcp
+```
+
+See [MCP](/mcp).
+
+## The packages
+
+`@husk/cli` depends on the first five and treats the last three as optional — `husk mcp`,
+`husk serve` and the SDK load lazily and fail with an actionable error if they are
+absent.
+
+| Package | What it is |
+| --- | --- |
+| `@husk/core` | Contracts, the `husk.yaml` schema, `paths()`, `redact()`. Depends on nothing but zod. |
+| `@husk/runtime` | Computer providers: docker, podman, local, ssh, fly. |
+| `@husk/models` | The model router: 11 providers, no vendor SDKs. |
+| `@husk/sessions` | Transcript importers and the distiller. |
+| `@husk/agent` | The tool-calling loop and the built-in tools. |
+| `@husk/mcp` | The MCP server. Optional. |
+| `@husk/server` | Control plane and bot host. Optional. |
+| `@husk/sdk` | Typed client for the control plane. Optional. |
+| `@husk/cli` | The `husk` binary. |
+
+## Optional pieces, and what each one buys
+
+Nothing below is required. Each one changes what `husk doctor` reports.
+
+**Docker or Podman** gives you a kernel boundary instead of process guardrails. This is
+the one that matters if an agent will read anything you did not write. Start Docker
+Desktop, or install Podman and run `podman machine init`.
+
+**Ollama** gives you a model with no API key and no network egress:
+
+```bash
+ollama pull gemma3
+```
+
+That is roughly 3 GB, after which `husk run` works offline.
+
+**An API key** gives you a frontier model. Husk reads these from the environment and
+never writes them to `~/.husk`:
+
+```bash
+export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GOOGLE_API_KEY, GROQ_API_KEY, …
+```
+
+The full list of variables Husk reads is in [Model providers](/models).
+
+## What lands on disk
+
+All state lives under one directory so you can back it up in one move and delete it in
+one move. `$HUSK_HOME` overrides the location; otherwise it is `~/.husk`.
+
+```
+~/.husk/
+  config.json       global settings
+  .env              local overrides, never committed
+  husks/            registered husks, one directory each
+  computers/        computer metadata (not filesystems) + bindings.json
+  workspaces/       the actual working directories for the `local` provider
+  runs/             run results and event traces
+  transcripts/      imported transcripts, cached
+  data/             reserved
+  cache/            downloaded assets, snapshot tarballs
+  .oriented         the marker that stops the welcome block reprinting
+```
+
+Every directory is created with mode `0700`. Credentials are never written here — Husk
+reads keys from the environment and keeps them there.
+
+## Uninstall
+
+```bash
+husk rm --all --yes        # destroy every computer first
+npm uninstall -g @husk/cli
+rm -rf ~/.husk
+```
+
+Removing `~/.husk` resets Husk completely, including the one-time orientation block. It
+does not remove Docker containers created by a previous version of the CLI; `husk ps
+--all` lists them while the CLI is still installed.

@@ -1,0 +1,227 @@
+---
+title: Providers and what they actually guarantee
+navTitle: Providers
+description: Five backends, three kinds of boundary, and the honest limits of each one.
+order: 2
+---
+
+Five providers implement the same `Computer` interface. They do not offer the same
+protection, and the difference is a first-class value rather than a footnote:
+`Availability.isolated` is a field on the provider interface and `husk doctor` prints it.
+
+| Provider | Priority | Boundary | Cost | When it wins |
+| --- | --- | --- | --- | --- |
+| `docker` | 20 | kernel | free, local | The default when the daemon is up |
+| `podman` | 18 | kernel, rootless | free, local | Linux or macOS without a Docker daemon |
+| `ssh` | 16 | the remote machine | free if you own the box | A Pi, a VPS, an Oracle Always Free ARM instance |
+| `fly` | 14 | microVM | metered by the second | Bursty parallel work, no local resources |
+| `local` | 10 | **process guardrails only** | free, local | Nothing else is available |
+
+`auto` walks that order, highest priority first, and takes the first provider that
+answers. Real isolation beats guardrails, free beats metered, and `local` sits at the
+bottom as the floor that is always there.
+
+An explicitly named provider is never silently substituted:
+
+<Terminal>
+{`$ husk up boom --provider docker
+creating boom...
+error provider "docker" is not usable: docker is installed but the daemon is not reachable
+hint:  start Docker Desktop (or \`sudo systemctl start docker\`), then re-run \`husk doctor\``}
+</Terminal>
+
+Falling back to something with weaker isolation than you asked for is exactly the kind of
+surprise that turns into a security incident, so it is an error instead.
+
+## docker
+
+Kernel isolation through namespaces, cgroups and seccomp. Every container is created
+with the same hardening, and none of it is conditional on what the caller passed:
+
+```text
+--cap-drop ALL
+--security-opt no-new-privileges
+--pids-limit 512
+--read-only
+--tmpfs /tmp:rw,exec,nosuid,size=512m
+--tmpfs /run:rw,nosuid,size=16m
+--tmpfs /work:rw,exec,nosuid,size=<diskMb or 2048>m
+--cpus=<cpus or 2>
+--memory=<memoryMb or 2048>m
+--memory-swap=<memoryMb or 2048>m
+-u 1000:1000
+```
+
+`--memory-swap` matches `--memory` because without it the limit only delays the OOM: the
+container swaps first. `--pids-limit 512` means a fork bomb inside the machine hits its
+own ceiling rather than the host's. The root filesystem is read-only, so anything written
+outside `/work` and `/tmp` fails loudly instead of mutating an image layer that is about
+to vanish.
+
+With `persist: true`, `/work` becomes a named volume `husk-<id>` instead of a tmpfs.
+
+An injected model in this mode can wreck the container. It cannot reach your home
+directory, your SSH keys, your Docker socket, or your other containers.
+
+`husk doctor` distinguishes three failure states: the CLI is not on `PATH`, the socket
+refused this user, and the daemon is not reachable. They have different fixes.
+
+## podman
+
+The same container hardening through the same shared code path — `DockerProvider` and
+`PodmanProvider` both extend `OciProvider`, and the only thing each subclass supplies is
+its identity and its diagnostics.
+
+Rootless is the interesting difference, and Husk reports it rather than assuming it. When
+`podman info` says `Host.Security.Rootless` is false:
+
+```text
+✓ podman   isolated
+    podman is running as root -- containers get kernel isolation, but an escape lands on root
+    fix: run husk as an unprivileged user to get rootless containers
+```
+
+Running as root is still kernel isolation. It is not the isolation this provider
+advertises, so it is said out loud.
+
+## ssh
+
+A Linux box you already own, reached over `ssh`. Configure it with:
+
+```bash
+export HUSK_SSH_TARGET=user@host        # or user@host:2222
+export HUSK_SSH_KEY=~/.ssh/id_ed25519   # optional; the agent is used otherwise
+```
+
+Per-husk, the same values go in the husk.yaml under
+[`computer.labels`](/chat-to-bot/husk-yaml#computerlabels), and win over the
+environment:
+
+```yaml
+computer:
+  provider: ssh
+  labels:
+    husk.ssh: user@host:2222
+    husk.ssh.key: ~/.ssh/id_ed25519
+```
+
+The probe runs a real command and reports the remote `uname`:
+
+```text
+✓ ssh      isolated
+    ssh · user@host (Linux aarch64)
+    commands run as your user on that box -- isolated from this machine, not from itself
+```
+
+Read that reason carefully. `isolated: true` here means **isolated from the machine you
+are sitting at**. It does not mean the agent is contained on the remote box: it runs as
+your user there, with your user's reach. If the remote box has anything on it you care
+about, run Docker on the remote box rather than pointing `ssh` at it directly.
+
+## fly
+
+One Fly.io microVM per computer, created and destroyed through the Machines API. Real
+hardware-level isolation, metered by the second while it runs.
+
+```bash
+export FLY_API_TOKEN=$(fly auth token)   # FLY_ACCESS_TOKEN also accepted
+export HUSK_FLY_APP=husk                 # or FLY_APP_NAME
+export HUSK_FLY_REGION=lhr               # optional; or FLY_REGION
+```
+
+Run `fly apps create husk` first — the probe reports "a fly token is present but no app
+is configured" as a separate state from "no token", because they have different fixes.
+
+Per-husk, the app and region go in the husk.yaml under
+[`computer.labels`](/chat-to-bot/husk-yaml#computerlabels) as `husk.fly.app` and
+`husk.fly.region`. The token stays in the environment — a husk.yaml is a file people
+commit.
+
+This is the one provider that costs money. `husk doctor` says so in the hint rather than
+after the fact.
+
+## local
+
+**Not a sandbox.** A guarded working directory, and the only provider that is always
+available.
+
+`husk doctor` reports `isolated: false`, the CLI warns on first use, and the MCP server
+tells the model in its first tool result — a model that believes it is contained when it
+is not will take risks it otherwise would not.
+
+### What it does guarantee
+
+| Control | What it stops |
+| --- | --- |
+| Path jail | Every **filesystem-API** call resolves through `realpath` and is rejected if the target leaves the workspace, including through a symlink created inside it |
+| Environment scrub | Everything not on a small allow-list is dropped before the process starts, not only things that look like credentials |
+| Command policy | A short list of unrecoverable commands is refused |
+| Output caps | A runaway process cannot exhaust memory through captured output |
+| Process-tree kill | A timeout kills the whole process group, not just the shell |
+| Mount namespace (WSL2) | `/work` is bind-mounted per exec inside `unshare -mr`, so two computers cannot see each other's files |
+
+### What it does not stop
+
+The agent shares your kernel, your network and your user account. Specifically, and
+verifiably:
+
+<Terminal title="on the local provider, WSL2">
+{`$ husk exec scratch -- 'ls /etc | head -3'
+PackageKit
+X11
+adduser.conf
+
+$ husk exec scratch -- 'cat ../../../../../../etc/passwd | head -2'
+root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin`}
+</Terminal>
+
+<Warning>
+The path jail applies to the **filesystem API** — `read_file`, `write_file`, `list_dir`,
+`husk cp`, and the `Computer` methods behind them. It does **not** constrain what a
+shell command can reach. A command run through `shell` or `husk exec` sees the whole
+filesystem of the machine, or of the WSL distro, it is running in.
+
+`docs/SECURITY-MODEL.md` describes the path jail as covering "every filesystem call",
+which is true of the API and not of the shell. Assume the shell has your user's reach.
+</Warning>
+
+The jail does bite on the file APIs, and the error names the boundary:
+
+<Terminal>
+{`$ husk cp scratch:/etc/passwd ./passwd.txt
+copying scratch:/etc/passwd → ./passwd.txt...
+error path is outside the machine's writable area: /etc/passwd
+hint:  this computer exposes /work and /tmp; use a path under one of them`}
+</Terminal>
+
+### The shell it picks
+
+| Platform | Shell | Reported as |
+| --- | --- | --- |
+| Linux, macOS | `/bin/sh` on the host | `/bin/sh on the host` |
+| Windows with WSL | The first working WSL distro | `WSL2 (Ubuntu)` |
+| Windows without WSL | The Windows host shell | `Windows host shell (no WSL) -- commands are NOT Linux` |
+
+On Windows, WSL is preferred because a product that promises a Linux computer and hands
+back `cmd.exe` has not delivered one. Being listed is not the same as working: a distro
+can be registered and still fail while `wsl.exe` exits 0, so Husk trusts an echoed marker
+rather than the exit code. If WSL dies underneath a running process, the provider
+downgrades to the host shell and says so once rather than failing every subsequent
+create.
+
+Inside a WSL exec the agent is uid 0 of a user namespace created by `unshare -mr`, so
+`id -un` prints `root`. Files it creates are owned by your real user outside the
+namespace, and the bind mount disappears when the command exits. It is the same trick
+rootless containers use, and it is not a container.
+
+## Which one to use
+
+Use `local` for your own code on your own machine.
+
+Use `docker` or `podman` the moment an agent will read anything you did not write: a
+scraped page, a dependency, an issue body, a PDF. Guardrails handle accidents and
+confusion. Only isolation handles prompt injection, because an injected model is not
+making a mistake — it is following instructions competently, toward someone else's goal.
+
+[Security](/security) is the long version of that paragraph.

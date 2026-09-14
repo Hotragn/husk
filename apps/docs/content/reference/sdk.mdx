@@ -1,0 +1,203 @@
+---
+title: "@husk/sdk"
+navTitle: SDK
+description: "The typed client for the control plane: every endpoint husk serve exposes, with the types the server actually returns."
+order: 4
+---
+
+# `@husk/sdk`
+
+A dependency-free, typed client for the Husk control plane. It uses global
+`fetch`, takes its shared types from `@husk/core`, and speaks exactly the routes
+in [the HTTP API](/reference/api).
+
+```bash
+npm install @husk/sdk
+```
+
+```ts
+import { HuskClient } from '@husk/sdk';
+
+const husk = new HuskClient({ baseUrl: 'http://127.0.0.1:7377' });
+
+const computer = await husk.computers.create({ provider: 'local' });
+await husk.computers.writeFile(computer.id, '/work/hello.txt', 'hi from the sdk');
+const shown = await husk.computers.exec(computer.id, { cmd: 'cat /work/hello.txt' });
+console.log(shown.stdout.trim()); // hi from the sdk
+await husk.computers.destroy(computer.id);
+```
+
+Start the server first with `husk serve`.
+
+## The contract is tested, not asserted
+
+An SDK and a server can drift into two different products while both look
+healthy, because each one's tests mock the other. So `src/contract.test.ts`
+boots a **real** `@husk/server` on an ephemeral port, backs it with a **real**
+`ComputerManager` and `LocalProvider`, and drives every public method against
+it, asserting the status, body shape and decoded type of each.
+
+That test exists because this client once shipped speaking a specification the
+server never implemented: twelve of twenty methods returned `404`, and several
+more returned `200` with a body contradicting their declared type. Both sides'
+unit tests were green the whole time. Only the model provider and the agent are
+still doubles, because a real one needs an API key.
+
+## Configuration
+
+```ts
+new HuskClient({
+  baseUrl: 'http://127.0.0.1:7377',  // default
+  token: process.env.HUSK_TOKEN,     // required when the server sets HUSK_TOKEN
+  fetch: myFetch,                    // inject one; defaults to global fetch
+  timeoutMs: 30_000,
+});
+```
+
+Every method takes an optional trailing `{ signal }` and honours it — including
+the streaming ones, which abort the underlying request rather than merely
+stopping iteration.
+
+## Health and capability
+
+```ts
+await husk.health();   // { ok, version, uptimeSec }
+await husk.doctor();   // the DoctorReport that husk doctor prints
+```
+
+`doctor()` is the honest one: it reports each provider's availability, whether
+it is `isolated`, and why not when it is not.
+
+## Computers
+
+```ts
+husk.computers.list();
+husk.computers.create(spec);          // ComputerSpec -> ComputerInfo
+husk.computers.get(id);
+husk.computers.stop(id);
+husk.computers.start(id);
+husk.computers.destroy(id);
+
+husk.computers.exec(id, { cmd, cwd?, env?, timeoutSec?, stdin? });
+husk.computers.execStream(id, { cmd });   // AsyncIterable<ExecEvent>
+
+husk.computers.listDir(id, '/work');
+husk.computers.readFile(id, path);        // Uint8Array
+husk.computers.readTextFile(id, path);    // string
+husk.computers.writeFile(id, path, content);
+husk.computers.remove(id, path, { recursive: true });
+husk.computers.exposePort(id, 8000);
+```
+
+Streamed output carries its payload on **`data`**, not `text`:
+
+```ts
+for await (const event of husk.computers.execStream(id, { cmd: 'ls -la /work' })) {
+  if (event.type === 'stdout') process.stdout.write(event.data);
+  if (event.type === 'exit') console.log('exit', event.result.exitCode);
+}
+```
+
+The stream ends on the server's `event: done` frame, which is consumed rather
+than yielded — the loop above never sees a trailing empty object.
+
+## Husks and runs
+
+```ts
+husk.husks.list();
+husk.husks.get(name);                       // { spec, yaml }
+husk.husks.create({ yaml });                // or { spec }
+husk.husks.update(name, { spec });
+husk.husks.validate({ yaml });              // { ok, issues? }
+husk.husks.delete(name);
+
+husk.husks.run(name, { input: 'check the build' });
+husk.husks.runStream(name, { input });      // AsyncIterable<RunEvent>
+
+husk.runs.list({ husk, limit, cursor });
+husk.runs.get(runId);
+husk.runs.cancel(runId);
+husk.runs.delete(runId);
+```
+
+`validate` answers rather than throwing, so you can wire it straight to a form:
+
+```ts
+const { ok, issues } = await husk.husks.validate({ yaml });
+if (!ok) console.error(issues.join('\n'));
+```
+
+### Approvals
+
+When a husk runs with `approvalMode: 'ask'` and calls a dangerous tool, the run
+blocks and the stream emits `approval_required`:
+
+```ts
+for await (const event of husk.husks.runStream('triage', { input, approvalMode: 'ask' })) {
+  if (event.type === 'approval_required') {
+    await husk.approvals.answer(event.approvalId, { approve: false });
+  }
+}
+```
+
+`husk.approvals.list()` returns everything currently waiting. An unanswered
+approval is denied when it times out after 120 seconds.
+
+## Sessions
+
+```ts
+husk.sessions.discover({ source: 'claude-code' });
+husk.sessions.import({ path });
+husk.sessions.distill({ transcriptId, useModel: true });
+husk.sessions.distillStream({ transcriptId });   // progress events
+```
+
+## Models
+
+```ts
+husk.models.list();
+husk.models.chat({ model: 'sonnet', messages });
+husk.models.chatStream({ model, messages });     // AsyncIterable<StreamEvent>
+```
+
+## Events
+
+```ts
+const stream = husk.events({ topics: ['computers', 'runs'] });
+for await (const event of stream) console.log(event.type, event.payload);
+stream.close();
+```
+
+A websocket firehose of computer state changes, run lifecycle and reaper
+activity — the same feed the console renders.
+
+## Errors
+
+Every failure throws a `HuskError` carrying the server's own `code` and `hint`:
+
+```ts
+import { isHuskError } from '@husk/sdk';
+
+try {
+  await husk.computers.exec(id, { cmd: 'sudo rm -rf /' });
+} catch (err) {
+  if (isHuskError(err)) {
+    console.error(err.code);  // E_EXEC_DENIED
+    console.error(err.hint);  // what to change if the refusal was wrong
+  }
+}
+```
+
+Codes round-trip exactly, including the server-only ones (`E_HUSK_NOT_FOUND`,
+`E_RUN_NOT_FOUND`, `E_APPROVAL_NOT_FOUND`, `E_TRANSCRIPT_NOT_FOUND`,
+`E_ROUTE_NOT_FOUND`). An unrecognised code is surfaced as itself rather than
+coerced into a plausible neighbour — a mistake this client used to make, turning
+every `404` into `E_COMPUTER_NOT_FOUND`.
+
+## Not here
+
+One thing is deliberately absent rather than stubbed:
+
+- **A terminal client.** `WS /v1/computers/:id/terminal` exists, but it is one
+  command per socket rather than a persistent shell, because there is no native
+  pty module. Use `client.http.wsUrl(...)` if you want to drive it yourself.

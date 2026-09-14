@@ -1,0 +1,117 @@
+---
+title: What Husk is
+navTitle: What Husk is
+description: A local-first runtime that hands an agent a disposable Linux computer, and turns a chat transcript into a bot you can run.
+order: 1
+---
+
+Husk does two things.
+
+**It gives an AI agent a computer.** A small, disposable Linux machine the agent can
+drive: a shell, a filesystem, ports, snapshots. On Docker or Podman that machine is a
+hardened container. On the `local` provider it is a guarded working directory on your own
+machine, which is a different and weaker thing — [Providers](/computers/providers) says
+exactly how much weaker.
+
+**It turns a chat into a bot.** Point Husk at a Claude Code, ChatGPT, Cursor, Gemini or
+markdown transcript. It reconstructs the conversation as it actually ran, distils it into
+a `husk.yaml` you can read and diff, and then runs that file as an agent — from the CLI,
+over HTTP, on a cron schedule, or from a webhook.
+
+The bridge between the two is MCP. One line puts a Linux machine inside Claude Code:
+
+```bash
+claude mcp add husk -- npx -y @husk/mcp
+```
+
+There is no second step, no account, and no config file.
+
+## The shape of it
+
+```
+                       ┌──────────────────────────────────────────┐
+   Claude Code ───────▶│  @husk/mcp                         stdio │
+   Cursor, Zed         └────────────────────┬─────────────────────┘
+   any MCP client                           │
+                       ┌────────────────────▼─────────────────────┐
+   HTTP / cron ───────▶│  @husk/server     control plane + bots   │
+   webhook             └────────────────────┬─────────────────────┘
+                       ┌────────────────────▼─────────────────────┐
+   husk run ──────────▶│  @husk/agent      the tool-calling loop  │
+                       └───┬──────────────────────────┬───────────┘
+                           │                          │
+        ┌──────────────────▼──────┐      ┌────────────▼─────────────┐
+        │ @husk/runtime           │      │ @husk/models             │
+        │ docker podman local     │      │ anthropic openai google  │
+        │ ssh fly                 │      │ groq ollama openrouter … │
+        └─────────────────────────┘      └──────────────────────────┘
+                           │                          │
+                       ┌───▼──────────────────────────▼───────────┐
+                       │ @husk/core   contracts, spec, primitives │
+                       └──────────────────────────────────────────┘
+
+   @husk/sessions  transcript ──▶ husk.yaml
+```
+
+Dependencies run strictly downhill. `core` imports nothing else from the workspace, and
+nothing imports `cli`.
+
+<NotYet>
+`docs/ARCHITECTURE.md` describes `@husk/mcp` as speaking "stdio + streamable HTTP".
+The package imports one transport, `StdioServerTransport`, and exposes one connect
+method, `connectStdio()`. There is a `get server()` accessor for embedding the raw
+protocol server in an HTTP framework you supply, but no HTTP server ships in the
+package. Treat MCP as stdio-only today.
+</NotYet>
+
+## Why it is shaped this way
+
+Three constraints drove the structure, and knowing them makes the rest of these pages
+predictable.
+
+### The free path is the default path, not a degraded mode
+
+Most agent-sandbox products start at a hosted control plane and bolt on a local option
+later. That inverts the trust and cost story for the people most likely to try this:
+someone with no budget and a laptop.
+
+So the primitive is a local provider, the hosted providers are plugins behind the same
+interface, and there is no code path that requires an account. `ComputerManager`
+registers five providers and `local` sits at the bottom of the priority order as the
+floor that is always there.
+
+### Isolation varies by machine, so it is a value, not an assumption
+
+Docker gives you a kernel boundary. A guarded directory does not. Pretending otherwise is
+the kind of lie that ends up in an incident report.
+
+`Availability.isolated` is a field on the provider interface. `husk doctor` prints it.
+The MCP server states it in its first tool result. These docs repeat it on every page
+where it matters.
+
+### An agent must not know where it is running
+
+If the shell tool behaved differently on Docker than on SSH, every `husk.yaml` would
+become provider-specific and the abstraction would be worth nothing. So `Computer` is a
+narrow, complete interface and every translation lives inside the provider.
+
+## What Husk deliberately does not do
+
+- **No GPU orchestration.** Different product, different economics.
+- **No multi-tenant hosted control plane in v1.** The single-user local daemon is the
+  product.
+- **No native modules.** No `better-sqlite3`, no `node-pty`. One `npm install` failing on
+  a Windows machine without a C++ toolchain costs more users than SQLite saves. State is
+  JSON files under `~/.husk`.
+- **No telemetry.** Not off by default — absent. There is no analytics call, no crash
+  reporter, and no phone-home in the codebase.
+
+## Where to go next
+
+[Quickstart](/start/quickstart) gets you a running computer in about a minute with no
+account and no Docker. [`husk doctor`](/start/doctor) explains how to read the report
+that tells you which version of the product your machine can actually run.
+
+If you are about to let an agent read something you did not write — a scraped page, a
+dependency, an issue body — read [Security](/security) first. It is the page that says
+what the `local` provider does not protect you from.

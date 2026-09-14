@@ -1,0 +1,330 @@
+---
+title: FAQ
+description: The questions people ask before they install, and the ones they ask an hour later.
+order: 1
+---
+
+## Getting started
+
+### Is it actually free?
+
+Yes, with no asterisk on the computer side. `husk up` and `husk exec` need no account,
+no key and no daemon — the `local` provider is always available.
+
+Running an *agent* needs a model, and there the honest answer is: free if you run one
+locally (Ollama, LM Studio), free-ish on the hosted tiers with a free allowance
+(Google Gemini Flash, Groq, Cerebras, OpenRouter's `:free` models), and metered
+otherwise. `husk doctor` tells you which of those you have.
+
+### Do I need Docker?
+
+No, and you should want it. Without Docker you get the `local` provider, which is
+[guardrails and not a sandbox](/security/isolation#local). That is fine for your own
+code on your own machine and not fine the moment an agent reads something you did not
+write.
+
+### Do I need an API key?
+
+Not for computers. For agents, yes — one of eleven providers, or a local model.
+[Providers](/models/providers) lists the environment variable for each.
+
+### Does it send anything anywhere?
+
+No. There is no telemetry, no analytics and no crash reporter — absent from the
+codebase, not disabled by a flag. The only outbound requests are to the model provider
+you configured, and to a container registry when a flavor's image is not already
+pulled.
+
+### Does it work on Windows?
+
+Yes, and it prefers WSL. There are no native modules anywhere in the tree — that is a
+build-contract rule, so `npm install` is clean on a Windows machine with no C++
+toolchain.
+
+With WSL, the `local` provider gives you a real Linux shell. Without it, commands run
+in the Windows host shell and Husk says so loudly, because a product that promises a
+Linux computer and hands back `cmd.exe` has not delivered one.
+
+### What does it write to my disk?
+
+One directory, `~/.husk` (or `$HUSK_HOME`), mode `0700`:
+
+```text
+config.json  husks/  computers/  workspaces/  runs/  transcripts/  data/  cache/
+```
+
+Delete it in one move. No keys are stored there; keys are read from the environment on
+every invocation.
+
+---
+
+## Computers
+
+### What is a "computer", exactly?
+
+A small, disposable Linux machine with an id, a provider, a state, a `/work`
+filesystem, and a narrow set of operations: exec, files, ports, stop, start, destroy,
+and optionally snapshot. [Concepts](/computers) is the interface.
+
+### How isolated is it, really?
+
+Depends entirely on the provider, which is why `isolated` is a field rather than a
+footnote:
+
+| Provider | Boundary |
+| --- | --- |
+| `docker`, `podman`, `fly` | kernel — namespaces, cgroups, dropped capabilities |
+| `ssh` | a different machine, but the agent has your user's reach *on that machine* |
+| `local` | process guardrails only. **Not a sandbox** |
+
+[Isolation](/security/isolation) is specific about each.
+
+### Why did it pick `local` when I have Docker?
+
+The daemon is not running. `husk doctor` will say
+`docker is installed but the daemon is not reachable`. Husk falls back when you did not
+name a provider, and errors when you did — because falling back to weaker isolation
+than you asked for is exactly the surprise that turns into an incident.
+
+### Can an agent escape the `local` provider?
+
+Yes, trivially, through the shell. The path jail covers the filesystem **API**, not
+shell commands, so `husk exec box -- cat /etc/passwd` works. That is documented rather
+than hidden. Use a container provider for anything untrusted.
+
+### Why is my container never destroyed?
+
+`reap()` is not implemented on the container providers. `idleTimeoutSec` has no effect
+on Docker and Podman machines; they stay up until `husk rm`.
+[Lifetimes](/computers/lifetimes) and a workaround in
+[Self-hosting](/guides/self-hosting#the-reaper).
+
+### Can I keep the filesystem between runs?
+
+```yaml
+computer:
+  persist: true
+```
+
+On the container providers `/work` becomes a named volume instead of a tmpfs. On
+`local` and `ssh` the directory is retained rather than removed.
+
+### Can two husks share one machine?
+
+Yes, if you say so explicitly. By default they do not: `ComputerManager.ensure(key,
+spec)` maps a stable key to a machine and the agent's key is `husk:<name>`, so two husks
+are two keys and therefore two machines -- which is usually what you want, since one
+husk's `rm -rf` should not be another's problem.
+
+To share one deliberately, pass `computerId` in the run body and both runs land on that
+machine. See [running a husk](/reference/api#running-a-husk).
+
+---
+
+## Models
+
+### Which model should I use?
+
+`auto` until you have a reason not to. It takes the best reachable model, preferring
+quality then cost.
+
+If cost is the constraint: `free` prefers zero-cost models, and `maxCostUsd: 0` in the
+husk file makes falling back to a paid one impossible.
+
+If privacy is the constraint: `local` never leaves Ollama or LM Studio.
+
+### Are the prices in `husk models` real?
+
+Some are. Prices flagged `estimatedPricing` are conservative guesses derived from the
+previous generation of the same tier, deliberately erring high so a budget guard
+refuses early. `husk models --json | jq '.[] | select(.estimatedPricing) | .id'` lists
+them. [Which prices are real](/models/cost#which-prices-are-real).
+
+### Why did my run cost more than `maxCostUsd`?
+
+The ceiling is checked against an *estimate* before each call, using a character
+heuristic rather than a tokeniser. When the actual cost lands over the ceiling Husk
+says so:
+
+```text
+warn  anthropic/claude-sonnet-5 cost $0.6120, over the $0.5000 ceiling; the estimate was low
+```
+
+Treat `maxCostUsd` as a circuit breaker, not an accounting control. Also check you did
+not pass `--max-cost` a non-number — it is
+[not validated](/reference/cli#husk-run) and `NaN` disables the ceiling silently.
+
+### Why is `fallbackModels` being ignored?
+
+Because you are using `husk run`, which pins one model up front and has no candidate
+list. The control-plane path (`POST /v1/husks/:name/run`) builds a real `ModelRouter`
+and does use it. [Details](/models#fallback).
+
+### Can I use a self-hosted or proxied endpoint?
+
+Yes, through a base-URL override: `OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`,
+`GOOGLE_BASE_URL`, `OLLAMA_HOST`, `LMSTUDIO_HOST`. Anything speaking
+`/v1/chat/completions` works through the OpenAI provider.
+
+### Is a 7B model good enough to drive a computer?
+
+Sometimes, and not the way you expect. It will emit two dependent tool calls in the
+same turn, so a read races a write and fails. It recovers, and it takes three steps and
+a minute to do what a frontier model does in one step and four seconds. There is a
+complete unedited transcript on [Local models](/models/local#what-a-7b-model-can-actually-do-as-an-agent).
+
+---
+
+## Agents and husk.yaml
+
+### What is a husk?
+
+An agent in one file: model, persona, knowledge, tools, the machine it gets, its limits
+and its guardrails. Portable, diffable, reviewable, and the only thing the runtime needs
+to bring a bot up. [The schema](/reference/husk-yaml).
+
+### What is the smallest valid file?
+
+```yaml
+name: my-bot
+```
+
+`name` is the only required field.
+
+### `husk distill` produced something bad. Is that expected?
+
+Sometimes, and it tells you. The heuristic path's confidence is capped at 0.75 by
+construction, and below 0.5 Husk warns you to read the persona before shipping. It also
+lists what it could not determine:
+
+```text
+THE DISTILLER COULD NOT DETERMINE
+  · No recurring standing instructions found. The persona is topic-only.
+  · Heuristic distillation: no model was used. Review the persona before shipping.
+```
+
+Distillation is a draft. The generated file says so in its own header.
+
+### Why is my distilled husk named after a file path?
+
+The distiller slugs the transcript's title, and transcript titles are usually a path.
+Rename it — `husk distill --name support-bot`, or edit the file.
+
+### Does `--model` change the bot's model?
+
+No. `husk distill --model` selects the model that does the *distilling*. The written
+spec's `model:` comes from the transcript's metadata when Husk recognises it, and is
+`auto` otherwise. Set it yourself.
+
+### Can I set the container's user or labels from `husk.yaml`?
+
+No. `ComputerConfigSchema` has no `user` or `labels` field, even though `ComputerSpec`
+does. Those are reachable only through `POST /v1/computers`.
+[Details](/reference/husk-yaml#computer).
+
+---
+
+## Security
+
+### What is the actual threat?
+
+Your own agent doing something irreversible — by accident, by confusion, or because it
+read a web page that told it to. Guardrails handle the first two. Only isolation
+handles the third. [The threat model](/security).
+
+### Does `network.mode: egress` stop `curl`?
+
+No. `egress` is enforced in the `fetch_url` and `http_request` tools, where the
+hostname is known. A shell command that opens a socket is not filtered on any provider.
+`none` on a container is kernel-enforced; `full` is an admission that there is no
+boundary. [Network](/security/network#where-each-mode-is-enforced).
+
+### Can an agent reach the cloud metadata service?
+
+Not through the tools. `169.254.169.254` and the rest of loopback, link-local and
+RFC1918 are refused **even in `mode: full`**, unless you name them in `allow`. Through
+a shell command, yes — the shell is not filtered. [The floor](/security/network#the-floor).
+
+### Will my API key end up in a container?
+
+No. The environment a command runs with is rebuilt from a small allow-list, so
+`ANTHROPIC_API_KEY` and everything else is dropped rather than forwarded. To pass one
+deliberately, put it in `computer.env` where a reviewer can see it.
+[Secrets](/security/secrets).
+
+### Will a secret reach the model?
+
+Every tool result passes through `redact()` first — nine credential formats plus PEM
+private keys. It is a pattern list, so a format it does not know gets through. And note
+that the live `tool_delta` stream and the persisted `runs/` events are **not**
+redacted; only what the model reads is. [Details](/security/secrets#redaction).
+
+### What does `approvalMode: ask` do with no human present?
+
+Denies. Absent means no — otherwise `ask` is a comment rather than a control, and a
+headless server quietly behaves as though it were in `auto`.
+[Approvals](/security/approvals#ask-fails-closed).
+
+---
+
+## MCP, the server, the SDK
+
+### What is the fastest way to give Claude Code a computer?
+
+```bash
+claude mcp add husk -- npx -y @husk/mcp
+```
+
+No account, no config file, and nothing is created until the model calls a tool.
+[MCP](/mcp).
+
+### Does the MCP server speak HTTP?
+
+No. Stdio only, despite what `docs/ARCHITECTURE.md` says. There is an accessor that
+hands you the raw protocol server if you want to attach your own transport, but no HTTP
+server ships in the package. [Details](/mcp#transports).
+
+### Does `husk serve` support multiple users?
+
+No. One process is one user's control plane: one token, one `HUSK_HOME`, one set of
+husks. There are no accounts and no authorization beyond "has the token or does not".
+Run one process per person.
+
+### Why does `@husk/sdk` 404?
+
+Because in 0.1.0 the SDK targets a different API than the server serves. Twelve of its
+twenty methods hit routes that do not exist, and several more return a body that does
+not match their declared type. The eight that work, and the workaround, are on
+[SDK](/reference/sdk).
+
+### Do the Discord, Slack and Telegram triggers work?
+
+The adapters do. The triggers do not — `TriggerHost.sync()` has branches for `http`,
+`webhook` and `cron` only, and `@husk/server` never imports `@husk/adapters`. About 40
+lines of glue connects them, and [the Discord guide](/guides/discord-bot#step-6-the-glue)
+is that glue, tested.
+
+---
+
+## The project
+
+### Why are the docs so keen to tell me what does not work?
+
+Because the alternative is worse in both directions. Documenting something as working
+sends you into a wall; quietly omitting it leaves you wondering why a flag in `--help`
+does nothing. Anything specified but not implemented gets a **Not yet** note naming the
+gap.
+
+### What is deliberately out of scope?
+
+- **GPU orchestration.** Different product, different economics.
+- **A multi-tenant hosted control plane.** The single-user local daemon is the product.
+- **Native modules.** No `better-sqlite3`, no `node-pty`. One failed `npm install` on a
+  Windows machine costs more users than SQLite saves.
+- **Telemetry.** Not off by default — absent.
+
+### Where do I report a bug?
+
+The repository's issue tracker, with `husk version`, `husk doctor --json`, and the
+failing command re-run with `--debug`. For a security problem, open a private advisory
+instead of a public issue.

@@ -1,0 +1,226 @@
+---
+title: The distiller
+description: How a transcript becomes a husk.yaml, what the heuristic path can and cannot see, and why the confidence number is capped at 0.75.
+order: 2
+---
+
+```bash
+husk distill ./chat.md --no-model
+husk distill tr_01hxyz --out support-bot.yaml
+```
+
+<Terminal title="husk distill">
+{`$ husk distill tr_01hxyz --no-model --out support-bot.yaml
+✓ wrote support-bot.yaml
+
+EXTRACTED
+  name         support-triage-bot
+  tools        files
+  confidence   ███░░░░░░░ 30%`}
+</Terminal>
+
+| Flag | What it does |
+| --- | --- |
+| `--model <m>` | Model to distil with. Default `auto` |
+| `--no-model` | Force the free heuristic path even when a model is configured |
+| `--out <file>` | Where to write. Default `husk.yaml` |
+| `--name <n>` | Override the generated husk name |
+| `--force` | Overwrite an existing file |
+| `--json` | Print the distillation result |
+
+## Two modes
+
+```
+transcript ──▶ importer ──▶ Transcript ──▶ distiller ──▶ DistilledAgent ──▶ husk.yaml
+```
+
+The heuristic mode has to be good, because it is the mode that runs with no API key.
+The model-backed mode does the same job better and falls back to the heuristic rather
+than failing.
+
+Both produce a `DistilledAgent`:
+
+```ts
+interface DistilledAgent {
+  name: string;
+  description: string;
+  persona: string;
+  knowledge: Array<{ title: string; content: string; source?: string }>;
+  examples: Array<{ user: string; assistant: string }>;
+  suggestedTools: string[];
+  suggestedModel?: string;
+  needsComputer: boolean;
+  confidence: number;   // 0..1
+  notes: string[];      // what it could not determine
+}
+```
+
+## The heuristic path
+
+Synchronous, free, offline. Four miners run over the transcript.
+
+### Which turns count as yours
+
+Claude Code marks a real human prompt with `promptSource`. When any message carries it,
+those messages *are* the human turns and no text heuristics run at all.
+
+For every other source, Husk filters synthetic user messages out by pattern: injected
+`<command-name>` and `<system-reminder>` blocks, `Caveat: The messages below…`,
+`[Request interrupted`, `[Image: original NxN`, `Base directory for this skill:`,
+`This session is being continued…`, and `Please continue the conversation…`.
+
+Those are not things you typed. Mining a persona from them produces a bot that talks
+like a tool harness.
+
+### Rules become the persona
+
+Each human turn is split into sentences, stripped of code fences and markdown chrome,
+and scored against a directive table:
+
+| Weight | Signal |
+| --- | --- |
+| 4 | Identity — "you are…" |
+| 3 | "from now on", "always", "never" |
+| 2 | "do not", "make sure" |
+| 1–2 | Style instructions |
+| 1 | "use", "prefer" |
+
+A sentence needs weight ≥ 2 to survive. Survivors are deduplicated on a normalised key,
+keeping the shortest phrasing, then ranked by `weight × (1 + log₂(occurrences))` — a rule
+you repeated four times beats one you said once. Corrections are skipped.
+
+The persona is the identity line, a blank, then `How you work:` with one bullet per
+remaining rule. When the transcript used a computer, Husk appends:
+
+```text
+You have a Linux computer. Run commands to check things rather than guessing,
+and show the command you ran when the result matters.
+```
+
+### Knowledge is durable fact
+
+A human turn qualifies as knowledge when it is at least 180 characters, is not a
+correction, is not a short question, and carries at least one fact signal: a code fence,
+a URL, an absolute path, a bullet list, or a `key: value` line. Content is clamped to
+1600 characters and the title is the first line, trimmed to 72 characters on a word
+boundary.
+
+### Examples are exchanges you did not correct
+
+A human turn is paired with the first substantial assistant reply after it — **unless
+the next human turn is a correction**, which is the signal that the reply was wrong.
+Candidates are ranked by reply length, then re-sorted chronologically and sampled evenly
+across the conversation, so the examples are not all from the first five minutes.
+
+### Tools come from observed use
+
+Every `toolName` in the transcript, plus `meta.tools` and `meta.sidechainTools`, mapped
+onto the `computer`, `files` and `web` bundles. Orchestration tools that do not port to a
+husk — `Task`, `TodoWrite`, `ExitPlanMode`, `Thinking` and their kin — are dropped, and
+their presence is reported as a note.
+
+### The confidence number
+
+```text
+confidence = 0.75 × min(1,
+    0.35 × min(rules, 6) / 6
+  + 0.30 × min(examples, 4) / 4
+  + 0.15 × min(knowledge, 3) / 3
+  + 0.10 × (any tools ? 1 : 0)
+  + 0.10 × min(assistantMessages, 20) / 20)
+```
+
+**The heuristic path can never report more than 0.75.** That ceiling is deliberate:
+pattern-matching sentences is a decent first pass, not a reading of the conversation, and
+the number should say so.
+
+### The notes
+
+Whatever it could not determine, in plain sentences:
+
+- `No explicit "you are..." instruction found; the persona opens with the topic instead.`
+- `No recurring standing instructions found. The persona is topic-only.`
+- `No durable user-supplied facts found worth carrying as knowledge.`
+- `No uncorrected user/assistant exchange was clean enough to use as an example.`
+- `No tool use observed; the bot is configured without tools.`
+- `Orchestration tools (Task, TodoWrite, ...) were observed but are not portable to a husk.`
+- `Heuristic distillation: no model was used. Review the persona before shipping.` — always.
+
+They land in the spec under `metadata.distillerNotes`, so they survive into the file and
+a reviewer sees them.
+
+## The model-backed path
+
+A map/reduce over the transcript. Nothing is truncated.
+
+1. The heuristic runs first, as the baseline to fall back to.
+2. The transcript is split into windows of about 12,000 tokens with a 2-message overlap
+   at each boundary.
+3. Each window is extracted concurrently — three at a time — at `temperature: 0` with a
+   JSON response format, and validated against a schema.
+4. One reduce call merges the candidates, also schema-validated.
+
+Model mode can report a confidence up to 1.0.
+
+### Three fallbacks, not one
+
+| Where it fails | What happens |
+| --- | --- |
+| One window | A note like `Slice 3/7: model JSON did not validate.` That window contributes nothing |
+| Every window | The heuristic result, plus `Model distillation produced nothing usable; fell back to heuristics.` |
+| The reduce call | A deterministic local merge: rules unioned and ranked by occurrence, capped at 12, confidence capped at `min(0.7, heuristic + 0.1)`, plus `Model reduce pass failed; candidates were merged deterministically.` |
+
+`distillWithModel` never throws. Every path ends in a `DistilledAgent`.
+
+### The transcript wins on tools
+
+The merge takes the union of observed tools **first**, then adds anything the model
+suggested that is not on the ignore list. The transcript is ground truth about which
+tools were used; the model only adds to it.
+
+## The output
+
+`toSpec` turns a `DistilledAgent` into a validated `HuskSpec`. The name is slugged to at
+most 64 characters and falls back to `husk-bot` if nothing survives; the description is
+clamped to 280; `computer.enabled` follows `needsComputer`; the confidence and the notes
+go into `metadata`; and provenance goes into `origin`.
+
+The file is optimised for review, not for machines:
+
+```yaml
+# Support Triage -- a husk.
+# Generated by @husk/sessions. Edit freely; this file is the whole bot.
+# Distilled from: /home/me/chat.jsonl
+# Messages read: 941
+# Imported: 2026-09-09T00:00:00.000Z
+apiVersion: husk/v1
+name: support-triage
+displayName: Support Triage
+version: 0.1.0
+description: Classifies inbound support messages.
+model: auto
+persona: |
+  You triage inbound support messages.
+  ...
+```
+
+Deliberate key order — identity, then behaviour, then capability, then policy. Literal
+block scalars for anything with a newline, so a persona is diffable line by line. No YAML
+anchors or aliases. Lines are never folded.
+
+```bash
+husk validate support-bot.yaml
+```
+
+<Note>
+`toSpec` stamps `origin.importedAt` with the current time, so distilling the same
+transcript twice produces two files that differ by one line. Worth knowing if you
+regenerate one in CI and diff it.
+</Note>
+
+## Read it before you ship it
+
+The distiller writes a starting point. The confidence number and the notes exist so you
+know how much of one — and the file is designed to be edited, which is why the
+[husk.yaml reference](/chat-to-bot/husk-yaml) documents every field rather than treating
+the file as generated output.

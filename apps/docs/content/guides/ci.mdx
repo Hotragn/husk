@@ -1,0 +1,332 @@
+---
+title: Husk in GitHub Actions
+navTitle: CI
+description: Give a job a disposable Linux computer, or run a husk against a pull request — with the exit codes, the isolation choice, and the secrets handling that CI needs.
+order: 4
+---
+
+CI is the environment Husk was designed for even though it was designed for laptops:
+no TTY, no interactivity, exit codes that mean something, and a hard requirement that
+the free path works.
+
+Two things you might want:
+
+1. **A computer for a job** — a disposable Linux machine to build or test in, driven
+   from a workflow step.
+2. **An agent on a pull request** — a husk that reads the diff or the failing log and
+   comments.
+
+Both are below. Everything here runs on `ubuntu-latest`, and the first one needs no
+API key at all.
+
+## What CI changes
+
+| | |
+| --- | --- |
+| No TTY | `husk rm` and `husk init` need `--yes`. `--approve ask` refuses to start |
+| Colour | Off automatically when piped; `NO_COLOR` also honoured |
+| Exit codes | `0` ok, `1` error, `2` usage, `130` interrupted. `husk exec` passes the child's code through |
+| stdout vs stderr | `husk run` puts the answer on **stdout** and everything else on stderr |
+| Docker | Preinstalled on `ubuntu-latest`, so you get kernel isolation for free |
+| Telemetry | None. Nothing leaves the runner except calls to the model provider you configure |
+
+## A computer for a job
+
+```yaml title=".github/workflows/husk-computer.yml"
+name: husk computer
+on: [push]
+
+jobs:
+  build-in-a-box:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+
+      - run: npm install -g @husk/cli
+
+      # Read this in the log before anything else fails mysteriously.
+      - name: what can this runner do
+        run: husk doctor
+
+      - name: create a machine
+        run: husk up ci --provider docker --flavor node --network full
+
+      - name: use it
+        run: |
+          husk cp ./ ci:/work/repo
+          husk exec ci --cwd /work/repo -- npm ci
+          husk exec ci --cwd /work/repo -- npm test
+
+      - name: get the artifact back
+        run: husk cp ci:/work/repo/coverage ./coverage
+
+      - name: always clean up
+        if: always()
+        run: husk rm ci --yes
+```
+
+`husk exec` exits with the command's own exit code, so a failing `npm test` fails the
+step. That is the whole reason it does not wrap the code.
+
+### Choosing the provider
+
+`--provider docker` on a GitHub-hosted runner gives you real kernel isolation, which is
+what you want for anything touching a fork's code:
+
+```text
+✓ docker   isolated
+    Kernel-level isolation via Docker
+    via 24.0.7
+```
+
+`--provider local` also works and needs nothing, which is why the Husk repo's own CI
+uses it for the smoke test — it proves the free path is genuinely free. On a runner the
+distinction matters less than on a laptop, because the runner is disposable anyway.
+
+<Note>
+The first `husk up --provider docker` pulls an image. Husk tries
+`ghcr.io/husk-sh/husk-<flavor>:0.1.0` first and falls back to the public base
+(`debian:bookworm-slim`, `python:3.12-slim`, `node:22-slim`, `debian:bookworm`) when
+that is not available. On a fallback image you lose the `huskinfo` script; the
+container still runs as uid 1000, because `-u 1000:1000` is passed regardless.
+
+Add a `docker pull` warm-up step, or accept ~20 s on the first `exec`.
+</Note>
+
+### Keeping state off the runner's home directory
+
+```yaml
+env:
+  HUSK_HOME: ${{ github.workspace }}/.husk
+```
+
+Everything Husk writes — machine records, workspaces, run events — then lands inside
+the workspace, where `actions/cache` can see it and where nothing survives the job.
+
+<Warning>
+Do not cache `HUSK_HOME` between runs. `runs/` holds unredacted tool output and
+`transcripts/` holds raw conversations. See
+[Secrets](/security/secrets#redaction).
+</Warning>
+
+## An agent on a pull request
+
+```yaml title=".github/workflows/husk-review.yml"
+name: husk review
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+
+      - run: npm install -g @husk/cli
+
+      - name: the diff
+        run: git diff --unified=3 "origin/${{ github.base_ref }}...HEAD" > /tmp/diff.patch
+
+      - name: review it
+        id: review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          husk run .github/husk/reviewer.yaml \
+            --model sonnet \
+            --max-steps 6 \
+            --max-cost 0.20 \
+            --approve readonly \
+            "$(cat /tmp/diff.patch)" > /tmp/review.md
+
+      - name: comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment "${{ github.event.number }}" --body-file /tmp/review.md
+```
+
+```yaml title=".github/husk/reviewer.yaml"
+apiVersion: husk/v1
+name: pr-reviewer
+description: Reviews a diff and names the one thing most likely to be wrong.
+
+model: sonnet
+fallbackModels: [flash]
+
+persona: |-
+  You review a unified diff from a TypeScript monorepo.
+
+  Name the single change most likely to be a bug, quote the line, and say why.
+  If nothing is wrong, reply with exactly: LGTM.
+
+  No summary of the diff. The author wrote it; they know what is in it.
+
+tools: []                 # a reviewer reads the prompt, not the filesystem
+
+computer:
+  enabled: false          # so no machine is ever created
+
+limits:
+  maxSteps: 4
+  maxCostUsd: 0.20
+  maxTokens: 120000
+  timeoutSec: 180
+
+guardrails:
+  approvalMode: readonly
+```
+
+Three deliberate choices in that file.
+
+**`tools: []` and `computer.enabled: false`.** A reviewer that only reads its prompt
+cannot be prompt-injected into running a command, because it has no command to run.
+This is the strongest control available and it costs one line.
+
+**`approvalMode: readonly`.** Belt and braces: even if a tool were added later, nothing
+`dangerous` can run. `ask` would be wrong here — it
+[fails closed](/security/approvals#ask-fails-closed) with no approver, which means it
+fails, loudly, on every run.
+
+**`maxCostUsd: 0.20`.** Checked *before* each model call. A pathological 12,000-line
+diff stops rather than billing.
+
+### Reading the answer
+
+`husk run` streams the model's text to **stdout** and every step, tool call and warning
+to **stderr**, so a plain redirect captures the answer and nothing else. For a
+structured result:
+
+```bash
+husk run reviewer.yaml "$(cat /tmp/diff.patch)" --json > /tmp/result.json
+jq -r '.text'       /tmp/result.json
+jq -r '.stopReason' /tmp/result.json    # complete | step_limit | budget | timeout | …
+jq -r '.usage.costUsd' /tmp/result.json
+```
+
+Fail the job when the run was cut short rather than when it merely disagreed with you:
+
+```bash
+STOP=$(jq -r .stopReason /tmp/result.json)
+[ "$STOP" = complete ] || { echo "::warning::husk stopped early: $STOP"; }
+```
+
+## Secrets
+
+Model keys go in repository secrets and reach Husk through `env:` on the step that
+needs them:
+
+```yaml
+env:
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+They stay on the runner. Husk's [environment scrub](/security/secrets#the-environment-scrub)
+rebuilds a command's environment from a small allow-list, so a key in the runner's
+environment does **not** reach a command running inside a computer. Pass one in
+deliberately if a build genuinely needs it:
+
+```yaml
+computer:
+  env:
+    NPM_TOKEN: ${NPM_TOKEN}
+```
+
+<Danger>
+`pull_request_target` runs with the base repository's secrets and a writable token,
+against a fork's code. Combining it with an agent that can run commands hands a
+stranger your secrets. Use plain `pull_request`, which has no secrets on a fork PR, and
+keep the reviewer husk tool-less as above.
+</Danger>
+
+## The free path, in CI
+
+No key, no Docker, no account. This is close to the Husk repository's own smoke job,
+which exists so that a regression in the free path fails the build:
+
+```yaml
+      - name: doctor reports honestly with nothing configured
+        run: husk doctor --json | jq '.selection, .warnings'
+
+      - name: a local computer works with no Docker and no API key
+        run: |
+          set -euo pipefail
+          husk up ci-smoke --provider local
+          husk exec ci-smoke -- 'echo hello from husk > /work/a.txt'
+          test "$(husk exec ci-smoke -- 'cat /work/a.txt')" = 'hello from husk'
+          husk ps
+          husk rm ci-smoke --yes
+
+      - name: the command policy refuses what it promises to refuse
+        run: |
+          if husk up deny-check --provider local &&
+             husk exec deny-check -- 'sudo rm -rf /'; then
+            echo "deny list did not fire" >&2; exit 1
+          fi
+          husk rm deny-check --yes
+
+      - name: shipped husks validate
+        run: for f in .github/husk/*.yaml; do husk validate "$f"; done
+```
+
+`husk validate` in CI is the cheapest possible guard against a `husk.yaml` that stopped
+parsing. It exits 1 and lists every problem at once.
+
+## Caching
+
+There is nothing Husk-specific to cache. The two costs are the npm install and the
+image pull:
+
+```yaml
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }   # caches the npm download cache
+```
+
+Docker layer caching between jobs is the usual `docker/setup-buildx-action` story and
+is unrelated to Husk.
+
+## Other CI systems
+
+Nothing here is GitHub-specific. Husk is a Node CLI with no daemon and no account.
+
+```yaml title="GitLab CI"
+husk:
+  image: node:22
+  script:
+    - npm install -g @husk/cli
+    - husk doctor
+    - husk up ci --provider local
+    - husk exec ci -- npm test
+    - husk rm ci --yes
+```
+
+Inside a container without a Docker socket, `--provider docker` is unavailable and
+`local` is the floor that is always there — which is the whole point of it being the
+floor. Read `husk doctor` in the log rather than assuming.
+
+## Troubleshooting
+
+**`refusing to destroy N computers without confirmation on a non-interactive stdin`** —
+add `--yes` to `husk rm`.
+
+**`--approve ask needs a terminal to ask on`** — use `auto` or `readonly`.
+
+**`no model provider is reachable`** — the secret is not on that step. `env:` is
+per-step unless you set it at the job or workflow level.
+
+**`provider "docker" is not usable`** — you are inside a container without a Docker
+socket. Use `--provider local`, or mount the socket, understanding that mounting the
+host's Docker socket into a job is equivalent to giving that job root on the host.
+
+**A step hangs.** `husk exec` defaults to a 120-second timeout and kills the whole
+process group; a run defaults to 300 seconds. Neither should hang. If one does, it is
+before either timer — most likely an image pull. Add `--debug`.
