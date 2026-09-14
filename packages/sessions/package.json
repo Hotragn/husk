@@ -3,6 +3,17 @@
   "version": "0.1.1",
   "description": "Transcript importers and the distiller that turns a chat into a husk.yaml.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hotragn/husk.git",
+    "directory": "packages/sessions"
+  },
+  "homepage": "https://github.com/Hotragn/husk/tree/main/packages/sessions#readme",
+  "bugs": "https://github.com/Hotragn/husk/issues",
+  "keywords": ["husk", "ai-agent", "chat-import", "distiller", "chatgpt", "claude"],
+  "engines": {
+    "node": ">=20.10"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

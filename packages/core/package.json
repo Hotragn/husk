@@ -3,6 +3,17 @@
   "version": "0.1.1",
   "description": "Shared contracts, types and primitives for Husk.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hotragn/husk.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/Hotragn/husk/tree/main/packages/core#readme",
+  "bugs": "https://github.com/Hotragn/husk/issues",
+  "keywords": ["husk", "ai-agent", "typescript", "contracts", "schema"],
+  "engines": {
+    "node": ">=20.10"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

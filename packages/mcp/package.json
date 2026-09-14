@@ -3,6 +3,13 @@
   "version": "0.1.1",
   "description": "Give any MCP client a Linux computer.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hotragn/husk.git",
+    "directory": "packages/mcp"
+  },
+  "homepage": "https://github.com/Hotragn/husk/tree/main/packages/mcp#readme",
+  "bugs": "https://github.com/Hotragn/husk/issues",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -30,11 +37,8 @@
   "bin": {
     "husk-mcp": "./dist/bin.js"
   },
-  "keywords": [
-    "mcp",
-    "model-context-protocol",
-    "claude",
-    "sandbox",
-    "agent"
-  ]
+  "keywords": ["husk", "ai-agent", "mcp", "model-context-protocol", "claude-code"],
+  "engines": {
+    "node": ">=20.10"
+  }
 }
