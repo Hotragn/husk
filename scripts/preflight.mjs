@@ -139,10 +139,10 @@ try {
   const { stdout } = await run('npm', ['whoami']);
   ok(`authenticated as ${stdout.trim()}`);
   try {
-    await run('npm', ['access', 'list', 'packages', '@husk']);
-    ok('the @husk scope is reachable with these credentials');
+    await run('npm', ['access', 'list', 'packages', '@husk-ai']);
+    ok('the @husk-ai scope is reachable with these credentials');
   } catch {
-    warn('cannot read the @husk scope -- create the org, or check the token has write access to it');
+    warn('cannot read the @husk-ai scope -- create the org, or check the token has write access to it');
   }
 } catch {
   warn('not logged in (`npm login`), so scope access could not be checked');

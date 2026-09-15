@@ -7,7 +7,7 @@
 
 /** Matches apps/docs/src/lib/site.ts and packages/core/src/config.ts. */
 export const SITE_URL = "https://husk.sh";
-export const REPO_URL = "https://github.com/husk-sh/husk";
+export const REPO_URL = "https://github.com/Hotragn/husk";
 export const DOCS_URL = `${REPO_URL}#readme`;
 export const LICENCE = "Apache-2.0";
 

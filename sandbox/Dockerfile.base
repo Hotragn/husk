@@ -8,7 +8,7 @@ FROM debian:bookworm-slim
 ARG HUSK_VERSION=0.1.0
 LABEL org.opencontainers.image.title="husk-base" \
       org.opencontainers.image.description="A disposable Linux computer for AI agents." \
-      org.opencontainers.image.source="https://github.com/husk-sh/husk" \
+      org.opencontainers.image.source="https://github.com/Hotragn/husk" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${HUSK_VERSION}" \
       husk.flavor="base"

@@ -270,7 +270,7 @@ one for all three is the most common version of this mistake.
   content, so nothing reflows on arrival. Skeletons are `--color-raised`
   rectangles. They do **not** shimmer — see §7.
 - **Over ~2s: a real status line**, in monospace, saying what is happening.
-  `Pulling ghcr.io/husk/base:0.1.0 — 42 MB of 118 MB`. Husk almost always knows
+  `Pulling debian:bookworm-slim — 42 MB of 118 MB`. Husk almost always knows
   what it is waiting for, and naming it is worth more than any animation.
 - **Streaming**: render tokens as they arrive, keep the scroll pinned to the
   bottom only while the user is already at the bottom, and always show a stop

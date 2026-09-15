@@ -3,12 +3,16 @@
 #
 #   ./build.sh                 build all flavors locally
 #   ./build.sh base python     build a subset
-#   PUSH=1 ./build.sh          build multi-arch and push to the registry
+#   HUSK_REGISTRY=ghcr.io/you PUSH=1 ./build.sh   multi-arch, pushed to a registry
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-REGISTRY="${HUSK_REGISTRY:-ghcr.io/husk-sh}"
+# No default registry. husk ships no images of its own -- every flavor resolves
+# to a public upstream image -- so these Dockerfiles exist for the one case that
+# wants something else: an air-gapped site, or somewhere that mirrors every
+# image it runs. Building locally needs no namespace; pushing needs yours.
+REGISTRY="${HUSK_REGISTRY:-}"
 VERSION="${HUSK_VERSION:-0.1.0}"
 PLATFORMS="${HUSK_PLATFORMS:-linux/amd64,linux/arm64}"
 PUSH="${PUSH:-0}"
@@ -22,9 +26,17 @@ if ! docker version >/dev/null 2>&1; then
     exit 1
 fi
 
+if [[ "${PUSH:-0}" == "1" && -z "$REGISTRY" ]]; then
+    echo "PUSH=1 needs HUSK_REGISTRY set -- there is nowhere to push to" >&2
+    exit 1
+fi
+
+# `ghcr.io/you/husk-base:0.1.0` when pushing, plain `husk-base:0.1.0` locally.
+prefix="${REGISTRY:+${REGISTRY}/}"
+
 for flavor in "${TARGETS[@]}"; do
-    tag="${REGISTRY}/husk-${flavor}:${VERSION}"
-    latest="${REGISTRY}/husk-${flavor}:latest"
+    tag="${prefix}husk-${flavor}:${VERSION}"
+    latest="${prefix}husk-${flavor}:latest"
     echo "==> ${tag}"
 
     if [[ "$PUSH" == "1" ]]; then
@@ -41,8 +53,8 @@ for flavor in "${TARGETS[@]}"; do
             --build-arg "HUSK_VERSION=${VERSION}" \
             --tag "$tag" --tag "$latest" \
             --file "Dockerfile.${flavor}" .
-        # Later flavors resolve `FROM ghcr.io/husk-sh/husk-base:$VERSION` against the
-        # local daemon, so the tag above is exactly what they need.
+        # Later flavors default to `FROM husk-base:$VERSION`, which resolves
+        # against the local daemon -- exactly the tag written above.
     fi
 done
 
