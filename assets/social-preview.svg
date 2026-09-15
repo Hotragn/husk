@@ -1,10 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-labelledby="husk-social-title">
   <title id="husk-social-title">Husk — give your agent a computer</title>
-  <defs>
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&amp;display=swap');
-    </style>
-  </defs>
+  <!-- No webfont import: this file should render identically offline, and a
+       project whose README says telemetry is absent should not make its own
+       social card fetch from Google. The font stacks below fall back to system
+       faces that are present everywhere. -->
 
   <!-- Background: dark theme bg -->
   <rect width="1280" height="640" fill="#0f0b07"/>
@@ -28,7 +27,7 @@
   <!-- Command -->
   <rect x="340" y="475" width="600" height="48" rx="5" fill="#1b1611" stroke="#36312a" stroke-width="1"/>
   <text x="360" y="506" fill="#9e9992" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="18">$</text>
-  <text x="385" y="506" fill="#42d0cf" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="18">claude mcp add husk -- npx -y @husk/mcp</text>
+  <text x="385" y="506" fill="#42d0cf" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="18">claude mcp add husk -- npx -y @husk-ai/mcp</text>
 
   <!-- Footer -->
   <text x="640" y="580" text-anchor="middle" fill="#655f58" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="18">Apache-2.0 · github.com/Hotragn/husk</text>
