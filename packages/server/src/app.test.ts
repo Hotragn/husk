@@ -1,3 +1,4 @@
+import { HUSK_VERSION } from '@husk-ai/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildTestApp, fakeAgentFactory, sampleSpec } from './testing.js';
 import type { TestApp } from './testing.js';
@@ -16,7 +17,7 @@ describe('health and doctor', () => {
   it('answers /health without auth', async () => {
     const res = await harness.app.inject({ method: 'GET', url: '/health' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ ok: true, version: '0.1.0' });
+    expect(res.json()).toMatchObject({ ok: true, version: HUSK_VERSION });
     expect(res.json().uptimeSec).toBeTypeOf('number');
   });
 
@@ -24,7 +25,7 @@ describe('health and doctor', () => {
     const res = await harness.app.inject({ method: 'GET', url: '/v1/doctor' });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.version).toBe('0.1.0');
+    expect(body.version).toBe(HUSK_VERSION);
     expect(body.node).toBe(process.version);
     expect(body.providers[0]).toMatchObject({ name: 'local', available: true, isolated: false });
     expect(body.selection.provider).toBe('local');
@@ -34,7 +35,7 @@ describe('health and doctor', () => {
 
   it('stamps the version header on every response', async () => {
     const res = await harness.app.inject({ method: 'GET', url: '/health' });
-    expect(res.headers['x-husk-version']).toBe('0.1.0');
+    expect(res.headers['x-husk-version']).toBe(HUSK_VERSION);
   });
 });
 

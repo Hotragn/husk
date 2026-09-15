@@ -13,4 +13,4 @@ export const REPO_EDIT_BASE = `${REPO_URL}/edit/main/apps/docs/content`;
 export const LICENCE = 'Apache-2.0';
 
 /** The version the docs describe. Matches the version field in every workspace package. */
-export const HUSK_VERSION = '0.1.0';
+export const HUSK_VERSION = '0.1.1';

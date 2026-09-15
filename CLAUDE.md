@@ -11,6 +11,9 @@ npm run typecheck   # all workspaces
 npm test            # all workspaces (vitest)
 ```
 
+`apps/docs` and `apps/web` are outside the workspace — own lockfiles, `cd` in and
+`npm install` on demand. A root `npm install` covers `packages/*` and `apps/console` only.
+
 Single package:
 
 ```bash
@@ -31,4 +34,5 @@ Dependencies flow downhill: `core` <- `runtime`/`models`/`sessions` <- `browser`
 - Errors use `HuskError` with a code and a `hint` naming the fix.
 - The `local` provider is guardrails only, not a sandbox. Never claim isolation that isn't provided.
 - `GUEST_ROOT = '/work'` is the canonical guest working directory (defined in `packages/runtime/src/policy.ts`).
-- Root `overrides` in package.json pins React to 19.2.8 and Zod to 3.25.76.
+- Root `overrides` in package.json pins React to 19.2.8 and Zod to 3.25.76. The two
+  out-of-workspace sites pin React themselves, exactly, since the override cannot reach them.

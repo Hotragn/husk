@@ -9,7 +9,7 @@
 
 import { HuskError, redact, type HuskErrorCode } from '@husk-ai/core';
 
-export const HUSK_UA = 'husk/0.1.0 (+https://github.com/Hotragn/husk)';
+export const HUSK_UA = 'husk/0.1.1 (+https://github.com/Hotragn/husk)';
 
 export interface ErrorContext {
   provider: string;

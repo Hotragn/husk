@@ -4,18 +4,23 @@
   "version": "0.1.1",
   "description": "Husk \u2014 give your agent a computer.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hotragn/husk.git"
+  },
   "engines": {
     "node": ">=20.10"
   },
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/console"
   ],
   "scripts": {
     "build": "npm run build -w @husk-ai/core -w @husk-ai/runtime -w @husk-ai/models -w @husk-ai/sessions -w @husk-ai/browser -w @husk-ai/agent -w @husk-ai/adapters -w @husk-ai/mcp -w @husk-ai/server -w @husk-ai/sdk -w @husk-ai/cli",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "build:packages": "npm run build -w @husk-ai/core -w @husk-ai/runtime -w @husk-ai/models -w @husk-ai/sessions -w @husk-ai/browser -w @husk-ai/agent -w @husk-ai/adapters -w @husk-ai/mcp -w @husk-ai/server -w @husk-ai/sdk -w @husk-ai/cli",
+    "drift": "node scripts/drift-check.mjs",
     "preflight": "node scripts/preflight.mjs",
     "clean": "node scripts/clean.mjs"
   },

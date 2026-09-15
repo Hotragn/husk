@@ -33,6 +33,27 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  drift:
+    name: duplicated facts still agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: node scripts/drift-check.mjs
+
+  drift-sites:
+    name: the sites agree too (advisory)
+    runs-on: ubuntu-latest
+    # The sites are outside the npm workspace. A typo in one must not gate a
+    # runtime fix, so this reports without blocking.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: node scripts/drift-check.mjs --sites
+
   secrets:
     name: no credentials in the tree or the history
     runs-on: ubuntu-latest

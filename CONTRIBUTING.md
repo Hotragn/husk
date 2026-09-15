@@ -12,6 +12,18 @@ node packages/cli/dist/bin.js doctor
 Node ≥ 20.10. Nothing else is required — no Docker, no API key. If any of those four
 commands needs something you do not have, that is a bug worth reporting on its own.
 
+The two websites sit outside the npm workspace on purpose. `apps/docs` and `apps/web`
+each carry their own lockfile and install on demand:
+
+```bash
+cd apps/web && npm install && npm run dev
+```
+
+Neither shares code with the packages and CI builds neither, so fixing a bug in the
+product never downloads Next, three.js or Tailwind — 628 fewer resolved packages in the
+default install. `apps/console` stays in the workspace: it imports `@husk-ai/core`,
+`@husk-ai/sdk` and `@husk-ai/browser`, and `husk serve` serves its build.
+
 ## How the pieces fit
 
 Before changing anything, know where it sits. Every box below maps to a real package:
