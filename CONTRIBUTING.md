@@ -78,6 +78,19 @@ Every test must pass with **no Docker, no API key, no network**. The suite runs 
 laptop and in CI with nothing installed; if your test needs a daemon, it is testing the
 daemon.
 
+A test that probes the real machine is the exception and must opt in, gated on
+`HUSK_INTEGRATION=1` so the default suite never waits on an external binary:
+
+```bash
+HUSK_INTEGRATION=1 npx vitest run packages/cli   # includes the live doctor probe
+```
+
+That gate exists because `doctor` shells out to docker, podman and wsl. The smoke test
+that asserted only the *shape* of its report took 890 seconds on a loaded machine and
+then failed, having asserted nothing about Docker. Inject the prober and hand the test a
+fake; a test whose result depends on how fast an external binary answers is not testing
+what its name says.
+
 ```bash
 npx vitest run                       # everything
 npx vitest run packages/runtime      # one package

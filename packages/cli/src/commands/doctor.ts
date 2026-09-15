@@ -81,9 +81,57 @@ const DECLARED_MODEL_PROVIDERS: Array<{ id: string; displayName: string; envKey?
   { id: 'lmstudio', displayName: 'LM Studio', envKey: ENV_KEYS.lmstudioHost },
 ];
 
-export async function collect(force = false): Promise<DoctorReport> {
+/**
+ * Everything doctor learns from outside this process.
+ *
+ * `status()` shells out to docker, podman and wsl; `isAvailable()` opens
+ * sockets. Doing that is the whole point of the command, and it is also why a
+ * test of how doctor *formats* a report must not do it: the smoke test that
+ * asserted only the report's shape took 890 seconds and then failed on a loaded
+ * machine, having asserted nothing whatsoever about Docker.
+ *
+ * So the probes are injected, the way the server's doctor route already takes
+ * its dependencies through `ctx.deps`. Production passes `liveProbes`; a test
+ * passes fakes and finishes in milliseconds.
+ */
+export interface DoctorProbes {
+  /** The slice of `ComputerManager.status()` this command reads. */
+  providerStatus(force: boolean): Promise<
+    Array<{
+      name: unknown;
+      description: string;
+      priority: number;
+      available: boolean;
+      isolated?: boolean | null;
+      isolationKind?: 'kernel' | 'machine' | 'guardrails';
+      version?: string;
+      reason?: string;
+      hint?: string;
+    }>
+  >;
+  modelProviders(): Promise<ModelProvider[]>;
+  orphanedWorkspaces(): Promise<string[]>;
+}
+
+/** The real thing. Imports stay dynamic so `husk --help` does not pay for them. */
+export const liveProbes: DoctorProbes = {
+  async providerStatus(force) {
+    const { ComputerManager } = await import('@husk-ai/runtime');
+    return new ComputerManager().status(force);
+  },
+  async modelProviders() {
+    const mod = await import('@husk-ai/models');
+    return mod.defaultProviders();
+  },
+  orphanedWorkspaces: () => findOrphanedWorkspaces(),
+};
+
+export async function collect(force = false, probes: DoctorProbes = liveProbes): Promise<DoctorReport> {
   const firstRun = !existsSync(huskHome());
-  const [providers, models] = await Promise.all([collectProviders(force), collectModels()]);
+  const [providers, models] = await Promise.all([
+    collectProviders(force, probes),
+    collectModels(probes),
+  ]);
 
   const chosen = providers.find((p) => p.available);
   const chosenModel = models.find((m) => m.available && m.models.length > 0);
@@ -125,7 +173,7 @@ export async function collect(force = false): Promise<DoctorReport> {
   // ever mention it: the computer is already gone from `husk ps`, so without
   // this the workspace is invisible and permanent. A provisioned Chromium is
   // 325 MB apiece.
-  const orphans = await findOrphanedWorkspaces().catch(() => [] as string[]);
+  const orphans = await probes.orphanedWorkspaces().catch(() => [] as string[]);
   if (orphans.length > 0) {
     warnings.push(
       `${orphans.length} workspace${orphans.length === 1 ? '' : 's'} under ${paths().workspaces} ` +
@@ -157,9 +205,8 @@ export async function collect(force = false): Promise<DoctorReport> {
   };
 }
 
-async function collectProviders(force: boolean): Promise<ProviderRow[]> {
-  const { ComputerManager } = await import('@husk-ai/runtime');
-  const status = await new ComputerManager().status(force);
+async function collectProviders(force: boolean, probes: DoctorProbes): Promise<ProviderRow[]> {
+  const status = await probes.providerStatus(force);
   return status.map((s) => ({
     name: String(s.name),
     description: s.description,
@@ -173,12 +220,11 @@ async function collectProviders(force: boolean): Promise<ProviderRow[]> {
   }));
 }
 
-async function collectModels(): Promise<ModelRow[]> {
-  const mod = await import('@husk-ai/models');
+async function collectModels(probes: DoctorProbes): Promise<ModelRow[]> {
   // Ask the package what it implements. A hardcoded list here once reported six
   // working providers as "not implemented" for a whole release.
   const built = new Map<string, ModelProvider>();
-  for (const p of mod.defaultProviders()) built.set(p.id, p);
+  for (const p of await probes.modelProviders()) built.set(p.id, p);
 
   const rows: ModelRow[] = [];
   for (const declared of DECLARED_MODEL_PROVIDERS) {
