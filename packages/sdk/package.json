@@ -1,6 +1,6 @@
 {
   "name": "@husk-ai/sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Typed, dependency-free client for the Husk control plane.",
   "license": "Apache-2.0",
   "repository": {
@@ -33,6 +33,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@husk-ai/core": "0.1.1"
+    "@husk-ai/core": "0.1.2"
   }
 }

@@ -1,7 +1,7 @@
 {
   "name": "@husk-ai/console",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,9 +12,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@husk-ai/browser": "0.1.1",
-    "@husk-ai/core": "0.1.1",
-    "@husk-ai/sdk": "0.1.1",
+    "@husk-ai/browser": "0.1.2",
+    "@husk-ai/core": "0.1.2",
+    "@husk-ai/sdk": "0.1.2",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "react": "19.2.8",

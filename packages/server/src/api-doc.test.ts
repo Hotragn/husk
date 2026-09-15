@@ -135,7 +135,7 @@ describe('docs/API.md', () => {
   });
 
   it('shows a DoctorReport example whose priorities are the real ones', () => {
-    const start = markdown.indexOf('{\n  "version": "0.1.0"');
+    const start = markdown.indexOf('{\n  "version": "0.1.2"');
     expect(start).toBeGreaterThan(-1);
     const example = JSON.parse(markdown.slice(start, markdown.indexOf('\n}\n', start) + 2)) as {
       providers: Array<{ name: string; priority: number; description: string; isolationKind?: string }>;
@@ -157,7 +157,7 @@ describe('docs/API.md', () => {
   });
 
   it('shows isolationKind, which the server returns and the example used to omit', () => {
-    const start = markdown.indexOf('{\n  "version": "0.1.0"');
+    const start = markdown.indexOf('{\n  "version": "0.1.2"');
     const example = JSON.parse(markdown.slice(start, markdown.indexOf('\n}\n', start) + 2)) as {
       providers: Array<{ name: string; isolationKind?: string }>;
     };

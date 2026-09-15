@@ -1,6 +1,6 @@
 {
   "name": "@husk-ai/agent",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "The Husk tool-calling loop and its built-in tools.",
   "license": "Apache-2.0",
   "repository": {
@@ -32,7 +32,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@husk-ai/browser": "0.1.1",
-    "@husk-ai/core": "0.1.1"
+    "@husk-ai/browser": "0.1.2",
+    "@husk-ai/core": "0.1.2"
   }
 }
