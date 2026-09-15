@@ -68,11 +68,13 @@ Never import from another package's `src/` — always the package name.
 - **No native modules.** No `better-sqlite3`, no `node-pty`, no anything needing a
   C++ toolchain. Windows users must get a clean `npm install`. Persist state as JSON
   files under `paths()` from `@husk-ai/core`.
-- Each package: `package.json` (name, version 0.1.0, license Apache-2.0, type module,
-  main/types/exports pointing at `dist`, `files: ["dist"]`, scripts `build`,
-  `typecheck`, `test`), `tsconfig.json` extending `../../tsconfig.base.json` with
-  `outDir: dist`, `rootDir: src`, and `src/index.ts` as the only public surface.
-- Workspace deps use `"@husk-ai/core": "0.1.0"` — npm workspaces links them.
+- Each package: `package.json` (name, the same version as the root manifest, license
+  Apache-2.0, type module, main/types/exports pointing at `dist`, `files: ["dist"]`,
+  scripts `build`, `typecheck`, `test`), `tsconfig.json` extending
+  `../../tsconfig.base.json` with `outDir: dist`, `rootDir: src`, and `src/index.ts`
+  as the only public surface.
+- Workspace deps pin that exact version, never a range and never `workspace:*` — npm
+  workspaces links them.
 - `strict` is on, and so is `noUncheckedIndexedAccess`. Index access yields `T |
   undefined`; handle it, do not blanket-assert.
 - Comments explain *why*. No comment restates the line below it. No section banners.
