@@ -87,6 +87,10 @@ the best place to land a first contribution.
 
 ## Before you open a PR
 
+**Branch off `main`, and target `main`.** It is the only base for pull requests.
+`dev` is the pre-launch development history, kept for the record and tagged
+`history/pre-launch`; it shares no ancestor with `main` and nothing merges into it.
+
 ```bash
 npm run build:packages && npm run typecheck && npm test
 ```
@@ -143,6 +147,24 @@ throw when the key is missing.
 
 Present tense, explain the why in the body when it is not obvious. No emoji, no
 Conventional Commits ceremony.
+
+**Say what changed for the person affected, not which files moved.** A reader
+scanning `git log` is asking "does this touch me?" -- a subject naming the symptom
+answers that, and one naming the module does not. Be specific enough that the
+subject is useless for any other commit: a number, a symptom, a count. If the
+subject cannot carry the reason, the body does.
+
+Worked examples, all real:
+
+    Stop losing 325 MB every time a destroy fails quietly
+    Name what holds the port, and stop four tests flaking under load
+    docs: stop claiming a streamable HTTP transport that does not exist
+
+Not `Update CHANGELOG`, not `chore: various fixes`, not `fix: bug in runtime`.
+One concern per commit.
+
+The fullest sample of the style is `git log history/pre-launch` -- the 19 pre-launch
+commits, which `main`'s squashed history does not preserve.
 
 ## Reference
 
