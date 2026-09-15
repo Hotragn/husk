@@ -23,7 +23,12 @@ Free to start. Runs on your hardware. No account required.
 > [!NOTE]
 > Husk is in **early alpha** — everything works, things are moving fast, and your feedback shapes what comes next. [Jump in](https://github.com/Hotragn/husk/discussions).
 
-> **See how it fits together** — open the [interactive architecture diagram](docs/diagrams/01-hero.html) locally. Pan, zoom, dark/light mode, PNG/SVG export, no server needed.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/png/01-hero.dark.png">
+  <img alt="A chat client talks to @husk-ai/mcp over stdio, which asks @husk-ai/runtime for a computer holding /work, a shell and Chromium" src="docs/diagrams/png/01-hero.light.png">
+</picture>
+
+<sub>[Open interactively](docs/diagrams/01-hero.html) — pan, zoom, trace relationships · [SVG](docs/diagrams/svg/01-hero.light.svg) · [all 16 diagrams](docs/diagrams/)</sub>
 
 ## Quick start
 
@@ -67,7 +72,16 @@ computer:
 limits: { maxSteps: 24, maxCostUsd: 0.25 }
 ```
 
-> **[How the distiller works](docs/diagrams/04-chat-to-bot.html)** — interactive sequence diagram.
+Here is what happens between the transcript and the YAML:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/png/04-chat-to-bot.dark.png">
+  <img alt="Sequence: transcript to importer to distiller, optionally via the model router, then redaction, husk.yaml and husk run" src="docs/diagrams/png/04-chat-to-bot.light.png">
+</picture>
+
+Importers normalise Claude Code JSONL, ChatGPT, Cursor, Gemini and markdown into one `Transcript` — branched threads are rebuilt by walking `parentUuid` back from the last leaf. The heuristic distiller runs with no API key, and the model-backed mode falls back to it rather than failing. Secrets are stripped before the file is written, not after.
+
+<sub>[Open interactively](docs/diagrams/04-chat-to-bot.html) · [SVG](docs/diagrams/svg/04-chat-to-bot.light.svg)</sub>
 
 ## Why Husk
 
@@ -98,6 +112,17 @@ Bring whatever you have. Aliases resolve across providers so the same husk runs 
 
 This is the part most tools are vague about, so here it is plainly.
 
+### How a provider gets picked
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/png/03-provider-ladder.dark.png">
+  <img alt="Providers probed in priority order: docker 20, podman 18, ssh 16, fly 14, then local 10 as the floor" src="docs/diagrams/png/03-provider-ladder.light.png">
+</picture>
+
+`auto` walks the ladder and takes the highest rung available. Every rung is free except `fly`, which is metered. An explicit `--provider` that is unavailable is an error — never a silent downgrade to something with weaker isolation.
+
+### What each one actually gives you
+
 | Provider | Isolation | Cost | Notes |
 | --- | --- | --- | --- |
 | `docker` | Kernel namespaces, cgroups, seccomp, read-only root | Free | Default when daemon is up |
@@ -108,8 +133,19 @@ This is the part most tools are vague about, so here it is plainly.
 | `fly` | microVM | Metered | Bursty parallel work |
 
 > **The `local` provider is not a sandbox.** It stops accidents, not adversaries. `husk doctor` reports `isolated: false` for it. See [SECURITY.md](SECURITY.md) for the full model.
->
-> **[Trust-boundary diagram](docs/diagrams/05-trust-boundaries.html)** — interactive view of what is isolated and what is not.
+
+### What crosses which line
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/png/05-trust-boundaries.dark.png">
+  <img alt="A tool call passes the path jail, command policy and env scrub into the computer; results pass redact() and the audit log" src="docs/diagrams/png/05-trust-boundaries.light.png">
+</picture>
+
+These hold in **every** mode including `local`: path jail, command deny list, environment scrub, output caps, process-tree kill, `redact()` on every result, `audited()` on every MCP call. What `local` does *not* give you is a kernel boundary — it shares your kernel, your network and your user account.
+
+`169.254.169.254` is blocked even in `network.mode: full`, because `full` means the internet, not the cloud metadata service that hands IAM credentials to anything that asks.
+
+<sub>[Open interactively](docs/diagrams/05-trust-boundaries.html) · [SVG](docs/diagrams/svg/05-trust-boundaries.light.svg)</sub>
 
 ## Install
 
@@ -140,7 +176,14 @@ apps/
   web          marketing site (Next.js + Three.js)
 ```
 
-> **[Full system architecture](docs/diagrams/02-system-architecture.html)** — interactive diagram showing how every package connects.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/png/02-system-architecture.dark.png">
+  <img alt="The husk monorepo: four entry points over an orchestration layer over runtime, models, browser and sessions, all on @husk-ai/core" src="docs/diagrams/png/02-system-architecture.light.png">
+</picture>
+
+Dependencies run downhill. All ten packages import `@husk-ai/core`; core imports nothing from the workspace; nothing imports `@husk-ai/cli`. The dashed edges are dynamic imports rather than package dependencies — `cli → server`, `cli → mcp`, `server → agent` — so the server starts without the agent built.
+
+<sub>[Open interactively](docs/diagrams/02-system-architecture.html) · [SVG](docs/diagrams/svg/02-system-architecture.light.svg)</sub>
 
 ## Documentation
 
