@@ -33,7 +33,7 @@ export default function NotFound() {
             <ul className="rule-list">
               <li>
                 <span className="rl-term">
-                  <Link href="/">husk.sh</Link>
+                  <Link href="/">husk</Link>
                 </span>
                 <span className="rl-desc">
                   what Husk is, in one screen and one command

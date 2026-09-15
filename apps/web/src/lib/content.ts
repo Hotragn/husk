@@ -5,9 +5,14 @@
  * claim the product cannot make. See BRAND.md §5.
  */
 
-/** Matches apps/docs/src/lib/site.ts and packages/core/src/config.ts. */
-export const SITE_URL = "https://husk.sh";
-export const REPO_URL = "https://github.com/husk-sh/husk";
+/**
+ * Set NEXT_PUBLIC_SITE_URL at deploy time. It feeds metadataBase, robots.txt and
+ * sitemap.xml, so a wrong value here tells search engines someone else owns this
+ * site. The localhost default is right for `next dev` and wrong nowhere else,
+ * because nothing is deployed yet.
+ */
+export const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+export const REPO_URL = "https://github.com/Hotragn/husk";
 export const DOCS_URL = `${REPO_URL}#readme`;
 export const LICENCE = "Apache-2.0";
 

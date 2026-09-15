@@ -8,7 +8,7 @@ export const SITE_NAME = 'Husk docs';
 export const SITE_DESCRIPTION =
   'Husk gives any AI agent a disposable Linux computer, and turns any chat into a bot. Runs free on your machine. No account, no telemetry.';
 
-export const REPO_URL = 'https://github.com/husk-sh/husk';
+export const REPO_URL = 'https://github.com/Hotragn/husk';
 export const REPO_EDIT_BASE = `${REPO_URL}/edit/main/apps/docs/content`;
 export const LICENCE = 'Apache-2.0';
 

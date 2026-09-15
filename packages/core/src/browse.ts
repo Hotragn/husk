@@ -74,7 +74,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 opener = urllib.request.build_opener(*([] if follow else [NoRedirect]))
 req = urllib.request.Request(url, headers={
-    "User-Agent": "husk-browser/0.1 (+https://husk.sh)",
+    "User-Agent": "husk-browser/0.1 (+https://github.com/Hotragn/husk)",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
     "Accept-Language": "en",
 })
@@ -227,7 +227,7 @@ async function browseWithCurl(
     '-m',
     String(opts.timeoutSec),
     '-A',
-    'husk-browser/0.1 (+https://husk.sh)',
+    'husk-browser/0.1 (+https://github.com/Hotragn/husk)',
     '-w',
     '\\nHUSK_META %{http_code} %{content_type} %{url_effective}',
     parsed.toString(),

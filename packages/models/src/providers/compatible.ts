@@ -32,7 +32,7 @@ export const COMPATIBLE_CONFIGS = {
     discover: true,
     // OpenRouter attributes traffic by these two headers and shows the title on its
     // activity page; without them a Husk user's calls are filed as anonymous.
-    headers: { 'http-referer': 'https://husk.sh', 'x-title': 'Husk', 'user-agent': HUSK_UA },
+    headers: { 'http-referer': 'https://github.com/Hotragn/husk', 'x-title': 'Husk', 'user-agent': HUSK_UA },
     freeSuffix: ':free',
     hint: 'Set OPENROUTER_API_KEY — openrouter.ai lists several `:free` models.',
   },

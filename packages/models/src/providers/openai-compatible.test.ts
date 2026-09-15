@@ -257,7 +257,7 @@ describe('the thin configurations', () => {
       model: 'deepseek/deepseek-chat',
       messages: [{ role: 'user', content: 'hi' }],
     });
-    expect(calls[0]?.headers['http-referer']).toBe('https://husk.sh');
+    expect(calls[0]?.headers['http-referer']).toBe('https://github.com/Hotragn/husk');
     expect(calls[0]?.headers['x-title']).toBe('Husk');
 
     const { fetch: groqFetch, calls: groqCalls } = recordingFetch(() =>
