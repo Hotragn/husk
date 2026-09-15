@@ -15,6 +15,7 @@ export * from './config.js';
 export * from './spec.js';
 export * from './net.js';
 export * from './browse.js';
+export * from './computer-info.js';
 
 
 export type {

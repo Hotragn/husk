@@ -1,5 +1,5 @@
 import type { Computer } from '@husk-ai/core';
-import { HuskError, clampText, formatBytes, redact } from '@husk-ai/core';
+import { HuskError, PROBE_COMPUTER_INFO, clampText, formatBytes, redact } from '@husk-ai/core';
 import { browseInComputer } from '@husk-ai/core';
 import { BROWSER_TOOLS, BROWSER_TOOL_NAMES, callBrowserTool } from './browser-tools.js';
 import { workspaceNote } from './workspace.js';
@@ -289,17 +289,11 @@ async function exposePort(computer: Computer, args: Record<string, unknown>): Pr
 }
 
 async function computerInfo(computer: Computer): Promise<ToolResult> {
-  // huskinfo exists in our images; everywhere else, assemble the same facts.
+  // huskinfo exists in the sandbox/ images; everywhere else, probe for the same
+  // fields. Shared with the agent's copy so that one tool name cannot report two
+  // different sets of facts depending on how the caller got here.
   const r = await computer.exec({
-    cmd:
-      'command -v huskinfo >/dev/null 2>&1 && huskinfo || { ' +
-      'echo "os        $(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || uname -s)"; ' +
-      'echo "kernel    $(uname -r)"; echo "arch      $(uname -m)"; ' +
-      'echo "user      $(id -un) (uid $(id -u))"; echo "workdir   $(pwd)"; ' +
-      'echo "cpus      $(nproc 2>/dev/null || echo ?)"; ' +
-      'echo "disk      $(df -h /work 2>/dev/null | awk \'NR==2 {print $4}\') free on /work"; ' +
-      'printf "tools     "; for t in git curl jq rg python3 node go cargo make gcc; do ' +
-      'command -v $t >/dev/null 2>&1 && printf "%s " $t; done; echo; }',
+    cmd: `command -v huskinfo >/dev/null 2>&1 && huskinfo || { ${PROBE_COMPUTER_INFO}; }`,
     timeoutSec: 20,
   });
 

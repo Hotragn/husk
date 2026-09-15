@@ -1,4 +1,4 @@
-import { HuskError } from '@husk-ai/core';
+import { HuskError, PROBE_COMPUTER_INFO } from '@husk-ai/core';
 import { assertCommandAllowed } from '../guard.js';
 import { defineTool } from '../types.js';
 import type { AgentTool } from '../types.js';
@@ -104,19 +104,11 @@ export const expose_port = defineTool<
   },
 });
 
-const FALLBACK_INFO = [
-  'uname -a',
-  'echo "cpus: $(nproc 2>/dev/null || echo unknown)"',
-  'echo "memory:"; (free -h 2>/dev/null || echo unknown)',
-  'echo "disk:"; df -h / 2>/dev/null | tail -n +1',
-  'echo "cwd: $(pwd)"',
-].join('; ');
-
 export const computer_info = defineTool<Record<string, never>, { source: 'huskinfo' | 'probe'; text: string }>({
   name: 'computer_info',
   description:
-    'Describe the computer: kernel, CPU count, memory, disk and working directory. ' +
-    'Call this once before assuming what is installed.',
+    'Describe the computer: os, kernel, arch, user, CPU count, memory, disk, working directory ' +
+    'and which of the common tools are installed. Call this once before assuming what is installed.',
   needsComputer: true,
   parameters: object({}),
   async handler(_input, ctx) {
@@ -130,7 +122,7 @@ export const computer_info = defineTool<Record<string, never>, { source: 'huskin
     const hasHuskinfo = probe.exitCode === 0 && probe.stdout.trim() === 'yes';
 
     const result = await computer.exec({
-      cmd: hasHuskinfo ? 'huskinfo' : FALLBACK_INFO,
+      cmd: hasHuskinfo ? 'huskinfo' : PROBE_COMPUTER_INFO,
       timeoutSec: 30,
       signal: ctx.signal,
       maxOutputBytes: Math.min(ctx.maxOutputBytes, 16_384),

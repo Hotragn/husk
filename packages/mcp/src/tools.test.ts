@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { TOOLS, callTool } from './tools.js';
 import { BROWSER_TOOLS } from './browser-tools.js';
 import type { Computer } from '@husk-ai/core';
+import { PROBE_COMPUTER_INFO } from '@husk-ai/core';
 
 /** Never reached: every assertion here stops at the dispatcher. */
 const noComputer = {} as Computer;
@@ -78,5 +79,50 @@ describe('the MCP tool list', () => {
     const result = await callTool(noComputer, 'browser_goto', { url: '' });
     expect(result.isError).toBe(true);
     expect(result.content[0]).toMatchObject({ type: 'text', text: 'url is empty' });
+  });
+});
+
+/**
+ * Same tool name, same facts, whichever entry point the caller arrived through.
+ *
+ * `computer_info` used to answer differently here and in `@husk-ai/agent`: this
+ * copy probed for installed tools and the agent's did not. Nothing surfaced the
+ * difference, so a model that learned the shape from one saw less from the other.
+ */
+describe('computer_info', () => {
+  function recording(): { computer: Computer; cmds: string[] } {
+    const cmds: string[] = [];
+    const computer = {
+      info: { id: 'cmp_test', provider: 'docker', image: 'debian:bookworm-slim' },
+      exec: async (req: { cmd: string }) => {
+        cmds.push(req.cmd);
+        return { exitCode: 0, stdout: 'probed', stderr: '', durationMs: 1 };
+      },
+    } as unknown as Computer;
+    return { computer, cmds };
+  }
+
+  it('runs the same probe the agent runs', async () => {
+    const { computer, cmds } = recording();
+    await callTool(computer, 'computer_info', {});
+
+    expect(typeof PROBE_COMPUTER_INFO).toBe('string');
+    expect(cmds[0]).toContain(PROBE_COMPUTER_INFO);
+  });
+
+  it('still prefers huskinfo when the image ships it', async () => {
+    const { computer, cmds } = recording();
+    await callTool(computer, 'computer_info', {});
+
+    expect(cmds[0]).toMatch(/^command -v huskinfo .* && huskinfo \|\| \{ /);
+  });
+
+  it('closes the brace group it opens', async () => {
+    // `|| { ... }` needs the trailing `; }`. Getting this wrong is a syntax
+    // error that only appears on a real machine, never in a type check.
+    const { computer, cmds } = recording();
+    await callTool(computer, 'computer_info', {});
+
+    expect(cmds[0]?.endsWith('; }')).toBe(true);
   });
 });
