@@ -1,6 +1,11 @@
 # Husk — architecture
 
-> **[Interactive diagram](../docs/diagrams/02-system-architecture.html)** — open locally for pan/zoom, relationship tracing and PNG/SVG export.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/png/02-system-architecture.dark.png">
+  <img alt="The husk monorepo: four entry points over an orchestration layer over runtime, models, browser and sessions, all on @husk-ai/core" src="diagrams/png/02-system-architecture.light.png">
+</picture>
+
+<sub>[Open interactively](diagrams/02-system-architecture.html) — pan, zoom, trace relationships · [all 16 diagrams](diagrams/)</sub>
 
 ## The two sentences
 
@@ -66,6 +71,19 @@ imports `cli`.
 that answers. Probes are cached for 30 seconds because `docker version` on a cold daemon
 takes ~800 ms and an agent may create four machines in a row.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/png/03-provider-ladder.dark.png">
+  <img alt="Providers probed in priority order: docker 20, podman 18, ssh 16, fly 14, then local 10 as the floor" src="diagrams/png/03-provider-ladder.light.png">
+</picture>
+
+Only the container pair share a base class. `local`, `ssh` and `fly` implement
+`ComputerProvider` directly rather than being forced through `OciProvider`:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/png/14-uml-provider-hierarchy.dark.png">
+  <img alt="ComputerProvider implemented by an abstract OciProvider, which Docker and Podman extend, plus Local, Ssh and Fly directly" src="diagrams/png/14-uml-provider-hierarchy.light.png">
+</picture>
+
 | provider | `isolationKind` | cost | when it wins |
 | --- | --- | --- | --- |
 | `docker` | `kernel` — namespaces, cgroups, seccomp | free, local | the default when Docker is up |
@@ -97,6 +115,14 @@ conversation keeps the same filesystem across tool calls without the caller trac
 A reaper honours `idleTimeoutSec` and `maxLifetimeSec`; metadata is JSON under
 `~/.husk/computers/` written with write-then-rename, so `husk ps` works from another
 process and a crash mid-write cannot corrupt the registry.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/png/15-computer-lifecycle.dark.png">
+  <img alt="ComputerState machine: creating to running to a reaper budget check to destroyed, with stop and start" src="diagrams/png/15-computer-lifecycle.light.png">
+</picture>
+
+Two states never get commanded: `paused` is reported by docker and fly but husk never
+sets it, and `error` is terminal.
 
 ## The model router
 
