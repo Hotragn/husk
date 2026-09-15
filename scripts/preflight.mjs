@@ -55,6 +55,47 @@ async function readPkg(dir) {
   return JSON.parse(await readFile(join(root, 'packages', dir, 'package.json'), 'utf8'));
 }
 
+/**
+ * ORDER is checked below for being dependency-correct. This checks that the
+ * release actually uses it.
+ *
+ * `release.yml` publishes with its own hardcoded `for pkg in ...` loop. Today
+ * the two lists agree; nothing makes them. Add a package to one and not the
+ * other and the release publishes in the wrong order or skips a package, and
+ * because every cross-workspace dependency is pinned to an exact version, a
+ * dependent published before its dependency is a hard `notarget` for whoever
+ * installs it next. npm has no undo, so the recovery is another release.
+ *
+ * Of everything in this script, this is the check guarding the only step with
+ * no rollback.
+ */
+async function checkReleaseOrder() {
+  let yml;
+  try {
+    yml = await readFile(join(root, '.github', 'workflows', 'release.yml'), 'utf8');
+  } catch {
+    bad('.github/workflows/release.yml is missing -- nothing publishes');
+    return;
+  }
+  const m = /for pkg in ([a-z0-9 -]+); do/.exec(yml);
+  if (!m) {
+    bad('release.yml has no `for pkg in ...` publish loop -- has the publish step been rewritten?');
+    return;
+  }
+  const loop = m[1].trim().split(/\s+/);
+  if (JSON.stringify(loop) === JSON.stringify(ORDER)) {
+    ok(`release.yml publishes in the same order (${ORDER.length} packages)`);
+    return;
+  }
+  const missing = ORDER.filter((p) => !loop.includes(p));
+  const extra = loop.filter((p) => !ORDER.includes(p));
+  if (missing.length) bad(`release.yml never publishes: ${missing.join(', ')}`);
+  if (extra.length) bad(`release.yml publishes packages that are not in ORDER: ${extra.join(', ')}`);
+  if (!missing.length && !extra.length) {
+    bad(`release.yml publishes in a different order than ORDER\n          ORDER: ${ORDER.join(' ')}\n          yml:   ${loop.join(' ')}`);
+  }
+}
+
 console.log('\nhusk publish preflight\n');
 
 // ---------------------------------------------------------------- packages
@@ -64,6 +105,8 @@ const dirs = (await readdir(join(root, 'packages'), { withFileTypes: true }))
   .map((d) => d.name);
 
 const missing = dirs.filter((d) => !ORDER.includes(d));
+await checkReleaseOrder();
+
 if (missing.length) bad(`not in the publish order, so they would never ship: ${missing.join(', ')}`);
 else ok(`${dirs.length} packages, all in the publish order`);
 

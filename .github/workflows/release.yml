@@ -17,6 +17,20 @@ on:
         description: Pack and check everything, publish nothing.
         type: boolean
         default: true
+      # So the Release step can be exercised before a release depends on it. A
+      # step whose first real run is a real release is not a step anyone has
+      # tested. Point this at a throwaway tag and watch a Release appear.
+      #
+      # Prefer a tag that does not match `v*`, like `release-test-1`. A `v*`
+      # tag is the push trigger above, so pushing one starts a workflow run
+      # -- the first step refuses it for not matching core's version, so
+      # nothing publishes, but a red run on a tag nobody meant to release is
+      # noise worth not making. A non-`v*` tag pushes inertly and this input
+      # is then the only path to the Release step.
+      release_tag:
+        description: Existing tag to cut a GitHub Release for. Empty skips that step. Prefer a non-v* name.
+        type: string
+        default: ''
 
 concurrency:
   group: release
@@ -26,7 +40,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # write, not read, because the last step cuts the GitHub Release. Until
+      # 0.1.2 that was done by hand every time, and a tag nobody turns into a
+      # Release is invisible: it shows up in no feed, no watch notification and
+      # not in the sidebar, so the only people who learn a version shipped are
+      # the ones already running `npm view`.
+      contents: write
       # Lets npm record where the tarball was built, so a consumer can verify
       # this repo produced it.
       id-token: write
@@ -38,6 +57,36 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
+      # First, and carrying the same condition as the publish step, because it
+      # exists to guard that step.
+      #
+      # It used to sit after the tests, keyed on `startsWith(github.ref,
+      # 'refs/tags/v')`. Two holes in that. A manual run with dry_run: false
+      # dispatches from a branch, so this was skipped entirely and publish ran
+      # anyway, from whatever was checked out. And a stray `v*` tag -- the push
+      # trigger above fires on any of them -- only failed here by virtue of
+      # step ordering nobody had written down as load-bearing.
+      #
+      # Needs nothing but the checkout, so it costs seconds rather than
+      # failing after four minutes of install, build and test.
+      - name: refuse to publish anything but a matching v* tag
+        if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+        run: |
+          set -euo pipefail
+          case "${GITHUB_REF}" in
+            refs/tags/v*) ;;
+            *)
+              echo "refusing to publish from ${GITHUB_REF}: a publish requires a v* tag" >&2
+              exit 1
+              ;;
+          esac
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./packages/core/package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag $tag does not match @husk-ai/core $pkg" >&2
+            exit 1
+          fi
+
       - run: npm ci
       - run: npm run build:packages
       - run: npm run typecheck
@@ -46,19 +95,6 @@ jobs:
       # Same checks you can run locally with `npm run preflight`, so a release
       # never fails on something that was knowable before the tag existed.
       - run: npm run preflight
-
-      # A tag that disagrees with package.json produces a release nobody can
-      # reason about later. Checked before anything leaves the machine.
-      - name: the tag matches the version
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME#v}"
-          pkg="$(node -p "require('./packages/core/package.json').version")"
-          if [ "$tag" != "$pkg" ]; then
-            echo "tag $tag does not match @husk-ai/core $pkg" >&2
-            exit 1
-          fi
 
       # Every package ships only `dist`. If a build was skipped, this is where
       # it shows up -- as an empty tarball rather than as a broken install.
@@ -89,6 +125,26 @@ jobs:
             echo "publishing @husk-ai/$pkg"
             npm publish --workspace="@husk-ai/$pkg" --access public --provenance
           done
+
+      # Last, and only on a real tag: if npm rejected a package there is nothing
+      # to announce. `--verify-tag` refuses to invent a Release for a tag that
+      # does not exist, and `--generate-notes` fills the body from the commits
+      # since the previous tag -- worth editing afterwards, but a Release with
+      # generated notes beats a tag with none.
+      - name: cut the GitHub Release
+        if: ${{ github.event_name == 'push' || inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # On a tag push this is the tag. On a manual run it is whatever tag
+          # you named, which is how this step gets exercised outside a release.
+          TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, leaving it alone"
+            exit 0
+          fi
+          gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
 
       - name: dry run summary
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
