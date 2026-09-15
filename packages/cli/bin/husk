@@ -1,4 +1,0 @@
-#!/usr/bin/env node
-// The published entrypoint. A static import, so there is no extra async tick
-// between the shell invoking `husk` and the parser running.
-import '../dist/bin.js';

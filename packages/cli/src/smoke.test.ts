@@ -14,8 +14,35 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
  * Every test runs against a throwaway HUSK_HOME so a developer's own computers
  * are never listed, never destroyed, and never counted against a quota.
  */
-const BIN = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
-const built = existsSync(BIN);
+/**
+ * The file npm will install as `husk`, read from package.json rather than assumed.
+ *
+ * Hardcoding `../dist/bin.js` here is what let 0.1.1 ship a `bin` that pointed at
+ * a wrapper which exited 0 without running anything: these tests went on exercising
+ * the module directly and stayed green while the published command did nothing.
+ * Resolving it from the manifest means the suite always runs what a user runs.
+ */
+const PKG = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
+const BIN = fileURLToPath(new URL('../' + PKG.bin.husk, import.meta.url));
+
+/**
+ * Skip when nothing is built; fail when something is built and the bin is absent.
+ *
+ * These are different states and must not look alike. `npm test` on a clean tree
+ * legitimately has no `dist/`, so the subprocess suites below skip. But a `dist/`
+ * that exists while `bin` names a file that does not is a package which installs a
+ * command that cannot start -- and deciding to skip on that would hide exactly the
+ * kind of defect this file is for.
+ */
+const DIST = fileURLToPath(new URL('../dist/', import.meta.url));
+const built = existsSync(DIST) && existsSync(BIN);
+
+describe('packaging', () => {
+  it('bin points at a file that exists once the package is built', () => {
+    if (!existsSync(DIST)) return;
+    expect(existsSync(BIN), `package.json bin.husk is ${PKG.bin.husk}, which does not exist`).toBe(true);
+  });
+});
 
 let home: string;
 

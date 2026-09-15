@@ -5,7 +5,7 @@
  * parts can be imported without running it.
  */
 
-export { main, findSubcommand } from './bin.js';
+export { main, findSubcommand } from './cli.js';
 export { VERSION } from './version.js';
 export { UsageError, parse, splitRemote, splitRest, parseMemory } from './args.js';
 export { COMMANDS, commandHelp, findCommand, suggest, topLevelHelp } from './help.js';

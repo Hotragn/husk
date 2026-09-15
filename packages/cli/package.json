@@ -15,7 +15,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "husk": "./bin/husk"
+    "husk": "./dist/bin.js"
   },
   "exports": {
     ".": {
@@ -25,7 +25,6 @@
   },
   "files": [
     "dist",
-    "bin",
     "README.md"
   ],
   "engines": {

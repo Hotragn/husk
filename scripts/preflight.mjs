@@ -95,6 +95,8 @@ if (!failures) ok('workspace dependencies are pinned and correctly ordered');
 // ------------------------------------------------------------------ files
 console.log('\ncontents');
 const failuresBeforePack = failures;
+/** package dir -> the paths npm would publish. Reused by the bin check below. */
+const packedPaths = {};
 for (const dir of ORDER) {
   const p = pkgs[dir];
   if (!p) continue;
@@ -105,6 +107,7 @@ for (const dir of ORDER) {
       maxBuffer: 32 * 1024 * 1024,
     });
     packed = JSON.parse(stdout)[0];
+    packedPaths[dir] = new Set(packed.files.map((f) => f.path));
   } catch (e) {
     bad(`${p.name}: npm pack failed -- ${String(e.message).split('\n')[0]}`);
     continue;
@@ -119,6 +122,46 @@ for (const dir of ORDER) {
 // loop that can fail is exactly the kind of reassuring lie this script exists
 // to catch in other things.
 if (failures === failuresBeforePack) ok('every package packs a built dist');
+
+// ------------------------------------------------------------------- bins
+/**
+ * Run every published `bin` and require it to say something.
+ *
+ * 0.1.1 shipped a cli whose bin was packed, carried a shebang, and did nothing:
+ * it pointed at a wrapper, and the guard in the real entry compared
+ * `process.argv[1]` to `import.meta.url`, which through a wrapper can never
+ * match. Exit 0, no output, every platform. Nothing here or in the test suite
+ * had an opinion about it, because everything tested the module and not the bin.
+ *
+ * So this does not inspect the file, it executes it. `--help` needs no daemon,
+ * no API key and no network.
+ *
+ * Either stream counts. `husk-mcp` prints its help on stderr on purpose, because
+ * its stdout carries the JSON-RPC protocol and a stray byte there kills the
+ * client. The question here is whether the bin reached its entry point at all.
+ */
+console.log('\nbinaries');
+const failuresBeforeBins = failures;
+for (const dir of ORDER) {
+  const pkg = pkgs[dir];
+  if (!pkg?.bin) continue;
+  for (const [name, target] of Object.entries(pkg.bin)) {
+    if (!packedPaths[dir]?.has(target.replace(/^\.\//, ''))) {
+      bad(`${pkg.name}: bin "${name}" points at ${target}, which is not in the published files`);
+      continue;
+    }
+    try {
+      const { stdout, stderr } = await rawRun(process.execPath, [join(root, 'packages', dir, target), '--help'], {
+        timeout: 30_000,
+      });
+      if (stdout.trim() || stderr.trim()) ok(`${name} reaches its entry point`);
+      else bad(`${pkg.name}: "${name} --help" exited 0 and printed nothing -- the bin never reaches its entry point`);
+    } catch (e) {
+      bad(`${pkg.name}: "${name} --help" failed -- ${String(e.message).split('\n')[0]}`);
+    }
+  }
+}
+if (failures === failuresBeforeBins) ok('every published bin runs');
 
 // --------------------------------------------------------------- registry
 console.log('\nregistry');

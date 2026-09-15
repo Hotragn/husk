@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findSubcommand } from './bin.js';
+import { findSubcommand } from './cli.js';
 import { COMMANDS, commandHelp, findCommand, suggest, topLevelHelp } from './help.js';
 
 describe('findSubcommand', () => {
