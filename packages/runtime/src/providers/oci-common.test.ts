@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import type { ComputerSpec } from '@husk-ai/core';
+import type { Availability, ComputerSpec, ProviderName } from '@husk-ai/core';
 import {
   type OciConfig,
   buildCopyIntoArgs,
   buildCopyOutOfArgs,
   buildExecArgs,
   buildRunArgs,
+  OciProvider,
   decodeSpec,
   encodeSpec,
   parseLsLong,
   posixDirname,
   toContainerArgv,
 } from './oci-common.js';
+import { REGISTRY, type ImagePlan, imagePlan } from '../images.js';
 
 /**
  * These flags are the isolation claim.
@@ -269,5 +271,115 @@ describe('path and spec helpers', () => {
   it('treats a missing or corrupt spec label as an empty spec', () => {
     expect(decodeSpec(undefined)).toEqual({});
     expect(decodeSpec('not base64 json')).toEqual({});
+  });
+});
+
+/**
+ * `pullable` decides which image a machine actually starts from, and it does it
+ * by shelling out. A subclass that records the argv instead is the only way to
+ * assert the candidate order without an engine installed.
+ *
+ * `pullable` is a real concern to test: with no mirror configured `primary` and
+ * `fallback` are the same string, and the loop used to spend a second pull
+ * learning what the first already said.
+ */
+class Probe extends OciProvider {
+  readonly name: ProviderName = 'docker';
+  readonly description = 'probe';
+  readonly priority = 0;
+  /** Every argv `pullable` would have run, in order. */
+  readonly attempts: string[][] = [];
+
+  /** `pullable` succeeds for an image in `local`, and only via `pull`. */
+  constructor(private readonly local = new Set<string>()) {
+    super(docker);
+  }
+
+  async isAvailable(): Promise<Availability> {
+    return { available: true, isolated: true, isolationKind: 'kernel' };
+  }
+
+  protected override cli(args: string[]) {
+    this.attempts.push(args);
+    const image = args[args.length - 1] as string;
+    const settled =
+      args[0] === 'pull' && this.local.has(image)
+        ? Promise.resolve({ stdout: '', stderr: '' })
+        : Promise.reject(new Error(`no such image: ${image}`));
+    return settled as ReturnType<OciProvider['cli']>;
+  }
+
+  pull(plan: ImagePlan) {
+    return this.pullable(plan);
+  }
+
+  get fellBack() {
+    return this.usedFallback;
+  }
+}
+
+/** A mirror and a public image, the only shape where the two genuinely differ. */
+function mirrored(): ImagePlan {
+  return {
+    primary: 'registry.example/husk-base:0.1.0',
+    fallback: 'debian:bookworm-slim',
+    installCmd: '',
+    user: 'husk',
+  };
+}
+
+/** What every flavor looks like unless someone sets HUSK_REGISTRY. */
+function collapsed(): ImagePlan {
+  return { primary: 'debian:bookworm-slim', fallback: 'debian:bookworm-slim', installCmd: '', user: 'husk' };
+}
+
+describe('pullable', () => {
+  it('is what the default plan looks like, so the collapse is not hypothetical', () => {
+    // Guarded: a developer with HUSK_REGISTRY exported has a mirror, and then
+    // the two are legitimately different strings.
+    if (REGISTRY) return;
+    const plan = imagePlan('base');
+    expect(plan.primary).toBe(plan.fallback);
+  });
+
+  it('spends one inspect and one pull when the two candidates collapse', async () => {
+    const probe = new Probe();
+    await expect(probe.pull(collapsed())).rejects.toThrow(/could not obtain an image/);
+    expect(probe.attempts).toEqual([
+      ['image', 'inspect', 'debian:bookworm-slim'],
+      ['pull', '--quiet', 'debian:bookworm-slim'],
+    ]);
+  });
+
+  it('names a collapsed image once, not twice, when nothing can be pulled', async () => {
+    const probe = new Probe();
+    await expect(probe.pull(collapsed())).rejects.toThrow(
+      'could not obtain an image (tried debian:bookworm-slim)',
+    );
+  });
+
+  it('still tries the mirror before the public image, and names both', async () => {
+    const probe = new Probe();
+    await expect(probe.pull(mirrored())).rejects.toThrow(
+      'could not obtain an image (tried registry.example/husk-base:0.1.0, debian:bookworm-slim)',
+    );
+    expect(probe.attempts.map((argv) => argv[argv.length - 1])).toEqual([
+      'registry.example/husk-base:0.1.0',
+      'registry.example/husk-base:0.1.0',
+      'debian:bookworm-slim',
+      'debian:bookworm-slim',
+    ]);
+  });
+
+  it('reports no fallback when the collapsed image is the one that works', async () => {
+    const probe = new Probe(new Set(['debian:bookworm-slim']));
+    expect(await probe.pull(collapsed())).toBe('debian:bookworm-slim');
+    expect(probe.fellBack).toBe(false);
+  });
+
+  it('reports a fallback only when a real mirror miss sent it to the public image', async () => {
+    const probe = new Probe(new Set(['debian:bookworm-slim']));
+    expect(await probe.pull(mirrored())).toBe('debian:bookworm-slim');
+    expect(probe.fellBack).toBe(true);
   });
 });

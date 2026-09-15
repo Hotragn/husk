@@ -856,7 +856,11 @@ export abstract class OciProvider implements ComputerProvider {
     // asked for. Substituting the image silently is how someone ends up
     // debugging a missing `python3` on an image they believe ships it.
     this.usedFallback = false;
-    for (const candidate of [plan.primary, plan.fallback]) {
+    // The two collapse to one string whenever no mirror is configured, which is
+    // the default. Deduped because trying the same image twice spends a second
+    // pull to learn what the first one already said.
+    const candidates = [...new Set([plan.primary, plan.fallback])];
+    for (const candidate of candidates) {
       this.usedFallback = candidate !== plan.primary;
       try {
         await this.cli(['image', 'inspect', candidate], 15_000);
@@ -871,7 +875,7 @@ export abstract class OciProvider implements ComputerProvider {
         // try the next one
       }
     }
-    throw new HuskError('E_COMPUTER_FAILED', `could not obtain an image (tried ${plan.primary}, ${plan.fallback})`, {
+    throw new HuskError('E_COMPUTER_FAILED', `could not obtain an image (tried ${candidates.join(', ')})`, {
       hint: 'check network access to the registry, or set computer.image to something already pulled',
     });
   }
