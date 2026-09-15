@@ -4,7 +4,7 @@
 # never the default -- but an agent asked to "build and test this repo" needs it, and
 # discovering that mid-run costs more than the pull did.
 #
-# This is also the only flavor that can run the rendered browser. `@husk/browser`
+# This is also the only flavor that can run the rendered browser. `@husk-ai/browser`
 # downloads a headless Chromium at runtime, but a browser binary is useless without
 # the two dozen shared libraries it links against, and the slim images have none of
 # them -- measured: "Chromium is missing 20 shared libraries" on python:3.12-slim,
@@ -12,7 +12,9 @@
 # because container computers mount their root filesystem read-only on purpose. So
 # they are baked in here, where the weight is already the point.
 ARG HUSK_VERSION=0.1.0
-FROM ghcr.io/husk-sh/husk-python:${HUSK_VERSION} AS base
+# Left bare for a local build; build.sh sets it when pushing to a registry.
+ARG HUSK_PYTHON
+FROM ${HUSK_PYTHON:-husk-python}:${HUSK_VERSION} AS base
 
 LABEL org.opencontainers.image.title="husk-full" \
       husk.flavor="full"

@@ -78,12 +78,12 @@ export interface ComputerInfo {
   /**
    * Set when `image` is not the image the spec asked for.
    *
-   * husk prefers its own images and falls back to a stock public one when the
-   * registry has nothing -- which is every install until the images are
-   * published. The fallback is a bare `debian:bookworm-slim`: no python3, no
-   * curl, no `huskinfo`, and no `husk` user. That is a perfectly usable Linux
-   * box and a surprising one if you were told you had the other, so the
-   * substitution is recorded rather than performed quietly.
+   * Only a configured `HUSK_REGISTRY` mirror can cause this: husk prefers
+   * `<registry>/husk-<flavor>:<tag>` and drops to the public image when that
+   * pull fails. Left unset -- the default -- the two are the same image and
+   * this never fires. Landing on an image you were not told about is how
+   * someone ends up debugging a missing `python3`, so the substitution is
+   * recorded rather than performed quietly.
    */
   imageFallback?: { wanted: string; reason: string };
   error?: string;

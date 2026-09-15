@@ -844,10 +844,12 @@ export abstract class OciProvider implements ComputerProvider {
   }
 
   /**
-   * Prefer our image, fall back to the public one.
+   * Prefer the configured mirror, fall back to the public image.
    *
-   * Nobody has pulled `ghcr.io/husk-sh/*` on a fresh install, and a first run that
-   * dies on a registry 404 is a first run that does not happen twice.
+   * With no `HUSK_REGISTRY` set the two are the same string, so this is a
+   * single pull. The loop earns its keep only for a mirror that is stale or
+   * unreachable, where dying on a registry 404 would make a first run that does
+   * not happen twice.
    */
   protected async pullable(plan: ImagePlan): Promise<string> {
     // Remembered so `create` can say when the machine is not the one the spec

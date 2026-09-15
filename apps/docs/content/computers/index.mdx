@@ -123,22 +123,37 @@ Every field a computer can be created with. In a `husk.yaml` these live under
 
 ## Flavors
 
-A flavor is a prebuilt image. Every one has a Husk image and a public fallback, because
-nobody has pulled `ghcr.io/husk-sh/*` on a fresh install and a first run that dies on a
-registry 404 is a first run that does not happen twice.
+A flavor picks the image. Each one resolves to a single public image maintained by the
+people who already keep that language or that browser patched. Husk publishes none of
+its own, and that is a decision rather than an unfinished task: an image you publish is
+an operating system you have promised to patch, and a stale one carrying known CVEs
+that people pull because your README told them to is worse than no image at all.
 
-| Flavor | Husk image | Public fallback | Contains |
-| --- | --- | --- | --- |
-| `base` | `ghcr.io/husk-sh/husk-base:0.1.0` | `debian:bookworm-slim` | git, curl, jq, ripgrep, fd, less, procps |
-| `python` | `ghcr.io/husk-sh/husk-python:0.1.0` | `python:3.12-slim` | base + Python 3.11, uv, requests, httpx, rich |
-| `node` | `ghcr.io/husk-sh/husk-node:0.1.0` | `node:22-slim` | base + Node 22, npm, corepack |
-| `full` | `ghcr.io/husk-sh/husk-full:0.1.0` | `debian:bookworm` | python + Node, build-essential, ffmpeg, imagemagick, poppler |
+| Flavor | Image | What you get |
+| --- | --- | --- |
+| `base` | `debian:bookworm-slim` | A Debian 12 userland and `apt`. Add anything else with `packages` |
+| `python` | `python:3.12-slim` | Python 3.12 and pip, on that same Debian 12 |
+| `node` | `node:22-slim` | Node 22 and npm, on that same Debian 12 |
+| `full` | `mcr.microsoft.com/playwright:v1.59.1-noble` | Ubuntu 24.04, Node 22, and the shared libraries Chromium needs |
 
-The provider tries the Husk image first — local inspect, then pull — and falls back to
-the public one. `HUSK_REGISTRY` and `HUSK_IMAGE_TAG` override the first pair.
+`full` is the only flavor that can run the rendered browser, and that is why it is
+Playwright's image and not a fatter Debian. `@husk-ai/browser` downloads Chromium at
+runtime, but the binary links against roughly twenty shared libraries the slim images
+do not carry — and a container computer mounts its root filesystem read-only on
+purpose, so they cannot be installed afterwards. Playwright's image already carries
+exactly that set, on glibc, maintained by people who track Chromium's dependencies for
+a living. It is heavier than the rest. That is the trade: `full` is the flavor you ask
+for when you want everything, and the browser is part of everything.
 
-On a fallback image you lose `huskinfo` and the non-root guarantees the Husk images bake
-in. The container still runs as uid 1000, because `-u 1000:1000` is passed regardless.
+`HUSK_REGISTRY` points a flavor at a mirror instead — `<registry>/husk-<flavor>:<tag>`,
+with the public image still there to fall back on if that pull fails, and
+`HUSK_IMAGE_TAG` sets the tag. Left unset there is nothing to fall back from, because
+the public image is the image. The Dockerfiles in `sandbox/` are what you build if you
+want to host that mirror yourself.
+
+These are upstream images, so what is in them is not husk's to promise: no `huskinfo`,
+and no locked root account. The container still runs as uid 1000, because `-u 1000:1000`
+is passed regardless.
 
 Package installation is per-flavor:
 
@@ -151,8 +166,8 @@ not forty.
 
 ## huskinfo
 
-The Husk images ship a `huskinfo` script so an agent can learn where it is in one call
-instead of five:
+The images in `sandbox/` ship a `huskinfo` script, so an agent on one of those can learn
+where it is in one call instead of five:
 
 <Terminal title="huskinfo">
 {`husk 0.1.0 (flavor: python)
@@ -169,7 +184,8 @@ tools     git curl jq rg fd python3`}
 </Terminal>
 
 The `computer_info` tool runs `huskinfo` when it exists and assembles the same facts from
-`uname`, `id`, `nproc` and `df` when it does not.
+`uname`, `id`, `nproc` and `df` when it does not — which is the default path, since the
+public images do not carry it.
 
 ## Where the records live
 

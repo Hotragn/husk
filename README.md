@@ -12,13 +12,18 @@
     <a href="https://www.npmjs.com/package/@husk-ai/cli"><img src="https://img.shields.io/npm/v/@husk-ai/cli?label=npm&color=cb3837" alt="npm"></a>
     <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status: Alpha">
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License"></a>
-    <a href="https://github.com/Hotragn/husk/stargazers"><img src="https://img.shields.io/github/stars/Hotragn/husk?style=social" alt="GitHub stars"></a>
   </p>
 </div>
 
-Husk gives your AI chat a real computer of its own: files, a browser, and somewhere to run code. It can build things, look stuff up online and keep your work between chats. Turn a chat you already had into a bot that does the job again tomorrow.
+Your AI chat can write a script. It cannot run it.
 
-Free to start. Runs on your hardware. No account required.
+Ask for a scraper and you get code to paste somewhere yourself. Ask again tomorrow and
+the files from today are gone. It cannot install a package, keep a login, or check
+whether the thing it just wrote actually works.
+
+Husk hands it a Linux computer instead. A shell, a filesystem at `/work` that outlives
+the conversation, and a browser whose login survives from one page to the next. One line
+to set up. Runs on hardware you already have, with no account and no API key.
 
 > [!NOTE]
 > Husk is in **early alpha** — everything works, things are moving fast, and your feedback shapes what comes next. [Jump in](https://github.com/Hotragn/husk/discussions).
@@ -30,34 +35,55 @@ Free to start. Runs on your hardware. No account required.
 
 <sub>[Open interactively](docs/diagrams/01-hero.html) — pan, zoom, trace relationships · [SVG](docs/diagrams/svg/01-hero.light.svg) · [all 16 diagrams](docs/diagrams/)</sub>
 
-## Quick start
-
-```bash
-npx @husk-ai/cli doctor            # what's available on this machine
-npx @husk-ai/cli up dev            # spin up a Linux computer
-npx @husk-ai/cli exec dev -- 'uname -sr && python3 -V'
-npx @husk-ai/cli rm dev            # tear it down
-```
-
-No Docker? It still works — [see what each provider gives you](#isolation).
-
-### Give Claude Code a computer
+## Install
 
 ```bash
 claude mcp add husk -- npx -y @husk-ai/mcp
 ```
 
-One command. Claude Code gets `shell`, `read_file`, `write_file`, `list_dir` and `expose_port` against a real Linux machine — sandboxed away from your repo, filesystem persisting across the conversation. Works with Cursor, Zed, or anything that speaks MCP.
+That is the whole setup. Nothing is created until the first tool call, so an installed
+husk that nobody uses costs nothing. Works with Cursor, Zed, or anything else that
+speaks MCP.
 
-### Turn a chat into a bot
+Your agent gets 21 tools. Eight for the machine — `shell`, `read_file`, `write_file`,
+`edit_file`, `list_dir`, `expose_port`, `browse`, `computer_info` — and thirteen
+`browser_*` tools that drive a real Chromium inside that same machine, addressed by
+accessibility ref rather than pixel coordinates.
+
+The first tool result says what kind of machine it got. A model that thinks it is
+sandboxed when it is not makes worse decisions than one that knows.
+
+## The CLI
 
 ```bash
-husk import                      # finds Claude Code / ChatGPT transcripts
-husk distill 3 --out triage.yaml # conversation → agent spec
+npx @husk-ai/cli doctor             # what this machine can offer
+npx @husk-ai/cli up dev             # bring up a Linux computer
+npx @husk-ai/cli exec dev -- 'uname -sr && python3 -V'
+npx @husk-ai/cli rm dev             # tear it down
+```
+
+On a laptop with Docker stopped and WSL2 installed, `exec` prints
+`Linux 6.18.33.2-microsoft-standard-WSL2` and `Python 3.14.4`. `doctor` reports every
+provider it probed, which one it would pick, and why the others were skipped.
+
+## Turn a chat into a bot
+
+A conversation that worked once becomes a file you can run again.
+
+```bash
+husk import                          # lists transcripts it found
+husk import --pick 1                 # imports one, prints its id
+husk distill <id> --out triage.yaml  # conversation → agent spec
 husk run triage.yaml "check the build"
 ```
 
-What comes out is a YAML file you can read and version:
+Importers read Claude Code JSONL, ChatGPT, Cursor, Gemini and markdown into one
+`Transcript`. Branched threads are rebuilt by walking `parentUuid` back from the last
+leaf. The distiller runs with no API key at all, and the model-backed mode falls back to
+that free path rather than failing. Secrets are stripped before the file is written,
+not after.
+
+What comes out is YAML you can read and diff:
 
 ```yaml
 name: triage
@@ -72,96 +98,43 @@ computer:
 limits: { maxSteps: 24, maxCostUsd: 0.25 }
 ```
 
-Here is what happens between the transcript and the YAML:
+`husk distill` prints its confidence and everything it could not work out, so a thin
+transcript announces itself instead of producing a plausible-looking persona nobody
+checks. Five worked examples live in [`examples/`](examples/).
+
+## What is in it
+
+- **A machine, not an interpreter.** Files, a shell, ports, a browser. `/work` survives
+  the whole session, and `persist` keeps it past that.
+- **Five computer providers.** `docker`, `podman`, `ssh`, `fly`, `local`. One interface;
+  `auto` takes the highest available.
+- **Eleven model providers.** Ollama, Anthropic, OpenAI, Google, Groq, DeepSeek,
+  Cerebras, OpenRouter, Mistral, Together, LM Studio. Aliases resolve across all of
+  them, so one `husk.yaml` runs on Opus or on a local Gemma.
+- **Four adapters.** Discord, Slack, Telegram, webhook.
+- **No telemetry.** Not off by default. Absent. There is no analytics call, no crash
+  reporter, no version ping.
+- **No native modules.** `npm install` finishes on Windows with no C++ toolchain. Node
+  20.10 or newer.
+- **1,570 tests across 81 files**, all passing with no Docker, no API key and no
+  network.
+
+## How it works
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/png/04-chat-to-bot.dark.png">
-  <img alt="Sequence: transcript to importer to distiller, optionally via the model router, then redaction, husk.yaml and husk run" src="docs/diagrams/png/04-chat-to-bot.light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/png/02-system-architecture.dark.png">
+  <img alt="The husk monorepo: four entry points over an orchestration layer over runtime, models, browser and sessions, all on @husk-ai/core" src="docs/diagrams/png/02-system-architecture.light.png">
 </picture>
 
-Importers normalise Claude Code JSONL, ChatGPT, Cursor, Gemini and markdown into one `Transcript` — branched threads are rebuilt by walking `parentUuid` back from the last leaf. The heuristic distiller runs with no API key, and the model-backed mode falls back to it rather than failing. Secrets are stripped before the file is written, not after.
-
-<sub>[Open interactively](docs/diagrams/04-chat-to-bot.html) · [SVG](docs/diagrams/svg/04-chat-to-bot.light.svg)</sub>
-
-## Why Husk
-
-| What you get | What that means |
-| --- | --- |
-| **A real computer per chat** | Files, shell, browser, ports — not a code interpreter, an actual Linux machine |
-| **Five providers, one interface** | Docker, Podman, local, SSH, Fly — highest available wins automatically |
-| **Works with what you have** | No Docker? No API key? No account? It still runs |
-| **Chat-to-bot pipeline** | Import a transcript, distill it to YAML, run it tomorrow |
-| **10+ model providers** | Ollama, Anthropic, OpenAI, Google, Groq, DeepSeek, Mistral, Together, LM Studio |
-| **MCP server** | One line to give any MCP client a sandboxed computer |
-| **Adapters built in** | Discord, Slack, Telegram, webhook — out of the box |
-| **Browser automation** | Chromium lifecycle, CDP, screenshots, click/type/scroll |
-| **No telemetry** | Not "off by default" — absent. No analytics, no crash reporter, no phone-home |
-| **No native modules** | `npm install` is clean on Windows without a C++ toolchain |
-
-## Models
-
-Bring whatever you have. Aliases resolve across providers so the same husk runs on Opus or on a local Gemma.
-
-| Tier | Providers |
-| --- | --- |
-| **Free, local** | Ollama (`gemma`, `llama`, `qwen`), LM Studio |
-| **Free tier** | Groq, Google AI Studio, OpenRouter `:free` models, Cerebras |
-| **Paid** | Anthropic (`opus`, `sonnet`, `haiku`), OpenAI, Google, DeepSeek, Mistral, Together |
-
-## Isolation
-
-This is the part most tools are vague about, so here it is plainly.
-
-### How a provider gets picked
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/png/03-provider-ladder.dark.png">
-  <img alt="Providers probed in priority order: docker 20, podman 18, ssh 16, fly 14, then local 10 as the floor" src="docs/diagrams/png/03-provider-ladder.light.png">
-</picture>
-
-`auto` walks the ladder and takes the highest rung available. Every rung is free except `fly`, which is metered. An explicit `--provider` that is unavailable is an error — never a silent downgrade to something with weaker isolation.
-
-### What each one actually gives you
-
-| Provider | Isolation | Cost | Notes |
-| --- | --- | --- | --- |
-| `docker` | Kernel namespaces, cgroups, seccomp, read-only root | Free | Default when daemon is up |
-| `podman` | Kernel, rootless | Free | Linux without Docker |
-| `local` (WSL2) | **Guardrails only** | Free | Real Linux via private mount namespace |
-| `local` (POSIX) | **Guardrails only** | Free | Your shell, jailed to a workspace |
-| `ssh` | Whatever the remote provides | Free if you own it | Oracle Free Tier, a Pi, a VPS |
-| `fly` | microVM | Metered | Bursty parallel work |
-
-> **The `local` provider is not a sandbox.** It stops accidents, not adversaries. `husk doctor` reports `isolated: false` for it. See [SECURITY.md](SECURITY.md) for the full model.
-
-### What crosses which line
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/png/05-trust-boundaries.dark.png">
-  <img alt="A tool call passes the path jail, command policy and env scrub into the computer; results pass redact() and the audit log" src="docs/diagrams/png/05-trust-boundaries.light.png">
-</picture>
-
-These hold in **every** mode including `local`: path jail, command deny list, environment scrub, output caps, process-tree kill, `redact()` on every result, `audited()` on every MCP call. What `local` does *not* give you is a kernel boundary — it shares your kernel, your network and your user account.
-
-`169.254.169.254` is blocked even in `network.mode: full`, because `full` means the internet, not the cloud metadata service that hands IAM credentials to anything that asks.
-
-<sub>[Open interactively](docs/diagrams/05-trust-boundaries.html) · [SVG](docs/diagrams/svg/05-trust-boundaries.light.svg)</sub>
-
-## Install
-
-```bash
-npm i -g @husk-ai/cli      # or: npx @husk-ai/cli
-```
-
-Node 20.10+. No native modules. Docker optional. API key optional.
-
-## Packages
+Eleven packages and three apps. Dependencies run downhill: the other ten packages
+import `@husk-ai/core`, core imports nothing from the workspace, and nothing imports
+`@husk-ai/cli`.
 
 ```
 packages/
   core         contracts, husk.yaml schema, primitives
   runtime      computer providers: docker, podman, local, ssh, fly
-  models       one surface over ten model providers
+  models       one surface over eleven model providers
   sessions     transcript importers + the distiller
   browser      Chromium lifecycle and CDP automation
   agent        tool-calling loop and built-in tools
@@ -176,14 +149,59 @@ apps/
   web          marketing site (Next.js + Three.js)
 ```
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/png/02-system-architecture.dark.png">
-  <img alt="The husk monorepo: four entry points over an orchestration layer over runtime, models, browser and sessions, all on @husk-ai/core" src="docs/diagrams/png/02-system-architecture.light.png">
-</picture>
+`server` reaches `@husk-ai/agent` through a dynamic import and never declares it as a
+dependency, so the control plane starts on a tree where the agent was never built.
 
-Dependencies run downhill. All ten packages import `@husk-ai/core`; core imports nothing from the workspace; nothing imports `@husk-ai/cli`. The dashed edges are dynamic imports rather than package dependencies — `cli → server`, `cli → mcp`, `server → agent` — so the server starts without the agent built.
+Four flavours choose the image: `base`, `python`, `node`, `full`. Husk publishes none of
+its own. `base` is `debian:bookworm-slim`, `python` is `python:3.12-slim`, `node` is
+`node:22-slim`, and `full` is Playwright's image, which already carries the twenty-odd
+shared libraries Chromium links against. An image you publish is an operating system you
+have promised to keep patched, and Debian and the Playwright team already do that better.
+Set `HUSK_REGISTRY` to point the lot at your own mirror.
 
 <sub>[Open interactively](docs/diagrams/02-system-architecture.html) · [SVG](docs/diagrams/svg/02-system-architecture.light.svg)</sub>
+
+## Providers
+
+`auto` walks the ladder and takes the highest rung that answers. Every rung is free
+except `fly`, which is metered. An explicit `--provider` that turns out to be
+unavailable is an error, never a quiet downgrade to weaker isolation.
+
+| Provider | Priority | Isolation | Cost | Notes |
+| --- | --- | --- | --- | --- |
+| `docker` | 20 | Kernel namespaces, cgroups, seccomp, read-only root | Free | Default when the daemon is up |
+| `podman` | 18 | Kernel, rootless | Free | Linux without Docker |
+| `ssh` | 16 | Whatever the remote gives you | Free if you own the box | An Oracle Always Free instance, a Pi, a VPS |
+| `fly` | 14 | microVM | Metered | Bursty parallel work |
+| `local` | 10 | **Guardrails only** | Free | WSL2 gives real Linux; POSIX jails your own shell |
+
+> **The `local` provider is not a sandbox.** It stops accidents, not adversaries.
+> `husk doctor` reports `isolated: false` for it, and the first MCP tool result says so
+> again.
+
+## Security model
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/png/05-trust-boundaries.dark.png">
+  <img alt="A tool call passes the path jail, command policy and env scrub into the computer; results pass redact() and the audit log" src="docs/diagrams/png/05-trust-boundaries.light.png">
+</picture>
+
+These hold in every mode, `local` included: the path jail, the command deny list, the
+environment scrub, output caps, process-tree kill, `redact()` on every result and
+`audited()` on every MCP call. What `local` does not give you is a kernel boundary. It
+shares your kernel, your network and your user account.
+
+`169.254.169.254` stays blocked even under `network.mode: full`, because `full` means
+the internet and not the cloud metadata service that hands IAM credentials to whatever
+asks. Loopback and the RFC1918 ranges are the same problem one hop out. An operator who
+wants one of them names it in `allow`, where a reviewer reading the `husk.yaml` can see
+the decision.
+
+Address spellings are normalised first. `127.1`, `2130706433` and `0x7f000001` are all
+`127.0.0.1` to curl, to Chromium and to Python's urllib, so a rule that only understands
+four dotted octets is not a rule.
+
+<sub>[Open interactively](docs/diagrams/05-trust-boundaries.html) · [SVG](docs/diagrams/svg/05-trust-boundaries.light.svg)</sub>
 
 ## Documentation
 
@@ -191,8 +209,21 @@ Dependencies run downhill. All ten packages import `@husk-ai/core`; core imports
 - **[API reference](docs/API.md)** — the control-plane HTTP contract
 - **[Build contract](docs/BUILD-CONTRACT.md)** — conventions every package obeys
 - **[Security model](docs/SECURITY-MODEL.md)** — what is isolated and what is not
-- **[Examples](examples/)** — six ready-to-run `husk.yaml` recipes
+- **[Examples](examples/)** — five `husk.yaml` recipes and an MCP session demo
 - **[Diagrams](docs/diagrams/)** — 16 interactive architecture, dataflow and design diagrams
+
+## Status
+
+Alpha, pre-1.0. The `husk.yaml` schema and the HTTP contract can still change between
+releases. What is known not to work today:
+
+- **The rendered browser is only confirmed on `local`.** The thirteen `browser_*` tools
+  drive Chromium there today. On the container providers the root filesystem is mounted
+  read-only, so Chromium's shared libraries have to arrive in the image rather than
+  through a package manager, and that path is still being worked out. `browse`, which
+  fetches a page and strips the tags, works everywhere.
+- **`fly` is the least exercised provider.** It has tests. It has far fewer real hours
+  than `docker` and `local`.
 
 ## Development
 
@@ -203,11 +234,14 @@ npm run build
 npm test
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions, test philosophy, and how to add a provider or model.
-
 ## Contributing
 
-Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR — it covers the build contract, test requirements, and the values that show up in code review.
+Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers the build contract,
+the test requirements, and how to add a provider or a model.
+
+## Contributors
+
+Everyone who has shipped something here is listed in [CONTRIBUTORS.md](CONTRIBUTORS.md).
 
 ## License
 

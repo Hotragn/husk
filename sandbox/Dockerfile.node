@@ -3,7 +3,9 @@
 # Node from nodesource rather than Debian's, because Debian ships a Node old enough
 # that half of npm refuses to install on it.
 ARG HUSK_VERSION=0.1.0
-FROM ghcr.io/husk-sh/husk-base:${HUSK_VERSION} AS base
+# Left bare for a local build; build.sh sets it when pushing to a registry.
+ARG HUSK_BASE
+FROM ${HUSK_BASE:-husk-base}:${HUSK_VERSION} AS base
 
 LABEL org.opencontainers.image.title="husk-node" \
       husk.flavor="node"

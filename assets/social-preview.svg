@@ -28,7 +28,7 @@
   <!-- Command -->
   <rect x="340" y="475" width="600" height="48" rx="5" fill="#1b1611" stroke="#36312a" stroke-width="1"/>
   <text x="360" y="506" fill="#9e9992" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="18">$</text>
-  <text x="385" y="506" fill="#42d0cf" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="18">claude mcp add husk -- npx -y @husk/mcp</text>
+  <text x="385" y="506" fill="#42d0cf" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="18">claude mcp add husk -- npx -y @husk-ai/mcp</text>
 
   <!-- Footer -->
   <text x="640" y="580" text-anchor="middle" fill="#655f58" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="18">Apache-2.0 · github.com/Hotragn/husk</text>

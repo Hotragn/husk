@@ -1,6 +1,8 @@
 # Husk images
 
-The machines an agent gets.
+Optional images, for anyone who would rather run their own than pull from Docker Hub.
+By default husk pulls a public upstream image per flavor and builds none of these; see
+`packages/runtime/src/images.ts`.
 
 | flavor | contents | size (approx, amd64) | use it for |
 | --- | --- | --- | --- |
@@ -46,21 +48,26 @@ tools     git curl jq rg fd python3
 ```bash
 ./build.sh              # all flavors, local, single-arch
 ./build.sh base python  # a subset
-PUSH=1 ./build.sh       # multi-arch to ghcr.io
+HUSK_REGISTRY=ghcr.io/you PUSH=1 ./build.sh   # multi-arch, pushed there
 ```
 
 `base` must be built before the others — they are `FROM` it.
 
-## Not using our images
+## Not using these images
 
-You do not have to. `flavor` is a convenience; `image` overrides it with anything:
+You do not have to, and by default you do not. Each flavor resolves to a public image
+— `debian:bookworm-slim`, `python:3.12-slim`, `node:22-slim`, and Playwright's
+`mcr.microsoft.com/playwright:v1.59.1-noble` for `full` — none of which carry
+`huskinfo` or the non-root guarantees these Dockerfiles bake in. The container still
+runs as uid 1000 either way, because `-u 1000:1000` is passed regardless.
+
+`flavor` is a convenience; `image` overrides it with anything:
 
 ```yaml
 computer:
   image: python:3.12-slim
 ```
 
-The runtime falls back to upstream public images (`debian:bookworm-slim`,
-`python:3.12-slim`, `node:22-slim`) when a husk image is not present locally and
-cannot be pulled, so a fresh install works before anyone has published anything.
-You lose `huskinfo` and the non-root guarantees the husk images bake in.
+To run these images instead, build them, push them somewhere, and point `HUSK_REGISTRY`
+at it. husk will then prefer `<registry>/husk-<flavor>:<tag>` and fall back to the
+public image if that pull fails.

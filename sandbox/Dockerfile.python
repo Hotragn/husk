@@ -3,7 +3,9 @@
 # Python plus uv. uv is here rather than bare pip because an agent installing a
 # package should wait two seconds, not forty -- and a slow install is a wasted turn.
 ARG HUSK_VERSION=0.1.0
-FROM ghcr.io/husk-sh/husk-base:${HUSK_VERSION} AS base
+# Left bare for a local build; build.sh sets it when pushing to a registry.
+ARG HUSK_BASE
+FROM ${HUSK_BASE:-husk-base}:${HUSK_VERSION} AS base
 
 LABEL org.opencontainers.image.title="husk-python" \
       husk.flavor="python"
