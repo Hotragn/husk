@@ -1,0 +1,72 @@
+# Auto-applied by .github/workflows/label.yml on every PR.
+#
+# One label per package, so a wave of PRs is triageable from the list view
+# without opening any of them. Labels are synced, not just added: move a PR
+# off a package and the label comes off with it.
+
+'pkg: core':
+  - changed-files:
+      - any-glob-to-any-file: 'packages/core/**'
+
+'pkg: runtime':
+  - changed-files:
+      - any-glob-to-any-file: 'packages/runtime/**'
+
+'pkg: models':
+  - changed-files:
+      - any-glob-to-any-file: 'packages/models/**'
+
+'pkg: browser':
+  - changed-files:
+      - any-glob-to-any-file: 'packages/browser/**'
+
+'pkg: sessions':
+  - changed-files:
+      - any-glob-to-any-file: 'packages/sessions/**'
+
+'pkg: agent':
+  - changed-files:
+      - any-glob-to-any-file: 'packages/agent/**'
+
+'pkg: adapters':
+  - changed-files:
+      - any-glob-to-any-file: 'packages/adapters/**'
+
+'pkg: mcp':
+  - changed-files:
+      - any-glob-to-any-file: 'packages/mcp/**'
+
+'pkg: server':
+  - changed-files:
+      - any-glob-to-any-file: 'packages/server/**'
+
+'pkg: sdk':
+  - changed-files:
+      - any-glob-to-any-file: 'packages/sdk/**'
+
+'pkg: cli':
+  - changed-files:
+      - any-glob-to-any-file: 'packages/cli/**'
+
+apps:
+  - changed-files:
+      - any-glob-to-any-file: 'apps/**'
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'docs/**'
+          - '**/*.md'
+          - 'examples/**'
+
+# Changes here alter what ships or how it is built, so they want a closer read
+# than the package label alone suggests.
+'build & ci':
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**'
+          - 'scripts/**'
+          - 'package.json'
+          - 'package-lock.json'
+          - 'tsconfig.base.json'
+          - 'vitest.workspace.ts'

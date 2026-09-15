@@ -1,0 +1,36 @@
+name: label
+
+# Labels a PR by which packages it touches, so a wave of PRs is triageable
+# from the list view.
+#
+# `pull_request_target` is deliberate and load-bearing: a `pull_request` run
+# from a fork gets a read-only token and cannot apply a label, which is
+# exactly the case this exists to cover.
+#
+# That event type is a footgun when a workflow checks out and runs fork code,
+# because it runs against the base repo with write permissions. This one never
+# checks anything out -- actions/labeler reads the changed-file list over the
+# API and writes labels back. Keep it that way. Do not add a checkout step.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: label-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    # Without this, every fork of husk runs this workflow against its own copy.
+    if: github.repository_owner == 'Hotragn'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # Remove a label when the PR stops touching that package, so the
+          # label reflects the current diff rather than its history.
+          sync-labels: true
