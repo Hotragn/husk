@@ -132,17 +132,22 @@ jobs:
       # a publish, and a package published before its dependency is a version
       # nobody can install for as long as it takes to notice.
       #
-      # ONE PACKAGE, ON PURPOSE, FOR 0.1.4 ONLY. This is the first release to
-      # authenticate over OIDC instead of NPM_TOKEN, and no dry run can prove
-      # that works -- dry_run publishes nothing, so it exercises everything
-      # except the one step being changed. `core` is the only package safe to
-      # publish alone: it depends on zod and on no `@husk-ai/*`, so a half-
-      # published 0.1.4 strands nothing. Any other single package would ship
-      # pointing at a version that is not on the registry yet.
+      # ONE PACKAGE, ON PURPOSE, FOR THE FIRST OIDC RELEASE. No dry run can
+      # prove OIDC authenticates -- dry_run publishes nothing, so it exercises
+      # every step except the one being changed -- and the only way to find out
+      # is a publish that really happens. `core` is the one package safe to send
+      # alone: it depends on zod and on no `@husk-ai/*`, so a half-published
+      # version strands no dependant. Any other single package would ship
+      # pointing at a version not yet on the registry.
       #
-      # Once this has run green, restore the full list in a follow-up and
-      # publish the remaining ten at the same version:
+      # This list is deliberately NOT gated on a version number, because a
+      # hardcoded version in a workflow is a fact that goes stale silently --
+      # the class scripts/drift-check.mjs exists for. Instead the step below
+      # verifies all eleven unconditionally, so this reduced list cannot survive
+      # unnoticed: the run stays red until the follow-up restores the full list
       #   core runtime models browser sessions agent adapters mcp server sdk cli
+      # and publishes the remaining ten at the same version. Red here means the
+      # release is genuinely incomplete, which is the truth worth reporting.
       #
       # No NODE_AUTH_TOKEN, and no `npm whoami` guard. Under trusted publishing
       # there is no static identity to report -- the OIDC exchange happens
@@ -163,23 +168,48 @@ jobs:
 
       # Ask the registry, because a publish step that exits 0 has been wrong
       # before: 0.1.2's run reported success while four packages still 404'd.
-      # An unpublished version fails here instead of at the first `npx` someone
-      # runs, and a missing attestation means OIDC fell back to something else.
-      - name: the registry actually has it, with provenance
+      #
+      # All eleven, every time, and deliberately not the list published above.
+      # A release is eleven packages at one version; anything less is a release
+      # someone cannot install, whichever step stopped early and whatever the
+      # reason. Keeping the two lists independent is what makes the reduced
+      # publish list above safe to commit -- it cannot quietly become permanent,
+      # because the run cannot go green until all eleven are on the registry.
+      #
+      # A missing attestation fails too: it means OIDC fell back to something
+      # else and the provenance we stopped asking for explicitly stopped
+      # arriving.
+      - name: all eleven are on the registry, with provenance
         if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
         run: |
           set -euo pipefail
           version="$(node -p "require('./packages/core/package.json').version")"
-          for pkg in core; do
-            echo "checking @husk-ai/$pkg@$version"
-            npm view "@husk-ai/$pkg@$version" version
-            attestations="$(npm view "@husk-ai/$pkg@$version" dist.attestations --json)"
-            if [ "$attestations" = "undefined" ] || [ -z "$attestations" ]; then
-              echo "@husk-ai/$pkg@$version published with no attestation; OIDC did not attest" >&2
-              exit 1
+          missing=()
+          unattested=()
+          for pkg in core runtime models browser sessions agent adapters mcp server sdk cli; do
+            spec="@husk-ai/$pkg@$version"
+            if ! npm view "$spec" version >/dev/null 2>&1; then
+              echo "MISSING  $spec"
+              missing+=("$pkg")
+              continue
             fi
-            echo "$attestations"
+            attestations="$(npm view "$spec" dist.attestations --json 2>/dev/null || true)"
+            if [ -z "$attestations" ] || [ "$attestations" = "undefined" ] || [ "$attestations" = "null" ]; then
+              echo "NO ATTESTATION  $spec"
+              unattested+=("$pkg")
+              continue
+            fi
+            echo "ok  $spec"
           done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::$version is incomplete on the registry: ${missing[*]} not published. A release is all eleven packages at one version." >&2
+          fi
+          if [ "${#unattested[@]}" -gt 0 ]; then
+            echo "::error::published without provenance: ${unattested[*]}. Trusted publishing should attest automatically; check that OIDC authenticated rather than a token." >&2
+          fi
+          if [ "${#missing[@]}" -gt 0 ] || [ "${#unattested[@]}" -gt 0 ]; then
+            exit 1
+          fi
 
       # Last, and only on a real tag: if npm rejected a package there is nothing
       # to announce. `--verify-tag` refuses to invent a Release for a tag that
