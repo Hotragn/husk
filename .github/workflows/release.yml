@@ -55,16 +55,29 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          # `registry-url` is deliberately absent. Given one, setup-node writes
-          # an .npmrc containing `_authToken=${NODE_AUTH_TOKEN}` and *also*
-          # exports `NODE_AUTH_TOKEN=XXXXX-XXXXX-XXXXX-XXXXX` when that variable
-          # is unset -- see its src/authutil.ts, unchanged from v4 through v6.
-          # So dropping the token does not leave the stanza empty, it leaves a
-          # well-formed useless one, and whether npm then tries OIDC at all is
-          # disputed across npm versions (actions/setup-node#1551,
-          # npm/documentation#1960, against npm's own "detects OIDC before
-          # falling back to tokens"). registry.npmjs.org is npm's default, so
-          # omitting this costs nothing and removes the dispute.
+          # `registry-url` is deliberately absent, and setup-node's own OIDC
+          # documentation sets it. Diverging from the vendor needs a reason, so
+          # here it is.
+          #
+          # Given a registry-url, setup-node writes an .npmrc containing
+          # `_authToken=${NODE_AUTH_TOKEN}`. Through v6 it *also* exported
+          # `NODE_AUTH_TOKEN=XXXXX-XXXXX-XXXXX-XXXXX` when the variable was
+          # unset, so removing the secret left well-formed useless credentials
+          # rather than none, and npm could see auth it could not use
+          # (actions/setup-node#1551, npm/documentation#1960). v7 fixed that --
+          # "Remove dummy NODE_AUTH_TOKEN export", its PR #1558 -- which is what
+          # makes the vendor's documented recipe coherent at all.
+          #
+          # What v7 did not remove is the `_authToken=` line itself. So the
+          # remaining question is what npm does with a stanza whose variable is
+          # unset, and that is the half the bug reports were actually about. The
+          # vendor says it works; we have no run proving it here.
+          #
+          # registry.npmjs.org is npm's default registry, so omitting this input
+          # publishes to exactly the same place with no .npmrc to reason about.
+          # On the one step with no rollback, fewer moving parts wins over
+          # matching an example. Revisit if a real OIDC publish ever needs
+          # something only registry-url provides.
 
       # First, and carrying the same condition as the publish step, because it
       # exists to guard that step.
