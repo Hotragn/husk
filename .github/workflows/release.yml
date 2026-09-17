@@ -55,7 +55,24 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          registry-url: https://registry.npmjs.org
+          # `registry-url` is deliberately absent. Given one, setup-node writes
+          # an .npmrc containing `_authToken=${NODE_AUTH_TOKEN}` and *also*
+          # exports `NODE_AUTH_TOKEN=XXXXX-XXXXX-XXXXX-XXXXX` when that variable
+          # is unset -- see its src/authutil.ts, unchanged from v4 through v6.
+          # So dropping the token does not leave the stanza empty, it leaves a
+          # well-formed useless one, and whether npm then tries OIDC at all is
+          # disputed across npm versions (actions/setup-node#1551,
+          # npm/documentation#1960, against npm's own "detects OIDC before
+          # falling back to tokens"). registry.npmjs.org is npm's default, so
+          # omitting this costs nothing and removes the dispute.
+
+      # Trusted publishing needs npm >= 11.5.1 and Node >= 22.14.0. Node
+      # satisfies itself -- '22' resolves to 22.23.2 -- but it bundles npm
+      # 10.9.8, and will keep doing so for as long as 22 is the pinned major, so
+      # setup-node alone never clears the floor. Re-check
+      # nodejs.org/dist/index.json before assuming this step is still needed.
+      - run: npm install -g npm@^11.5.1
+      - run: npm --version
 
       # First, and carrying the same condition as the publish step, because it
       # exists to guard that step.
@@ -114,16 +131,54 @@ jobs:
       # The dependency order is the build order. npm does not work it out for
       # a publish, and a package published before its dependency is a version
       # nobody can install for as long as it takes to notice.
+      #
+      # ONE PACKAGE, ON PURPOSE, FOR 0.1.4 ONLY. This is the first release to
+      # authenticate over OIDC instead of NPM_TOKEN, and no dry run can prove
+      # that works -- dry_run publishes nothing, so it exercises everything
+      # except the one step being changed. `core` is the only package safe to
+      # publish alone: it depends on zod and on no `@husk-ai/*`, so a half-
+      # published 0.1.4 strands nothing. Any other single package would ship
+      # pointing at a version that is not on the registry yet.
+      #
+      # Once this has run green, restore the full list in a follow-up and
+      # publish the remaining ten at the same version:
+      #   core runtime models browser sessions agent adapters mcp server sdk cli
+      #
+      # No NODE_AUTH_TOKEN, and no `npm whoami` guard. Under trusted publishing
+      # there is no static identity to report -- the OIDC exchange happens
+      # inside `npm publish` for one package at a time -- so whoami answers 401
+      # by design and the old guard would fail every run before it published
+      # anything. The check that replaces it is below, and it reads the
+      # registry rather than an exit status.
+      #
+      # `--provenance` is gone too: trusted publishing attests automatically.
       - name: publish, in dependency order
         if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          npm whoami --registry https://registry.npmjs.org || { echo "npm auth failed — check NPM_TOKEN secret"; exit 1; }
-          for pkg in core runtime models browser sessions agent adapters mcp server sdk cli; do
+          for pkg in core; do
             echo "publishing @husk-ai/$pkg"
-            npm publish --workspace="@husk-ai/$pkg" --access public --provenance
+            npm publish --workspace="@husk-ai/$pkg" --access public
+          done
+
+      # Ask the registry, because a publish step that exits 0 has been wrong
+      # before: 0.1.2's run reported success while four packages still 404'd.
+      # An unpublished version fails here instead of at the first `npx` someone
+      # runs, and a missing attestation means OIDC fell back to something else.
+      - name: the registry actually has it, with provenance
+        if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./packages/core/package.json').version")"
+          for pkg in core; do
+            echo "checking @husk-ai/$pkg@$version"
+            npm view "@husk-ai/$pkg@$version" version
+            attestations="$(npm view "@husk-ai/$pkg@$version" dist.attestations --json)"
+            if [ "$attestations" = "undefined" ] || [ -z "$attestations" ]; then
+              echo "@husk-ai/$pkg@$version published with no attestation; OIDC did not attest" >&2
+              exit 1
+            fi
+            echo "$attestations"
           done
 
       # Last, and only on a real tag: if npm rejected a package there is nothing
