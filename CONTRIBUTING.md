@@ -12,6 +12,15 @@ node packages/cli/dist/bin.js doctor
 Node ≥ 20.10. Nothing else is required — no Docker, no API key. If any of those four
 commands needs something you do not have, that is a bug worth reporting on its own.
 
+`npm run build` walks an explicit topological order rather than npm workspaces' default,
+because the default has no view of which package must be built before which. One package
+at a time:
+
+```bash
+npm run build -w @husk-ai/core
+npm test -w @husk-ai/core
+```
+
 The two websites sit outside the npm workspace on purpose. `apps/docs` and `apps/web`
 each carry their own lockfile and install on demand:
 
@@ -25,6 +34,9 @@ default install. `apps/console` stays in the workspace: it imports `@husk-ai/cor
 `@husk-ai/sdk` and `@husk-ai/browser`, and `husk serve` serves its build.
 
 For how the packages fit together, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+For what Husk does and does not protect you from,
+[`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md). For how a version reaches npm,
+[`docs/RELEASING.md`](docs/RELEASING.md).
 
 ## Read this first
 
@@ -34,9 +46,10 @@ obeys. It is short, and it is not optional. The parts that trip people up:
 - **ESM only, and relative imports carry `.js`.** NodeNext resolution.
 - **No native modules.** Ever. A Windows `npm install` must be clean without a C++
   toolchain, which is worth more than SQLite would be.
-- **Dependencies run downhill.** `core` ← `runtime`/`models`/`sessions` ← `agent` ←
-  `mcp`/`server`/`adapters` ← `cli`. Never sideways, never up, never into another
-  package's `src/`.
+- **Dependencies run downhill.** Never sideways, never up, never into another package's
+  `src/`. The layers are listed in
+  [the build contract](docs/BUILD-CONTRACT.md#dependency-direction) — one copy, because
+  a chain written from memory has been wrong in three files at once.
 - **Two tsconfigs per package.** `tsconfig.json` for typecheck, `tsconfig.build.json`
   for build. Compiled tests must not ship.
 
@@ -58,6 +71,48 @@ needs to degrade with an explanation.
 **Comments explain why.** A comment restating the line below it will be removed in
 review. A comment explaining a non-obvious constraint — why `close` and not `exit`, why
 `unshare -mr`, why the deny list is anchored to command position — is the point.
+
+**A duplicated fact needs an observer, not necessarily a single home.** The recurring
+defect in this repo is one fact living in several places with no link between the
+copies: `husk.sh` across four User-Agent strings, the security contact in two branches,
+`REPO_URL` in two apps, a version literal in a test. Sometimes the copies are correct —
+the docs site cannot import from `packages/core`. So the rule is that copies must be
+able to disagree loudly. `scripts/drift-check.mjs` is that observer, and root
+`package.json`'s `repository.url` is the arbiter every other copy is compared against.
+
+Its assertion count is not a score. Each assertion admits a fact that could not be given
+one home, so the count going *down*, because something became derivable, is the
+progress.
+
+## Verifying work
+
+**Check the artifact, never the exit status.** Four defects reached or nearly reached
+users through a command that succeeded while doing nothing:
+
+- `@husk-ai/cli@0.1.1` exited 0 and printed zero bytes
+- `gh issue edit` with a bad path exited 0 and changed nothing
+- `exposePort` returned a URL with nothing listening on it
+- a release run reported success while the registry still 404'd four packages
+
+The habit that catches all four is the same: read back the thing the command was
+supposed to produce. Run the installed binary. Fetch the URL. Open the file.
+
+### The four guards
+
+Each checks a different layer, and none substitutes for another.
+
+| Guard | Checks |
+| --- | --- |
+| `npm run drift` | source copies of one fact still agree with each other |
+| `npm run preflight` | manifests, publish order and registry state, before publishing |
+| `packages/cli/src/pack.test.ts` | the *installed* binary prints what its manifest claims |
+| `scripts/secret-scan.mjs` | every ref, tree and the full history |
+
+A green suite is narrower than it looks. Integration tests are opt-in behind
+`HUSK_INTEGRATION=1`, so passing CI does not mean Docker was exercised — and the Windows
+job skips the `local` free-path test on every run
+([#63](https://github.com/Hotragn/husk/issues/63)), which is the one platform where that
+path is most likely to be the only one a user has.
 
 ## Tests
 
@@ -141,6 +196,69 @@ use `gh api --method PATCH repos/OWNER/REPO/pulls/N -F body=@body.md`, or
 prints which token is active and what scopes it carries; read it before assuming
 the command is at fault.
 
+## Merging
+
+**Merge commits only.** Squash and rebase merges are disabled in repository settings,
+because both rewrite a SHA and break any PR stacked on the one being merged.
+
+GitHub's `CLEAN` means there is no textual conflict, and nothing more. Whenever a PR
+touches a file another PR has just merged, trial-merge locally before trusting it.
+Mergeability is also computed asynchronously, so a single read can catch it mid-flight
+and tell you something that is about to stop being true.
+
+**Never resolve a conflict with `--ours` or `--theirs` across a file.** Conflict markers
+show which lines disagree; they never show how many facts those lines encode. In
+`core/src/config.ts` and `models/src/http.ts` the version and the repository URL were a
+single string literal, so neither side was right and only a hand-merge was. A hunk's
+fact-arity also changes between merge steps — resolving one step can consume a fact — so
+a resolution worked out once is not reusable against a `main` that has moved.
+
+After any hand-merge, `npm run drift` must pass. It has caught a bad resolution twice.
+
+## Releasing
+
+Maintainer work, and the sequence matters: see [`docs/RELEASING.md`](docs/RELEASING.md).
+Version bumps, root manifests and the three lockfiles are the maintainer's alone — a
+contributor PR should never carry one.
+
+## Working alongside other changes
+
+Work is scoped by directory rather than by task, so concurrent changes stay disjoint:
+
+| Owner | Directory |
+| --- | --- |
+| maintainer | `packages/*`, releases |
+| website | `apps/web` |
+| console | `apps/console` |
+| docs | `apps/docs` |
+| infrastructure | `.github/`, repository settings |
+
+Findings belong in the repository — a PR comment or an issue — not in a message thread.
+A precondition written against a proxy ("the bump merged") rather than against the
+condition itself ("the release shipped") is a stale gate with nobody watching it.
+
+Before adding a file at the repository root, ask whether someone cloning this repo needs
+it. If not, ignore it rather than committing it and tidying up later; history is the one
+thing you cannot tidy.
+
+## Local environment traps
+
+These have each cost someone an hour.
+
+- **Never `git stash` in this repo.** The stash is shared across every worktree, so an
+  entry created in one appears in all of them and is easy to pop in the wrong place. Use
+  a throwaway worktree instead.
+- **`git worktree list` before opening another.** A stale worktree causes "branch already
+  checked out" and refuses branch deletion, and the refusal looks like a git bug rather
+  than a leftover directory.
+- **On Windows, WSL2 is a shared dependency of two providers.** The `local` provider uses
+  WSL2 to give you a real Linux `/work`; Docker Desktop runs its engine inside WSL2 too.
+  When WSL is unhealthy, `local` quietly degrades to the Windows shell *and* Docker is
+  unavailable — one root cause presenting as two independent failures.
+- **A checkout under OneDrive or another syncing folder holds file handles.** `EBUSY` on
+  rename, failed directory deletes, and broken `git pull`, `npm install` and
+  `git worktree remove` all follow from it.
+
 ## Adding a computer provider
 
 Implement `ComputerProvider` from `@husk-ai/core`. Only the container pair share a base
@@ -195,6 +313,28 @@ One concern per commit.
 
 The fullest sample of the style is `git log history/pre-launch` -- the 19 pre-launch
 commits, which `main`'s squashed history does not preserve.
+
+**No attribution lines, co-author trailers or tool footers** — in commits, PR bodies,
+comments, issues, release notes, code comments, the docs or the site. The commit author
+is the attribution, and a trailer naming a tool tells a reader nothing about whether the
+change touches them.
+
+Write about the code, not about the work that produced it. No process commentary, no
+notes on how a change came to be. Someone reading this later wants to know what changed
+and why it matters to them.
+
+## When nothing above reaches
+
+The heuristics that have actually worked here.
+
+- **Verify before asserting.** Read the file, the API response, the installed binary.
+  Every bad call this repo has seen came from reasoning off memory instead of looking.
+- **Prefer a mechanical guard to a remembered step.** A draft PR that enforces ordering,
+  a setting that removes the wrong button, a gate written as a command anyone can run.
+- **Do not write down what you cannot reproduce.** A rule for an unreproduced failure
+  sends the next person chasing a ghost, and devalues the rules next to it.
+- **Reversibility sets the caution level.** A merge is reversible. npm is not.
+- **Scope discipline beats completeness.** A change fixes the thing it exists to fix.
 
 ## Reference
 

@@ -41,6 +41,7 @@ packages/
   models/     @husk-ai/models     model router: anthropic, openai, google, groq,
                                openrouter, ollama, lmstudio, deepseek, mistral, cerebras
   sessions/   @husk-ai/sessions   transcript importers + the distiller (chat -> husk.yaml)
+  browser/    @husk-ai/browser    a real Chromium inside a computer, driven over CDP
   agent/      @husk-ai/agent      the tool-calling loop + the built-in tools
   mcp/        @husk-ai/mcp        MCP server (stdio)
   server/     @husk-ai/server     control plane REST/WS + bot host
@@ -54,9 +55,26 @@ sandbox/                       Dockerfiles for the husk images
 brand/                         brand kit
 ```
 
-**Dependency direction is strictly downhill.** `core` <- `runtime`/`models`/`sessions`
-<- `agent` <- `mcp`/`server`/`adapters` <- `cli`. Never import sideways or upward.
-Never import from another package's `src/` — always the package name.
+### Dependency direction
+
+**Strictly downhill.** Never import sideways or upward, and never from another package's
+`src/` — always the package name.
+
+| Layer | Packages | May depend on |
+| --- | --- | --- |
+| 0 | `core` | nothing in the workspace |
+| 1 | `runtime`, `models`, `sessions`, `browser`, `sdk`, `adapters` | layer 0 |
+| 2 | `agent` | layers 0–1 |
+| 3 | `mcp`, `server` | layers 0–2 |
+| 4 | `cli` | layers 0–3 |
+
+The layer is a ceiling, not a requirement: `adapters` and `sdk` sit at layer 1 because
+`core` is all they need, and `server` depends on `adapters` and `runtime` but not on
+`agent`. Nothing depends on `cli`.
+
+This table is the only copy of the ordering. It was previously written as a linear chain
+in three files, and all three had drifted — `browser` was missing from every one of
+them, and `adapters` and `sdk` were shown above `agent` when neither imports it.
 
 ## Conventions
 
@@ -75,6 +93,10 @@ Never import from another package's `src/` — always the package name.
   as the only public surface.
 - Workspace deps pin that exact version, never a range and never `workspace:*` — npm
   workspaces links them.
+- Root `overrides` pins `react` and `react-dom` to 19.2.8 and `zod` to 3.25.76, so a
+  transitive dependency cannot pull in a second copy. An override only reaches the
+  workspace, so `apps/docs` and `apps/web` pin React themselves, at the same exact
+  versions — nothing links those two pins to this one.
 - `strict` is on, and so is `noUncheckedIndexedAccess`. Index access yields `T |
   undefined`; handle it, do not blanket-assert.
 - Comments explain *why*. No comment restates the line below it. No section banners.
@@ -96,7 +118,18 @@ Import these from `@husk-ai/core`:
 - `HuskError`, `createLogger`, `paths()`, `ensurePaths()`, `redact()`, `retry()`,
   `clampText()`, `mapLimit()`, `id()`, `slug()`.
 
-If a contract is genuinely wrong, say so in your report — do not silently widen it.
+If a contract is genuinely wrong, say so in a PR or an issue — do not silently widen it.
+
+`GUEST_ROOT = '/work'` is the canonical working directory inside a computer, on every
+provider. It is defined in `packages/runtime/src/policy.ts` and exported from
+`@husk-ai/runtime`. Paths in tool arguments, in the path jail and in a `husk.yaml` all
+resolve against it, so a provider that put the workspace elsewhere would make specs
+provider-specific. Import it rather than writing `/work`.
+
+One copy is unavoidable: `core/src/computer-info.ts` needs the same string and cannot
+import from `runtime`, which sits above it. That copy is `GUEST_WORKDIR`, marked with a
+comment naming its counterpart — and it is not yet one of the drift check's assertions,
+which is the only reason the two could disagree without anyone hearing about it.
 
 ## Model aliases (canonical, used everywhere)
 

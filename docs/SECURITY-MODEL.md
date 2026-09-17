@@ -148,6 +148,30 @@ In `readonly`, dangerous tools are never offered.
 - **No remote execution by default.** `husk serve` binds loopback, and it refuses to start
   on a non-loopback address without `HUSK_TOKEN` set.
 
+## Securing the repository itself
+
+A key that never reaches a model is still a key if it reaches a commit.
+
+`scripts/secret-scan.mjs` reads tracked files and walks `git log -p --all`, so its
+coverage is exactly *reachable from a ref* — every branch, tag and note, including a
+second root. `.npmrc` is deliberately tracked, because it carries shared settings and
+ignoring it would change nothing for a file git already follows; `npm login` writes
+`_authToken` into that same file, so the scanner is what covers it.
+
+Three things follow from "reachable from a ref":
+
+- **Deleting a branch or force-pushing is concealment, not remediation.** GitHub serves
+  unreachable commits by SHA indefinitely, to anyone who has the SHA. Deletion removes
+  those commits from your scanner and from nobody else. Scan an unmerged ref *before*
+  deleting it.
+- **`--all` includes `refs/stash`**, so a stash entry can be the only thing keeping a
+  commit in scope — and `stash@{1}` and older live in a reflog the scan never reaches.
+- **A clean scan means nothing without its scope.** Record the ref set and the commit
+  count alongside the result, or the result is not repeatable.
+
+If a credential does reach a commit, the remediation is rotating it. Rewriting history
+is tidying, and it happens second.
+
 ## Reporting a vulnerability
 
 Open a private security advisory on the repository rather than a public issue. Include the

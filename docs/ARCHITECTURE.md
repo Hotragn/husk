@@ -58,10 +58,13 @@ entirely in the provider.
                        └──────────────────────────────────────────┘
 
    @husk-ai/sessions  transcript ──▶ husk.yaml    (feeds the layers above, depends on core)
+   @husk-ai/browser   Chromium over CDP           (used by agent, mcp and server)
+   @husk-ai/sdk       typed control-plane client  (depends on core only)
 ```
 
 Dependencies run strictly downhill. `core` imports nothing from the workspace. Nothing
-imports `cli`.
+imports `cli`. The full ordering is a table in
+[the build contract](BUILD-CONTRACT.md#dependency-direction).
 
 ## The computer
 

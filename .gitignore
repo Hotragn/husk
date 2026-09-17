@@ -56,18 +56,17 @@ gha-creds-*.json
 # resolve. Anchored to the root, so a future `packages/*/husk` would be fine.
 /husk/
 
-# --------------------------------------------------------------- agent tooling
+# ----------------------------------------------------- machine-local tool state
 #
-# Third-party skill files installed by `npx skills add <repo>`. Re-installable
-# in one command, not this repo's content.
+# Editor and assistant configuration that belongs to one machine, not to the
+# project. Re-created in one command, and none of it is this repo's content.
 .agents/
 
-# Machine-local agent state, including `worktrees/` which are full duplicate
-# checkouts. Committing it would put a second copy of the source tree inside
-# the first one.
+# Includes `worktrees/`, which are full duplicate checkouts. Committing it
+# would put a second copy of the source tree inside the first one.
 .claude/
 
-# Lock file written by `npx skills add` — goes with .agents/.
+# The lock file that goes with .agents/.
 skills-lock.json
 
 # ------------------------------------------------------------- scratch & junk
