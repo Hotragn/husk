@@ -39,6 +39,17 @@ export async function run(argv: string[]): Promise<number> {
     );
   }
 
+  // Before touching a provider: a quoting mistake should not cost a container
+  // round-trip and come back as somebody else's error message.
+  const stray = strayQuote(cmd);
+  if (stray !== undefined) {
+    throw new UsageError(
+      `\`${stray}\` is not a command — the single quotes were passed through instead of stripped, ` +
+        `which is what cmd.exe does. Use double quotes: ${rewriteQuoted(name, cmd)}`,
+      'exec',
+    );
+  }
+
   const computer = await resolve(name);
 
   // A single argument is a shell string, so `husk exec box -- 'a > b; cat b'`
@@ -74,4 +85,28 @@ export async function run(argv: string[]): Promise<number> {
   }
 
   return result.exitCode === 0 ? EXIT_OK : result.exitCode;
+}
+
+/**
+ * Catch a command that arrived with its quotes still attached.
+ *
+ * `husk exec dev -- 'uname -sr && python3 -V'` is the documented form, and it is
+ * a posix-shell form: the shell strips the quotes and husk gets one argument.
+ * cmd.exe does not strip single quotes, so husk gets `'uname`, `-sr`, ... and
+ * hands `'uname` to the container as an executable name. The runtime then fails
+ * with a raw OCI error -- `exec: "'uname": executable file not found in $PATH` --
+ * which names neither husk nor the quote that caused it.
+ *
+ * The signature is an argument that opens a single quote and never closes it,
+ * which no real argv produces. A token that is quoted on both sides is left
+ * alone: that one is ambiguous and could be deliberate.
+ */
+export function strayQuote(cmd: string[]): string | undefined {
+  return cmd.find((a) => a.startsWith("'") && !(a.length > 1 && a.endsWith("'")));
+}
+
+/** The command the caller meant, re-quoted for a shell that keeps its quotes. */
+export function rewriteQuoted(name: string, cmd: string[]): string {
+  const joined = cmd.join(' ').replace(/^'/, '').replace(/'$/, '');
+  return `husk exec ${name} -- "${joined}"`;
 }

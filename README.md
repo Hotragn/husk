@@ -62,6 +62,13 @@ npx @husk-ai/cli exec dev -- 'uname -sr && python3 -V'
 npx @husk-ai/cli rm dev             # tear it down
 ```
 
+On Windows `cmd.exe`, use double quotes -- it does not strip single ones, so the
+quotes would reach the container as part of the command:
+
+```bat
+npx @husk-ai/cli exec dev -- "uname -sr && python3 -V"
+```
+
 On a laptop with Docker stopped and WSL2 installed, `exec` prints
 `Linux 6.18.33.2-microsoft-standard-WSL2` and `Python 3.14.4`. `doctor` reports every
 provider it probed, which one it would pick, and why the others were skipped.
@@ -116,7 +123,7 @@ checks. Five worked examples live in [`examples/`](examples/).
   reporter, no version ping.
 - **No native modules.** `npm install` finishes on Windows with no C++ toolchain. Node
   20.10 or newer.
-- **1,570 tests across 81 files**, all passing with no Docker, no API key and no
+- **1,660 tests across 95 files**, all passing with no Docker, no API key and no
   network.
 
 ## How it works

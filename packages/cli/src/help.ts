@@ -103,6 +103,7 @@ export const COMMANDS: HelpEntry[] = [
     examples: [
       'husk exec scratch -- uname -sr',
       "husk exec scratch -- 'echo hi > /work/a.txt; cat /work/a.txt'",
+      'husk exec scratch -- "echo hi > /work/a.txt; cat /work/a.txt"   # cmd.exe keeps single quotes',
       'husk exec scratch --json -- ls /work | jq .exitCode',
     ],
   },

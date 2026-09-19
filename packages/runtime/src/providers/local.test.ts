@@ -20,9 +20,33 @@ let home: string | undefined;
 const original = process.env.HUSK_HOME;
 const computers: Computer[] = [];
 
+/**
+ * Remove the scratch HUSK_HOME, allowing for a filesystem that is still settling.
+ *
+ * Each test has just had a provider writing under `computers/`, and teardown can
+ * start before the last of those writes has landed -- `rm` then loses the race
+ * and reports `ENOTEMPTY: directory not empty, rmdir`. Seen on macos-latest for
+ * 0f664b6. `maxRetries` is Node's answer: with `recursive`, it backs off linearly
+ * and retries exactly that error set (EBUSY, EMFILE, ENFILE, ENOTEMPTY, EPERM).
+ * `force` alone does not help -- it suppresses "does not exist", not "is busy".
+ *
+ * This is the same fix #80 applied to `packages/cli/src/smoke.test.ts`, including
+ * the part that matters most: teardown cannot fail the run. Every assertion has
+ * already passed by the time this runs, the directory is under the OS temp dir,
+ * and a CI runner is discarded whole. The warning keeps a leak visible rather
+ * than silent.
+ */
+async function removeHome(dir: string): Promise<void> {
+  try {
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (err) {
+    console.warn(`[local.test] could not remove ${dir}: ${(err as Error).message}`);
+  }
+}
+
 afterEach(async () => {
   for (const c of computers.splice(0)) await c.destroy().catch(() => {});
-  if (home) await rm(home, { recursive: true, force: true });
+  if (home) await removeHome(home);
   home = undefined;
   if (original === undefined) delete process.env.HUSK_HOME;
   else process.env.HUSK_HOME = original;
