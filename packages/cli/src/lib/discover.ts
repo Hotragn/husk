@@ -2,7 +2,7 @@ import { open, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { TranscriptSource } from '@husk-ai/core';
-import { parseMarkdownChat } from '@husk-ai/sessions';
+import { parseClaudeJsonl, parseMarkdownChat } from '@husk-ai/sessions';
 
 /**
  * Find transcripts without being told where they are.
@@ -118,7 +118,7 @@ async function walk(dir: string, root: Root, depth: number, out: Map<string, Can
     out.set(full, {
       path: full,
       source: root.source,
-      title: prettyTitle(full, root.source),
+      title: await prettyTitle(full, root.source),
       sizeBytes: st.size,
       modifiedAt: st.mtime.toISOString(),
     });
@@ -128,15 +128,31 @@ async function walk(dir: string, root: Root, depth: number, out: Map<string, Can
 /**
  * A readable label.
  *
- * Claude Code names its files after a session uuid, which tells a human nothing,
- * so the project directory above it is used instead -- that is the name they
- * would recognise.
+ * Claude Code names its files after a session uuid, which tells a human nothing.
+ * Its encoded parent name cannot be decoded without confusing literal dashes
+ * with separators, so prefer the exact cwd from the bounded transcript prefix.
+ * The raw parent name is a truthful fallback when cwd is unavailable.
  */
-function prettyTitle(path: string, source: TranscriptSource): string {
+export async function prettyTitle(path: string, source: TranscriptSource): Promise<string> {
   const file = basename(path);
   if (source === 'claude-code') {
     const parent = basename(join(path, '..'));
-    const project = parent.replace(/^-+/, '').replace(/-/g, '/');
+    let project = parent;
+    try {
+      const fh = await open(path, 'r');
+      try {
+        const buf = Buffer.alloc(SNIFF_BYTES);
+        const { bytesRead } = await fh.read(buf, 0, SNIFF_BYTES, 0);
+        const parsed = parseClaudeJsonl(buf.subarray(0, bytesRead).toString('utf8'), path);
+        const cwd = parsed?.transcript.meta?.cwd;
+        if (typeof cwd === 'string' && cwd.length > 0) project = cwd;
+      } finally {
+        await fh.close();
+      }
+    } catch {
+      // Discovery still returns a useful, truthful label if the file changes
+      // or becomes unreadable between readdir and this bounded prefix read.
+    }
     return project && project !== '.claude' ? `${project}  ${file.slice(0, 8)}` : file;
   }
   return file;
