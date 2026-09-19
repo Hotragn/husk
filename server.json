@@ -1,0 +1,41 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.hotragn/husk",
+  "title": "Husk",
+  "description": "A real Linux computer for your agent: shell, persistent /work, files, ports, a browser.",
+  "version": "0.1.4",
+  "websiteUrl": "https://husk-dev.vercel.app/",
+  "repository": {
+    "url": "https://github.com/Hotragn/husk",
+    "source": "github"
+  },
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/Hotragn/husk/main/brand/logo/mark-512-dark.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "512x512"
+      ],
+      "theme": "dark"
+    },
+    {
+      "src": "https://raw.githubusercontent.com/Hotragn/husk/main/brand/logo/mark-512-light.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "512x512"
+      ],
+      "theme": "light"
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@husk-ai/mcp",
+      "version": "0.1.4",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

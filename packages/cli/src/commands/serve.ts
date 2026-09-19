@@ -1,5 +1,6 @@
 import { DEFAULT_CONFIG, HuskError } from '@husk-ai/core';
 import { parse, parseCount } from '../args.js';
+import { orientBriefly } from '../lib/first-run.js';
 import { interruptSignal } from '../signal.js';
 import * as ui from '../ui.js';
 import { EXIT_OK } from '../exit.js';
@@ -24,6 +25,7 @@ interface ServerModule {
 export async function run(argv: string[]): Promise<number> {
   const { values } = parse(argv, { port: { type: 'string' }, host: { type: 'string' } }, 'serve');
   ui.configure(values);
+  orientBriefly('open the console it prints, or POST /v1/husks/<name>/run');
 
   const port = parseCount(values.port as string | undefined, '--port', 'serve') ?? DEFAULT_CONFIG.port;
   const host = (values.host as string | undefined) ?? DEFAULT_CONFIG.host;

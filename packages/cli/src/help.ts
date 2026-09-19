@@ -18,6 +18,25 @@ export interface HelpEntry {
 
 export const COMMANDS: HelpEntry[] = [
   {
+    name: 'onboard',
+    group: 'system',
+    summary: 'Guided setup — run this first',
+    usage: 'husk onboard [--yes] [--json]',
+    details:
+      'Five steps: what this machine gives you and how isolated it really is, a throwaway\n'
+      + 'computer created and destroyed in front of you, the shortest route to a model if you\n'
+      + 'have none, the three places people reach a husk from, and one command to run next.\n\n'
+      + 'It never asks for an API key. husk reads credentials from the environment and does not\n'
+      + 'store them, so this prints the export line and re-checks instead. With no terminal it\n'
+      + 'prints the whole path as text rather than waiting for an answer.',
+    flags: [
+      ['--yes', 'do not ask; run the check even without a terminal'],
+      ['--skip-checks', 'do not create the throwaway computer'],
+      ['--json', 'the same decisions as a machine-readable plan'],
+    ],
+    examples: ['husk onboard', 'husk onboard --json | jq .next'],
+  },
+  {
     name: 'doctor',
     group: 'system',
     summary: 'Show exactly what this machine can and cannot do',
@@ -103,6 +122,7 @@ export const COMMANDS: HelpEntry[] = [
     examples: [
       'husk exec scratch -- uname -sr',
       "husk exec scratch -- 'echo hi > /work/a.txt; cat /work/a.txt'",
+      'husk exec scratch -- "echo hi > /work/a.txt; cat /work/a.txt"   # cmd.exe keeps single quotes',
       'husk exec scratch --json -- ls /work | jq .exitCode',
     ],
   },
@@ -260,12 +280,27 @@ export function findCommand(name: string): HelpEntry | undefined {
   return COMMANDS.find((c) => c.name === name);
 }
 
-export function topLevelHelp(version: string): string {
+/**
+ * The overview.
+ *
+ * `firstRun` is passed in rather than read here: this module is pure so that
+ * `husk --help` costs nothing, and a `statSync` on the state directory is
+ * exactly the kind of thing that creeps into a hot path. The caller already
+ * knows.
+ *
+ * On a first run the twenty-command wall is the wrong first thing to read, so
+ * one line goes above it pointing at the command written for that moment.
+ */
+export function topLevelHelp(version: string, firstRun = false): string {
   const width = Math.max(...COMMANDS.map((c) => c.name.length));
   const out: string[] = [];
 
   out.push(`${bold('husk')} ${dim(version)} — give your agent a computer, and turn a chat into a bot.`);
   out.push('');
+  if (firstRun) {
+    out.push(`${bold('NEW HERE?')}  ${cyan('husk onboard')} ${dim('— five steps, nothing to sign up for, safe to re-run.')}`);
+    out.push('');
+  }
   out.push(`${bold('USAGE')}`);
   out.push(`  husk <command> [flags]`);
   out.push('');
@@ -290,6 +325,7 @@ export function topLevelHelp(version: string): string {
   for (const [flag, desc] of globals) out.push(`  ${flag.padEnd(flagWidth)}  ${desc}`);
   out.push('');
   out.push(bold('GETTING STARTED'));
+  out.push(`  ${gray('$')} husk onboard                     ${dim('# guided, start here')}`);
   out.push(`  ${gray('$')} husk doctor                      ${dim('# what can this machine do?')}`);
   out.push(`  ${gray('$')} husk up scratch                  ${dim('# a Linux box, free, no account')}`);
   out.push(`  ${gray('$')} husk exec scratch -- uname -sr   ${dim('# drive it')}`);

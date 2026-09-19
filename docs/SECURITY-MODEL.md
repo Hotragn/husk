@@ -44,7 +44,7 @@ directory, your SSH keys, your Docker socket, or your other containers.
 
 | control | what it stops |
 | --- | --- |
-| path jail (file tools) | every file-tool call resolves through `realpath` and is rejected if the target leaves the workspace — including via a symlink created inside it. Shell commands are **not** path-confined: they start in the workspace, but absolute host paths and `..` reach whatever your user reaches |
+| path jail (file tools) | every file-tool call resolves through `realpath` and is rejected if the target leaves the workspace — including via a symlink created inside it. Shell commands are **not** path-confined: they start in the workspace, but absolute host paths and `..` reach whatever your user reaches. On a Windows host the jail currently errs the other way and refuses *any* symlink inside the workspace, because the host reads those files through `\\wsl.localhost\` and cannot follow a Linux link ([#113](https://github.com/Hotragn/husk/issues/113)) |
 | environment scrub | `ANTHROPIC_API_KEY`, `AWS_*`, `*_TOKEN`, `*_SECRET` and everything else not on a small allow-list never reach the process |
 | command policy | a short list of unrecoverable commands (`rm -rf /`, `mkfs`, `dd of=/dev/sda`, `curl … \| sh`, `sudo`, fork bombs) is refused |
 | output caps | a runaway process cannot exhaust memory through captured output |
@@ -114,8 +114,13 @@ Two independent controls:
    rather than forwarded.
 2. **Nothing credential-shaped leaves a tool.** Every tool result passes through
    `redact()` before it re-enters the conversation, matching Anthropic, OpenAI, Google,
-   GitHub, Slack and AWS key formats plus PEM private keys. An agent that `cat`s a `.env`
-   sees the file; the model sees `sk-ant-…[redacted]`.
+   GitHub, Slack and AWS access key IDs plus PEM private keys. An agent that `cat`s a
+   `.env` sees the file; the model sees `sk-ant-…[redacted]`.
+
+   An AWS *secret* access key is the documented exception: it is forty characters of
+   base64 with no prefix and nothing to match on, so no pattern finds it without also
+   redacting ordinary hashes. Pair the scrub with `none` egress when that is the
+   credential you are worried about.
 
 To pass a credential deliberately, name it:
 
@@ -144,7 +149,10 @@ In `readonly`, dangerous tools are never offered.
   phone-home. The only calls Husk makes are to the model provider you configured and to a
   registry when pulling an image.
 - **No credential storage.** Husk reads keys from the environment and never writes them to
-  `~/.husk`.
+  `~/.husk`. One thing does land there verbatim: `husk import` caches the transcript you
+  gave it, so a chat log containing a key keeps that key in `~/.husk/transcripts`. What
+  Husk *derives* from it is redacted first — the distilled `husk.yaml`, its name, its
+  slug and its filename — but the cached copy of your own file is not rewritten.
 - **No remote execution by default.** `husk serve` binds loopback, and it refuses to start
   on a non-loopback address without `HUSK_TOKEN` set.
 

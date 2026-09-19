@@ -1,6 +1,7 @@
 import { EXIT_OK, EXIT_SIGINT, EXIT_USAGE } from './exit.js';
 import { UsageError, parse } from './args.js';
 import { COMMANDS, commandHelp, findCommand, suggest, topLevelHelp } from './help.js';
+import { hasBeenOriented } from './lib/first-run.js';
 import { trip } from './signal.js';
 import { VERSION } from './version.js';
 import * as ui from './ui.js';
@@ -19,9 +20,21 @@ import * as ui from './ui.js';
  * user pays is the cost of the command they actually ran. A CLI invoked a few
  * hundred times a day cannot afford to load the world to print a usage string.
  */
+/**
+ * Has this machine run husk before?
+ *
+ * The marker `first-run.ts` already writes is the cheapest honest signal there
+ * is -- one `existsSync` -- so the pointer to `husk onboard` appears for exactly
+ * the person it was written for, and never again after that.
+ */
+function isFirstRun(): boolean {
+  return !hasBeenOriented();
+}
+
 /** Command name -> the module that implements it. Values are lazy on purpose. */
 const ROUTES: Record<string, () => Promise<{ run: (argv: string[]) => Promise<number> }>> = {
   doctor: () => import('./commands/doctor.js'),
+  onboard: () => import('./commands/onboard.js'),
   up: () => import('./commands/up.js'),
   ps: () => import('./commands/ps.js'),
   rm: () => import('./commands/rm.js'),
@@ -50,6 +63,8 @@ const ALIASES: Record<string, string> = {
   run_: 'run',
   sh: 'shell',
   check: 'doctor',
+  setup: 'onboard',
+  quickstart: 'onboard',
 };
 
 /**
@@ -82,7 +97,7 @@ export async function main(argv: string[]): Promise<number> {
       return EXIT_OK;
     }
     ui.configure(parse(argv).values);
-    process.stdout.write(topLevelHelp(VERSION) + '\n');
+    process.stdout.write(topLevelHelp(VERSION, isFirstRun()) + '\n');
     // No arguments is a question, not a mistake. Exit 0 so `husk` in a script
     // that just probes for the binary does not look like a failure.
     return EXIT_OK;
@@ -92,7 +107,7 @@ export async function main(argv: string[]): Promise<number> {
     const target = rest.find((a) => !a.startsWith('-'));
     ui.configure(parse(rest.filter((a) => a !== target)).values);
     if (!target) {
-      process.stdout.write(topLevelHelp(VERSION) + '\n');
+      process.stdout.write(topLevelHelp(VERSION, isFirstRun()) + '\n');
       return EXIT_OK;
     }
     const entry = findCommand(resolveAlias(target));
@@ -116,7 +131,7 @@ export async function main(argv: string[]): Promise<number> {
   if (rest.includes('--help') || rest.includes('-h')) {
     ui.configure({});
     const entry = findCommand(resolved);
-    process.stdout.write((entry ? commandHelp(entry) : topLevelHelp(VERSION)) + '\n');
+    process.stdout.write((entry ? commandHelp(entry) : topLevelHelp(VERSION, isFirstRun())) + '\n');
     return EXIT_OK;
   }
 

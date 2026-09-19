@@ -97,7 +97,7 @@ describe('a failed Chromium launch', () => {
     }
 
     expect(isHuskError(caught) && caught.code).toBe('E_COMPUTER_FAILED');
-    expect((caught as Error).message).toMatch(/within 40 seconds/);
+    expect((caught as Error).message).toMatch(/waited up to 90 seconds/);
     expect(JSON.stringify(caught)).toContain('missing libnss3.so');
 
     const poll = calls.find((call) => call.cmd.includes('for i in $(seq 1 80)'));

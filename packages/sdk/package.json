@@ -42,6 +42,7 @@
     "@husk-ai/core": "0.1.3"
   },
   "devDependencies": {
+    "@husk-ai/mcp": "0.1.3",
     "@husk-ai/runtime": "0.1.3",
     "@husk-ai/server": "0.1.3",
     "@types/ws": "^8.18.1",

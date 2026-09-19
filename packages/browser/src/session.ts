@@ -305,7 +305,11 @@ export class BrowserSession {
       await this.computer
         .exec({ cmd: `pkill -f -- "--remote-debugging-port=${port}" || true`, timeoutSec: 15 })
         .catch(() => undefined);
-      throw new HuskError('E_COMPUTER_FAILED', 'Chromium started but never opened its debugging port within 40 seconds', {
+      // "40 seconds" was the poll's own arithmetic, not its ceiling: 80 attempts
+      // x 0.5s only holds while each connect is refused instantly. A listener
+      // that accepts and wedges makes every curl pay its full --max-time and the
+      // wait runs to the 90s exec kill. Quote the bound, not the fast path.
+      throw new HuskError('E_COMPUTER_FAILED', 'Chromium started but never opened its debugging port (waited up to 90 seconds)', {
         hint: 'the log is in details -- a missing shared library or a stale singleton lock in the profile are the usual causes',
         details: { port, log: log.slice(-2000) },
       });

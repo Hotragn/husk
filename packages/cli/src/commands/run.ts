@@ -6,6 +6,7 @@ import type { AgentRunEvent, ApprovalRequest, RouterLike } from '@husk-ai/agent'
 import { UsageError, parse, parseChoice, parseCount,
   parseAmount, required } from '../args.js';
 import { manager } from '../lib/computers.js';
+import { orientBriefly } from '../lib/first-run.js';
 import { resolveModel } from '../lib/models.js';
 import { confirm, interactive, readPipedStdin } from '../lib/prompt.js';
 import { loadSpec } from '../lib/yaml.js';
@@ -37,6 +38,7 @@ export async function run(argv: string[]): Promise<number> {
     'run',
   );
   ui.configure(values);
+  orientBriefly('the agent gets a computer on its first tool call; `husk ps` shows it');
 
   const ref = required(positionals, 0, 'husk.yaml|name', 'run');
   const spec = await locateSpec(ref);

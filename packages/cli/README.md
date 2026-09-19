@@ -44,6 +44,10 @@ $ husk rm scratch --yes
 ✓ destroyed scratch
 ```
 
+On Windows `cmd.exe` the single quotes above are not stripped and would reach the
+container as part of the command, so use double quotes there:
+`husk exec scratch -- "echo hi > /work/a.txt; cat /work/a.txt; uname -sr"`.
+
 No account, no API key, no Docker. `husk doctor` is the command to run when
 anything is confusing — it tells you what is available, what is not, and the one
 command that fixes each gap.

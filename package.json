@@ -2,7 +2,7 @@
   "name": "husk-monorepo",
   "private": true,
   "version": "0.1.3",
-  "description": "Husk — give your agent a computer.",
+  "description": "Husk \u2014 give your agent a computer.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -23,6 +23,7 @@
     "drift": "node scripts/drift-check.mjs",
     "links": "node scripts/link-check.mjs",
     "preflight": "node scripts/preflight.mjs",
+    "install-smoke": "node scripts/install-smoke.mjs",
     "clean": "node scripts/clean.mjs"
   },
   "overrides": {

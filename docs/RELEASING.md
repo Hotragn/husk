@@ -31,11 +31,24 @@ because that step had been sitting on `main`, unused, since `0.1.2`.
 2. **`npm run preflight`.** Read-only: manifests, publish order, and what the registry
    already has.
 
-3. **Tag at an explicit SHA**, never at `HEAD`. `HEAD` moves; a release is a point.
+3. **`npm run install-smoke`.** Packs all eleven, installs them into a scratch directory
+   outside the checkout, and drives the installed copies: the CLI lifecycle, an MCP
+   handshake over stdio, an SDK import. Everything else in the gate tests the *workspace*,
+   where a symlink satisfies an import the published package never declared — which is how
+   0.1.1 shipped a bin that did nothing and 0.1.3 shipped three pins a version behind.
 
-4. **`release.yml` publishes in dependency order**, then creates the GitHub Release.
+   It also reads every cross-package pin out of the **tarball** rather than the checkout.
+   That is a static check on purpose: before a publish the correct version is not on the
+   registry, so an install that resolved transitively would 404 on a correct pin and sail
+   through a stale one that happens to be published. After the publish,
+   `npm run install-smoke -- --registry` drops the local overrides and resolves the graph
+   for real.
 
-5. **Verify from outside the repo**, against the registry rather than the workflow:
+4. **Tag at an explicit SHA**, never at `HEAD`. `HEAD` moves; a release is a point.
+
+5. **`release.yml` publishes in dependency order**, then creates the GitHub Release.
+
+6. **Verify from outside the repo**, against the registry rather than the workflow:
 
    ```bash
    npx -y @husk-ai/cli@X.Y.Z doctor

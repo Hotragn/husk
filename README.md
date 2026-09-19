@@ -56,15 +56,33 @@ sandboxed when it is not makes worse decisions than one that knows.
 ## The CLI
 
 ```bash
-npx @husk-ai/cli doctor             # what this machine can offer
-npx @husk-ai/cli up dev             # bring up a Linux computer
+npx @husk-ai/cli onboard                 # guided setup, five steps, start here
+npx @husk-ai/cli doctor                  # or go straight to what this machine can offer
+npx @husk-ai/cli up dev --flavor python  # bring up a Linux computer
 npx @husk-ai/cli exec dev -- 'uname -sr && python3 -V'
-npx @husk-ai/cli rm dev             # tear it down
+npx @husk-ai/cli rm dev                  # tear it down
 ```
 
-On a laptop with Docker stopped and WSL2 installed, `exec` prints
-`Linux 6.18.33.2-microsoft-standard-WSL2` and `Python 3.14.4`. `doctor` reports every
-provider it probed, which one it would pick, and why the others were skipped.
+`onboard` names your provider and how isolated it really is, creates a computer and
+destroys it in front of you, points at the shortest route to a model if you have none,
+and prints the MCP line for your editor. It never asks for an API key — husk reads
+credentials from the environment and does not store them, so it prints the `export` line
+and re-checks.
+
+On Windows `cmd.exe`, use double quotes -- it does not strip single ones, so the
+quotes would reach the container as part of the command:
+
+```bat
+npx @husk-ai/cli exec dev -- "uname -sr && python3 -V"
+```
+
+`--flavor python` is there because the default `base` flavour is
+`debian:bookworm-slim`, which has no `python3` -- and a quickstart whose third line
+prints `python3: not found` is not a quickstart. On a laptop with Docker running, that
+sequence prints `Linux 6.18.33.2-microsoft-standard-WSL2` and `Python 3.12.14`; with
+Docker stopped and WSL2 installed it picks `local` and prints the same kernel with the
+distro's own `Python 3.14.4`. `doctor` reports every provider it probed, which one it
+would pick, and why the others were skipped.
 
 ## Turn a chat into a bot
 
@@ -116,8 +134,9 @@ checks. Five worked examples live in [`examples/`](examples/).
   reporter, no version ping.
 - **No native modules.** `npm install` finishes on Windows with no C++ toolchain. Node
   20.10 or newer.
-- **1,570 tests across 81 files**, all passing with no Docker, no API key and no
-  network.
+- **1,739 tests across 100 files**, passing with no API key and no network. Twenty-two of
+  them are the container half of the workspace-conformance matrix and skip when no Docker
+  daemon answers; the rest do not need one.
 
 ## How it works
 
@@ -183,13 +202,25 @@ unavailable is an error, never a quiet downgrade to weaker isolation.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/png/05-trust-boundaries.dark.png">
-  <img alt="A tool call passes the path jail, command policy and env scrub into the computer; results pass redact() and the audit log" src="docs/diagrams/png/05-trust-boundaries.light.png">
+  <img alt="A tool call passes the local-only path jail, the command policy and the env scrub into the computer; results pass redact() and the audit log" src="docs/diagrams/png/05-trust-boundaries.light.png">
 </picture>
 
-These hold in every mode, `local` included: the path jail, the command deny list, the
-environment scrub, output caps, process-tree kill, `redact()` on every result and
-`audited()` on every MCP call. What `local` does not give you is a kernel boundary. It
-shares your kernel, your network and your user account.
+These hold in every mode, `local` included, and were re-checked against a live `local`
+and a live `docker` computer for 0.1.4: the command deny list, the environment scrub,
+output caps, process-tree kill, `redact()` on every result and `audited()` on every MCP
+call.
+
+The path jail is not one of them, and this paragraph used to say it was
+([#120](https://github.com/Hotragn/husk/issues/120)). It is a `local` control, and there
+it confines the file tools rather than the shell. On `docker`, `podman` and `fly` the
+container *is* the boundary, so the file tools address the container's own filesystem:
+`read_file /etc/passwd` returns the container's copy, and `/dev/shm` takes a write.
+Neither reaches your machine, which is the point of running those providers — a jail
+inside a kernel boundary is largely redundant. Claiming one anyway is exactly what this
+section exists not to do.
+
+What `local` does not give you is a kernel boundary. It shares your kernel, your network
+and your user account.
 
 `169.254.169.254` stays blocked even under `network.mode: full`, because `full` means
 the internet and not the cloud metadata service that hands IAM credentials to whatever

@@ -5193,8 +5193,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         <text data-detail="context" x="378" y="118" class="t-muted" font-size="9" text-anchor="middle">shell · write_file · browse</text>
         </g>
 
-        <g id="node-pathjail" data-node-id="pathjail" data-node-label="path jail" tabindex="0" role="button" aria-label="Focus path jail, realpath, rejects escapes, Architecture component" aria-pressed="false" data-node-kind="security" data-node-sublabel="realpath, rejects escapes" data-node-context="Architecture component">
-          <title>path jail · realpath, rejects escapes · Architecture component</title>
+        <g id="node-pathjail" data-node-id="pathjail" data-node-label="path jail" tabindex="0" role="button" aria-label="Focus path jail, local file tools only, Architecture component" aria-pressed="false" data-node-kind="security" data-node-sublabel="local file tools only" data-node-context="Architecture component">
+          <title>path jail · local file tools only · Architecture component</title>
           <rect x="516" y="70" width="180" height="68" rx="6" class="c-mask"/>
           <rect x="516" y="70" width="180" height="68" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(522 76) scale(0.6875)">
@@ -5202,7 +5202,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="606" y="102" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">path jail</text>
-        <text data-detail="context" x="606" y="118" class="t-muted" font-size="9" text-anchor="middle">realpath, rejects escapes</text>
+        <text data-detail="context" x="606" y="118" class="t-muted" font-size="9" text-anchor="middle">local file tools only</text>
         </g>
 
         <g id="node-denylist" data-node-id="denylist" data-node-label="command policy" tabindex="0" role="button" aria-label="Focus command policy, anchored deny list, Architecture component" aria-pressed="false" data-node-kind="security" data-node-sublabel="anchored deny list" data-node-context="Architecture component">
@@ -5571,6 +5571,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <h3>The honest limits</h3>
         </div>
         <ul>
+          <li>&bull; The path jail is a local-only control, and confines the file tools, not the shell</li>
+          <li>&bull; On docker/podman/fly the container is the boundary: read_file /etc/passwd returns the container's copy</li>
           <li>&bull; mode: egress is enforced at the tool layer, not by a firewall — a raw socket is not stopped</li>
           <li>&bull; An empty allow-list permits nothing; approval with no approver wired denies, not allows</li>
         </ul>

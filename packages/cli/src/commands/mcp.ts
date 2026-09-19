@@ -1,5 +1,6 @@
 import { HuskError } from '@husk-ai/core';
 import { parse } from '../args.js';
+import { orientBriefly } from '../lib/first-run.js';
 import * as ui from '../ui.js';
 import { EXIT_OK } from '../exit.js';
 
@@ -31,6 +32,7 @@ export async function run(argv: string[]): Promise<number> {
     'mcp',
   );
   ui.configure({ ...values, json: false, quiet: false });
+  orientBriefly('your MCP client drives it from here; the first tool result says what machine it got');
 
   let mod: McpModule;
   try {
