@@ -1065,8 +1065,9 @@ export class LocalProvider implements ComputerProvider {
     const info = all.find((i) => i.id === id || i.name === id);
     if (!info || info.provider !== 'local') return null;
     const workspaceRoot = info.spec.labels?.['husk.workspace'] ?? join(paths().workspaces, info.id);
-    if (!existsSync(workspaceRoot)) return null;
-    return new LocalComputer(info, jailFor(workspaceRoot), detectShell());
+    const computer = new LocalComputer(info, jailFor(workspaceRoot), detectShell());
+    await computer.refresh();
+    return computer;
   }
 
   async list(): Promise<ComputerInfo[]> {
