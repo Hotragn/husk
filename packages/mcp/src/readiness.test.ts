@@ -32,6 +32,18 @@ async function session() {
 }
 
 describe('MCP reconnects', () => {
+  it('separates the first isolation note from tool output', async () => {
+    const s = await session();
+    const first = await s.shell();
+    if (!Array.isArray(first.content)) throw new Error('Expected MCP content array');
+    expect(first.content[0]).toMatchObject({ type: 'text', text: expect.stringMatching(/\n$/) });
+    expect(first.content[1]).toMatchObject({ type: 'text', text: expect.stringContaining('ok') });
+    expect(first.content.map((item) => item.text ?? '').join('')).toMatch(/\nok$/);
+
+    const second = await s.shell();
+    expect(second.content).toEqual([{ type: 'text', text: 'ok' }]);
+  });
+
   it('resumes a cached computer before the next tool executes', async () => {
     const s = await session();
     await s.shell();
