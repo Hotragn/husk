@@ -11,6 +11,8 @@ not here.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-09-22
+
 ### Added
 
 - **`husk onboard` — the guided setup that was missing.** Between `npm i -g @husk-ai/cli`
@@ -261,7 +263,8 @@ to the list of what does.
 - Anthropic's Opus and Sonnet cache-write prices are derived from estimated input
   rates and are marked `estimatedPricing`.
 
-[Unreleased]: https://github.com/Hotragn/husk/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/Hotragn/husk/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/Hotragn/husk/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Hotragn/husk/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Hotragn/husk/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Hotragn/husk/compare/v0.1.0...v0.1.1

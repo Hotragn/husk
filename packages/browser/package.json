@@ -1,6 +1,6 @@
 {
   "name": "@husk-ai/browser",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "A real Chromium inside a Husk computer, driven over CDP.",
   "license": "Apache-2.0",
   "repository": {
@@ -41,7 +41,7 @@
     "embed-driver": "node scripts/embed-driver.mjs"
   },
   "dependencies": {
-    "@husk-ai/core": "0.1.3"
+    "@husk-ai/core": "0.1.4"
   },
   "devDependencies": {
     "jsdom": "^25.0.1"
