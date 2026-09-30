@@ -107,7 +107,7 @@ export class HuskMcpServer {
       const content = [...result.content];
       if (!this.announced) {
         this.announced = true;
-        content.unshift({ type: 'text', text: this.isolationNote(computer) });
+        content.unshift({ type: 'text', text: `${this.isolationNote(computer)}\n` });
       }
       return { content, ...(result.isError ? { isError: true } : {}) };
     });
