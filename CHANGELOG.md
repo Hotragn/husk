@@ -11,6 +11,40 @@ not here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`computer_info` reported the host's CPU count and no memory limit at all**, when
+  both are limits husk set. A computer created with `--cpus=0.5 --memory=512m` described
+  itself as having the host's 10 cores and 7724MB, because `nproc` and `free` read
+  `/proc`, which a container shares with the machine under it. Both now come from the
+  cgroup, v2 or v1, and a fractional CPU stays fractional rather than rounding up to a
+  core the computer does not have. `huskinfo` inside the images and the fallback probe
+  produce identical output, which is asserted
+  ([#131](https://github.com/Hotragn/husk/pull/131), thanks
+  [@Audgui-Byte](https://github.com/Audgui-Byte))
+- **`husk rm` could not remove a computer whose workspace directory was gone, and
+  `husk ps` went on listing it as running.** The error contradicted its own hint —
+  `no computer named "cmp_…"` above `hint: running now: box-…`, naming the same machine.
+  A computer whose files have vanished is now returned as destroyed rather than as
+  nothing, so it can be removed and stops being listed
+  ([#134](https://github.com/Hotragn/husk/pull/134), thanks
+  [@Audgui-Byte](https://github.com/Audgui-Byte))
+- **The first line of output ran into the MCP isolation note.** A client that
+  concatenates text blocks showed `isolation.hi` instead of the note and then the
+  command's output
+  ([#133](https://github.com/Hotragn/husk/pull/133), thanks
+  [@Audgui-Byte](https://github.com/Audgui-Byte))
+- **`husk import` invented paths for every Claude Code project whose directory had a
+  dash in it.** The label was built by turning every `-` in the encoded directory name
+  into `/`, so `C--Users-dev-Claude-Code-husk` was offered as
+  `C//Users/dev/Claude/Code/husk` — a path that exists nowhere. The encoding cannot be
+  reversed, because a dash in it is either a literal dash or a separator and nothing
+  records which, so the real working directory is now read from the transcript itself.
+  Where a transcript does not carry one, the encoded name is shown as-is rather than
+  decoded into a guess
+  ([#129](https://github.com/Hotragn/husk/pull/129), thanks
+  [@Audgui-Byte](https://github.com/Audgui-Byte))
+
 ## [0.1.4] - 2026-09-22
 
 ### Added
@@ -99,16 +133,6 @@ not here.
   printed for providers reported as unavailable and `local` is always available.
   `doctor` now distinguishes the two states, gives each its own fix, and says that
   Docker is down for the same reason — its engine runs inside WSL2.
-- **`husk import` invented paths for every Claude Code project whose directory had a
-  dash in it.** The label was built by turning every `-` in the encoded directory name
-  into `/`, so `C--Users-dev-Claude-Code-husk` was offered as
-  `C//Users/dev/Claude/Code/husk` — a path that exists nowhere. The encoding cannot be
-  reversed, because a dash in it is either a literal dash or a separator and nothing
-  records which, so the real working directory is now read from the transcript itself.
-  Where a transcript does not carry one, the encoded name is shown as-is rather than
-  decoded into a guess
-  ([#129](https://github.com/Hotragn/husk/pull/129), thanks
-  [@Audgui-Byte](https://github.com/Audgui-Byte))
 - **A model given a degraded Windows computer was told it had Linux.** The first tool
   result said the machine was "on the Windows shell", which is a label with no
   consequence attached; the model would still open with `ls -la /work` and then retry
