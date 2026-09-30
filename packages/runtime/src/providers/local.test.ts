@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { LocalProvider, windowsHint, windowsReason } from './local.js';
 import type { ShellPlan } from './local.js';
 import type { Computer } from '@husk-ai/core';
+import { ComputerManager } from '../manager.js';
 
 /**
  * The local provider's workspace contract, exercised the way an agent hits it:
@@ -121,6 +122,35 @@ describe.skipIf(process.platform === 'win32')('local provider /work contract', (
  * was sandboxed.
  */
 describe('the local provider', () => {
+  it('can remove a registered computer after its workspace disappears', async () => {
+    const computer = await freshComputer();
+    const provider = new LocalProvider();
+    const workspace = computer.info.spec.labels?.['husk.workspace'];
+    expect(workspace).toBeTruthy();
+    await rm(workspace!, { recursive: true, force: true });
+
+    expect((await provider.list()).map((info) => info.id)).toContain(computer.id);
+    const stale = await provider.get(computer.id);
+    expect(stale).not.toBeNull();
+    expect(stale!.info.state).toBe('destroyed');
+    await stale!.destroy();
+    expect((await provider.list()).map((info) => info.id)).not.toContain(computer.id);
+  });
+
+  it('recreates a stable-key computer when its workspace disappears', async () => {
+    home = await mkdtemp(join(tmpdir(), 'husk-local-'));
+    process.env.HUSK_HOME = home;
+    const manager = new ComputerManager({ providers: [new LocalProvider()] });
+    const first = await manager.ensure('missing-workspace', { provider: 'local' });
+    computers.push(first);
+    await rm(first.info.spec.labels!['husk.workspace']!, { recursive: true, force: true });
+
+    const replacement = await manager.ensure('missing-workspace', { provider: 'local' });
+    computers.push(replacement);
+    expect(replacement.id).not.toBe(first.id);
+    expect(replacement.info.state).toBe('running');
+  });
+
   it('is always available, because the free path depends on it', async () => {
     const a = await new LocalProvider().isAvailable();
     expect(a.available).toBe(true);
