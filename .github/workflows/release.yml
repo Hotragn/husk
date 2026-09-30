@@ -55,7 +55,29 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          registry-url: https://registry.npmjs.org
+          # `registry-url` is deliberately absent, and setup-node's own OIDC
+          # documentation sets it. Diverging from the vendor needs a reason, so
+          # here it is.
+          #
+          # Given a registry-url, setup-node writes an .npmrc containing
+          # `_authToken=${NODE_AUTH_TOKEN}`. Through v6 it *also* exported
+          # `NODE_AUTH_TOKEN=XXXXX-XXXXX-XXXXX-XXXXX` when the variable was
+          # unset, so removing the secret left well-formed useless credentials
+          # rather than none, and npm could see auth it could not use
+          # (actions/setup-node#1551, npm/documentation#1960). v7 fixed that --
+          # "Remove dummy NODE_AUTH_TOKEN export", its PR #1558 -- which is what
+          # makes the vendor's documented recipe coherent at all.
+          #
+          # What v7 did not remove is the `_authToken=` line itself. So the
+          # remaining question is what npm does with a stanza whose variable is
+          # unset, and that is the half the bug reports were actually about. The
+          # vendor says it works; we have no run proving it here.
+          #
+          # registry.npmjs.org is npm's default registry, so omitting this input
+          # publishes to exactly the same place with no .npmrc to reason about.
+          # On the one step with no rollback, fewer moving parts wins over
+          # matching an example. Revisit if a real OIDC publish ever needs
+          # something only registry-url provides.
 
       # First, and carrying the same condition as the publish step, because it
       # exists to guard that step.
@@ -87,6 +109,20 @@ jobs:
             exit 1
           fi
 
+      # After the refusal above, never before it. Trusted publishing needs npm
+      # >= 11.5.1 and Node >= 22.14.0. Node satisfies itself -- '22' resolves to
+      # 22.23.2 -- but it bundles npm 10.9.8, and will keep doing so for as long
+      # as 22 is the pinned major, so setup-node alone never clears the floor.
+      # Re-check nodejs.org/dist/index.json before assuming this is still
+      # needed.
+      #
+      # Ordering is load-bearing in one direction only: the refusal costs
+      # seconds and needs nothing but the checkout, which is the whole reason it
+      # sits first. Putting a global install ahead of it makes a stray tag pay
+      # for the install before being told no.
+      - run: npm install -g npm@^11.5.1
+      - run: npm --version
+
       - run: npm ci
       - run: npm run build:packages
       - run: npm run typecheck
@@ -114,23 +150,157 @@ jobs:
       # The dependency order is the build order. npm does not work it out for
       # a publish, and a package published before its dependency is a version
       # nobody can install for as long as it takes to notice.
+      #
+      # ONE PACKAGE, ON PURPOSE, FOR THE FIRST OIDC RELEASE. No dry run can
+      # prove OIDC authenticates -- dry_run publishes nothing, so it exercises
+      # every step except the one being changed -- and the only way to find out
+      # is a publish that really happens. `core` is the one package safe to send
+      # alone: it depends on zod and on no `@husk-ai/*`, so a half-published
+      # version strands no dependant. Any other single package would ship
+      # pointing at a version not yet on the registry.
+      #
+      # This list is deliberately NOT gated on a version number, because a
+      # hardcoded version in a workflow is a fact that goes stale silently --
+      # the class scripts/drift-check.mjs exists for. Instead each package
+      # published here is appended to $RUNNER_TEMP/published.txt, and the
+      # completeness step compares that record against all eleven
+      #   core runtime models browser sessions agent adapters mcp server sdk cli
+      # so this reduced list cannot survive unnoticed. The run stays red until
+      # the follow-up publishes the remaining ten at the same version, and red
+      # means the release is genuinely incomplete, which is worth reporting.
+      #
+      # No NODE_AUTH_TOKEN, and no `npm whoami` guard. Under trusted publishing
+      # there is no static identity to report -- the OIDC exchange happens
+      # inside `npm publish` for one package at a time -- so whoami answers 401
+      # by design and the old guard would fail every run before it published
+      # anything. What replaces it is the `+ name@version` assertion below,
+      # which is npm's own record of the write rather than an exit status.
+      #
+      # `--provenance` is gone too: trusted publishing attests automatically.
       - name: publish, in dependency order
         if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          npm whoami --registry https://registry.npmjs.org || { echo "npm auth failed — check NPM_TOKEN secret"; exit 1; }
-          for pkg in core runtime models browser sessions agent adapters mcp server sdk cli; do
+          version="$(node -p "require('./packages/core/package.json').version")"
+          : > "$RUNNER_TEMP/published.txt"
+
+          for pkg in core; do
             echo "publishing @husk-ai/$pkg"
-            npm publish --workspace="@husk-ai/$pkg" --access public --provenance
+            log="$RUNNER_TEMP/publish-$pkg.log"
+            npm publish --workspace="@husk-ai/$pkg" --access public 2>&1 | tee "$log"
+
+            # `+ name@version` is npm's own record that the write happened, and
+            # docs/RELEASING.md names it as *the* record for a reason: a
+            # registry read afterwards is evidence of propagation, not of
+            # publication. Asserting the line closes the 0.1.2 hole -- a publish
+            # step that exits 0 having done nothing -- without asking the
+            # registry a question it cannot answer yet.
+            if ! grep -qF "+ @husk-ai/$pkg@$version" "$log"; then
+              echo "::error::npm publish for @husk-ai/$pkg exited 0 but never printed '+ @husk-ai/$pkg@$version'. Treat this as not published." >&2
+              exit 1
+            fi
+            echo "$pkg" >> "$RUNNER_TEMP/published.txt"
           done
 
-      # Last, and only on a real tag: if npm rejected a package there is nothing
-      # to announce. `--verify-tag` refuses to invent a Release for a tag that
-      # does not exist, and `--generate-notes` fills the body from the commits
-      # since the previous tag -- worth editing afterwards, but a Release with
-      # generated notes beats a tag with none.
+      # Propagation and provenance, for what was actually published.
+      #
+      # This runs BEFORE the completeness check on purpose. On the first OIDC
+      # release the completeness check fails by design (ten packages not
+      # attempted), and if that ran first this step would be skipped -- losing
+      # the one answer the release exists to get, which is whether OIDC
+      # attested.
+      #
+      # Propagation is advisory, and that is not timidity. docs/RELEASING.md:
+      # "A GET for a version you just published can 404 for minutes... treating
+      # a 404 as a failed publish is how a release gets attempted twice." The
+      # publish step already holds npm's own `+ name@version` record, so a 404
+      # here means not yet visible, never not published. Failing on it would
+      # invite exactly the wrong remedy.
+      #
+      # A missing attestation on a package that IS visible is different: that is
+      # a real answer, and it means OIDC fell back to something else rather than
+      # attesting. That fails.
+      - name: what we published propagated, and carries provenance
+        if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./packages/core/package.json').version")"
+          published="$RUNNER_TEMP/published.txt"
+          unattested=()
+          slow=()
+
+          # `--prefer-online` because npm answers `view` from its local cache by
+          # default -- `npm view <spec> --offline` returns a version with no
+          # network at all, and `prefer-online` is false. setup-node restores a
+          # cache and `npm publish` reads the packument just before writing, so
+          # without this the step can read a pre-publish packument. That is a
+          # second, separate staleness from the registry-side one above.
+          while read -r pkg; do
+            [ -n "$pkg" ] || continue
+            spec="@husk-ai/$pkg@$version"
+
+            # Up to five minutes, because minutes is the documented window.
+            visible=""
+            deadline=$(( SECONDS + 300 ))
+            while [ "$SECONDS" -lt "$deadline" ]; do
+              if npm view --prefer-online "$spec" version >/dev/null 2>&1; then
+                visible=yes
+                break
+              fi
+              sleep 15
+            done
+
+            if [ -z "$visible" ]; then
+              echo "::warning::$spec is not visible on the registry yet. The publish step recorded npm's '+ $spec' line, so it IS published -- this is propagation lag, not a failed publish. Do not re-publish. Confirm later with: npm view $spec version" >&2
+              slow+=("$pkg")
+              continue
+            fi
+
+            attestations="$(npm view --prefer-online "$spec" dist.attestations --json 2>/dev/null || true)"
+            if [ -z "$attestations" ] || [ "$attestations" = "undefined" ] || [ "$attestations" = "null" ]; then
+              echo "NO ATTESTATION  $spec"
+              unattested+=("$pkg")
+              continue
+            fi
+            echo "ok  $spec -- visible and attested"
+          done < "$published"
+
+          if [ "${#slow[@]}" -gt 0 ]; then
+            echo "not yet visible (published, awaiting propagation): ${slow[*]}"
+          fi
+          if [ "${#unattested[@]}" -gt 0 ]; then
+            echo "::error::published without provenance: ${unattested[*]}. Trusted publishing attests automatically, so this says OIDC did not authenticate -- check that, do not re-publish." >&2
+            exit 1
+          fi
+
+      # Completeness, and it asks no one. A release is eleven packages at one
+      # version, and whether all eleven were published is answered by what the
+      # publish step recorded, not by the registry -- so this cannot flake, has
+      # no window, and needs no retry.
+      #
+      # This is what makes the reduced publish list above safe to commit: it
+      # cannot quietly become permanent, because the run stays red until every
+      # one of the eleven has been published at this version.
+      - name: all eleven packages were published
+        if: ${{ always() && (github.event_name == 'push' || inputs.dry_run == false) }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./packages/core/package.json').version")"
+          published="$RUNNER_TEMP/published.txt"
+          [ -f "$published" ] || : > "$published"
+          notpublished=()
+          for pkg in core runtime models browser sessions agent adapters mcp server sdk cli; do
+            if grep -qxF "$pkg" "$published"; then
+              echo "published  @husk-ai/$pkg@$version"
+            else
+              notpublished+=("$pkg")
+            fi
+          done
+          if [ "${#notpublished[@]}" -gt 0 ]; then
+            echo "::error::$version is an incomplete release: ${notpublished[*]} were never published. A release is all eleven packages at one version. Publish the remainder at $version." >&2
+            exit 1
+          fi
+
       - name: cut the GitHub Release
         if: ${{ github.event_name == 'push' || inputs.release_tag != '' }}
         env:
