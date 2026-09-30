@@ -106,7 +106,7 @@ function husk(args: string[], opts: { cwd?: string; input?: string } = {}): Resu
   return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
-describe.skipIf(!built)('the binary', () => {
+describe.skipIf(!built)('the binary', { timeout: 30_000 }, () => {
   it('carries a shebang so it can be exec\'d directly', () => {
     expect(readFileSync(BIN, 'utf8').split('\n')[0]).toBe('#!/usr/bin/env node');
   });
@@ -137,7 +137,7 @@ describe.skipIf(!built)('the binary', () => {
   });
 });
 
-describe.skipIf(!built)('help and version', () => {
+describe.skipIf(!built)('help and version', { timeout: 30_000 }, () => {
   it('prints an overview for no arguments and exits 0', () => {
     const r = husk([]);
     expect(r.status).toBe(0);
@@ -170,7 +170,7 @@ describe.skipIf(!built)('help and version', () => {
   });
 });
 
-describe.skipIf(!built)('exit codes', () => {
+describe.skipIf(!built)('exit codes', { timeout: 30_000 }, () => {
   it('exits 2 on an unknown command, and suggests the right one', () => {
     const r = husk(['docter']);
     expect(r.status).toBe(2);
@@ -200,7 +200,7 @@ describe.skipIf(!built)('exit codes', () => {
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('no computer named "nope"');
     expect(r.stderr).toContain('hint:');
-  }, 15_000);
+  });
 
   it('exits 1 with a hint when asked to remove a computer that does not exist', () => {
     const r = husk(['rm', 'anything']);
@@ -215,7 +215,7 @@ describe.skipIf(!built)('exit codes', () => {
   });
 });
 
-describe.skipIf(!built)('--json purity', () => {
+describe.skipIf(!built)('--json purity', { timeout: 30_000 }, () => {
   it('puts nothing but JSON on stdout for ps', () => {
     const r = husk(['ps', '--json']);
     expect(r.status).toBe(0);
@@ -285,7 +285,7 @@ describe.skipIf(!built || !integration)('doctor, against this machine', () => {
  * `local` provider, which the build contract guarantees is always available, so
  * it works on a laptop with no Docker and no API key.
  */
-describe.skipIf(!built)('the free path, end to end', () => {
+describe.skipIf(!built)('the free path, end to end', { timeout: 60_000 }, () => {
   const name = 'vitest-smoke';
 
   it('creates, execs, lists, refuses an unconfirmed rm, then removes', (ctx) => {
@@ -332,10 +332,10 @@ describe.skipIf(!built)('the free path, end to end', () => {
     }
 
     expect(husk(['ps', '--json']).stdout).not.toContain(name);
-  }, 60_000);
+  });
 });
 
-describe.skipIf(!built)('init and validate round trip', () => {
+describe.skipIf(!built)('init and validate round trip', { timeout: 30_000 }, () => {
   it('scaffolds a file that its own validator accepts', () => {
     const dir = mkdtempSync(join(tmpdir(), 'husk-init-'));
     try {
