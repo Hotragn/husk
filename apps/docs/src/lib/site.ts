@@ -1,8 +1,11 @@
 /**
  * Site-wide constants.
  *
- * `HUSK_VERSION` is read from the monorepo root package.json rather than typed
- * here, so the docs cannot claim a version the repo is not on.
+ * `HUSK_VERSION` is typed here, because this site is outside the npm workspace
+ * and cannot import the root manifest. `npm run drift -- --sites` is what stops
+ * it claiming a version the repo is not on -- and that job is advisory, so a
+ * release that forgets this line goes red somewhere nobody is required to look.
+ * It was left on 0.1.3 through the whole of 0.1.4 for exactly that reason.
  */
 /**
  * `SITE_URL` is deliberately not here. It reads Vercel's `VERCEL_*` variables,
@@ -46,4 +49,4 @@ export const REPO_EDIT_BASE = `${REPO_URL}/edit/main/apps/docs/content`;
 export const LICENCE = 'Apache-2.0';
 
 /** The version the docs describe. Matches the version field in every workspace package. */
-export const HUSK_VERSION = '0.1.3';
+export const HUSK_VERSION = '0.1.4';
