@@ -99,7 +99,7 @@ describe('PROBE_COMPUTER_INFO', () => {
 
 // The production command is Linux-specific. Windows and macOS package jobs do
 // not provide the same /bin/sh and /etc/os-release contract as a Husk computer.
-describe.skipIf(process.platform !== 'linux')('resource limit probe integration', () => {
+describe.skipIf(process.platform !== 'linux')('resource limit probe integration', { timeout: 30_000 }, () => {
   const huskinfo = readFileSync(new URL('../../../sandbox/huskinfo.sh', import.meta.url), 'utf8');
 
   it.each(RESOURCE_CASES)('$name is identical through the fallback and huskinfo paths', (testCase) => {

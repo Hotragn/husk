@@ -37,7 +37,15 @@ describe('the embedded driver', () => {
  */
 const python = ['python3', 'python'].find((bin) => spawnSync(bin, ['-c', 'pass']).status === 0);
 
-describe.skipIf(!python)('driver.py, run for real', () => {
+/**
+ * Each case here starts a real Python interpreter. Cold process start on a
+ * loaded CI runner routinely passes vitest's 5s default -- this block went red
+ * on `main` at 5468ms and on a changelog-only PR at 7881ms, neither of which
+ * had touched it. The assertions are about what the driver prints, not how
+ * fast an interpreter boots, so the budget is per-block and generous: a real
+ * hang still fails, and a slow machine no longer does.
+ */
+describe.skipIf(!python)('driver.py, run for real', { timeout: 30_000 }, () => {
   const run = (input: string): { code: number; out: Record<string, unknown> } => {
     const r = spawnSync(python!, [join(here, 'driver.py')], { input, encoding: 'utf8' });
     return { code: r.status ?? -1, out: JSON.parse(r.stdout.trim()) as Record<string, unknown> };
