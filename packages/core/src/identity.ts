@@ -8,7 +8,7 @@
  *
  * There used to be three User-Agent literals, each holding both facts at once:
  *
- *     'husk/0.1.3 (+https://github.com/Hotragn/husk)'
+ *     'husk/0.1.4 (+https://github.com/Hotragn/husk)'
  *
  * A version bump has to edit that string. So does a change to the repository
  * URL. When both happened at once the merge had no correct side -- `--theirs`
@@ -27,7 +27,7 @@
  */
 
 /** Must equal the root manifest's `version`. Asserted by the drift check. */
-export const HUSK_VERSION = '0.1.3';
+export const HUSK_VERSION = '0.1.4';
 
 /**
  * Must equal the root manifest's `repository.url`, without the `git+` prefix

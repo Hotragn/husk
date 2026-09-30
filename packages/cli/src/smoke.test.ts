@@ -121,9 +121,19 @@ describe.skipIf(!built)('the binary', () => {
     // Budgeted in CI so a dependency cannot silently regress it. Generous
     // against the ~95ms measured locally, because CI machines are slower --
     // it is a regression gate, not a benchmark.
-    const t = Date.now();
-    execFileSync(process.execPath, [BIN, '--help'], { stdio: 'ignore' });
-    expect(Date.now() - t).toBeLessThan(1500);
+    //
+    // Best of three, because one wall-clock spawn inside a parallel suite
+    // measures the machine as much as the binary: this failed at 1591ms and
+    // 1600ms during a full `npm test` while passing every time it was run on
+    // its own. A real regression is slow in all three runs; scheduler
+    // contention is not, and a gate that fires on load is one people learn to
+    // ignore.
+    const runs = [0, 0, 0].map(() => {
+      const t = Date.now();
+      execFileSync(process.execPath, [BIN, '--help'], { stdio: 'ignore' });
+      return Date.now() - t;
+    });
+    expect(Math.min(...runs), `startup times: ${runs.join('ms, ')}ms`).toBeLessThan(1500);
   });
 });
 

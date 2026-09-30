@@ -1,6 +1,6 @@
 {
   "name": "@husk-ai/docs",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Husk documentation site.",
   "scripts": {
