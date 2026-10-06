@@ -1,4 +1,5 @@
 import { HuskError } from '@husk-ai/core';
+import { compareModelPreference } from '@husk-ai/models';
 import type { ChatRequest, ChatResponse, ModelInfo, ModelProvider, StreamEvent } from '@husk-ai/core';
 
 /**
@@ -37,7 +38,7 @@ export async function resolveModel(ref: string): Promise<ResolvedModel> {
       rejected.push(`${p.id}: ${a.reason ?? 'unavailable'}`);
       continue;
     }
-    reachable.push({ provider: p, models: await p.listModels().catch(() => []) });
+    reachable.push({ provider: p, models: (await p.listModels().catch(() => [])).sort(compareModelPreference) });
   }
 
   if (!reachable.length) {
@@ -65,10 +66,10 @@ export async function resolveModel(ref: string): Promise<ResolvedModel> {
   }
 
   if (ref === 'auto' || ref === 'free' || ref === 'local') {
-    const preferred = ref === 'local' ? reachable.filter((r) => r.provider.id === 'ollama') : reachable;
+    const preferred = ref === 'local' ? reachable.filter((r) => r.provider.id === 'ollama' || r.provider.id === 'lmstudio') : reachable;
     for (const { provider, models } of preferred) {
       const free = ref === 'free' ? models.find((m) => m.free) : undefined;
-      const chosen = free ?? models[0];
+      const chosen = ref === 'free' ? free : models[0];
       if (chosen) return { provider, info: chosen };
     }
   }

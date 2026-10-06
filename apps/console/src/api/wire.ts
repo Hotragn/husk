@@ -34,7 +34,7 @@ import type {
   DoctorProvider as SdkDoctorProvider,
   DoctorReport as SdkDoctorReport,
   ExecResult,
-  HealthReport,
+  HealthReport as SdkHealthReport,
   HuskSpec,
   ModelInfo,
   RunEvent,
@@ -59,7 +59,10 @@ export type {
  * and not the `/v1/health` the SDK's `client.health()` asks for, and it is the
  * one endpoint that never needs the token. See `client.ts`.
  */
-export type { HealthReport };
+export type HealthReport = SdkHealthReport & {
+  mode?: 'starter' | 'server';
+  profile?: 'starter' | 'computer';
+};
 
 /**
  * What the isolation boundary actually is, per provider.

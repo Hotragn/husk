@@ -32,12 +32,13 @@ export {
   PLAYWRIGHT_CHROMIUM_REVISION,
   downloadPlanFor,
   findInstalledChromium,
+  inspectBrowserCapability,
   normaliseArch,
   parseMissingLibs,
   pickChromeForTestingAsset,
   provisionChromium,
 } from './provision.js';
-export type { BrowserArch, DownloadPlan, ProvisionOptions, ProvisionResult } from './provision.js';
+export type { BrowserArch, BrowserCapability, DownloadPlan, ProvisionOptions, ProvisionResult } from './provision.js';
 
 export {
   BrowserSession,

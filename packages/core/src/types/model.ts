@@ -136,6 +136,8 @@ export interface ModelInfo {
   supportsVision: boolean;
   supportsStreaming: boolean;
   supportsThinking?: boolean;
+  /** Parameter count reported by a local provider; not a quality benchmark. */
+  parameterCount?: number;
   /**
    * USD per million tokens. Absent or zero for local models.
    *

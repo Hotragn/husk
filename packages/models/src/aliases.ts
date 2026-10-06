@@ -151,7 +151,7 @@ export function aliasTable(overrides: Record<string, string> = {}): Array<{
 }
 
 function describeStrategy(s: DynamicStrategy): string {
-  if (s === 'local') return 'first available Ollama model';
+  if (s === 'local') return 'preferred available local model';
   if (s === 'free') return 'best free model that is actually reachable';
   return 'best available, preferring quality then cost';
 }

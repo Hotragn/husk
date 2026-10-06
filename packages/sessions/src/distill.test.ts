@@ -369,6 +369,26 @@ describe('distillWithModel', () => {
     const agent = await distillWithModel(RUNBOOK, stubModel(['not json at all']));
     expect(agent.notes.join(' ')).toMatch(/fell back to heuristics/);
     expect(agent.persona).toMatch(/Always run the full test suite/i);
+    expect(agent.notes.join(' ')).not.toMatch(/no model was used/i);
+    expect(agent.notes.join(' ')).toMatch(/Model distillation attempted/);
+  });
+
+  it('stops a repeatedly failing extractor before sending the entire transcript', async () => {
+    const model = stubModel(['not JSON']);
+    const long = t(Array.from({ length: 20 }, (_, i) => ({ role: 'user', content: `Always verify result ${i}. `.repeat(30) })));
+    const agent = await distillWithModel(long, model, { windowTokens: 100, overlap: 0 });
+    expect(model.calls).toHaveLength(2);
+    expect(agent.notes.join(' ')).toMatch(/skipped 18 of 20 slices/);
+    expect(agent.notes.join(' ')).toMatch(/fell back to heuristics/);
+    expect(agent.notes.join(' ')).not.toMatch(/no model was used/i);
+  });
+
+  it('resets the failure streak after a usable slice', async () => {
+    const model = stubModel(['bad', candidate, 'bad', candidate, merged]);
+    const long = t(Array.from({ length: 4 }, (_, i) => ({ role: 'user', content: `Always verify result ${i}. `.repeat(30) })));
+    const agent = await distillWithModel(long, model, { windowTokens: 100, overlap: 0 });
+    expect(model.calls).toHaveLength(5);
+    expect(agent.notes.join(' ')).not.toMatch(/skipped/);
   });
 
   it('falls back rather than throwing when the model errors', async () => {

@@ -5,7 +5,7 @@
     <img src="brand/logo/lockup-horizontal.svg" alt="Husk" height="72">
   </picture>
 
-  <p><strong>Give your AI chat a real computer of its own.</strong></p>
+  <p><strong>Keep your AI work. Sources, results, and a place to return to.</strong></p>
 
   <p>
     <a href="https://github.com/Hotragn/husk/actions/workflows/ci.yml"><img src="https://github.com/Hotragn/husk/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -15,18 +15,41 @@
   </p>
 </div>
 
-Your AI chat can write a script. It cannot run it.
+Husk gives your AI chat named local workspaces. Save public web sources, ask your AI
+for a cited brief, comparison, or action list, then review and download the result.
+Reopen the same workspace in your next chat. No Husk account, Docker, terminal, or
+additional model API key is needed for this starter flow.
 
-Ask for a scraper and you get code to paste somewhere yourself. Ask again tomorrow and
-the files from today are gone. It cannot install a package, keep a login, or check
-whether the thing it just wrote actually works.
-
-Husk hands it a Linux computer instead. A shell, a filesystem at `/work` that outlives
-the conversation, and a browser whose login survives from one page to the next. One line
-to set up. Runs on hardware you already have, with no account and no API key.
+For coding and automation, Husk also provides optional computer tools: a shell,
+files, and a browser. Existing MCP and CLI computer workflows remain available.
 
 > [!NOTE]
-> Husk is in **early alpha** — everything works, things are moving fast, and your feedback shapes what comes next. [Jump in](https://github.com/Hotragn/husk/discussions).
+> **0.2.0 release candidate.** The desktop extension is built locally from this checkout;
+> this change does not establish a public release or directory listing. See the
+> [one-day delivery and launch checklist](docs/one-day-delivery.md).
+
+## Start with a workspace
+
+Install the supplied `husk-0.2.0.mcpb` in Claude Desktop through **Settings → Extensions
+→ Advanced settings → Install Extension**. Claude Desktop supplies Node.js. This
+candidate is unsigned; organization policies may restrict custom extensions.
+
+Ask Claude: **“Create a Husk workspace called My first brief and open its viewer.”**
+Add public page URLs, choose a starter prompt, paste it back into Claude, then return
+to review and download the saved result. Keep Claude running while the viewer is open.
+
+The [workspace guide](apps/docs/content/start/workspaces.mdx) explains the full flow,
+privacy, recovery, and limits. To build the installer as a contributor:
+
+```bash
+npm ci
+npm run build
+npm run bundle:mcpb
+npm run smoke:starter -- --bundle
+```
+
+The artifact and checksum are written to `build/`. The smoke test extracts that
+archive and checks restart persistence, access control, assets, downloads, and ZIP export.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/png/01-hero.dark.png">
@@ -35,7 +58,7 @@ to set up. Runs on hardware you already have, with no account and no API key.
 
 <sub>[Open interactively](docs/diagrams/01-hero.html) — pan, zoom, trace relationships · [SVG](docs/diagrams/svg/01-hero.light.svg) · [all 16 diagrams](docs/diagrams/)</sub>
 
-## Install
+## Computer tools for developers
 
 ```bash
 claude mcp add husk -- npx -y @husk-ai/mcp
@@ -45,7 +68,8 @@ That is the whole setup. Nothing is created until the first tool call, so an ins
 husk that nobody uses costs nothing. Works with Cursor, Zed, or anything else that
 speaks MCP.
 
-Your agent gets 21 tools. Eight for the machine — `shell`, `read_file`, `write_file`,
+The default computer profile exposes eight workspace tools plus 21 computer tools.
+Eight are for the machine — `shell`, `read_file`, `write_file`,
 `edit_file`, `list_dir`, `expose_port`, `browse`, `computer_info` — and thirteen
 `browser_*` tools that drive a real Chromium inside that same machine, addressed by
 accessibility ref rather than pixel coordinates.
@@ -130,13 +154,12 @@ checks. Five worked examples live in [`examples/`](examples/).
   Cerebras, OpenRouter, Mistral, Together, LM Studio. Aliases resolve across all of
   them, so one `husk.yaml` runs on Opus or on a local Gemma.
 - **Four adapters.** Discord, Slack, Telegram, webhook.
-- **No telemetry.** Not off by default. Absent. There is no analytics call, no crash
-  reporter, no version ping.
+- **No product telemetry.** The installed runtime has no analytics, crash reporter,
+  or version ping. The marketing and documentation websites use Vercel Web Analytics.
 - **No native modules.** `npm install` finishes on Windows with no C++ toolchain. Node
   20.10 or newer.
-- **1,739 tests across 100 files**, passing with no API key and no network. Twenty-two of
-  them are the container half of the workspace-conformance matrix and skip when no Docker
-  daemon answers; the rest do not need one.
+- **Automated regression tests and archive smoke checks.** `npm test` checks the
+  packages; integration cases that need an unavailable provider are explicitly skipped.
 
 ## How it works
 

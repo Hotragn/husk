@@ -17,6 +17,7 @@ usage
   npx -y @husk-ai/mcp [options]
 
 options
+  --profile <name>    starter (saved workspaces) | computer (all tools; default)
   --session <key>     reuse a named machine (default: unique to this server process)
   --provider <name>   docker | podman | local | ssh | fly  (default: best available)
   --flavor <name>     base | python | node | full          (default: base)
@@ -38,6 +39,7 @@ async function main(): Promise<void> {
     parsed = parseArgs({
       options: {
         session: { type: 'string' },
+        profile: { type: 'string', default: 'computer' },
         provider: { type: 'string' },
         flavor: { type: 'string' },
         network: { type: 'string' },
@@ -60,6 +62,7 @@ async function main(): Promise<void> {
   }
 
   const spec: ComputerSpec = {};
+  if (values.profile !== 'starter' && values.profile !== 'computer') throw new Error('--profile must be starter or computer');
   if (values.provider) spec.provider = values.provider;
   if (values.flavor) spec.flavor = values.flavor as Flavor;
   if (values.network) spec.network = { mode: values.network as 'none' | 'egress' | 'full' };
@@ -67,6 +70,7 @@ async function main(): Promise<void> {
   if (values.cpus) spec.cpus = Number(values.cpus);
 
   const server = new HuskMcpServer({
+    profile: values.profile,
     ...(values.session ? { sessionKey: values.session } : {}),
     spec,
     ephemeral: !values.keep,

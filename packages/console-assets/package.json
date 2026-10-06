@@ -1,0 +1,14 @@
+{
+  "name": "@husk-ai/console-assets",
+  "version": "0.2.0",
+  "description": "Packaged Husk console interface for the server and desktop extension.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/Hotragn/husk.git", "directory": "packages/console-assets" },
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": { "build": "node build.mjs" },
+  "engines": { "node": ">=20.10" }
+}

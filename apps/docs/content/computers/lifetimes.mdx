@@ -37,16 +37,9 @@ garbage-collected somebody else's machine would be a surprise.
 
 The sweep asks every provider that implements `reap()` and ignores the ones that do not.
 
-<Warning>
-`reap()` is implemented by `local`, `ssh` and `fly`. It is **not** implemented by the
-shared `OciProvider` base class, so **`docker` and `podman` containers are never
-reaped**, whatever `idleTimeoutSec` says.
-
-`docs/ARCHITECTURE.md` states that "a reaper honours `idleTimeoutSec` and
-`maxLifetimeSec`" without qualification. On the container providers today, an idle
-machine stays up until you run `husk rm`, or until the engine restarts. Budget for that,
-or use `docker ps` and clean up by hand.
-</Warning>
+Docker and Podman also implement `reap()` now. Idle cleanup runs only while the
+owning process has started the reaper, such as `husk serve`. One-shot commands do
+not leave a background scheduler behind; use `husk rm` for explicit removal.
 
 A reaper failure in one provider is logged at debug and does not stop the others.
 

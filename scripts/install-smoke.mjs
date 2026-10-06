@@ -64,7 +64,7 @@ const bad = (m) => {
 const info = (m) => console.log(`        ${m}`);
 
 /** Dependency order, same list preflight publishes in. */
-const ORDER = ['core', 'runtime', 'models', 'browser', 'sessions', 'agent', 'adapters', 'mcp', 'server', 'sdk', 'cli'];
+const ORDER = ['core', 'runtime', 'models', 'browser', 'sessions', 'agent', 'adapters', 'workspaces', 'console-assets', 'server', 'mcp', 'sdk', 'cli'];
 
 /**
  * Drive a stdio child to completion.

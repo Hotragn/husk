@@ -37,7 +37,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  starter:
+    uses: ./.github/workflows/starter.yml
   publish:
+    needs: starter
     runs-on: ubuntu-latest
     permissions:
       # write, not read, because the last step cuts the GitHub Release. Until
@@ -92,6 +95,9 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+      - uses: actions/download-artifact@v4
+        with: { name: husk-desktop-bundle, path: build }
+
       # Same checks you can run locally with `npm run preflight`, so a release
       # never fails on something that was knowable before the tag existed.
       - run: npm run preflight
@@ -121,7 +127,7 @@ jobs:
         run: |
           set -euo pipefail
           npm whoami --registry https://registry.npmjs.org || { echo "npm auth failed — check NPM_TOKEN secret"; exit 1; }
-          for pkg in core runtime models browser sessions agent adapters mcp server sdk cli; do
+          for pkg in core runtime models browser sessions agent adapters workspaces console-assets server mcp sdk cli; do
             echo "publishing @husk-ai/$pkg"
             npm publish --workspace="@husk-ai/$pkg" --access public --provenance
           done
@@ -144,7 +150,7 @@ jobs:
             echo "Release $TAG already exists, leaving it alone"
             exit 0
           fi
-          gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
+          gh release create "$TAG" build/*.mcpb build/*.mcpb.sha256 --verify-tag --generate-notes --title "$TAG"
 
       - name: dry run summary
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}

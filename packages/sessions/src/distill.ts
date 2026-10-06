@@ -585,6 +585,8 @@ export interface ModelDistillOptions extends HeuristicOptions {
   /** Messages of context repeated at each window boundary. */
   overlap?: number;
   concurrency?: number;
+  /** Stop scheduling extraction after this many consecutive failed slices. Default 2. */
+  maxConsecutiveFailures?: number;
   signal?: AbortSignal;
 }
 
@@ -691,6 +693,9 @@ export async function distillWithModel(
   opts: ModelDistillOptions = {},
 ): Promise<DistilledAgent> {
   const heuristic = distillHeuristic(transcript, { ...opts, redact: false });
+  // The heuristic builder is also used when no model is ever called. Once we
+  // enter this path that claim is no longer true, even if every call fails.
+  heuristic.notes = heuristic.notes.filter((note) => !note.startsWith('Heuristic distillation:'));
   const tools = observedTools(transcript);
   const model = opts.model ?? 'auto';
   const notes: string[] = [];
@@ -698,8 +703,17 @@ export async function distillWithModel(
   const windows = windowMessages(transcript.messages, opts.windowTokens ?? 12_000, opts.overlap ?? 2);
   const meta = { source: transcript.source, ...(transcript.title ? { title: transcript.title } : {}) };
 
-  const results = await mapLimit(windows, opts.concurrency ?? 3, async (win, index) => {
+  const failureLimit = Math.max(1, opts.maxConsecutiveFailures ?? 2);
+  let failures = 0;
+  let skipped = 0;
+  let attempted = 0;
+  const results = await mapLimit(windows, opts.concurrency ?? 1, async (win, index) => {
     if (!win.length) return undefined;
+    if (failures >= failureLimit || opts.signal?.aborted) {
+      skipped++;
+      return undefined;
+    }
+    attempted++;
     try {
       const res = await router.chat({
         model,
@@ -711,15 +725,21 @@ export async function distillWithModel(
       });
       const parsed = CandidateSchema.safeParse(JSON.parse(stripFence(res.text)));
       if (!parsed.success) {
+        failures++;
         notes.push(`Slice ${index + 1}/${windows.length}: model JSON did not validate.`);
         return undefined;
       }
+      failures = 0;
       return parsed.data;
     } catch {
+      failures++;
       notes.push(`Slice ${index + 1}/${windows.length}: extraction failed.`);
       return undefined;
     }
   });
+
+  if (skipped) notes.push(`Stopped extraction after repeated failures or cancellation; skipped ${skipped} of ${windows.length} slices.`);
+  notes.push(`Model distillation attempted ${attempted} of ${windows.length} slices with ${model}.`);
 
   const candidates = results.filter((c): c is Candidate => c !== undefined);
   if (!candidates.length) {

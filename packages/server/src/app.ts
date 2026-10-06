@@ -19,11 +19,14 @@ import { modelRoutes } from './routes/models.js';
 import { runRoutes } from './routes/runs.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { createTriggerHost } from './triggers/index.js';
+import { WorkspaceStore } from '@husk-ai/workspaces';
+import { registerWorkspaceRoutes } from './routes/workspaces.js';
 
 export interface CreateAppOptions extends ServerDeps {
   /** Skip the loopback-without-a-token check. Only tests should set this. */
   unsafeAllowAnyBind?: boolean;
   approvalTimeoutMs?: number;
+  workspaceStore?: WorkspaceStore;
 }
 
 /**
@@ -98,6 +101,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   await app.register(modelRoutes);
   await app.register(approvalRoutes);
   await app.register(eventRoutes);
+  await registerWorkspaceRoutes(app, options.workspaceStore);
 
   if (config.triggers !== false) {
     const host = createTriggerHost(app);

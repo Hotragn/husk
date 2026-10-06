@@ -14,6 +14,8 @@ env:
   HUSK_LOG_LEVEL: warn
 
 jobs:
+  starter:
+    uses: ./.github/workflows/starter.yml
   packages:
     name: packages (node ${{ matrix.node }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}

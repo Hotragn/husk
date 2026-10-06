@@ -109,7 +109,7 @@ should not have to wonder why Husk cannot see it.
 SELECTION  what husk would use right now
   computer   local  highest-priority available provider (10)
   isolation  guardrails only
-  model      ollama/qwen2.5:1.5b  first reachable model on Ollama
+  model      ollama/qwen2.5:7b  preferred available model on Ollama (capabilities, catalog quality, and local size tier)
 ```
 
 This is the block to read first when a run behaved unexpectedly. It carries the *reason*
@@ -170,7 +170,7 @@ Warnings are conditions, not errors. The report generates them for:
     "providerReason": "highest-priority available provider (10)",
     "isolated": false,
     "model": "ollama/qwen2.5:7b",
-    "modelReason": "first reachable model on Ollama"
+    "modelReason": "preferred available model on Ollama (capabilities, catalog quality, and local size tier)"
   },
   "warnings": []
 }

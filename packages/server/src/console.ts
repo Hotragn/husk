@@ -3,6 +3,7 @@ import { setNotFoundFallback } from './errors.js';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HUSK_VERSION } from '@husk-ai/core';
+import { consoleAssetsPath } from '@husk-ai/console-assets';
 import type { FastifyInstance } from 'fastify';
 
 /**
@@ -13,6 +14,7 @@ import type { FastifyInstance } from 'fastify';
  */
 function candidateDirs(here: string): string[] {
   return [
+    consoleAssetsPath,
     resolve(here, '../../console/dist'),
     resolve(here, '../../../apps/console/dist'),
     resolve(here, '../../../../apps/console/dist'),

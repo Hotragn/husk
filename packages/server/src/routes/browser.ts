@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { browserFor, closeBrowserFor, findInstalledChromium } from '@husk-ai/browser';
+import { browserFor, closeBrowserFor, inspectBrowserCapability } from '@husk-ai/browser';
 import type { Computer } from '@husk-ai/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -91,10 +91,7 @@ export async function browserRoutes(app: FastifyInstance): Promise<void> {
   app.get('/v1/computers/:id/browser/status', async (req: FastifyRequest) => {
     const { id } = req.params as { id: string };
     const computer = await mustGet(app, id);
-    const found = await findInstalledChromium(computer).catch(() => null);
-    return found
-      ? { installed: true, source: found.source, ...(found.version ? { version: found.version } : {}) }
-      : { installed: false };
+    return inspectBrowserCapability(computer);
   });
 
   app.post('/v1/computers/:id/browser/goto', async (req: FastifyRequest) => {

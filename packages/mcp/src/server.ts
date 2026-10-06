@@ -8,6 +8,10 @@ import type { Computer, ComputerInfo, ComputerSpec, Logger } from '@husk-ai/core
 import { ComputerManager, ensureRunning } from '@husk-ai/runtime';
 import { audited } from '@husk-ai/core';
 import { callTool, toolsFor } from './tools.js';
+import { WorkspaceStore } from '@husk-ai/workspaces';
+import { startWorkspaceViewer } from '@husk-ai/server/workspace-viewer';
+import type { WorkspaceProfile } from '@husk-ai/server/workspace-viewer';
+import { WORKSPACE_TOOLS, WORKSPACE_TOOL_NAMES, WORKSPACE_INSTRUCTIONS, WorkspaceTools } from './workspace-tools.js';
 
 export interface HuskMcpOptions {
   /**
@@ -20,6 +24,8 @@ export interface HuskMcpOptions {
   /** Destroy the machine when the client disconnects. Default true. */
   ephemeral?: boolean;
   logger?: Logger;
+  profile?: WorkspaceProfile;
+  workspaceStore?: WorkspaceStore;
 }
 
 /**
@@ -49,6 +55,11 @@ export class HuskMcpServer {
   private announced = false;
   /** Set once a computer exists and turns out not to be Linux. */
   private degraded = false;
+  private profile: WorkspaceProfile;
+  private readonly workspaceStore: WorkspaceStore;
+  private readonly workspaceTools: WorkspaceTools;
+  private viewer?: Promise<{ url: string; close: () => Promise<void> }>;
+  private confirmedProvider?: string;
 
   constructor(opts: HuskMcpOptions = {}) {
     this.manager = opts.manager ?? new ComputerManager();
@@ -56,6 +67,9 @@ export class HuskMcpServer {
     this.sessionKey = opts.sessionKey ?? process.env.HUSK_SESSION ?? `mcp-${randomUUID()}`;
     this.spec = opts.spec ?? {};
     this.ephemeral = opts.ephemeral ?? true;
+    this.profile = opts.profile ?? 'computer';
+    this.workspaceStore = opts.workspaceStore ?? new WorkspaceStore();
+    this.workspaceTools = new WorkspaceTools(this.workspaceStore, () => this.openViewer());
     // stderr only: stdout is the protocol.
     this.log = opts.logger ?? createLogger({ scope: 'mcp' });
 
@@ -65,12 +79,14 @@ export class HuskMcpServer {
         // `listChanged` is declared because the tool descriptions are not final
         // at this point: see `announceDegradation`.
         capabilities: { tools: { listChanged: true } },
-        instructions:
+        instructions: WORKSPACE_INSTRUCTIONS + '\n' + (this.profile === 'starter'
+          ? 'This session starts with workspace tools only. The user can enable computer tools in the viewer Advanced settings after reviewing the environment.'
+          :
           'Husk gives you a computer -- on almost every host a Linux container. Use `shell` ' +
           'for anything a command line can do; the filesystem at /work persists across calls ' +
           'in this session. Call `computer_info` once before assuming a runtime, a tool or ' +
           'even a POSIX shell is there: on a Windows host without a working WSL this is ' +
-          'cmd.exe, and the first tool result will say so.',
+          'cmd.exe, and the first tool result will say so.'),
       },
     );
 
@@ -78,10 +94,12 @@ export class HuskMcpServer {
   }
 
   private registerHandlers(): void {
-    this.mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: toolsFor(this.degraded) }));
+    this.mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...WORKSPACE_TOOLS, ...(this.profile === 'computer' ? toolsFor(this.degraded) : [])] }));
 
     this.mcp.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
       const { name, arguments: args } = request.params;
+      if (WORKSPACE_TOOL_NAMES.has(name)) return this.workspaceTools.call(name, (args ?? {}) as Record<string, unknown>);
+      if (this.profile !== 'computer') return { isError: true, content: [{ type: 'text', text: 'Computer tools are disabled. The user can enable them from Advanced in the workspace viewer after reviewing the environment.' }] };
       let computer: Computer;
       try {
         computer = await this.getComputer();
@@ -183,10 +201,38 @@ export class HuskMcpServer {
   }
 
   async close(): Promise<void> {
+    if (this.viewer) await quiet(async () => (await this.viewer!).close());
     await quiet(() => this.mcp.close());
     if (this.ephemeral && this.computer) {
-      await quiet(() => this.computer!.destroy());
+      // A named local computer owns user files. Destroying it would delete them.
+      await quiet(() => this.namedSession ? this.computer!.stop() : this.computer!.destroy());
     }
+  }
+
+  private async openViewer(): Promise<string> {
+    this.viewer ??= startWorkspaceViewer({
+      store: this.workspaceStore,
+      getProfile: () => this.profile,
+      getCapabilities: async () => {
+        const providers = await this.manager.status();
+        const selected = this.spec.provider
+          ? providers.find((p) => p.name === this.spec.provider && p.available)
+          : providers.find((p) => p.available);
+        this.confirmedProvider = selected?.name;
+        return { providers, selected: selected ?? null };
+      },
+      setProfile: async (profile) => {
+        if (profile === 'computer') {
+          if (!this.confirmedProvider) throw new Error('Check the available environment before enabling computer tools.');
+          const available = await this.manager.probe(this.confirmedProvider, true);
+          if (!available.available) throw new Error(available.reason ?? 'The selected environment is no longer available. Check it again.');
+          this.spec.provider = this.confirmedProvider;
+        }
+        this.profile = profile;
+        await quiet(() => this.mcp.sendToolListChanged());
+      },
+    }).catch((error) => { this.viewer = undefined; throw error; });
+    return (await this.viewer).url;
   }
 }
 

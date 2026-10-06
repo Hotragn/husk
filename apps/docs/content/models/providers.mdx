@@ -249,6 +249,7 @@ Husk will apply OpenAI's reasoning-model quirks to any model id matching `o1`–
 
 ## What Husk sends where
 
-Only two kinds of outbound request exist in the codebase: the model provider you
-configured, and a container registry when a flavor's image is not already pulled. There
-is no telemetry, no analytics and no crash reporter — absent, not disabled by a flag.
+Model requests go to the provider you configure. Other tasks may contact public
+sources, search providers, remote computers, and image registries. The installed
+runtime has no product telemetry or crash reporter; the hosted website and docs
+use Vercel Web Analytics.

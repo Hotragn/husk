@@ -1,0 +1,39 @@
+name: starter archive
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: npm run bundle:mcpb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: husk-desktop-bundle
+          path: |
+            build/*.mcpb
+            build/*.mcpb.sha256
+          if-no-files-found: error
+  smoke:
+    needs: bundle
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['20', '22']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: '${{ matrix.node }}', cache: npm }
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with: { name: husk-desktop-bundle, path: build }
+      - run: npm run smoke:starter -- --bundle

@@ -43,6 +43,24 @@ function localFetch(chat: () => Response) {
 }
 
 describe('OllamaProvider.listModels', () => {
+  it('preserves reported size and does not invent tool support when discovery fails', async () => {
+    const { fetch } = recordingFetch((call) => call.url.endsWith('/api/tags')
+      ? jsonResponse({ models: [{}, { name: 'custom:7b', details: { parameter_size: '7.6B', family: 'custom' } }] })
+      : new Response('', { status: 500 }));
+    const models = await new OllamaProvider({ fetch }).listModels();
+    expect(models).toHaveLength(1);
+    expect(models[0]).toMatchObject({ parameterCount: 7_600_000_000, supportsTools: false, tags: ['local', 'custom'] });
+  });
+
+  it('trusts an explicit empty capability list over catalog assumptions', async () => {
+    const { fetch } = recordingFetch((call) => call.url.endsWith('/api/tags')
+      ? jsonResponse({ models: [{ name: 'llama3.2' }] })
+      : jsonResponse({ capabilities: [], model_info: { 'general.parameter_count': 3_210_000_000 } }));
+    expect((await new OllamaProvider({ fetch }).listModels())[0]).toMatchObject({
+      supportsTools: false, parameterCount: 3_210_000_000,
+    });
+  });
+
   it('reports what is actually pulled, at zero cost', async () => {
     const { fetch } = localFetch(() => jsonResponse({}));
     const models = await new OllamaProvider({ fetch }).listModels();
