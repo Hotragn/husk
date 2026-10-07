@@ -31,7 +31,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: "Husk — a real computer for your AI chat",
+    default: "Husk — your AI chat gets a computer",
     template: "%s — Husk",
   },
   description: SITE_DESCRIPTION,
@@ -44,12 +44,12 @@ export const metadata: Metadata = {
     type: "website",
     siteName: "Husk",
     url: "/",
-    title: "Husk — a real computer for your AI chat",
+    title: "Husk — your AI chat gets a computer",
     description: SITE_DESCRIPTION,
   },
   twitter: {
     card: "summary_large_image",
-    title: "Husk — a real computer for your AI chat",
+    title: "Husk — your AI chat gets a computer",
     description: SITE_DESCRIPTION,
   },
   robots: { index: true, follow: true },

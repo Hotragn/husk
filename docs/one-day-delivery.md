@@ -6,6 +6,11 @@ candidate that a beginner can use to turn public sources into a saved result.
 ## Product decision
 
 Lead with **“Keep your AI work: sources, results, and a place to return to.”**
+
+> **Superseded 7 October 2026.** The tagline is now **“Your AI chat gets a computer.”**
+> Workspaces stay in the hero as the supporting line rather than the headline. The
+> reasoning below is kept as it was written, including the point that generic file and
+> terminal access is available elsewhere.
 The first audience is people already using an AI desktop app for research and
 small decisions. Their first task is a cited brief from a few public pages.
 Success means they can finish, inspect, export, and reopen it without shell setup.

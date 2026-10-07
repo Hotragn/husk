@@ -67,11 +67,11 @@ export function SiteFooter() {
               <HuskWordmark height={30} />
             </span>
             <p className="lead" style={{ marginTop: "var(--space-5)", maxWidth: "34ch" }}>
-              Empty by design.
+              Your AI chat gets a computer.
             </p>
             <p className="small" style={{ marginTop: "var(--space-3)" }}>
-              A husk is empty, a fresh machine has nothing installed, and there
-              is no account holding anything of yours.
+              The name says it: a husk is empty. Every computer starts with nothing
+              installed, and there&rsquo;s no account holding anything of yours.
             </p>
           </div>
 

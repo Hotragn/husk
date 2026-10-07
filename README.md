@@ -5,7 +5,8 @@
     <img src="brand/logo/lockup-horizontal.svg" alt="Husk" height="72">
   </picture>
 
-  <p><strong>Keep your AI work. Sources, results, and a place to return to.</strong></p>
+  <p><strong>Your AI chat gets a computer.</strong></p>
+  <p>A terminal, files and a browser it can actually use, and a workspace that keeps what it finds for next time.</p>
 
   <p>
     <a href="https://github.com/Hotragn/husk/actions/workflows/ci.yml"><img src="https://github.com/Hotragn/husk/actions/workflows/ci.yml/badge.svg" alt="CI"></a>

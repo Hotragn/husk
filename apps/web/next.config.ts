@@ -18,6 +18,39 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
 
   /**
+   * Security headers, on every response.
+   *
+   * HSTS is belt and braces: `.dev` is on the browser preload list at the TLD,
+   * so browsers refuse plain HTTP here regardless. The CSP is deliberately
+   * partial. `frame-ancestors`, `base-uri`, `object-src` and `form-action`
+   * close clickjacking, base-tag injection and plugin embeds without touching
+   * how the page loads; nothing on this site frames another page, is framed,
+   * or posts a form.
+   *
+   * ponytail: no script-src/style-src. Next inlines its bootstrap scripts and
+   * styles, so a real script policy needs per-request nonces from middleware.
+   * Add that if the site ever renders user-supplied content.
+   */
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), browsing-topics=()" },
+          {
+            key: "Content-Security-Policy",
+            value: "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'",
+          },
+        ],
+      },
+    ];
+  },
+
+  /**
    * Lighthouse flagged "missing source maps for large first-party JavaScript".
    * The bundle is first-party and Apache-2.0 -- the source is already public,
    * so there is nothing here a map could leak, and without one a production

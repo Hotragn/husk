@@ -27,7 +27,7 @@ import {
 } from "@/lib/content";
 
 export const metadata: Metadata = {
-  title: "Husk — a place to keep your AI work",
+  title: "Husk — your AI chat gets a computer",
   alternates: { canonical: "/" },
 };
 
@@ -49,12 +49,13 @@ export default function Home() {
         <div className="hero-grid">
           <div className="hero-copy hero-copy-wide">
             <h1 id="hero-title" className="h-hero">
-              Your AI work, ready to return to.
+              Your AI chat gets a computer.
             </h1>
             <p className="lead" style={{ marginTop: "var(--space-6)" }}>
-              Save your sources. Ask your AI for a brief, comparison, or action
-              list. Review and download the result, then reopen the same workspace
-              tomorrow. Add computer tools when your task needs them.
+              Add Husk to Claude Code, Codex or Cursor and your AI gets a machine
+              of its own: a terminal, files and a browser. It can run the code it
+              writes, check the pages it talks about, and keep what it finds in a
+              workspace you can reopen tomorrow.
             </p>
 
             {/* 42rem, not 40. The mono face is wider than the fallback stack
@@ -68,23 +69,25 @@ export default function Home() {
                 Claude Code in two places while the copy underneath promised
                 Cursor and Zed the same thing without saying what to type. */}
             <div style={{ marginTop: "var(--space-8)", maxWidth: "42rem" }}>
-              <p className="small">Workspaces are available in the unsigned{" "}
-                <a href={PREVIEW_RELEASE_URL}>0.2.0 public preview</a>. Start with
-                the guide for installation and your first task.</p>
+              <p className="small">Workspaces are in the{" "}
+              <a href={PREVIEW_RELEASE_URL}>0.2.0 public preview</a>, which
+              isn&rsquo;t code-signed yet. The guide walks you through setup and a
+              first task.</p>
             </div>
 
             <div className="hero-actions" style={{ marginTop: "var(--space-4)" }}>
               <a className="btn btn-primary btn-lg" href={WORKSPACE_GUIDE_URL}>
-                Make your first brief
+                Get started
               </a>
               <LinkPreview {...PREVIEWS.source} className="btn btn-secondary btn-lg">
-                Explore the source
+                View on GitHub
               </LinkPreview>
             </div>
 
             <p className="meta" style={{ marginTop: "var(--space-6)" }}>
-              No Husk account or extra API key for workspace tasks. Apache-2.0.
-              Your AI app’s usage limits still apply.
+              No Husk account, and no extra API key for workspace tasks. Open
+              source under Apache-2.0. Your AI app’s own usage limits still
+              apply.
             </p>
           </div>
 
@@ -114,11 +117,9 @@ export default function Home() {
           className="small"
           style={{ marginTop: "var(--space-4)", maxWidth: "var(--measure-prose)" }}
         >
-          That ran on a Windows laptop with no Docker and no API key. The local
-          provider found WSL2 and gave it a real kernel and a real{" "}
-          <code className="inline">/work</code>. Then it refused a command that
-          would not have been recoverable, and said what to change if the refusal
-          was wrong.
+          This ran on a Windows laptop with no Docker and no API key. Husk found
+          WSL2 and used it as the computer. At the end it refused a command that
+          couldn&rsquo;t be undone, and said what to change if you meant it.
         </p>
       </section>
 
@@ -137,9 +138,8 @@ export default function Home() {
               Husk does two things.
             </h2>
             <p className="prose" style={{ marginTop: "var(--space-4)" }}>
-              One binary. The first job hands a machine to an agent that does not
-              have one. The second takes a conversation you already finished and
-              keeps it running.
+              It gives your AI somewhere to do the work, and it can turn a
+              conversation you&rsquo;ve already had into a bot that keeps running.
             </p>
           </div>
         </Reveal>
@@ -147,19 +147,13 @@ export default function Home() {
         <div className="stack-16">
           <div className="grid12">
             <div className="col-5">
-              <h3 className="h-sub">It gives an agent a computer.</h3>
+              <h3 className="h-sub">It gives your AI a computer.</h3>
               <div className="prose" style={{ marginTop: "var(--space-4)" }}>
                 <p>
-                  A computer is a disposable Linux machine: shell, filesystem,
-                  ports, snapshots. Nothing is spun up until a tool actually
-                  needs one, and a stable key maps a conversation to the same
-                  machine, so its files survive across tool calls without you
-                  tracking ids.
-                </p>
-                <p>
-                  A cold <code className="inline">docker version</code> takes
-                  about 800 ms, so provider probes are cached for 30 seconds. An
-                  agent that creates four machines in a row pays that once.
+                The computer is a throwaway Linux machine with a shell, files
+                and open ports. Husk doesn&rsquo;t start it until your AI
+                actually needs it, and the whole conversation uses the same
+                one, so a file made in one step is still there in the next.
                 </p>
               </div>
             </div>
@@ -186,17 +180,17 @@ export default function Home() {
               </h3>
               <div className="prose" style={{ marginTop: "var(--space-4)" }}>
                 <p>
-                  Husk reads a Claude Code, ChatGPT or Cursor transcript, walks{" "}
-                  <code className="inline">parentUuid</code> back from the last
-                  leaf to get the conversation as it actually ran rather than
-                  every dead end, and writes a{" "}
-                  <code className="inline">husk.yaml</code> you can diff.
+                Point Husk at a Claude Code, ChatGPT or Cursor conversation. It
+                follows the thread the way it actually went, skipping the
+                branches you backed out of, and writes it down as a short{" "}
+                <code className="inline">husk.yaml</code> file you can read and
+                edit.
                 </p>
                 <p>
-                  The distiller runs with no API key. It mines the instructions
-                  you kept repeating, the answers you did not correct, and the
-                  tools you actually used, then reports what it could not
-                  determine instead of inventing it.
+                This works without an API key. Husk picks out the instructions
+                you kept repeating, the answers you left alone and the tools
+                you actually used. Anything it can&rsquo;t work out, it tells
+                you instead of guessing.
                 </p>
               </div>
             </div>
@@ -209,9 +203,9 @@ export default function Home() {
         <div className="grid12">
           <div className="col-7">
             <Reveal>
-              <p className="eyebrow">the whole install</p>
+              <p className="eyebrow">setup</p>
               <h2 id="mcp-title" className="h-section">
-                One line gives your client a machine.
+                One line gives your AI a computer.
               </h2>
             </Reveal>
 
@@ -221,18 +215,17 @@ export default function Home() {
 
             <div className="prose" style={{ marginTop: "var(--space-6)" }}>
               <p>
-                In Claude Code and Codex there is no second step and no config
-                file to edit. Cursor, Zed and Antigravity have no add command
-                of their own, so those get the block to paste and the path to
-                paste it into — the tab above switches between them. Either
-                way the client gets workspace and computer tools —
-                a shell, the filesystem, ports, and a browser — and that
-                filesystem persists for the rest of the conversation.
+              In Claude Code and Codex, that&rsquo;s the whole setup. Cursor,
+              Zed and Antigravity don&rsquo;t have an add command, so for those
+              you paste a short block into a settings file. The tabs above show
+              what to paste and where. Either way, your AI gets a shell, files,
+              ports and a browser, and its files stay put for the rest of the
+              conversation.
               </p>
               <p>
-                The first tool result tells the model how isolated it is,
-                because a model that believes it is contained when it is not
-                will take risks it otherwise would not.
+              The first thing Husk tells your AI is how well its machine is
+              walled off from yours. An AI that wrongly thinks it&rsquo;s walled
+              off will take risks it otherwise wouldn&rsquo;t.
               </p>
             </div>
           </div>
@@ -262,9 +255,9 @@ export default function Home() {
               ))}
             </ul>
             <p className="small" style={{ marginTop: "var(--space-3)" }}>
-              {BROWSER_TOOL_COUNT} in all. A real Chromium inside the computer,
-              driven by structured page text rather than pixels — which is why an
-              agent can use it without seeing.
+              {BROWSER_TOOL_COUNT} in all. It&rsquo;s a full Chromium browser
+              running inside the computer. Your AI reads each page as text rather
+              than a screenshot, so it doesn&rsquo;t need to see it.
             </p>
           </div>
         </div>
@@ -274,14 +267,14 @@ export default function Home() {
       <section className="container section" aria-labelledby="start-title" id="start">
         <Reveal>
           <div className="section-head">
-            <p className="eyebrow">after the one line</p>
+            <p className="eyebrow">after setup</p>
             <h2 id="start-title" className="h-section">
               Three things to ask it first.
             </h2>
             <p className="prose" style={{ marginTop: "var(--space-4)" }}>
-              The install is one line and then nothing tells you what changed.
-              These are the three that show you the computer is real, in the
-              order that makes the point fastest.
+              Setup is one line, and then nothing tells you what changed. Ask
+              these three, in this order. They show you quickly that there&rsquo;s
+              a real machine on the other end.
             </p>
           </div>
         </Reveal>
@@ -315,16 +308,15 @@ export default function Home() {
       >
         <Reveal>
           <div className="section-head">
-            <p className="eyebrow">containment</p>
+            <p className="eyebrow">isolation</p>
             <h2 id="providers-title" className="h-section">
-              <code className="inline">husk doctor</code> tells you which one you
+              Run <code className="inline">husk doctor</code> to see which one you
               have.
             </h2>
             <p className="prose" style={{ marginTop: "var(--space-4)" }}>
-              Two of the five providers are not isolated in any meaningful sense.{" "}
-              <code className="inline">Availability.isolated</code> is on the
-              provider interface so that no part of this product ever has to be
-              vague about which two.
+              Husk can run your AI&rsquo;s computer five ways, and two of them
+              don&rsquo;t really keep it apart from your own machine. Husk always
+              says which kind you&rsquo;re on, so you never have to guess.
             </p>
           </div>
         </Reveal>
@@ -332,16 +324,16 @@ export default function Home() {
         <div className="table-scroll" tabIndex={0} role="region" aria-labelledby="providers-title">
           <table className="data">
             <caption>
-              Isolation, cost and the mechanism behind each claim. Never the
-              word &ldquo;secure&rdquo; on its own.
+              How each option keeps the computer apart from your machine, what it
+              costs, and when to use it.
             </caption>
             <thead>
               <tr>
                 <th scope="col">provider</th>
                 <th scope="col">isolation</th>
-                <th scope="col">mechanism</th>
+                <th scope="col">how</th>
                 <th scope="col">cost</th>
-                <th scope="col">when it wins</th>
+                <th scope="col">best for</th>
               </tr>
             </thead>
             <tbody>
@@ -370,9 +362,8 @@ export default function Home() {
         </div>
 
         <p className="small" style={{ marginTop: "var(--space-4)", maxWidth: "var(--measure-prose)" }}>
-          Husk never silently substitutes a weaker provider for the one you
-          asked for. Asking for <code className="inline">--provider docker</code>{" "}
-          with the daemon down is an error, not a downgrade.
+          Husk never quietly swaps in a weaker option. If you ask for Docker and
+          Docker isn&rsquo;t running, you get an error, not a downgrade.
         </p>
 
         {/* The viewer answers "how contained is the one I got?", which is a
@@ -390,12 +381,12 @@ export default function Home() {
             >
               <p>
                 <span className="callout-code">guardrails, not a sandbox</span>
-                The local provider pins the working directory, resolves every
-                path through <code className="inline">realpath</code> and refuses
-                escapes, strips credential-shaped environment variables, caps
-                output, and kills the process tree on timeout. That stops
-                accidents. It will not stop an adversary, and a prompt-injected
-                model is closer to an adversary than to an accident.
+                On the local option, your AI is kept inside one folder. It
+                can&rsquo;t follow a path out of it, API keys are stripped from its
+                environment, its output is capped, and anything it starts is stopped
+                when time runs out. That stops accidents. It won&rsquo;t stop someone
+                trying to break out, and an AI tricked by something it read is closer
+                to that than to an accident.
               </p>
             </div>
           </div>
@@ -411,23 +402,23 @@ export default function Home() {
         <div className="grid12">
           <div className="col-4">
             <Reveal>
-              <p className="eyebrow">the unit of value</p>
+              <p className="eyebrow">the output</p>
               <h2 id="yaml-title" className="h-section">
                 What comes out is a file you can read.
               </h2>
             </Reveal>
             <div className="prose" style={{ marginTop: "var(--space-4)" }}>
               <p>
-                Deliberate key order, block scalars, and a provenance header
-                naming the transcript it came from. The file is optimised for
-                review rather than for machines, because the first thing you
-                will do with it is disagree with a line and change it.
+              It&rsquo;s laid out for a person to read, with a note at the top
+              saying which conversation it came from. That matters, because the
+              first thing you&rsquo;ll want to do is disagree with a line and
+              change it.
               </p>
               <p>
-                <Link href="/#chat-to-bot">Distil one</Link>, edit it, then run
-                it on the CLI or serve it over HTTP, Discord, Slack or cron. The
-                same file runs against Opus or against a local Gemma by changing
-                one word.
+              <Link href="/#chat-to-bot">Make one</Link>, edit it, then run it
+              from the terminal or as a bot on Discord, Slack, a web endpoint or
+              a schedule. Switching it from Claude Opus to a free model on your
+              own machine means changing one word.
               </p>
             </div>
           </div>
@@ -448,27 +439,28 @@ export default function Home() {
             <Reveal>
               <p className="eyebrow">cost</p>
               <h2 id="free-title" className="h-section">
-                The free path is the same path everything else is built on.
+                The free version is the full version.
               </h2>
             </Reveal>
             <div className="prose" style={{ marginTop: "var(--space-6)" }}>
               <p>
-                The local provider is the primitive. Docker, Podman, SSH and Fly
-                are plugins behind the same interface, which means there is no
-                code path in Husk that requires an account, a card or a network
-                connection. Nothing is gated, nothing expires, and there is no
-                edition of this product you are not already using.
+              Husk was built to run on your own machine first. Docker, Podman,
+              SSH and Fly plug into that same base, so nothing in Husk needs an
+              account, a card or an internet connection. Nothing is locked,
+              nothing expires, and there&rsquo;s no paid version with more in
+              it.
               </p>
               <p>
-                The installed Husk runtime has no product telemetry or crash
-                reporter. It contacts the websites, model providers, registries,
-                and services your tasks use. Text shared with your AI follows
-                that app’s policies. This website and the docs use Vercel Web Analytics.
+              Husk doesn&rsquo;t collect usage data or crash reports. It only
+              talks to the websites, AI providers and services your tasks
+              actually use. Anything you share with your AI app is covered by
+              that app&rsquo;s own policy. This website and the docs do use
+              Vercel Web Analytics.
               </p>
               <p>
                 <LinkPreview {...PREVIEWS.pricing}>
-                  What a hosted tier would have to add before it was worth
-                  charging for
+                  What a paid, hosted version would need to offer before we
+                  charged for it
                 </LinkPreview>
                 .
               </p>
@@ -487,21 +479,21 @@ export default function Home() {
                 </span>
               </li>
               <li>
-                <span className="rl-term">no key</span>
+                <span className="rl-term">no API key</span>
                 <span className="rl-desc">
-                  Ollama runs gemma, qwen or llama on your machine for nothing
+                  run a free model like Gemma or Llama on your own machine with Ollama
                 </span>
               </li>
               <li>
                 <span className="rl-term">no Docker</span>
                 <span className="rl-desc">
-                  the local provider works without it, and says what you gave up
+                  Husk works without it, and tells you what you&rsquo;re missing
                 </span>
               </li>
               <li>
-                <span className="rl-term">no product telemetry</span>
+                <span className="rl-term">no usage tracking</span>
                 <span className="rl-desc">
-                  in the installed runtime; the hosted sites use web analytics
+                  in Husk itself; this website uses basic analytics
                 </span>
               </li>
               <li>

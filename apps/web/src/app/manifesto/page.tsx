@@ -68,20 +68,21 @@ export default function Manifesto() {
             comparable.
           </p>
           <p>
-            A container is a kernel boundary: dropped capabilities, no
-            new privileges, a read-only root, a pid ceiling, a locked root
-            account, the network policy you declared. An injected model in that
+            A container is a real wall. It runs without admin rights, can&rsquo;t
+            give itself more, can&rsquo;t change its own system files, has a cap
+            on how many processes it can start, and reaches the network only the
+            way you allowed. An injected model in that
             mode can wreck the container. It cannot reach your home directory,
             your SSH keys, your Docker socket or your other containers.
           </p>
           <p>
             A guarded working directory is a different thing wearing the same
-            word. Husk&rsquo;s local provider resolves every filesystem call
-            through <code className="inline">realpath</code> and rejects
-            anything that leaves the workspace, including through a symlink
-            created inside it. It strips credential-shaped environment
-            variables. It refuses a short list of unrecoverable commands. It
-            caps captured output and kills the whole process group on timeout.
+            word. Husk&rsquo;s local option checks every file path and refuses anything
+            that leads out of the workspace, even through a shortcut the AI made
+            inside it. It removes anything that looks like a password or key from
+            the AI&rsquo;s environment. It refuses a short list of commands that
+            can&rsquo;t be undone. It caps how much output it keeps, and stops
+            everything the AI started when time runs out.
             Those are real controls and they are tested. The agent still shares
             your kernel, your network and your user account, and the command
             policy is a deny list, and deny lists are bypassable by anyone who
@@ -104,8 +105,8 @@ export default function Manifesto() {
           </p>
           <p>
             So the isolation guarantee has to be a value in the program, not a
-            paragraph on a website. In Husk it is a field on the provider
-            interface. <code className="inline">husk doctor</code> prints it.
+            paragraph on a website. In Husk it&rsquo;s built into the code that
+            runs each option. <code className="inline">husk doctor</code> prints it.
             The CLI says it the first time you use a provider that does not
             have it. The MCP server puts it in the model&rsquo;s first tool
             result, because a model that believes it is contained when it is
@@ -153,8 +154,8 @@ export default function Manifesto() {
             laptop.
           </p>
           <p>
-            Husk goes the other way. The local provider is the primitive and
-            everything hosted is a plugin behind the same interface. There is no
+            Husk goes the other way. It was built to run on your own machine
+            first, and every hosted option plugs into that same base. There is no
             account, no card, and no telemetry — absent from the codebase, not
             disabled by a flag. That is not generosity. It is what makes the
             honesty checkable: you can read the code that decides whether you

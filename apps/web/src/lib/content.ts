@@ -1,8 +1,8 @@
 /**
- * Every string in this file is quoted from the repository — README.md,
- * docs/ARCHITECTURE.md, docs/SECURITY-MODEL.md, brand/voice-examples.md or a
- * real session transcript. Nothing here is invented, and nothing here is a
- * claim the product cannot make. See BRAND.md §5.
+ * Every claim in this file is one the product can back up: the facts come from
+ * README.md, docs/ARCHITECTURE.md, docs/SECURITY-MODEL.md or a real session
+ * transcript, and the wording is plain English rather than the identifiers in
+ * the code. Rewording is fine; inventing a capability is not. See BRAND.md §5.
  */
 
 /**
@@ -42,7 +42,7 @@ export const WORKSPACE_GUIDE_URL = process.env.NEXT_PUBLIC_DOCS_URL
   : `${REPO_URL}/blob/main/apps/docs/content/start/workspaces.mdx`;
 
 export const SITE_DESCRIPTION =
-  "Keep sources and AI results in local workspaces. Make a cited brief, compare options, and return to your work later. Optional computer tools for coding and automation. No Husk account required.";
+  "Husk gives your AI chat a computer: a terminal, files and a browser it can use to do the work. Keep what it finds in a workspace and pick it up later. Free and open source, no account needed.";
 
 export const MCP_COMMAND = "claude mcp add husk -- npx -y @husk-ai/mcp";
 
@@ -73,20 +73,20 @@ export const PROVIDERS: Provider[] = [
     id: "docker",
     shell: "sealed",
     isolationKind: "kernel",
-    isolation: "kernel",
+    isolation: "isolated",
     mechanism:
-      "namespaces, cgroups, seccomp, --cap-drop ALL, read-only root, uid 1000",
+      "its own container with no admin rights, read-only system files and a short list of allowed system calls",
     cost: "free, local",
-    when: "the default when the daemon is up",
+    when: "the default when Docker is running",
   },
   {
     id: "podman",
     shell: "sealed",
     isolationKind: "kernel",
-    isolation: "kernel",
-    mechanism: "the same boundary, rootless",
+    isolation: "isolated",
+    mechanism: "the same as Docker, without needing admin rights to run",
     cost: "free, local",
-    when: "Linux without a Docker daemon",
+    when: "Linux machines without Docker",
   },
   {
     id: "local",
@@ -94,27 +94,27 @@ export const PROVIDERS: Provider[] = [
     isolationKind: "none",
     isolation: "guardrails only",
     mechanism:
-      "path jail through realpath, scrubbed credentials, deny list, output caps, process-tree kill",
+      "a folder it can’t leave, API keys hidden from it, a short list of blocked commands, and a time limit",
     cost: "free, local",
-    when: "nothing else is available",
+    when: "when nothing else is available",
   },
   {
     id: "ssh",
     shell: "partial",
     isolationKind: "unknown",
-    isolation: "whatever the remote is",
-    mechanism: "the box you pointed it at — Husk cannot know and does not guess",
+    isolation: "depends on the machine",
+    mechanism: "whatever machine you point it at; Husk can’t see how that one is set up, so it doesn’t guess",
     cost: "free if you own the box",
-    when: "an Oracle Always Free ARM instance, a Pi, a VPS",
+    when: "a free Oracle Cloud server, a Raspberry Pi, a VPS",
   },
   {
     id: "fly",
     shell: "sealed",
     isolationKind: "kernel",
-    isolation: "microVM",
-    mechanism: "a Firecracker machine, not a container on your kernel",
+    isolation: "isolated (VM)",
+    mechanism: "a small virtual machine on Fly.io, not a container on your own computer",
     cost: "metered",
-    when: "bursty parallel work, no local resources",
+    when: "lots of work at once, without using your own machine",
   },
 ];
 
@@ -277,13 +277,13 @@ triggers:
  * have caught the site short.
  */
 export const MCP_TOOLS: Array<{ name: string; what: string }> = [
-  { name: "shell", what: "run a command, get stdout, stderr and an exit code" },
-  { name: "read_file", what: "read a path inside the workspace" },
-  { name: "write_file", what: "write a path inside the workspace" },
-  { name: "edit_file", what: "replace an exact string, and fail loudly if it is missing or ambiguous" },
+  { name: "shell", what: "run a command and get back what it printed" },
+  { name: "read_file", what: "read a file in the workspace" },
+  { name: "write_file", what: "write a file in the workspace" },
+  { name: "edit_file", what: "change one exact piece of text, and stop if it isn’t there or appears twice" },
   { name: "list_dir", what: "list a directory" },
-  { name: "expose_port", what: "publish a port the agent started listening on" },
-  { name: "computer_info", what: "kernel, cpus, memory, disk and network, so the model stops probing" },
+  { name: "expose_port", what: "open up a server your AI started, so you can visit it" },
+  { name: "computer_info", what: "what the machine has: CPU, memory, disk and network, so your AI doesn’t have to poke around" },
 ];
 
 /**
@@ -293,11 +293,11 @@ export const MCP_TOOLS: Array<{ name: string; what: string }> = [
  * it without seeing.
  */
 export const BROWSER_TOOLS: Array<{ name: string; what: string }> = [
-  { name: "browser_goto", what: "open a URL in a real Chromium and return the rendered text" },
-  { name: "browser_snapshot", what: "list everything readable or clickable, each with a ref" },
-  { name: "browser_click", what: "click an element the snapshot named" },
+  { name: "browser_goto", what: "open a page and get back its text" },
+  { name: "browser_snapshot", what: "list what on the page can be read or clicked" },
+  { name: "browser_click", what: "click something from that list" },
   { name: "browser_type", what: "type into a field" },
-  { name: "browser_screenshot", what: "take a PNG, for checking a layout or showing a human" },
+  { name: "browser_screenshot", what: "take a screenshot, to check a layout or show you" },
 ];
 
 /** Thirteen ship; the list above is the first five. */
@@ -315,14 +315,14 @@ export const BROWSER_TOOL_COUNT = 13;
 export const ONBOARDING: Array<{ ask: string; what: string }> = [
   {
     ask: "What kernel are you on?",
-    what: "It runs uname -sr in the machine and reads it back. The answer is Linux on a computer that did not exist a second ago, and it is not one the model could have guessed.",
+    what: "It runs a command on the machine and reads the answer back. You get Linux, on a computer that didn’t exist a second ago, and not an answer your AI could have made up.",
   },
   {
     ask: "Write a note to /work/note.txt, then read it back next turn.",
-    what: "The filesystem persists for the rest of the conversation. A stable key maps the chat to the same machine, so nothing is tracked by you.",
+    what: "The file is still there next turn, and for the rest of the conversation. You don’t have to keep track of anything.",
   },
   {
     ask: "Start a web server and give me the URL.",
-    what: "expose_port publishes the port it started listening on and hands back a URL you can open. That is the moment the computer stops being an abstraction.",
+    what: "It starts the server and hands you a link you can open in your own browser. That’s usually when it sinks in that there’s a real computer there.",
   },
 ];
