@@ -90,6 +90,14 @@ jobs:
             exit 1
           fi
 
+      # Check the same token a real publish will use, including on dry runs.
+      # This is read-only and catches an expired or missing secret before the
+      # longer build and test steps. npm publish still checks auth again below.
+      - name: verify npm publish credentials
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm whoami --registry https://registry.npmjs.org
+
       - run: npm ci
       - run: npm run build:packages
       - run: npm run typecheck
