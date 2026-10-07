@@ -2,6 +2,7 @@ import { OG_CONTENT_TYPE, OG_SIZE, ogCard } from "@/lib/og-card";
 
 export const alt =
   "Pricing — Husk is free and open source, with no paid plan and no trial.";
+export const dynamic = "force-static";
 export const size = OG_SIZE;
 export const contentType = OG_CONTENT_TYPE;
 

@@ -455,7 +455,7 @@ export default function Home() {
               talks to the websites, AI providers and services your tasks
               actually use. Anything you share with your AI app is covered by
               that app&rsquo;s own policy. This website and the docs do use
-              Vercel Web Analytics.
+              Cloudflare Web Analytics.
               </p>
               <p>
                 <LinkPreview {...PREVIEWS.pricing}>
