@@ -26,7 +26,7 @@ export const PREVIEWS = {
     image: "/pricing/opengraph-image",
     title: "Pricing",
     summary:
-      "There is no paid tier and no edition you are not already using.",
+      "Husk is free and open source, with no paid plan and no trial.",
   },
   manifesto: {
     href: "/manifesto",

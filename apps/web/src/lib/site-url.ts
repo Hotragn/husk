@@ -12,7 +12,7 @@
  *                                    because it is the only one that survives a
  *                                    custom domain: Vercel's own variables keep
  *                                    naming the `.vercel.app` host even after
- *                                    `husk.dev` is pointed at the project.
+ *                                    `huskai.dev` is pointed at the project.
  *   2. `VERCEL_PROJECT_PRODUCTION_URL` -- the project's production hostname,
  *                                    the same value on every deployment, so a
  *                                    preview build still emits production

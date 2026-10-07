@@ -33,11 +33,16 @@ loudly and with a hint, and it does not hard-fail.
 
 ### Tagline
 
-> **Empty by design.**
+> **Your AI chat gets a computer.**
 
-Read it three ways, all true: a husk is empty; a fresh machine has nothing installed and
-no opinions; and there is no account, no profile, no telemetry — nothing of yours is held
-anywhere.
+Five words a person can repeat without explaining. It names the thing they already have
+(an AI chat) and the one thing that changes (it gets a computer), with no category word or
+adjective doing the persuading.
+
+The previous tagline, *Empty by design*, is retired as a headline because it was opaque to
+anyone arriving from a link. Its meaning survives in plain words under the footer mark:
+a husk is empty, every computer starts with nothing installed, and no account holds anything
+of yours.
 
 ### 25 words
 

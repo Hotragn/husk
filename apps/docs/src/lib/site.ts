@@ -26,7 +26,7 @@ export const REPO_URL = 'https://github.com/Hotragn/husk';
 /**
  * Where the link back to the main site goes.
  *
- * The docs had no route back to husk.dev and the main site had no route in
+ * The docs had no route back to huskai.dev and the main site had no route in
  * here; the nav now closes the loop in both directions. Set
  * `NEXT_PUBLIC_WEB_URL` on this Vercel project to the marketing deployment.
  *
