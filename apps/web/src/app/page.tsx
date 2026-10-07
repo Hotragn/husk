@@ -21,6 +21,7 @@ import {
   DOCTOR,
   HUSK_YAML,
   MCP_TOOLS,
+  PREVIEW_RELEASE_URL,
   PROVIDERS,
   WORKSPACE_GUIDE_URL,
 } from "@/lib/content";
@@ -67,8 +68,9 @@ export default function Home() {
                 Claude Code in two places while the copy underneath promised
                 Cursor and Zed the same thing without saying what to type. */}
             <div style={{ marginTop: "var(--space-8)", maxWidth: "42rem" }}>
-              <p className="small">Workspaces are available in the 0.2.0 preview.
-                Start with the guide for installation and your first task.</p>
+              <p className="small">Workspaces are available in the unsigned{" "}
+                <a href={PREVIEW_RELEASE_URL}>0.2.0 public preview</a>. Start with
+                the guide for installation and your first task.</p>
             </div>
 
             <div className="hero-actions" style={{ marginTop: "var(--space-4)" }}>

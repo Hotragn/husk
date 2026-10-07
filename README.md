@@ -24,13 +24,16 @@ For coding and automation, Husk also provides optional computer tools: a shell,
 files, and a browser. Existing MCP and CLI computer workflows remain available.
 
 > [!NOTE]
-> **0.2.0 release candidate.** The desktop extension is built locally from this checkout;
-> this change does not establish a public release or directory listing. See the
+> **0.2.0 public preview.** Download the unsigned desktop extension from the
+> [GitHub prerelease](https://github.com/Hotragn/husk/releases/tag/preview-0.2.0).
+> It has passed automated checks; installation and first-task completion inside
+> Claude Desktop still need beta testing. See the
 > [one-day delivery and launch checklist](docs/one-day-delivery.md).
 
 ## Start with a workspace
 
-Install the supplied `husk-0.2.0.mcpb` in Claude Desktop through **Settings → Extensions
+Download `husk-0.2.0.mcpb` from the [public preview](https://github.com/Hotragn/husk/releases/tag/preview-0.2.0).
+Install it in Claude Desktop through **Settings → Extensions
 → Advanced settings → Install Extension**. Claude Desktop supplies Node.js. This
 candidate is unsigned; organization policies may restrict custom extensions.
 

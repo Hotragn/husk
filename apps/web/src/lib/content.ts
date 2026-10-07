@@ -14,6 +14,7 @@
 const stripTrailingSlash = (url: string) => url.replace(/\/+$/, "");
 
 export const REPO_URL = "https://github.com/Hotragn/husk";
+export const PREVIEW_RELEASE_URL = `${REPO_URL}/releases/tag/preview-0.2.0`;
 /**
  * Where the Docs link in the nav goes.
  *

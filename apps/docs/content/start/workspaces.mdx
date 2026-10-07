@@ -10,16 +10,18 @@ writing; Husk saves files you can inspect, reopen, and download.
 
 ## Install the desktop extension
 
-This guide describes the **0.2.0 release candidate**. A maintainer can build
-`husk-0.2.0.mcpb` from this checkout with `npm ci`, `npm run build`, and
-`npm run bundle:mcpb`. Check the [release page](https://github.com/Hotragn/husk/releases)
-for published artifacts; do not assume an older release contains this extension.
+Download the [Husk 0.2.0 public preview](https://github.com/Hotragn/husk/releases/tag/preview-0.2.0)
+and choose `husk-0.2.0.mcpb`. The release also includes a SHA-256 checksum for
+anyone who wants to verify the download. This is an unsigned preview for first-use
+feedback; installation and a complete task inside Claude Desktop still need beta
+testing. A maintainer can also build the bundle from this checkout with `npm ci`,
+`npm run build`, and `npm run bundle:mcpb`.
 
 In Claude Desktop, open **Settings → Extensions → Advanced settings → Install
 Extension**, select the supplied `.mcpb`, and review the installation prompt.
 Claude Desktop includes Node.js, so this starter flow requires no terminal,
 Docker, Husk account, or extra API key. Your AI app's subscription and usage limits
-still apply. The local candidate is unsigned; managed devices may restrict it.
+still apply. Managed devices may restrict custom unsigned extensions.
 These installation steps follow [Claude's extension guide](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop).
 
 ## Make your first useful result

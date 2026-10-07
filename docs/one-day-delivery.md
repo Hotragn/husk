@@ -66,11 +66,14 @@ longer work. The identity check does not prove publish permission. The dry run
 published nothing. Use the [official MCPB tooling](https://github.com/modelcontextprotocol/mcpb/blob/main/CLI.md)
 for validation, packing, and signing.
 
-The delivered local candidate is **unsigned and unpublished**. An actual install
-inside Claude Desktop and beta outcomes must be observed before calling this
-generally available. Public release, directory submission, and any
-signing identity remain release-owner actions. No new accounts, paid services,
-community posts, or outreach were made by this implementation.
+The candidate is **unsigned and available as a
+[GitHub prerelease](https://github.com/Hotragn/husk/releases/tag/preview-0.2.0)**.
+The attached bundle and checksum came from the passing release dry run; no npm
+package was published. An actual install inside Claude Desktop and beta outcomes
+must be observed before calling this generally available. npm publication,
+directory submission, and any signing identity remain release-owner actions. No
+new accounts, paid services, community posts, or outreach were made by this
+implementation.
 
 ## Traction work ready to run on launch day
 
@@ -87,8 +90,9 @@ community posts, or outreach were made by this implementation.
 4. Fix the most frequent blocker before adding more features. If installation fails,
    improve distribution. If users cannot get a useful result, improve the handoff
    and prompts. If they do not return for another task, revisit the target use case.
-5. Publish the verified artifact, a short first-task guide, known limits, and an honest
-   demo. Then submit the extension through the directory's current submission process.
+5. Promote the preview after real install and first-task checks, with the short
+   first-task guide, known limits, and an honest demo. Then submit the extension
+   through the directory's current submission process.
    Start with relevant existing communities and useful examples; do not mass-message.
 
 ### Minimal measurement sheet
