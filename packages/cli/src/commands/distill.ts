@@ -53,7 +53,7 @@ export async function run(argv: string[]): Promise<number> {
 
   const spin = ui.spinner(provider ? 'distilling with the model' : 'distilling');
   const { Distiller } = await import('@husk-ai/sessions');
-  const agent: DistilledAgent = await new Distiller(provider).distill(transcript).finally(() => spin.stop());
+  const agent: DistilledAgent = await new Distiller(provider, { ...(modelId ? { model: modelId } : {}) }).distill(transcript).finally(() => spin.stop());
 
   // The distiller emits a free-form shape; the schema wants a slug and known
   // tool bundles. `toSpec` in @husk-ai/sessions does that normalising -- including
@@ -67,7 +67,8 @@ export async function run(argv: string[]): Promise<number> {
   const yaml = renderSpec(spec, {
     provenance: [
       `Distilled by husk from ${transcript.origin ?? transcript.id} (${transcript.source}).`,
-      `${transcript.messages.length} messages · confidence ${agent.confidence.toFixed(2)} · ${modelId ?? 'heuristic'}`,
+      `${transcript.messages.length} messages · confidence ${agent.confidence.toFixed(2)} · ${modelId ? `model attempted: ${modelId}` : 'heuristic'}`,
+      ...agent.notes,
       'Review the persona before you serve this. Distillation is a draft, not an oracle.',
     ],
   });

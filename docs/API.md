@@ -40,7 +40,7 @@ invents endpoints the other does not know about.
 ## Health and capability
 
 ```
-GET /health     -> 200 { "ok": true, "version": "0.1.4", "uptimeSec": 812 }
+GET /health     -> 200 { "ok": true, "version": "0.2.0", "uptimeSec": 812 }
 GET /v1/doctor  -> 200 DoctorReport
 ```
 
@@ -52,7 +52,7 @@ other two — the `selected` / `selection` split cost a release once.
 
 ```json
 {
-  "version": "0.1.4",
+  "version": "0.2.0",
   "node": "v22.11.0",
   "platform": "win32-arm64",
   "huskHome": "C:\\Users\\me\\.husk",

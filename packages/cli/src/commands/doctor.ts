@@ -6,6 +6,7 @@ import * as ui from '../ui.js';
 import { EXIT_OK } from '../exit.js';
 import { paths } from '@husk-ai/core';
 import { findOrphanedWorkspaces } from '@husk-ai/runtime';
+import { compareModelPreference } from '@husk-ai/models';
 
 /**
  * The command people run when they are confused, so it must never be confusing.
@@ -225,7 +226,7 @@ export async function collect(force = false, probes: DoctorProbes = liveProbes):
       isolated: chosen?.isolated ?? null,
       model: chosenModel ? (chosenModel.models[0] ?? null) : null,
       modelReason: chosenModel
-        ? `first reachable model on ${chosenModel.displayName}`
+        ? `preferred available model on ${chosenModel.displayName} (capabilities, catalog quality, and local size tier)`
         : 'no provider has credentials or is listening',
     },
     warnings,
@@ -296,7 +297,7 @@ async function collectModels(probes: DoctorProbes): Promise<ModelRow[]> {
       hint,
       envKey: declared.envKey,
       implemented: true,
-      models: models.map((m) => m.id),
+      models: models.sort(compareModelPreference).map((m) => m.id),
     });
   }
 

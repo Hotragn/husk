@@ -103,13 +103,15 @@ export class OllamaProvider implements ModelProvider {
       throw networkError(this.ctx(), err);
     }
 
-    const names = tags.map((t) => t.model ?? t.name).filter((n): n is string => typeof n === 'string' && n.length > 0);
+    const validTags = tags.filter((tag) => typeof (tag.model ?? tag.name) === 'string' && (tag.model ?? tag.name)!.length > 0);
+    const names = validTags.map((tag) => (tag.model ?? tag.name)!);
     const details = await mapLimit(names, 4, async (name) => this.show(name));
 
     const models: ModelInfo[] = names.map((name, i) => {
-      const tag = tags[i];
+      const tag = validTags[i];
       const shown = details[i];
       const known = findModel(`ollama/${stripLatest(name)}`);
+      const parameterCount = shown?.parameterCount ?? parseParameterCount(tag?.details?.parameter_size);
       return {
         id: `ollama/${name}`,
         provider: 'ollama',
@@ -117,11 +119,12 @@ export class OllamaProvider implements ModelProvider {
         displayName: `${name} (local)`,
         contextWindow: shown?.contextWindow ?? known?.contextWindow ?? 8_192,
         maxOutputTokens: Math.min(shown?.contextWindow ?? known?.contextWindow ?? 8_192, 8_192),
-        supportsTools: shown?.supportsTools ?? known?.supportsTools ?? true,
+        supportsTools: shown?.supportsTools ?? known?.supportsTools ?? false,
         supportsVision: shown?.supportsVision ?? known?.supportsVision ?? false,
         supportsStreaming: true,
         pricing: { inputPerMTok: 0, outputPerMTok: 0 },
         free: true,
+        ...(parameterCount ? { parameterCount } : {}),
         tags: ['local', ...(tag?.details?.family ? [tag.details.family] : [])],
       };
     });
@@ -131,7 +134,7 @@ export class OllamaProvider implements ModelProvider {
   }
 
   /** `/api/show` knows the real context length and whether the model does tools. */
-  private async show(name: string): Promise<{ contextWindow?: number; supportsTools?: boolean; supportsVision?: boolean } | undefined> {
+  private async show(name: string): Promise<Partial<Pick<ModelInfo, 'contextWindow' | 'supportsTools' | 'supportsVision' | 'parameterCount'>> | undefined> {
     try {
       const res = await this.doFetch(`${this.baseUrl}/api/show`, {
         method: 'POST',
@@ -143,13 +146,17 @@ export class OllamaProvider implements ModelProvider {
       const body = (await res.json()) as {
         model_info?: Record<string, unknown>;
         capabilities?: string[];
+        details?: { parameter_size?: string };
       };
       const contextKey = Object.keys(body.model_info ?? {}).find((k) => k.endsWith('.context_length'));
       const raw = contextKey ? body.model_info?.[contextKey] : undefined;
-      const caps = body.capabilities ?? [];
-      const out: { contextWindow?: number; supportsTools?: boolean; supportsVision?: boolean } = {};
+      const caps = body.capabilities;
+      const out: Partial<Pick<ModelInfo, 'contextWindow' | 'supportsTools' | 'supportsVision' | 'parameterCount'>> = {};
       if (typeof raw === 'number' && raw > 0) out.contextWindow = raw;
-      if (caps.length > 0) {
+      const count = body.model_info?.['general.parameter_count'];
+      const parsedCount = typeof count === 'number' && count > 0 ? count : parseParameterCount(body.details?.parameter_size);
+      if (parsedCount) out.parameterCount = parsedCount;
+      if (Array.isArray(caps)) {
         out.supportsTools = caps.includes('tools');
         out.supportsVision = caps.includes('vision');
       }
@@ -373,4 +380,10 @@ function normaliseHost(host: string): string {
 
 function stripLatest(name: string): string {
   return name.endsWith(':latest') ? name.slice(0, -':latest'.length) : name;
+}
+
+function parseParameterCount(size?: string): number | undefined {
+  const match = /^\s*(\d+(?:\.\d+)?)\s*([BM])\s*$/i.exec(size ?? '');
+  if (!match) return undefined;
+  return Number(match[1]) * (match[2]?.toUpperCase() === 'B' ? 1_000_000_000 : 1_000_000);
 }

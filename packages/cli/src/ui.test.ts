@@ -5,6 +5,9 @@ let out: string[];
 let err: string[];
 
 beforeEach(() => {
+  // Each case controls its terminal environment. CI may export NO_COLOR,
+  // FORCE_COLOR, or TERM=dumb, which must not change another case's premise.
+  for (const key of ['NO_COLOR', 'HUSK_NO_COLOR', 'FORCE_COLOR', 'TERM']) vi.stubEnv(key, undefined);
   out = [];
   err = [];
   vi.spyOn(process.stdout, 'write').mockImplementation((c: unknown) => {
@@ -69,6 +72,14 @@ describe('the stdout contract', () => {
 describe('colour', () => {
   it('is off when NO_COLOR is set, whatever the caller asked for', () => {
     vi.stubEnv('NO_COLOR', '1');
+    vi.stubEnv('FORCE_COLOR', '1');
+    ui.configure({ color: true });
+    expect(ui.red('x')).toBe('x');
+  });
+
+  it('is off when HUSK_NO_COLOR is set even if CI forces colour', () => {
+    vi.stubEnv('HUSK_NO_COLOR', '1');
+    vi.stubEnv('FORCE_COLOR', '1');
     ui.configure({ color: true });
     expect(ui.red('x')).toBe('x');
   });

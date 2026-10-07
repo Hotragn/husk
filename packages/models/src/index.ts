@@ -92,6 +92,7 @@ export {
 export { AnthropicProvider } from './providers/anthropic.js';
 export { GoogleProvider } from './providers/google.js';
 export { OllamaProvider } from './providers/ollama.js';
+export { compareModelPreference } from './preference.js';
 export { OpenAIProvider } from './providers/openai.js';
 export {
   OpenAICompatibleProvider,

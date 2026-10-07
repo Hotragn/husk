@@ -142,7 +142,17 @@ export const HuskSpecSchema = z.object({
   limits: LimitsSchema.default({}),
   guardrails: GuardrailsSchema.default({}),
   memory: MemorySchema.default({}),
-  triggers: z.array(TriggerSchema).default([{ type: 'cli' }]),
+  triggers: z.array(TriggerSchema).default([{ type: 'cli' }]).superRefine((triggers, ctx) => {
+    for (const [index, trigger] of triggers.entries()) {
+      if (trigger.type === 'discord' || trigger.type === 'slack' || trigger.type === 'telegram') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, 'type'],
+          message: `${trigger.type} triggers are not wired into the Husk server yet. Use http, webhook, cron, or cli; messaging adapters must be started explicitly in your own application.`,
+        });
+      }
+    }
+  }),
   /** Free-form, carried through untouched. */
   metadata: z.record(z.unknown()).default({}),
   /** Provenance: which transcript this husk was distilled from. */

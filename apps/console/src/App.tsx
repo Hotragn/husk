@@ -20,11 +20,13 @@ import { HusksPanel } from './panels/HusksPanel';
 import { DoctorPanel } from './panels/DoctorPanel';
 import { EventsPanel } from './panels/EventsPanel';
 import { DisconnectedScreen } from './panels/DisconnectedScreen';
+import { HomePanel } from './panels/HomePanel';
 
-const PANELS = ['computers', 'terminal', 'files', 'browser', 'husks', 'doctor', 'events'] as const;
+const PANELS = ['home', 'computers', 'terminal', 'files', 'browser', 'husks', 'doctor', 'events'] as const;
 type PanelId = (typeof PANELS)[number];
 
 const PANEL_LABELS: Record<PanelId, string> = {
+  home: 'Home',
   computers: 'Computers',
   terminal: 'Terminal',
   files: 'Files',
@@ -36,17 +38,28 @@ const PANEL_LABELS: Record<PanelId, string> = {
 
 function panelFromHash(): PanelId {
   const raw = window.location.hash.replace(/^#\/?/, '');
-  return (PANELS as readonly string[]).includes(raw) ? (raw as PanelId) : 'computers';
+  return (PANELS as readonly string[]).includes(raw) ? (raw as PanelId) : 'home';
 }
 
 export default function App() {
   return (
     <ConnectionProvider>
-      <ComputersProvider>
-        <Shell />
-      </ComputersProvider>
+      <ConnectionShell />
     </ConnectionProvider>
   );
+}
+
+function ConnectionShell() {
+  const { health, status, token, error, retryNow } = useConnection();
+  const { theme, toggle } = useTheme();
+  if (health && health.mode !== 'starter') return <ComputersProvider><Shell /></ComputersProvider>;
+  return <>
+    <a className="skip-link" href="#main">Skip to content</a>
+    <div className="starter-app">
+      <header className="starter-header"><a className="starter-brand" href="#main">Husk <span>workspace</span></a><div className="btn-row"><StatusDot tone={status === 'connected' ? 'success' : status === 'disconnected' ? 'danger' : 'info'} label={status === 'connected' ? 'Connected' : status === 'disconnected' ? 'Disconnected' : 'Connecting'} /><Button onClick={toggle}>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</Button></div></header>
+      {status === 'disconnected' && !token ? <DisconnectedScreen /> : <main id="main" className="starter-main" tabIndex={-1}>{status === 'disconnected' ? <section className="workspace-welcome"><h1>Reconnect to your workspace</h1><p>{error?.message ?? 'Husk is not responding.'} Open the workspace again from your AI app to reconnect. Your saved files stay on this device.</p><Button onClick={retryNow}>Try again</Button></section> : health ? <HomePanel /> : <p role="status">Opening your workspace…</p>}</main>}
+    </div>
+  </>;
 }
 
 function Shell() {
@@ -58,7 +71,10 @@ function Shell() {
   const [activeComputer, setActiveComputer] = useState<string | null>(null);
 
   useEffect(() => {
-    const onHash = () => setPanel(panelFromHash());
+    const onHash = () => {
+      const raw = window.location.hash.replace(/^#\/?/, '');
+      if ((PANELS as readonly string[]).includes(raw)) setPanel(raw as PanelId);
+    };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
@@ -113,10 +129,13 @@ function Shell() {
         <nav className="app-nav" aria-label="Console sections">
           <div>
             <p className="nav-section-label" id="nav-label">
-              Control plane
+              Workspace
             </p>
-            <ul className="nav-list" aria-labelledby="nav-label">
-              {PANELS.map((id) => (
+            <button type="button" className="nav-item" aria-current={panel === 'home' ? 'page' : undefined} onClick={() => go('home')}>Home</button>
+            <details className="nav-advanced" open={panel !== 'home' || undefined}>
+              <summary>Advanced</summary>
+            <ul className="nav-list" aria-label="Advanced console sections">
+              {PANELS.filter((id) => id !== 'home').map((id) => (
                 <li key={id}>
                   <button
                     type="button"
@@ -130,6 +149,7 @@ function Shell() {
                 </li>
               ))}
             </ul>
+            </details>
           </div>
         </nav>
 
@@ -137,6 +157,7 @@ function Shell() {
           <DisconnectedScreen />
         ) : (
           <main id="main" className="app-main" tabIndex={-1}>
+            {panel === 'home' ? <HomePanel /> : null}
             {panel === 'computers' ? (
               <ComputersPanel activeId={activeComputer} onSelect={setActiveComputer} />
             ) : null}

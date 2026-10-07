@@ -30,10 +30,11 @@ Not for computers. For agents, yes — one of eleven providers, or a local model
 
 ### Does it send anything anywhere?
 
-No. There is no telemetry, no analytics and no crash reporter — absent from the
-codebase, not disabled by a flag. The only outbound requests are to the model provider
-you configured, and to a container registry when a flavor's image is not already
-pulled.
+The installed Husk runtime has no product telemetry or crash reporter. It makes
+outbound requests for the tasks you ask it to do: public source capture, configured
+model or search providers, computer providers, and image registries. Your AI host
+processes the tool results it receives under its own policies. The hosted Husk
+website and docs use Vercel Web Analytics.
 
 ### Does it work on Windows?
 
@@ -94,10 +95,9 @@ than hidden. Use a container provider for anything untrusted.
 
 ### Why is my container never destroyed?
 
-`reap()` is not implemented on the container providers. `idleTimeoutSec` has no effect
-on Docker and Podman machines; they stay up until `husk rm`.
-[Lifetimes](/computers/lifetimes) and a workaround in
-[Self-hosting](/guides/self-hosting#the-reaper).
+Docker and Podman implement idle cleanup. The owning process must be running a
+reaper; a one-shot CLI command does not leave a background scheduler behind.
+Use `husk rm` for explicit cleanup and check `idleTimeoutSec` and recent activity.
 
 ### Can I keep the filesystem between runs?
 
@@ -107,7 +107,9 @@ computer:
 ```
 
 On the container providers `/work` becomes a named volume instead of a tmpfs. On
-`local` and `ssh` the directory is retained rather than removed.
+`local` and `ssh`, stopping retains the working directory; explicit destruction can
+remove it. A named MCP session stops on disconnect so it can reopen its files.
+Named task workspaces are separate and survive disconnects without a computer.
 
 ### Can two husks share one machine?
 
@@ -150,15 +152,14 @@ says so:
 warn  anthropic/claude-sonnet-5 cost $0.6120, over the $0.5000 ceiling; the estimate was low
 ```
 
-Treat `maxCostUsd` as a circuit breaker, not an accounting control. Also check you did
-not pass `--max-cost` a non-number — it is
-[not validated](/reference/cli#husk-run) and `NaN` disables the ceiling silently.
+Treat `maxCostUsd` as a circuit breaker, not an accounting control. The CLI rejects
+invalid `--max-cost` values before running.
 
 ### Why is `fallbackModels` being ignored?
 
-Because you are using `husk run`, which pins one model up front and has no candidate
-list. The control-plane path (`POST /v1/husks/:name/run`) builds a real `ModelRouter`
-and does use it. [Details](/models#fallback).
+Both `husk run` and the control-plane run path pass `fallbackModels` to the model
+router. Check that the fallback provider is reachable, credentials are configured,
+and the candidate fits your cost limit. An explicit model remains the first choice.
 
 ### Can I use a self-hosted or proxied endpoint?
 
@@ -292,17 +293,17 @@ Run one process per person.
 
 ### Why does `@husk-ai/sdk` 404?
 
-Because in 0.1.0 the SDK targets a different API than the server serves. Twelve of its
-twenty methods hit routes that do not exist, and several more return a body that does
-not match their declared type. The eight that work, and the workaround, are on
-[SDK](/reference/sdk).
+Check that the SDK and server use matching versions and that the base URL points to
+the running control plane. The current SDK is tested against the server routes.
+The starter workspace viewer exposes workspace routes only, so computer and bot
+requests need the full `husk serve` control plane.
 
 ### Do the Discord, Slack and Telegram triggers work?
 
-The adapters do. The triggers do not — `TriggerHost.sync()` has branches for `http`,
-`webhook` and `cron` only, and `@husk-ai/server` never imports `@husk-ai/adapters`. About 40
-lines of glue connects them, and [the Discord guide](/guides/discord-bot#step-6-the-glue)
-is that glue, tested.
+The adapter APIs are available for custom integrations. The built-in trigger host
+supports `http`, `webhook`, and `cron`. A husk file with Discord, Slack, or Telegram
+triggers now fails validation with an actionable message instead of silently ignoring
+them. See [the Discord guide](/guides/discord-bot#step-6-the-glue) for a custom integration.
 
 ---
 

@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { defaultSpec, parseSpec } from './spec.js';
+import { defaultSpec, parseSpec, safeParseSpec, TriggerSchema } from './spec.js';
+
+describe('runtime trigger validation', () => {
+  it.each(['discord', 'slack', 'telegram'])('rejects the unwired %s trigger with an actionable error', (type) => {
+    expect(() => parseSpec({ name: 'bot', triggers: [{ type }] })).toThrow(/not wired into the Husk server/);
+    const result = safeParseSpec({ name: 'bot', triggers: [{ type }] });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues[0]).toContain('triggers.0.type');
+    // Standalone adapter consumers may still describe their own binding.
+    expect(TriggerSchema.safeParse({ type }).success).toBe(true);
+  });
+
+  it('accepts every trigger the runtime mounts', () => {
+    expect(() => parseSpec({ name: 'bot', triggers: [
+      { type: 'cli' }, { type: 'http' }, { type: 'webhook', path: '/hook' },
+      { type: 'cron', schedule: '0 * * * *', prompt: 'check' },
+    ] })).not.toThrow();
+  });
+});
 
 /**
  * `computer.user` and `computer.labels`.

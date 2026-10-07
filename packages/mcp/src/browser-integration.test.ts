@@ -70,29 +70,33 @@ describe.skipIf(!dockerAnswers)('browser_goto, on a real docker computer', () =>
  * filesystem is read-only and the default image has nothing to download with
  * -- and the tool used to promise the download anyway (#122).
  */
-describe('browser_status names the provider that cannot fetch a browser', () => {
+describe('browser_status checks capabilities instead of guessing from the provider', () => {
   const textOf = (r: { content: ToolContent[] }): string =>
     r.content.map((c) => (c.type === 'text' ? c.text : '')).join('');
 
-  function fakeComputer(provider: string): Computer {
+  function fakeComputer(provider: string, missing: string[] = []): Computer {
     return {
       id: 'cmp_fake',
       info: { id: 'cmp_fake', provider, state: 'running', workdir: '/work' },
-      exec: async () => ({ exitCode: 1, stdout: '', stderr: '', truncated: false, timedOut: false }),
+      exec: async ({ cmd }: { cmd: string }) => ({
+        exitCode: 0,
+        stdout: cmd === 'uname -m' ? 'x86_64' : cmd.includes('HUSK_BROWSER_PREFLIGHT') ? JSON.stringify({ system: 'Linux', missing }) : '',
+        stderr: '', truncated: false, timedOut: false,
+      }),
       readTextFile: async () => '',
       listDir: async () => [],
     } as unknown as Computer;
   }
 
-  it('warns on docker', async () => {
-    const r = await callBrowserTool(fakeComputer('docker'), 'browser_status', {}, 4000);
+  it('names missing runtime dependencies without promising a download', async () => {
+    const r = await callBrowserTool(fakeComputer('docker', ['libnss3.so']), 'browser_status', {}, 4000);
     const out = textOf(r);
     expect(out).toContain('read-only');
-    expect(out).toContain('--flavor python');
-    expect(out).toContain('local');
+    expect(out).toContain('libnss3.so');
+    expect(out).toContain('no download was attempted');
   });
 
-  it('stays quiet on local, where the browser is the confirmed case', async () => {
+  it('offers a download only after prerequisites pass', async () => {
     const r = await callBrowserTool(fakeComputer('local'), 'browser_status', {}, 4000);
     const out = textOf(r);
     expect(out).toContain('111 MB');

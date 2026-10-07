@@ -14,6 +14,7 @@
 const stripTrailingSlash = (url: string) => url.replace(/\/+$/, "");
 
 export const REPO_URL = "https://github.com/Hotragn/husk";
+export const PREVIEW_RELEASE_URL = `${REPO_URL}/releases/tag/preview-0.2.0`;
 /**
  * Where the Docs link in the nav goes.
  *
@@ -36,9 +37,12 @@ export const DOCS_URL = stripTrailingSlash(
       : "http://localhost:3001"),
 );
 export const LICENCE = "Apache-2.0";
+export const WORKSPACE_GUIDE_URL = process.env.NEXT_PUBLIC_DOCS_URL
+  ? `${stripTrailingSlash(process.env.NEXT_PUBLIC_DOCS_URL)}/start/workspaces`
+  : `${REPO_URL}/blob/main/apps/docs/content/start/workspaces.mdx`;
 
 export const SITE_DESCRIPTION =
-  "Husk gives your AI chat a real computer of its own: files, a browser, and somewhere to run code. Turn a chat you already had into a bot that does the job again tomorrow. Free. No account, no card.";
+  "Keep sources and AI results in local workspaces. Make a cited brief, compare options, and return to your work later. Optional computer tools for coding and automation. No Husk account required.";
 
 export const MCP_COMMAND = "claude mcp add husk -- npx -y @husk-ai/mcp";
 

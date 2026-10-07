@@ -264,7 +264,7 @@ T=$(cat /etc/husk/token)
 H="Authorization: Bearer $T"
 
 curl -s https://husk.example.com/health
-# {"ok":true,"version":"0.1.0","uptimeSec":41}
+# {"ok":true,"version":"0.2.0","uptimeSec":41}
 
 curl -s -H "$H" https://husk.example.com/v1/doctor | jq '.selection, .warnings'
 
@@ -326,25 +326,9 @@ them up accordingly or prune them.
 `husk serve` starts a sweep every 60 seconds that destroys machines past their
 `idleTimeoutSec` or `maxLifetimeSec`.
 
-<Warning>
-`reap()` is implemented by `local`, `ssh` and `fly`, and **not** by the shared container
-base class. Docker and Podman containers are never reaped, whatever `idleTimeoutSec`
-says. On a long-lived server this leaks containers. Until it is fixed, a cron entry is
-the workaround:
-
-```bash title="/usr/local/bin/husk-reap-containers"
-#!/bin/sh
-# Destroy husk-created containers that have been running for over two hours.
-# Every one carries a `husk.provider` label, set by the runtime at create time.
-docker ps -q --filter label=husk.provider=docker | while read -r id; do
-  started=$(docker inspect -f '{{.State.StartedAt}}' "$id")
-  age=$(( $(date +%s) - $(date -d "$started" +%s) ))
-  [ "$age" -gt 7200 ] && docker rm -f "$id"
-done
-```
-
-[Lifetimes](/computers/lifetimes) has the detail.
-</Warning>
+Docker and Podman implement the reaper. Keep `husk serve` running for scheduled
+cleanup, set the relevant lifetime limits, and use `husk rm` when you need to
+remove a computer immediately. [Lifetimes](/computers/lifetimes) has the detail.
 
 ### Upgrades
 

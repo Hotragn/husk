@@ -1,6 +1,6 @@
 {
   "name": "@husk-ai/sdk",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Typed, dependency-free client for the Husk control plane.",
   "license": "Apache-2.0",
   "repository": {
@@ -39,12 +39,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@husk-ai/core": "0.1.4"
+    "@husk-ai/core": "0.2.0"
   },
   "devDependencies": {
-    "@husk-ai/mcp": "0.1.4",
-    "@husk-ai/runtime": "0.1.4",
-    "@husk-ai/server": "0.1.4",
+    "@husk-ai/mcp": "0.2.0",
+    "@husk-ai/runtime": "0.2.0",
+    "@husk-ai/server": "0.2.0",
     "@types/ws": "^8.18.1",
     "fastify": "^5.12.3",
     "vitest": "^5.0.1",

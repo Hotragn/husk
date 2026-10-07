@@ -108,10 +108,10 @@ surprise that turns into a security incident.
 
 ## What Husk deliberately does not do
 
-- **No telemetry.** Not off by default — absent. There is no analytics call, no crash
-  reporter and no phone-home in the codebase. The only outbound requests are to the
-  model provider you configured, and to a container registry when a flavor's image is
-  not already pulled.
+- **No product telemetry in the installed runtime.** Task requests can contact
+  public sources, configured model or search providers, computer providers, and
+  image registries. Tool results are shared with the connected AI host. The
+  hosted website and docs use Vercel Web Analytics.
 - **No credential storage.** Keys are read from the process environment. No command
   writes one to `~/.husk`.
 - **No remote execution by default.** `husk serve` binds `127.0.0.1`, and it **refuses to

@@ -1,0 +1,75 @@
+---
+title: Your first workspace
+navTitle: Start with a workspace
+description: Save public sources, make a cited result in your AI chat, and reopen your work later.
+order: 0
+---
+
+Husk keeps your sources and results together on your device. Your AI app does the
+writing; Husk saves files you can inspect, reopen, and download.
+
+## Install the desktop extension
+
+Download the [Husk 0.2.0 public preview](https://github.com/Hotragn/husk/releases/tag/preview-0.2.0)
+and choose `husk-0.2.0.mcpb`. The release also includes a SHA-256 checksum for
+anyone who wants to verify the download. This is an unsigned preview for first-use
+feedback; installation and a complete task inside Claude Desktop still need beta
+testing. A maintainer can also build the bundle from this checkout with `npm ci`,
+`npm run build`, and `npm run bundle:mcpb`.
+
+In Claude Desktop, open **Settings → Extensions → Advanced settings → Install
+Extension**, select the supplied `.mcpb`, and review the installation prompt.
+Claude Desktop includes Node.js, so this starter flow requires no terminal,
+Docker, Husk account, or extra API key. Your AI app's subscription and usage limits
+still apply. Managed devices may restrict custom unsigned extensions.
+These installation steps follow [Claude's extension guide](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop).
+
+## Make your first useful result
+
+1. Ask your AI: **Create a Husk workspace called My first brief and open its viewer.**
+2. Open the local link it returns. Keep the AI app running while using the viewer.
+3. Add public pages you want to understand or compare. Inspect the captured text.
+4. Choose **Cited brief**, **Comparison**, or **Action list**, then **Copy prompt**.
+5. Paste the prompt into the connected AI chat. It reads the sources and saves a result.
+6. Return to **Review & download**. Read the output, check its citations, and download
+   the file or choose **Export workspace** for a ZIP containing sources and results.
+
+The viewer checks for new files while open. **Refresh results** updates it immediately.
+In a later chat, ask **Open my Husk workspace My first brief**. Workspaces survive
+restarts; the viewer link lasts only as long as its connection. Ask for a new link
+if it stops responding.
+
+## What is saved and shared
+
+Workspaces are stored under `~/.husk/workspaces` (or `HUSK_HOME/workspaces`). Each
+source includes its URL, capture time, text, and content hash. Outputs record the
+source IDs the AI supplies. This helps you inspect provenance; it does not prove
+that every claim is correct.
+
+Husk fetches public pages directly from your device without login cookies. The site
+receives a normal web request. Source text returned to your AI is processed under
+that app's policies. Husk's installed runtime has no product telemetry. The hosted
+documentation and marketing sites use Vercel Web Analytics.
+
+## Limits and recovery
+
+- Public text and HTML pages work. Login pages, PDFs, and JavaScript-only pages may
+  be refused or incomplete. Check the capture before relying on it.
+- This release saves UTF-8 text outputs up to 2 MiB each, with a 32 MiB workspace
+  limit and up to 100 sources and 100 outputs. Images and binary uploads are not supported.
+- If a capture fails, your existing work stays saved. Check the URL or use another source.
+- A ZIP is an export for keeping or sharing; automatic ZIP import is not included.
+- Deletion is permanent and requires typing the full workspace name. Export first.
+- Workspaces are single-user local storage, not a shared team account or cloud backup.
+
+## Optional computer tools
+
+Open **Advanced · computer tools** only when you need commands or an automated
+browser. Husk displays the available provider and its isolation before you enable
+it. A local provider runs with your device's permissions and is not a sandbox.
+The selected provider is checked again before enabling; it cannot silently switch
+to a weaker provider. Permission applies to the current connection. Restarting
+the starter extension returns to workspace-only mode.
+
+Developers can still use the [computer quickstart](/start/quickstart). Other MCP
+clients with Node.js can start `husk-mcp --profile starter` from the built package.

@@ -185,6 +185,75 @@ export interface ProvisionResult {
   version?: string;
 }
 
+export type BrowserCapability =
+  | { installed: true; readyToInstall: false; source: ProvisionResult['source']; binary: string; version?: string }
+  | { installed: false; readyToInstall: true; arch: BrowserArch }
+  | { installed: false; readyToInstall: false; reason: string; hint?: string };
+
+/** Read-only checks shared by status and installation; never fetches a binary. */
+export async function inspectBrowserCapability(computer: Computer): Promise<BrowserCapability> {
+  try {
+    const found = await findInstalledChromium(computer);
+    if (found) return { ...found, installed: true, readyToInstall: false };
+    const arch = await archOf(computer);
+    await assertDownloadPrerequisites(computer);
+    return { installed: false, readyToInstall: true, arch };
+  } catch (error) {
+    return {
+      installed: false,
+      readyToInstall: false,
+      reason: error instanceof Error ? error.message : String(error),
+      ...(error instanceof HuskError && error.hint ? { hint: error.hint } : {}),
+    };
+  }
+}
+
+// Chromium's Linux runtime dependencies, checked before paying for an archive.
+// Source: Playwright's nativeDeps.ts Chromium list. The post-download ldd check
+// remains necessary because a future binary may introduce another dependency.
+const CHROMIUM_LIBRARIES = [
+  'libnss3.so', 'libnspr4.so', 'libatk-1.0.so.0', 'libatk-bridge-2.0.so.0',
+  'libatspi.so.0', 'libcups.so.2', 'libdbus-1.so.3', 'libdrm.so.2',
+  'libX11.so.6', 'libxcb.so.1', 'libXcomposite.so.1', 'libXdamage.so.1',
+  'libXext.so.6', 'libXfixes.so.3', 'libXrandr.so.2', 'libgbm.so.1',
+  'libxkbcommon.so.0', 'libasound.so.2', 'libglib-2.0.so.0',
+  'libpango-1.0.so.0', 'libcairo.so.2',
+];
+
+async function assertDownloadPrerequisites(computer: Computer, signal?: AbortSignal): Promise<void> {
+  const probe = await sh(computer, `python3 - <<'HUSK_BROWSER_PREFLIGHT'
+import ctypes, json, platform, urllib.request, zipfile
+missing = []
+if platform.system() == 'Linux':
+    for name in ${JSON.stringify(CHROMIUM_LIBRARIES)}:
+        try:
+            ctypes.CDLL(name)
+        except OSError:
+            missing.append(name)
+print(json.dumps({'system': platform.system(), 'missing': missing}))
+HUSK_BROWSER_PREFLIGHT`, { signal, timeoutSec: 30 });
+  if (probe.code !== 0) {
+    throw new HuskError('E_PROVIDER_UNAVAILABLE', 'browser setup needs Python 3 in this computer before downloading Chromium', {
+      hint: 'Use an image with Python 3 and Chromium system dependencies, or install a system Chromium in the computer. No browser download was attempted.',
+      details: { detail: (probe.err || probe.out).slice(0, 500) },
+    });
+  }
+  let result: { system?: string; missing?: string[] };
+  try { result = JSON.parse(probe.out.trim()) as typeof result; }
+  catch { throw new HuskError('E_PROVIDER_UNAVAILABLE', 'could not verify browser prerequisites; no download was attempted'); }
+  if (result.system !== 'Linux') {
+    throw new HuskError('E_NOT_IMPLEMENTED', `automatic Chromium installation needs Linux; this computer reports ${result.system ?? 'an unknown system'}`, {
+      hint: 'Use a Linux computer, or install a system Chromium that Husk can detect. No browser download was attempted.',
+    });
+  }
+  if (result.missing?.length) {
+    throw new HuskError('E_PROVIDER_UNAVAILABLE', `browser setup is missing ${result.missing.length} system libraries; no download was attempted`, {
+      hint: 'Use a computer image built with Chromium system dependencies. Container root filesystems are read-only, so add dependencies when building the image. Missing: ' + result.missing.join(', '),
+      details: { missing: result.missing },
+    });
+  }
+}
+
 async function sh(
   computer: Computer,
   cmd: string,
@@ -254,6 +323,9 @@ export async function provisionChromium(
     say(`reusing the Chromium already downloaded to ${cached.binary}`);
     return cached;
   }
+
+  say('checking Chromium system dependencies before downloading');
+  await assertDownloadPrerequisites(computer, signal);
 
   const plan = arch === 'x64' ? await resolveX64Plan(computer, signal, say) : downloadPlanFor('arm64');
 
@@ -352,6 +424,8 @@ async function findCached(
   if (!ok.out.includes('yes')) return null;
 
   const version = await versionOf(computer, binary, signal);
+  await assertLinkable(computer, binary, signal);
+  if (!version) return null;
   return { binary, arch, source: 'cached', ...(version ? { version } : {}) };
 }
 
@@ -361,21 +435,20 @@ async function resolveX64Plan(
   say: (m: string) => void,
 ): Promise<DownloadPlan> {
   say('asking Chrome for Testing which build is current');
-  const r = await sh(computer, `curl -fsSL --max-time 30 ${CHROME_FOR_TESTING_MANIFEST}`, {
+  const r = await sh(computer, `python3 -c "import urllib.request; print(urllib.request.urlopen('${CHROME_FOR_TESTING_MANIFEST}', timeout=30).read().decode())"`, {
     signal,
     timeoutSec: 60,
   });
   if (r.code !== 0 || !r.out.trim()) {
-    // A pinned fallback is worse than the manifest but far better than nothing:
-    // the manifest host being down should not mean no browser.
-    say('the Chrome for Testing manifest was unreachable; falling back to the `stable` alias');
-    return downloadPlanFor('x64');
+    throw new HuskError('E_PROVIDER_UNAVAILABLE', 'could not fetch the Chrome for Testing manifest; no browser archive was downloaded', {
+      hint: 'Check network access from this computer, or install a system Chromium.',
+    });
   }
   let manifest: unknown;
   try {
     manifest = JSON.parse(r.out) as unknown;
   } catch {
-    return downloadPlanFor('x64');
+    throw new HuskError('E_PROVIDER_UNAVAILABLE', 'Chrome for Testing returned an invalid manifest; no browser archive was downloaded');
   }
   const { url, version } = pickChromeForTestingAsset(manifest);
   return downloadPlanFor('x64', { url, version });

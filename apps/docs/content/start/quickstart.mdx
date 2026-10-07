@@ -27,7 +27,7 @@ On a Windows laptop with Docker installed but not running, Ollama up, and no API
 that prints:
 
 <Terminal title="husk doctor">
-{`husk 0.1.0  node 24.14.0 · win32-arm64
+{`husk 0.2.0  node 24.14.0 · win32-arm64
 state: C:\\Users\\me\\.husk
 
 COMPUTERS
@@ -62,13 +62,13 @@ MODELS
 SELECTION  what husk would use right now
   computer   local  highest-priority available provider (10)
   isolation  guardrails only
-  model      ollama/qwen2.5:1.5b  first reachable model on Ollama
+  model      ollama/qwen2.5:7b  preferred available model on Ollama (capabilities, catalog quality, and local size tier)
 
 WARNINGS
   ! The "local" provider gives guardrails, not isolation. A prompt-injected model is closer to an adversary than to an accident — start Docker before running anything you did not write.
   ! Docker is installed but its daemon is not running, so husk is falling back to weaker isolation.
 
-husk sends nothing anywhere except the model provider you configure. There is no telemetry.`}
+Husk has no product telemetry. Tasks can contact configured providers and requested websites.`}
 </Terminal>
 
 Docker being down is a row in the table, not an error. Husk keeps going with the

@@ -5,7 +5,12 @@ description: A local-first runtime that hands an agent a disposable Linux comput
 order: 1
 ---
 
-Husk does two things.
+Start with a [workspace](/start/workspaces): save public sources, ask your AI for a
+cited brief or comparison, and download the result. You can reopen it in a later
+chat without setting up a computer. The desktop starter profile exposes only
+workspace tools until you explicitly enable computer tools.
+
+For advanced workflows, Husk also does two things.
 
 **It gives an AI agent a computer.** A small, disposable Linux machine the agent can
 drive: a shell, a filesystem, ports, snapshots. On Docker or Podman that machine is a
@@ -103,8 +108,8 @@ narrow, complete interface and every translation lives inside the provider.
 - **No native modules.** No `better-sqlite3`, no `node-pty`. One `npm install` failing on
   a Windows machine without a C++ toolchain costs more users than SQLite saves. State is
   JSON files under `~/.husk`.
-- **No telemetry.** Not off by default — absent. There is no analytics call, no crash
-  reporter, and no phone-home in the codebase.
+- **No product telemetry.** The installed runtime has no analytics or crash reporter.
+  The documentation and marketing sites use Vercel Web Analytics.
 
 ## Where to go next
 

@@ -21,11 +21,13 @@ import {
   DOCTOR,
   HUSK_YAML,
   MCP_TOOLS,
+  PREVIEW_RELEASE_URL,
   PROVIDERS,
+  WORKSPACE_GUIDE_URL,
 } from "@/lib/content";
 
 export const metadata: Metadata = {
-  title: "Husk — a real computer for your AI chat",
+  title: "Husk — a place to keep your AI work",
   alternates: { canonical: "/" },
 };
 
@@ -47,12 +49,12 @@ export default function Home() {
         <div className="hero-grid">
           <div className="hero-copy hero-copy-wide">
             <h1 id="hero-title" className="h-hero">
-              Your AI chat gets a real computer of its own.
+              Your AI work, ready to return to.
             </h1>
             <p className="lead" style={{ marginTop: "var(--space-6)" }}>
-              Files, a browser, and somewhere to run code. It can build things,
-              look stuff up online and keep your work as you go. Turn a chat you
-              already had into a bot that does the job again tomorrow.
+              Save your sources. Ask your AI for a brief, comparison, or action
+              list. Review and download the result, then reopen the same workspace
+              tomorrow. Add computer tools when your task needs them.
             </p>
 
             {/* 42rem, not 40. The mono face is wider than the fallback stack
@@ -66,21 +68,23 @@ export default function Home() {
                 Claude Code in two places while the copy underneath promised
                 Cursor and Zed the same thing without saying what to type. */}
             <div style={{ marginTop: "var(--space-8)", maxWidth: "42rem" }}>
-              <InstallSelector size="lg" idPrefix="hero-install" />
+              <p className="small">Workspaces are available in the unsigned{" "}
+                <a href={PREVIEW_RELEASE_URL}>0.2.0 public preview</a>. Start with
+                the guide for installation and your first task.</p>
             </div>
 
             <div className="hero-actions" style={{ marginTop: "var(--space-4)" }}>
-              <a className="btn btn-primary btn-lg" href="#mcp">
-                What that command does
+              <a className="btn btn-primary btn-lg" href={WORKSPACE_GUIDE_URL}>
+                Make your first brief
               </a>
               <LinkPreview {...PREVIEWS.source} className="btn btn-secondary btn-lg">
-                Read the source
+                Explore the source
               </LinkPreview>
             </div>
 
             <p className="meta" style={{ marginTop: "var(--space-6)" }}>
-              Free. No account, no card. Apache-2.0 · works with Claude Code,
-              Cursor, Zed, or anything speaking MCP
+              No Husk account or extra API key for workspace tasks. Apache-2.0.
+              Your AI app’s usage limits still apply.
             </p>
           </div>
 
@@ -221,7 +225,7 @@ export default function Home() {
                 file to edit. Cursor, Zed and Antigravity have no add command
                 of their own, so those get the block to paste and the path to
                 paste it into — the tab above switches between them. Either
-                way the client gets twenty tools against a real Linux machine —
+                way the client gets workspace and computer tools —
                 a shell, the filesystem, ports, and a browser — and that
                 filesystem persists for the rest of the conversation.
               </p>
@@ -456,11 +460,10 @@ export default function Home() {
                 edition of this product you are not already using.
               </p>
               <p>
-                There is no telemetry either. Not off by default — absent. No
-                analytics, no crash reporter, no phone-home; the only network
-                calls Husk makes are to the model provider you configured and to
-                a registry when you pull an image. You can check that claim the
-                same way we do, by reading the repository.
+                The installed Husk runtime has no product telemetry or crash
+                reporter. It contacts the websites, model providers, registries,
+                and services your tasks use. Text shared with your AI follows
+                that app’s policies. This website and the docs use Vercel Web Analytics.
               </p>
               <p>
                 <LinkPreview {...PREVIEWS.pricing}>
@@ -496,9 +499,9 @@ export default function Home() {
                 </span>
               </li>
               <li>
-                <span className="rl-term">no telemetry</span>
+                <span className="rl-term">no product telemetry</span>
                 <span className="rl-desc">
-                  absent from the codebase, not disabled by a flag
+                  in the installed runtime; the hosted sites use web analytics
                 </span>
               </li>
               <li>

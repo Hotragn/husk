@@ -1,7 +1,7 @@
 {
   "name": "husk-monorepo",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Husk \u2014 give your agent a computer.",
   "license": "Apache-2.0",
   "repository": {
@@ -16,10 +16,12 @@
     "apps/console"
   ],
   "scripts": {
-    "build": "npm run build -w @husk-ai/core -w @husk-ai/runtime -w @husk-ai/models -w @husk-ai/sessions -w @husk-ai/browser -w @husk-ai/agent -w @husk-ai/adapters -w @husk-ai/mcp -w @husk-ai/server -w @husk-ai/sdk -w @husk-ai/cli",
+    "build": "npm run build:packages",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "build:packages": "npm run build -w @husk-ai/core -w @husk-ai/runtime -w @husk-ai/models -w @husk-ai/sessions -w @husk-ai/browser -w @husk-ai/agent -w @husk-ai/adapters -w @husk-ai/mcp -w @husk-ai/server -w @husk-ai/sdk -w @husk-ai/cli",
+    "build:packages": "npm run build -w @husk-ai/core -w @husk-ai/runtime -w @husk-ai/models -w @husk-ai/sessions -w @husk-ai/browser -w @husk-ai/agent -w @husk-ai/adapters -w @husk-ai/workspaces -w @husk-ai/sdk -w @husk-ai/console -w @husk-ai/console-assets -w @husk-ai/server -w @husk-ai/mcp -w @husk-ai/cli",
+    "bundle:mcpb": "node scripts/build-mcpb.mjs",
+    "smoke:starter": "node scripts/starter-smoke.mjs",
     "drift": "node scripts/drift-check.mjs",
     "links": "node scripts/link-check.mjs",
     "preflight": "node scripts/preflight.mjs",
@@ -32,6 +34,7 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
+    "@anthropic-ai/mcpb": "2.1.2",
     "@fastify/cors": "^11.3.0",
     "@fastify/static": "^10.1.3",
     "@fastify/websocket": "^11.3.0",

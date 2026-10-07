@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { browserFor, findInstalledChromium } from '@husk-ai/browser';
+import { browserFor, inspectBrowserCapability } from '@husk-ai/browser';
 import type { SnapshotNode } from '@husk-ai/browser';
 import type { Computer } from '@husk-ai/core';
 import { redact } from '@husk-ai/core';
@@ -205,11 +205,6 @@ export const BROWSER_TOOLS: ToolDef[] = [
 
 export const BROWSER_TOOL_NAMES: ReadonlySet<string> = new Set(BROWSER_TOOLS.map((t) => t.name));
 
-/** Providers whose computer is a container with a read-only root filesystem. */
-function containerBacked(computer: Computer): boolean {
-  return computer.info.provider === 'docker' || computer.info.provider === 'podman';
-}
-
 function text(body: string): ToolResult {
   return { content: [{ type: 'text', text: body.length ? body : '(no output)' }] };
 }
@@ -402,29 +397,17 @@ export async function callBrowserTool(
     }
 
     case 'browser_status': {
-      const found = await findInstalledChromium(computer).catch(() => null);
-      if (found) {
+      const found = await inspectBrowserCapability(computer);
+      if (found.installed) {
         return text(
           `a browser is already installed: ${found.binary} (${found.source}${found.version ? `, ${found.version}` : ''}). browser_goto will not download anything.`,
         );
       }
-      // Promising a download that this computer cannot perform is worse than
-      // saying nothing: the container providers mount the root filesystem
-      // read-only and the default `base` image ships neither curl nor python3,
-      // so `browser_goto` fails before a byte moves. The rendered browser is
-      // confirmed on `local` only (#122).
+      if (!found.readyToInstall) return text(`This computer cannot install a rendered browser yet: ${found.reason}${found.hint ? `\n${found.hint}` : ''}\nText-only browse remains a separate capability.`);
       return text(
-        'no browser yet. The first browser_goto on this computer downloads Chromium ' +
-          '(~111 MB) into /work/.husk-browser and takes a minute; on a persistent machine ' +
-          'that happens once.' +
-          (containerBacked(computer)
-            ? `
-
-This is a ${computer.info.provider} computer, where that download usually cannot happen: ` +
-              'the root filesystem is read-only and the default `base` image has neither curl nor ' +
-              'python3 to fetch with. Use `--flavor python`, set `computer.image` to one that ships ' +
-              'a browser, or use the `local` provider, which is where the rendered browser is confirmed.'
-            : ''),
+        'No browser is installed. Python and known Chromium system dependencies passed preflight. ' +
+          'The first browser_goto downloads about 95–111 MB into /work/.husk-browser. ' +
+          'Network reachability and the downloaded binary are checked during setup; preflight does not guarantee launch.',
       );
     }
 

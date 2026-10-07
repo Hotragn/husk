@@ -358,10 +358,10 @@ list](/security/isolation#the-command-deny-list).
 
 ### Containers are never destroyed
 
-`reap()` is implemented by `local`, `ssh` and `fly`, and **not** by the shared container
-base class, so `idleTimeoutSec` has no effect on Docker and Podman machines. They stay
-up until `husk rm` or an engine restart. [Lifetimes](/computers/lifetimes) and a cron
-workaround in [Self-hosting](/guides/self-hosting#the-reaper).
+Docker and Podman support idle cleanup. Check that the owning process has a running
+reaper, that `idleTimeoutSec` is set, and that ongoing activity is not refreshing the
+deadline. A one-shot CLI process cannot keep running cleanup after it exits. Use
+`husk rm` to explicitly remove a computer.
 
 ### `vim` and `top` do not work in `husk shell`
 
@@ -475,10 +475,9 @@ can stream for minutes.
              "hint": "see docs/API.md for the endpoints this server serves" } }
 ```
 
-If you are using `@husk-ai/sdk`, this is expected for twelve of its twenty methods — the
-SDK and the server disagree about a dozen paths in 0.1.0. See
-[SDK](/reference/sdk#what-does-not-work) for the list and the workaround.
-[HTTP API](/reference/api) is the routes that exist.
+Use matching versions of `@husk-ai/sdk` and the server, and check the base URL against
+the [HTTP API](/reference/api). The desktop starter viewer serves workspace routes;
+computer, bot, and event routes require the full `husk serve` control plane.
 
 ---
 

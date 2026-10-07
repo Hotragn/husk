@@ -22,7 +22,8 @@ import type {
 } from '@husk-ai/core';
 import { HuskError, createLogger, redact, retry, withTimeout } from '@husk-ai/core';
 import { resolveAlias, type DynamicStrategy } from './aliases.js';
-import { findModel, unknownModel, type CatalogModel } from './catalog.js';
+import { findModel, unknownModel } from './catalog.js';
+import { compareModelPreference } from './preference.js';
 import { costOf, formatUsd, minimumCostUsd } from './cost.js';
 import { isAbort, isFatalRequestError, isRetryable } from './http.js';
 import { AnthropicProvider } from './providers/anthropic.js';
@@ -562,7 +563,7 @@ export class ModelRouter {
     }
 
     const affordable = pool.filter((c) => this.affordable(c, inputTokens, limit));
-    const byQuality = (a: Candidate, b: Candidate) => qualityOf(b.info) - qualityOf(a.info);
+    const byQuality = (a: Candidate, b: Candidate) => compareModelPreference(a.info, b.info);
     const byCost = (a: Candidate, b: Candidate) => inputPrice(a.info) - inputPrice(b.info);
 
     if (strategy === 'auto') {
@@ -663,12 +664,6 @@ export function defaultProviders(opts: ProviderOptions = {}): ModelProvider[] {
     ...compatibleProviders(opts),
     new OllamaProvider(opts),
   ];
-}
-
-function qualityOf(info: ModelInfo): number {
-  const quality = (info as CatalogModel).quality;
-  if (typeof quality === 'number') return quality;
-  return info.free === true ? 40 : 50;
 }
 
 function inputPrice(info: ModelInfo): number {

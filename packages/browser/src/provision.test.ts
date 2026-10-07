@@ -1,12 +1,71 @@
 import { describe, expect, it } from 'vitest';
 import { isHuskError } from '@husk-ai/core';
+import type { Computer, ExecResult } from '@husk-ai/core';
 import {
   PLAYWRIGHT_CHROMIUM_REVISION,
   downloadPlanFor,
   normaliseArch,
   parseMissingLibs,
   pickChromeForTestingAsset,
+  provisionChromium,
+  inspectBrowserCapability,
 } from './provision.js';
+
+function machine(preflight: { system: string; missing: string[] } | 'no-python', systemBrowser = false) {
+  const commands: string[] = [];
+  const computer = {
+    info: { provider: 'docker' },
+    async exec({ cmd }: { cmd: string }): Promise<ExecResult> {
+      commands.push(cmd);
+      let stdout = '';
+      let exitCode = 0;
+      if (cmd === 'uname -m') stdout = 'x86_64';
+      else if (cmd.includes('command -v chromium') && systemBrowser) stdout = '/usr/bin/chromium';
+      else if (cmd.includes('--version') && systemBrowser) stdout = 'Chromium 145';
+      else if (cmd.includes('HUSK_BROWSER_PREFLIGHT')) {
+        if (preflight === 'no-python') exitCode = 127;
+        else stdout = JSON.stringify(preflight);
+      } else if (!cmd.includes('command -v chromium') && !cmd.startsWith('ls -d ')) {
+        throw new Error(`unexpected command: ${cmd}`);
+      }
+      return { stdout, stderr: exitCode ? 'python3: not found' : '', exitCode, durationMs: 1, timedOut: false, truncated: false };
+    },
+  } as unknown as Computer;
+  return { computer, commands };
+}
+
+describe('browser prerequisite checks', () => {
+  it('refuses missing shared libraries before a manifest or archive request', async () => {
+    const { computer, commands } = machine({ system: 'Linux', missing: ['libnss3.so', 'libgbm.so.1'] });
+    await expect(provisionChromium(computer)).rejects.toThrow(/no download was attempted/);
+    expect(commands.some((cmd) => cmd.includes('curl ') || cmd.includes('urlopen(') || cmd.includes('urlretrieve('))).toBe(false);
+    const capability = await inspectBrowserCapability(computer);
+    expect(capability).toMatchObject({ installed: false, readyToInstall: false });
+    if (!capability.installed && !capability.readyToInstall) expect(capability.hint).toContain('libnss3.so');
+  });
+
+  it('refuses a machine without the downloader and extraction runtime', async () => {
+    const { computer } = machine('no-python');
+    await expect(provisionChromium(computer)).rejects.toThrow(/Python 3/);
+  });
+
+  it('does not offer a Linux archive on another operating system', async () => {
+    const { computer } = machine({ system: 'Darwin', missing: [] });
+    expect(await inspectBrowserCapability(computer)).toMatchObject({ readyToInstall: false, reason: expect.stringContaining('needs Linux') });
+  });
+
+  it('reports passing local prerequisites without touching the network', async () => {
+    const { computer, commands } = machine({ system: 'Linux', missing: [] });
+    expect(await inspectBrowserCapability(computer)).toEqual({ installed: false, readyToInstall: true, arch: 'x64' });
+    expect(commands.some((cmd) => cmd.includes('urlopen(') || cmd.includes('urlretrieve('))).toBe(false);
+  });
+
+  it('reuses a working system browser without requiring download prerequisites', async () => {
+    const { computer, commands } = machine('no-python', true);
+    expect(await provisionChromium(computer)).toMatchObject({ source: 'system', binary: '/usr/bin/chromium' });
+    expect(commands.some((cmd) => cmd.includes('HUSK_BROWSER_PREFLIGHT'))).toBe(false);
+  });
+});
 
 describe('normaliseArch', () => {
   it('accepts the names uname actually prints', () => {

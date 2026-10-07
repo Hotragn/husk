@@ -132,10 +132,12 @@ filtered by the husk's network policy.
 
 ## Requests Husk itself makes
 
-Only two kinds, and you can name both:
+Requests depend on the task and provider:
 
 - The model provider you configured.
 - A container registry, when a flavor's image is not already pulled.
+- Public sources and search services you ask the agent to access.
+- The remote computer provider you configured, if any.
 
-There is no telemetry, no analytics, and no crash reporter — absent from the codebase,
-not disabled by a flag.
+The installed runtime has no product telemetry or crash reporter. The hosted website
+and docs use Vercel Web Analytics.
