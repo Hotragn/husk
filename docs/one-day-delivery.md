@@ -58,13 +58,17 @@ dependencies. `--online` additionally captures three real public sources.
 
 The `starter.yml` workflow builds one archive and tests that same artifact across
 Windows, macOS, and Linux on Node 20 and 22. Release publishing depends on this gate
-and attaches the archive plus SHA-256 checksum. It has been added, not run remotely
-as part of this local session. Use the [official MCPB tooling](https://github.com/modelcontextprotocol/mcpb/blob/main/CLI.md)
+and attaches the archive plus SHA-256 checksum. The
+[release dry run](https://github.com/Hotragn/husk/actions/runs/37559726026) passed
+the platform matrix, package build, typecheck, tests, registry collision preflight,
+and tarball checks. It also verified the configured npm token's identity before the
+longer work. The identity check does not prove publish permission. The dry run
+published nothing. Use the [official MCPB tooling](https://github.com/modelcontextprotocol/mcpb/blob/main/CLI.md)
 for validation, packing, and signing.
 
 The delivered local candidate is **unsigned and unpublished**. An actual install
-inside Claude Desktop, hosted CI results, and beta outcomes must be observed before
-calling this generally available. Public release, directory submission, and any
+inside Claude Desktop and beta outcomes must be observed before calling this
+generally available. Public release, directory submission, and any
 signing identity remain release-owner actions. No new accounts, paid services,
 community posts, or outreach were made by this implementation.
 
