@@ -103,7 +103,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with: { name: husk-desktop-bundle, path: build }
 
       # Same checks you can run locally with `npm run preflight`, so a release
