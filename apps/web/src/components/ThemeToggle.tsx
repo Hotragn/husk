@@ -13,16 +13,19 @@ export function ThemeToggle() {
   const [theme, setTheme] = useState<"dark" | "light" | null>(null);
 
   useEffect(() => {
-    const attr = document.documentElement.getAttribute("data-theme");
-    if (attr === "light" || attr === "dark") {
-      setTheme(attr);
-      return;
-    }
-    setTheme(
-      window.matchMedia("(prefers-color-scheme: light)").matches
-        ? "light"
-        : "dark",
-    );
+    const frame = requestAnimationFrame(() => {
+      const attr = document.documentElement.getAttribute("data-theme");
+      if (attr === "light" || attr === "dark") {
+        setTheme(attr);
+        return;
+      }
+      setTheme(
+        window.matchMedia("(prefers-color-scheme: light)").matches
+          ? "light"
+          : "dark",
+      );
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   const toggle = useCallback(() => {
