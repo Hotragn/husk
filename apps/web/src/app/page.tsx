@@ -68,20 +68,19 @@ export default function Home() {
                 one in #mcp are the same component: the page used to hardcode
                 Claude Code in two places while the copy underneath promised
                 Cursor and Zed the same thing without saying what to type. */}
-            <div style={{ marginTop: "var(--space-8)", maxWidth: "42rem" }}>
-              <p className="small">Workspaces are in the{" "}
-              <a href={PREVIEW_RELEASE_URL}>0.2.0 public preview</a>, which
-              isn&rsquo;t code-signed yet. The guide walks you through setup and a
-              first task.</p>
-            </div>
+            <p className="small hero-preview">
+              The <a href={PREVIEW_RELEASE_URL}>0.2.0 desktop preview</a> starts
+              with workspace tools. Computer access is opt-in after provider
+              review.
+            </p>
 
             <div className="hero-actions" style={{ marginTop: "var(--space-4)" }}>
               <a className="btn btn-primary btn-lg" href={WORKSPACE_GUIDE_URL}>
-                Get started
+                Start in Claude Desktop
               </a>
-              <LinkPreview {...PREVIEWS.source} className="btn btn-secondary btn-lg">
-                View on GitHub
-              </LinkPreview>
+              <a className="btn btn-secondary btn-lg" href="#mcp">
+                Set up computer tools
+              </a>
             </div>
 
             <p className="meta" style={{ marginTop: "var(--space-6)" }}>
@@ -129,17 +128,17 @@ export default function Home() {
           transcript of the same three facts, which is what a crawler sees. */}
       <ScrollNarrative />
 
-      {/* ---------------------------------------------------------- two jobs */}
+      {/* ------------------------------------------------------- three jobs */}
       <section className="container section" aria-labelledby="jobs-title">
         <Reveal>
           <div className="section-head">
             <p className="eyebrow">what it does</p>
             <h2 id="jobs-title" className="h-section">
-              Husk does two things.
+              Husk does three things.
             </h2>
             <p className="prose" style={{ marginTop: "var(--space-4)" }}>
-              It gives your AI somewhere to do the work, and it can turn a
-              conversation you&rsquo;ve already had into a bot that keeps running.
+              It gives your AI a computer, keeps useful results with their
+              sources, and turns a conversation into a bot you can run again.
             </p>
           </div>
         </Reveal>
@@ -159,10 +158,42 @@ export default function Home() {
             </div>
             <div className="col-7">
               <StaticTerminal
-                title="husk doctor · first run"
+                title="husk doctor · example report"
                 lines={DOCTOR}
-                label="Output of husk with no arguments on a machine that has never run it"
+                label="Illustrative provider report showing what husk doctor checks"
               />
+            </div>
+          </div>
+
+          <div className="grid12" id="workspaces">
+            <div className="col-5">
+              <h3 className="h-sub">It keeps the result with its sources.</h3>
+              <div className="prose" style={{ marginTop: "var(--space-4)" }}>
+                <p>
+                  Named local workspaces survive reconnects and restarts. Capture
+                  public pages, ask your AI to make something useful, then inspect
+                  and export the result.
+                </p>
+                <p>
+                  <a href={WORKSPACE_GUIDE_URL}>Follow the first-workspace guide</a>.
+                </p>
+              </div>
+            </div>
+            <div className="col-7">
+              <ol className="rule-list" aria-label="Workspace workflow">
+                <li>
+                  <span className="rl-term">01 / Capture</span>
+                  <span className="rl-desc">Save public pages with their URLs and capture dates.</span>
+                </li>
+                <li>
+                  <span className="rl-term">02 / Make</span>
+                  <span className="rl-desc">Choose a brief, comparison, or action list for your AI to write.</span>
+                </li>
+                <li>
+                  <span className="rl-term">03 / Return</span>
+                  <span className="rl-desc">Review the sources, download the result, and reopen it later.</span>
+                </li>
+              </ol>
             </div>
           </div>
 

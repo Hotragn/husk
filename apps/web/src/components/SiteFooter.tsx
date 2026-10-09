@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { HuskMark, HuskWordmark } from "@/components/Logo";
 import { LinkPreview } from "@/components/LinkPreview";
-import { DOCS_URL, LICENCE, REPO_URL } from "@/lib/content";
+import { DOCS_URL, LICENCE, REPO_URL, WORKSPACE_GUIDE_URL } from "@/lib/content";
 import { PREVIEWS } from "@/lib/previews";
 
 /**
@@ -54,8 +54,13 @@ const HELP: Array<{ title: string; href: string }> = [
   { title: "Errors", href: "/reference/errors" },
 ];
 
+const DOC_INDEX_PATHS = new Set(["/start", "/computers", "/mcp", "/models", "/security"]);
+
 export function SiteFooter() {
-  const doc = (href: string) => `${DOCS_URL}${href}`;
+  const doc = (href: string) =>
+    DOCS_URL.endsWith("#readme")
+      ? `${REPO_URL}/blob/main/apps/docs/content${href}${DOC_INDEX_PATHS.has(href) ? "/index" : ""}.mdx`
+      : `${DOCS_URL}${href}`;
 
   return (
     <footer className="site-footer">
@@ -70,8 +75,8 @@ export function SiteFooter() {
               Your AI chat gets a computer.
             </p>
             <p className="small" style={{ marginTop: "var(--space-3)" }}>
-              The name says it: a husk is empty. Every computer starts with nothing
-              installed, and there&rsquo;s no account holding anything of yours.
+              Give it a shell, files, and a browser. Keep the work worth
+              returning to in local workspaces.
             </p>
           </div>
 
@@ -79,7 +84,10 @@ export function SiteFooter() {
             <h2 className="footer-heading">Product</h2>
             <ul className="footer-list">
               <li>
-                <Link href="/">Give your agent a computer</Link>
+                <Link href="/#mcp">Computer tools</Link>
+              </li>
+              <li>
+                <a href={WORKSPACE_GUIDE_URL}>Start a workspace</a>
               </li>
               <li>
                 <Link href="/#chat-to-bot">Turn a chat into a bot</Link>
@@ -153,7 +161,7 @@ export function SiteFooter() {
 
         <div className="footer-legal">
           <p>{LICENCE}.</p>
-          <p className="mono">no telemetry. nothing left this machine.</p>
+          <p className="mono">No telemetry in Husk’s installed runtime. This site uses web analytics.</p>
         </div>
       </div>
     </footer>
