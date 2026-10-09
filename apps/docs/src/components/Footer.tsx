@@ -11,7 +11,7 @@ export function Footer() {
           Source
         </a>
         <span>
-          These docs use Vercel Web Analytics and serve fonts locally.
+          These docs use Cloudflare Web Analytics and serve fonts locally.
           The installed Husk runtime has no product telemetry.
         </span>
       </div>

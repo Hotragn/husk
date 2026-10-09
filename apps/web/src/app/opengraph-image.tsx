@@ -3,6 +3,7 @@ import { OG_CONTENT_TYPE, OG_SIZE, ogCard } from "@/lib/og-card";
 
 export const alt =
   "Husk — your AI chat gets a computer. claude mcp add husk -- npx -y @husk-ai/mcp";
+export const dynamic = "force-static";
 export const size = OG_SIZE;
 export const contentType = OG_CONTENT_TYPE;
 

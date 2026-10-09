@@ -1,0 +1,17 @@
+// Cloudflare serves `out/`, the static export `next build` writes. There is no
+// Worker script: every request is a file, and a path with no file gets
+// `404.html` with a 404 status. Headers come from `public/_headers`.
+{
+  "name": "husk-web",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./out",
+    "not_found_handling": "404-page"
+  },
+  // www is the address. The apex is attached so it has a certificate and a
+  // proxied record; a zone redirect rule sends it to www before this runs.
+  "routes": [
+    { "pattern": "www.huskai.dev", "custom_domain": true },
+    { "pattern": "huskai.dev", "custom_domain": true }
+  ]
+}

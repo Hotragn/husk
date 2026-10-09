@@ -235,26 +235,27 @@ if (SITES_ONLY) {
     contains('apps/docs/src/lib/site.ts', `REPO_URL = '${REPO}'`, derive);
     contains('apps/web/src/lib/content.ts', `REPO_URL = "${REPO}"`, derive);
   }
-  // Not derivable: SITE_URL reads NEXT_PUBLIC_SITE_URL now, so the requirement
-  // is that no domain is hardcoded at all, which only an absence can say.
+  // Not derivable from any manifest. The production addresses are written down
+  // now that the domain exists, and what has to hold is that the four places
+  // naming them agree: a canonical URL and a nav link that disagree are a split
+  // site nobody notices.
   //
   // Both sites, because only one of them had it. `apps/docs` shipped with no
   // SITE_URL at all -- no metadataBase, no robots.txt, no sitemap.xml -- which
   // is not a wrong canonical URL but no canonical URL, and an assertion that
-  // only watched `apps/web` had nothing to say about it. The positive half is
-  // the half that matters here: a file that reads the env var cannot hardcode a
-  // domain, and a file that has no SITE_URL at all fails this outright.
-  //
-  // SITE_URL moved out of content.ts / site.ts into its own module. Both
-  // VERCEL_ variables it now falls back to are absent from a client bundle --
-  // they are not NEXT_PUBLIC_ -- and content.ts is imported by client
-  // components, so the resolution has to live somewhere only server code
-  // imports. These assertions follow it; the invariants are unchanged.
+  // only watched `apps/web` had nothing to say about it.
+  const WEB = 'https://www.huskai.dev';
+  const DOCS = 'https://docs.huskai.dev';
+  const agree = 'the canonical address and the cross-site links must name the same host';
+  contains('apps/web/src/lib/site-url.ts', `"${WEB}"`, agree);
+  contains('apps/docs/src/lib/site.ts', `'${WEB}'`, agree);
+  contains('apps/docs/src/lib/site-url.ts', `'${DOCS}'`, agree);
+  contains('apps/web/src/lib/content.ts', `"${DOCS}"`, agree);
   for (const site of ['apps/web/src/lib/site-url.ts', 'apps/docs/src/lib/site-url.ts']) {
     contains(
       site,
       'process.env.NEXT_PUBLIC_SITE_URL',
-      'the canonical URL is set at deploy time, never written down here',
+      'a build must still be able to name another host',
     );
     // A dashboard field is a text box and `https://example.com/` is what a
     // person types. Unstripped, that slash reaches `Sitemap:` in robots.txt and
@@ -264,25 +265,15 @@ if (SITES_ONLY) {
       'stripTrailingSlash(',
       'strip the trailing slash: NEXT_PUBLIC_SITE_URL is typed by hand and a slash doubles in every canonical URL',
     );
-    // The fallbacks that stop this recurring on a project where nobody set the
-    // explicit variable. Production canonicals came out as localhost on every
-    // route until these landed.
+    // Production canonicals once came out as localhost on every route. The
+    // production branch is what stops that recurring.
     contains(
       site,
-      'VERCEL_PROJECT_PRODUCTION_URL',
-      'fall back to the project production host, so a missing variable is not a localhost canonical',
+      'NODE_ENV',
+      'a production build names the real address, so a missing variable is not a localhost canonical',
     );
-    absent(site, 'husk.sh', 'SITE_URL reads the environment; no domain belongs here');
+    absent(site, 'husk.sh', 'husk.sh is not this project\'s domain');
   }
-  // The nav's Docs link is the one cross-site link on either site, and it must
-  // not hardcode a hostname for the same reason SITE_URL does not: the docs are
-  // a separate Vercel project today and a subdomain the day a real domain
-  // exists. Only `apps/web` has it; the docs site does not link back.
-  contains(
-    'apps/web/src/lib/content.ts',
-    'process.env.NEXT_PUBLIC_DOCS_URL',
-    'the docs hostname is set at deploy time, never written down here',
-  );
 
   contains(
     "apps/docs/src/lib/site.ts",
