@@ -19,7 +19,10 @@ async function viewer() {
   return { app, store, headers, setProfile };
 }
 
-describe('authenticated workspace companion', () => {
+// Real files in a temp directory and a ZIP export on every run. 6.2 s on a
+// Windows runner against the 5 s default; the other disk-bound suites carry
+// the same budget.
+describe('authenticated workspace companion', { timeout: 30_000 }, () => {
   it('serves the UI but protects data, rejects cross-origin requests and hostile hosts', async () => {
     const { app, headers } = await viewer();
     const index = await app.inject({ url: '/', headers: { host: '127.0.0.1' } });
