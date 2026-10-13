@@ -4,8 +4,11 @@ import { describe, expect, it } from 'vitest';
 import { errorResponse, jsonResponse, recordingFetch, streamResponse } from '../testing.js';
 import { GoogleProvider, geminiSchema, toGeminiContents } from './google.js';
 
-// Shaped like a Google key, because the redactor has to recognise it, and
-// split so the literal never is one: secret scanners read source, not runtime.
+// PLACEHOLDER -- not a real API key. No Google project issued it and it
+// unlocks nothing. It is shaped like a Google key because these tests check
+// that the key stays out of URLs and is redacted from errors, and it is split
+// in two so the file never contains a key-shaped string for a secret scanner
+// to flag. GitHub secret-scanning alert #1 was this value, resolved as used in tests.
 const KEY = 'AIza' + 'SyTHISISNOTAREALGOOGLEKEY0123456789';
 
 const SSE = [
