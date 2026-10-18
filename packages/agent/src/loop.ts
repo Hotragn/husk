@@ -15,6 +15,8 @@ import type {
   Computer,
   ComputerSpec,
   ContentPart,
+  HandoffOutcome,
+  HandoffRequest,
   HuskSpec,
   Logger,
   ModelMessage,
@@ -207,11 +209,7 @@ class Run {
     if (this.opts.signal?.aborted) this.onExternalAbort();
     else this.opts.signal?.addEventListener('abort', this.onExternalAbort, { once: true });
 
-    this.timer = setTimeout(() => {
-      this.timedOut = true;
-      this.abort.abort(new HuskError('E_ABORTED', 'the run hit its time limit'));
-    }, this.budget.limits.timeoutMs);
-    this.timer.unref?.();
+    this.armTimer(this.budget.limits.timeoutMs);
 
     this.emit({ type: 'run_start', runId: this.runId, husk: this.spec.name, model: this.model });
 
@@ -579,6 +577,41 @@ class Run {
     }
   }
 
+  private armTimer(ms: number): void {
+    this.timer = setTimeout(() => {
+      this.timedOut = true;
+      this.abort.abort(new HuskError('E_ABORTED', 'the run hit its time limit'));
+    }, ms);
+    this.timer.unref?.();
+  }
+
+  /**
+   * Hand the run to a person. The time limit stops counting while they hold it:
+   * a login or a 2FA code is theirs to take as long as it takes, and a run that
+   * times out in the middle of that would be the husk's fault, not theirs.
+   */
+  private async askHandoff(req: HandoffRequest): Promise<HandoffOutcome> {
+    const handler = this.opts.onHandoff;
+    if (!handler) {
+      throw new HuskError('E_TOOL_ERROR', 'nobody is connected to take over this run', {
+        hint: 'a handoff needs a viewer; run the husk where someone can watch it',
+      });
+    }
+    if (this.timer) clearTimeout(this.timer);
+    this.budget.pause();
+    // The reason is model text, and it goes to a person's screen and an event log.
+    const reason = this.spec.guardrails.redactSecrets ? redact(req.reason) : req.reason;
+    try {
+      return (await handler({ ...req, reason }, this.abort.signal)) === 'done' ? 'done' : 'aborted';
+    } catch (err) {
+      this.log.warn('the handoff handler threw; ending the wait', err);
+      return 'aborted';
+    } finally {
+      this.budget.resume();
+      if (!this.abort.signal.aborted) this.armTimer(this.budget.remainingMs);
+    }
+  }
+
   private async askApproval(req: ApprovalRequest): Promise<boolean> {
     const approver = this.opts.onApproval;
     if (!approver) return false;
@@ -619,6 +652,13 @@ class Run {
         });
       },
       acquireComputer: () => this.acquireComputer(),
+      handoff: (request: HandoffRequest) =>
+        this.askHandoff({
+          ...request,
+          runId: this.runId,
+          huskId: this.spec.name,
+          ...(this.computer ? { computerId: this.computer.id } : {}),
+        }),
       spec: this.spec,
       maxOutputBytes: this.spec.limits.maxOutputBytes,
       callId: call.id,

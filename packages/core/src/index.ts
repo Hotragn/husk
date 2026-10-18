@@ -66,6 +66,8 @@ export type {
   ApprovalMode,
   ApprovalRequest,
   Approver,
+  HandoffOutcome,
+  HandoffRequest,
   RunOptions,
   RunEvent,
   RunResult,

@@ -65,8 +65,24 @@ export class Budget {
     this.pricing = p;
   }
 
+  /** Time the run has spent on its own clock, not counting any pause. */
+  private pausedTotalMs = 0;
+  private pausedSince: number | undefined;
+
   get elapsedMs(): number {
-    return this.now() - this.startedAt;
+    const open = this.pausedSince === undefined ? 0 : this.now() - this.pausedSince;
+    return this.now() - this.startedAt - this.pausedTotalMs - open;
+  }
+
+  /** Stop the clock while the run waits on a person. Idempotent. */
+  pause(): void {
+    if (this.pausedSince === undefined) this.pausedSince = this.now();
+  }
+
+  resume(): void {
+    if (this.pausedSince === undefined) return;
+    this.pausedTotalMs += this.now() - this.pausedSince;
+    this.pausedSince = undefined;
   }
 
   get remainingMs(): number {

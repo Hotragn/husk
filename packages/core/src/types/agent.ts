@@ -14,7 +14,25 @@ export interface ToolContext {
   emit(event: RunEvent): void;
   /** Ask the operator to approve a dangerous call. Resolves false when no approver is wired. */
   confirm(prompt: string, details?: Record<string, unknown>): Promise<boolean>;
+  /**
+   * Stop the run and wait for a person to finish something only they can do.
+   * Resolves `done` only when that person says so; `aborted` when the run ends first.
+   */
+  handoff?(request: HandoffRequest): Promise<HandoffOutcome>;
 }
+
+/** What a person is being asked to do, and the run that is waiting on them. */
+export interface HandoffRequest {
+  runId: string;
+  huskId: string;
+  /** One sentence a person can act on, e.g. "Sign in to example.com". */
+  reason: string;
+  /** The machine whose browser the person needs, when the run has one up. */
+  computerId?: string;
+}
+
+/** `done` is the only way a handoff resumes. Everything else ends the run's wait. */
+export type HandoffOutcome = 'done' | 'aborted';
 
 export interface Tool<I = Record<string, unknown>, O = unknown> {
   name: string;
@@ -78,6 +96,12 @@ export interface RunOptions {
    * closed, not quietly behave as though it were in `auto`.
    */
   onApproval?: Approver;
+  /**
+   * Called when the agent hands off to a person. The run stays paused until the
+   * promise settles, and `signal` aborts it when the run ends. Absent means the
+   * handoff is refused at once: nobody is there to take it, so waiting would hang.
+   */
+  onHandoff?: (request: HandoffRequest, signal: AbortSignal) => Promise<HandoffOutcome>;
   /** Named values interpolated into the persona template. */
   vars?: Record<string, string>;
 }
@@ -104,6 +128,7 @@ export type RunEvent =
    * denied when it times out.
    */
   | { type: 'approval_required'; approvalId: string; request: ApprovalRequest }
+  | { type: 'handoff_required'; request: HandoffRequest }
   | { type: 'computer_ready'; computerId: string; provider: string }
   | { type: 'usage'; usage: Usage; cumulative: Usage }
   | { type: 'warning'; message: string }
