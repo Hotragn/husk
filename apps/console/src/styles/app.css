@@ -1301,3 +1301,26 @@ pre.code {
   overflow-wrap: anywhere;
   overflow-x: visible;
 }
+
+/* Handoffs: the page a run is paused on, at its own aspect, clickable. */
+.handoff-reason {
+  font-size: var(--font-size-lg);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+.handoff-screen {
+  margin: 0;
+}
+.handoff-screen img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: crosshair;
+  user-select: none;
+}
+.handoff-type .input {
+  flex: 1 1 16rem;
+  min-width: 0;
+}

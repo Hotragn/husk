@@ -201,6 +201,44 @@ export interface RunRequestBody {
 /** A `RunEvent`, or the empty object the terminating `event: done` frame carries. */
 export type RunStreamEvent = RunEvent | { type?: undefined };
 
+/** `GET /v1/handoffs` row. `reason` is model text: render it as text, never as HTML. */
+export interface PendingHandoff {
+  handoffId: string;
+  runId: string;
+  husk: string;
+  reason: string;
+  computerId?: string;
+  createdAt: string;
+}
+
+export interface HandoffFrame {
+  image: Blob;
+  /** The page's CSS viewport, for mapping a click on the image back to the page. */
+  width: number;
+  height: number;
+}
+
+export type HandoffKey =
+  | 'Enter'
+  | 'Tab'
+  | 'Escape'
+  | 'Backspace'
+  | 'Delete'
+  | 'ArrowUp'
+  | 'ArrowDown'
+  | 'ArrowLeft'
+  | 'ArrowRight'
+  | 'Home'
+  | 'End'
+  | 'PageUp'
+  | 'PageDown';
+
+export type HandoffInput =
+  | { type: 'click'; x: number; y: number; button?: 'left' | 'right'; double?: boolean }
+  | { type: 'scroll'; x: number; y: number; dx?: number; dy: number }
+  | { type: 'text'; text: string }
+  | { type: 'key'; key: HandoffKey };
+
 export interface ApprovalAnswer {
   approvalId: string;
   approved: boolean;

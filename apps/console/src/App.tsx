@@ -16,17 +16,19 @@ import { ComputersPanel } from './panels/ComputersPanel';
 import { TerminalPanel } from './panels/TerminalPanel';
 import { FilesPanel } from './panels/FilesPanel';
 import { BrowserPanel } from './panels/BrowserPanel';
+import { HandoffsPanel, useHandoffs } from './panels/HandoffsPanel';
 import { HusksPanel } from './panels/HusksPanel';
 import { DoctorPanel } from './panels/DoctorPanel';
 import { EventsPanel } from './panels/EventsPanel';
 import { DisconnectedScreen } from './panels/DisconnectedScreen';
 import { HomePanel } from './panels/HomePanel';
 
-const PANELS = ['home', 'computers', 'terminal', 'files', 'browser', 'husks', 'doctor', 'events'] as const;
+const PANELS = ['home', 'handoffs', 'computers', 'terminal', 'files', 'browser', 'husks', 'doctor', 'events'] as const;
 type PanelId = (typeof PANELS)[number];
 
 const PANEL_LABELS: Record<PanelId, string> = {
   home: 'Home',
+  handoffs: 'Handoffs',
   computers: 'Computers',
   terminal: 'Terminal',
   files: 'Files',
@@ -65,6 +67,7 @@ function ConnectionShell() {
 function Shell() {
   const { status, health, baseUrl } = useConnection();
   const { list: rows } = useComputers();
+  const { list: waiting } = useHandoffs();
   const { theme, toggle } = useTheme();
 
   const [panel, setPanel] = useState<PanelId>(() => panelFromHash());
@@ -145,6 +148,9 @@ function Shell() {
                   >
                     <span>{PANEL_LABELS[id]}</span>
                     {id === 'computers' && rows.length > 0 ? <span className="count">{rows.length}</span> : null}
+                    {id === 'handoffs' && waiting.length > 0 ? (
+                      <span className="count" aria-label={`${waiting.length} waiting on you`}>{waiting.length}</span>
+                    ) : null}
                   </button>
                 </li>
               ))}
@@ -166,6 +172,7 @@ function Shell() {
             ) : null}
             {panel === 'files' ? <FilesPanel activeId={activeComputer} onSelect={setActiveComputer} /> : null}
             {panel === 'browser' ? <BrowserPanel activeId={activeComputer} onSelect={setActiveComputer} /> : null}
+            {panel === 'handoffs' ? <HandoffsPanel /> : null}
             {panel === 'husks' ? <HusksPanel /> : null}
             {panel === 'doctor' ? <DoctorPanel /> : null}
             {panel === 'events' ? <EventsPanel /> : null}

@@ -28,11 +28,14 @@ import type {
   DirListResponse,
   DoctorReport,
   ExecStreamEvent,
+  HandoffFrame,
+  HandoffInput,
   HealthReport,
   HuskDetail,
   HuskListResponse,
   HuskSummary,
   ModelListResponse,
+  PendingHandoff,
   RunRequestBody,
   RunStreamEvent,
   BrowserStatus,
@@ -384,6 +387,47 @@ export class HuskApi {
     return this.client.http.request<ApprovalAnswer>('POST', `/v1/approvals/${enc(approvalId)}`, {
       body: { approve, remember },
     });
+  }
+
+  // -- handoffs -------------------------------------------------------------
+
+  /** `GET /v1/handoffs`: runs paused until a person finishes something. */
+  async listHandoffs(signal?: AbortSignal): Promise<PendingHandoff[]> {
+    const res = await this.client.http.request<{ handoffs: PendingHandoff[] }>('GET', '/v1/handoffs', {
+      ...(signal ? { signal } : {}),
+    });
+    return res.handoffs;
+  }
+
+  /**
+   * `GET /v1/handoffs/:id/screen` -> a JPEG and the page's CSS viewport.
+   *
+   * Through `fetch` directly because the viewport rides in a response header,
+   * which `Http.bytes` does not hand back.
+   */
+  async handoffScreen(handoffId: string, signal?: AbortSignal): Promise<HandoffFrame> {
+    const url = this.client.http.url(`/v1/handoffs/${enc(handoffId)}/screen`);
+    const headers: Record<string, string> = {};
+    if (this.token) headers.authorization = `Bearer ${this.token}`;
+    let res: Response;
+    try {
+      res = await fetch(url, { headers, cache: 'no-store', ...(signal ? { signal } : {}) });
+    } catch (err) {
+      throw transportError(err, url);
+    }
+    if (!res.ok) throw errorFromResponse(res.status, await safeJson(res), url);
+    const [w, h] = (res.headers.get('x-husk-viewport') ?? '').split('x').map(Number);
+    return { image: await res.blob(), width: w && w > 0 ? w : 0, height: h && h > 0 ? h : 0 };
+  }
+
+  /** `POST /v1/handoffs/:id/input`. A mouse and a keyboard, nothing more. */
+  handoffInput(handoffId: string, input: HandoffInput): Promise<void> {
+    return this.client.http.request<void>('POST', `/v1/handoffs/${enc(handoffId)}/input`, { body: input });
+  }
+
+  /** `POST /v1/handoffs/:id/done`. The only call that hands the run back to the agent. */
+  handoffDone(handoffId: string): Promise<{ handoffId: string; outcome: 'done' }> {
+    return this.client.http.request('POST', `/v1/handoffs/${enc(handoffId)}/done`);
   }
 
   // -- models ---------------------------------------------------------------
