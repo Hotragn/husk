@@ -3,8 +3,10 @@ import { livePageFor } from '@husk-ai/browser';
 import type { Page } from '@husk-ai/browser';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { bearerToken } from '../auth.js';
 import { ctxOf } from '../context.js';
 import { huskError, invalidSpec } from '../errors.js';
+import type { HandoffRegistry, PendingHandoff } from '../handoffs.js';
 
 /** Viewport coordinates in CSS pixels. Bounded so nothing absurd reaches Chromium. */
 const coord = z.number().finite().min(0).max(20_000);
@@ -56,12 +58,44 @@ const InputSchema = z.discriminatedUnion('type', [
     .strict(),
 ]);
 
+export interface HandoffRouteOptions {
+  registry: HandoffRegistry;
+  /**
+   * Scope each request to one handoff by its own key, for a viewer that is not
+   * behind the server-wide token. Without it, the caller's auth is all there is.
+   */
+  perHandoffKeys?: boolean;
+  onDone?: (handoff: PendingHandoff) => void;
+}
+
+/** The control plane: behind the server-wide bearer token, and every handoff listed. */
 export async function handoffRoutes(app: FastifyInstance): Promise<void> {
   const ctx = ctxOf(app);
+  app.get('/v1/handoffs', async () => ({ handoffs: ctx.runner.handoffs.list() }));
+  registerHandoffRoutes(app, {
+    registry: ctx.runner.handoffs,
+    onDone: (pending) => ctx.bus.emit('runs', 'handoff_completed', pending),
+  });
+}
+
+/** One handoff's view, input and done. Never a list: a key opens one handoff. */
+export function registerHandoffRoutes(app: FastifyInstance, opts: HandoffRouteOptions): void {
+  const { registry } = opts;
+
+  /** The open handoff, after checking the key when keys are in use. A wrong key is a 404, not a 401. */
+  const open = (req: FastifyRequest): PendingHandoff => {
+    const { handoffId } = req.params as { handoffId: string };
+    if (opts.perHandoffKeys && !registry.verify(handoffId, bearerToken(req) ?? '')) {
+      throw huskError('E_HANDOFF_NOT_FOUND', 'no open handoff with that link', {
+        hint: 'the handoff has ended, or the link is wrong; ask your AI chat for a new one',
+      });
+    }
+    return registry.get(handoffId);
+  };
 
   /** The page the person needs, scoped to an open handoff. Never launches a browser. */
-  const pageFor = (handoffId: string): Page => {
-    const handoff = ctx.runner.handoffs.get(handoffId);
+  const pageFor = (req: FastifyRequest): Page => {
+    const handoff = open(req);
     const page = handoff.computerId ? livePageFor(handoff.computerId) : undefined;
     if (!page) {
       throw huskError('E_BROWSER_NOT_FOUND', 'there is no open browser for this handoff', {
@@ -71,11 +105,10 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
     return page;
   };
 
-  app.get('/v1/handoffs', async () => ({ handoffs: ctx.runner.handoffs.list() }));
+  app.get('/v1/handoffs/:handoffId', async (req: FastifyRequest) => open(req));
 
   app.get('/v1/handoffs/:handoffId/screen', async (req: FastifyRequest, reply: FastifyReply) => {
-    const { handoffId } = req.params as { handoffId: string };
-    const frame = await pageFor(handoffId).frame();
+    const frame = await pageFor(req).frame();
     // The viewport rides in a header so a click on the image maps back to CSS
     // pixels whatever the device scale. no-store: a login page is not for caches.
     return reply
@@ -88,12 +121,11 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
   // Input is never logged or put on the event bus: a person typing here is
   // usually typing a password or a one-time code.
   app.post('/v1/handoffs/:handoffId/input', async (req: FastifyRequest, reply: FastifyReply) => {
-    const { handoffId } = req.params as { handoffId: string };
     const parsed = InputSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       throw invalidSpec(parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`));
     }
-    const page = pageFor(handoffId);
+    const page = pageFor(req);
     const input = parsed.data;
     if (input.type === 'click') {
       await page.clickAt(input.x, input.y, { button: input.button ?? 'left', clickCount: input.double ? 2 : 1 });
@@ -107,12 +139,10 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(204).send();
   });
 
-  // The only request that resumes a run that asked for a person. Auth is the
-  // server-wide bearer check, so this is never reachable without the token.
-  app.post('/v1/handoffs/:handoffId/done', async (req) => {
-    const { handoffId } = req.params as { handoffId: string };
-    const pending = ctx.runner.handoffs.complete(handoffId);
-    ctx.bus.emit('runs', 'handoff_completed', pending);
-    return { handoffId, outcome: 'done' };
+  // The only request that resumes a run that asked for a person.
+  app.post('/v1/handoffs/:handoffId/done', async (req: FastifyRequest) => {
+    const pending = registry.complete(open(req).handoffId);
+    opts.onDone?.(pending);
+    return { handoffId: pending.handoffId, outcome: 'done' };
   });
 }

@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { id } from '@husk-ai/core';
 import type { HandoffOutcome } from '@husk-ai/core';
 import { notFound } from './errors.js';
@@ -13,6 +14,8 @@ export interface PendingHandoff {
 }
 
 interface Waiter extends PendingHandoff {
+  /** A key to this one handoff, for a viewer that must not hold the server token. */
+  secret: string;
   settle(outcome: HandoffOutcome): void;
 }
 
@@ -28,7 +31,7 @@ export class HandoffRegistry {
   private readonly pending = new Map<string, Waiter>();
 
   list(): PendingHandoff[] {
-    return [...this.pending.values()].map(({ settle: _s, ...rest }) => rest);
+    return [...this.pending.values()].map(({ settle: _s, secret: _k, ...rest }) => rest);
   }
 
   request(
@@ -55,7 +58,7 @@ export class HandoffRegistry {
         resolve(outcome);
       };
 
-      this.pending.set(handoffId, { ...record, settle });
+      this.pending.set(handoffId, { ...record, secret: randomBytes(32).toString('hex'), settle });
       args.signal.addEventListener('abort', onAbort, { once: true });
       onRaised(record);
     });
@@ -65,8 +68,22 @@ export class HandoffRegistry {
   get(handoffId: string): PendingHandoff {
     const waiter = this.pending.get(handoffId);
     if (!waiter) throw notFound('handoff', handoffId);
-    const { settle: _s, ...snapshot } = waiter;
+    const { settle: _s, secret: _k, ...snapshot } = waiter;
     return snapshot;
+  }
+
+  /** The key that opens this handoff and nothing else. Never listed, never logged. */
+  secretOf(handoffId: string): string | undefined {
+    return this.pending.get(handoffId)?.secret;
+  }
+
+  /** Whether `supplied` is this open handoff's key. False once it has ended. */
+  verify(handoffId: string, supplied: string): boolean {
+    const secret = this.pending.get(handoffId)?.secret;
+    if (!secret) return false;
+    const a = Buffer.from(supplied);
+    const b = Buffer.from(secret);
+    return a.length === b.length && timingSafeEqual(a, b);
   }
 
   /** A person says they are done. Resumes the run; the only path that does. */

@@ -269,6 +269,7 @@ enter a 2FA code. The run is paused, not failed:
 
 ```
 GET  /v1/handoffs                    -> { "handoffs": PendingHandoff[] }
+GET  /v1/handoffs/:handoffId         -> PendingHandoff
 GET  /v1/handoffs/:handoffId/screen  -> image/jpeg, header x-husk-viewport: <w>x<h>
 POST /v1/handoffs/:handoffId/input   body: one of
        { "type": "click",  "x": 0, "y": 0, "button"?: "left"|"right", "double"?: true }
@@ -292,6 +293,12 @@ Only `POST .../done` resumes the run. There is no timeout and a dropped connecti
 does not count, so a tunnel that falls over mid-login leaves the run waiting. The run's
 `timeoutSec` stops counting while the person holds it. Cancelling the run ends the wait.
 A run with nobody to take the handoff refuses it at once rather than waiting.
+
+The MCP server (`@husk-ai/mcp`) serves the same per-handoff routes, minus the list, on
+its loopback viewer, for chats whose own model calls `hand_off`. There each handoff has
+its own key, carried in the link's `#fragment` and sent back as a bearer token; it opens
+that one handoff and nothing else, and it stops working when the handoff ends. The
+viewer's own token does not open a handoff.
 
 ### Runs
 

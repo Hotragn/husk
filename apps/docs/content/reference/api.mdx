@@ -367,6 +367,7 @@ the full behaviour.
 
 ```text
 GET  /v1/handoffs                    -> { handoffs: PendingHandoff[] }
+GET  /v1/handoffs/:handoffId         -> PendingHandoff
 GET  /v1/handoffs/:handoffId/screen  -> image/jpeg (header x-husk-viewport: <w>x<h>)
 POST /v1/handoffs/:handoffId/input   body: click | scroll | text | key  -> 204
 POST /v1/handoffs/:handoffId/done    -> { handoffId, outcome: "done" }
