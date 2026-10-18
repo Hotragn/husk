@@ -1,0 +1,10 @@
+{
+  "name": "husk",
+  "version": "0.2.0",
+  "description": "Give Claude Code its own computer: a shell, files and a real browser, with a handoff for logins.",
+  "author": { "name": "Husk", "url": "https://github.com/Hotragn/husk" },
+  "homepage": "https://github.com/Hotragn/husk",
+  "repository": "https://github.com/Hotragn/husk",
+  "license": "Apache-2.0",
+  "keywords": ["computer", "sandbox", "browser", "mcp"]
+}

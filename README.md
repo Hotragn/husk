@@ -72,11 +72,20 @@ That is the whole setup. Nothing is created until the first tool call, so an ins
 husk that nobody uses costs nothing. Works with Cursor, Zed, or anything else that
 speaks MCP.
 
-The default computer profile exposes eight workspace tools plus 21 computer tools.
+In Claude Code you can install it as a plugin instead, which adds a `husk` skill that
+teaches the model when to use which tool and when to hand the computer to you:
+
+```text
+/plugin install husk --marketplace Hotragn/husk
+```
+
+The default computer profile exposes eight workspace tools plus 23 computer tools.
 Eight are for the machine — `shell`, `read_file`, `write_file`,
-`edit_file`, `list_dir`, `expose_port`, `browse`, `computer_info` — and thirteen
+`edit_file`, `list_dir`, `expose_port`, `browse`, `computer_info` — thirteen
 `browser_*` tools that drive a real Chromium inside that same machine, addressed by
-accessibility ref rather than pixel coordinates.
+accessibility ref rather than pixel coordinates, and `hand_off` / `hand_off_done`,
+which give you the computer for a login, a 2FA code or a CAPTCHA and give it back
+only when you say you're done.
 
 The first tool result says what kind of machine it got. A model that thinks it is
 sandboxed when it is not makes worse decisions than one that knows.
