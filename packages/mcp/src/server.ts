@@ -61,6 +61,20 @@ export const COMPUTER_INSTRUCTIONS =
 /** How long a tool call waits on the in-chat "Done?" before handing the model the link instead. */
 const ELICIT_WAIT_MS = 200_000;
 
+/**
+ * Clients known to actually show a form-elicitation prompt. Declaring the
+ * capability is not enough: Claude Desktop is reported to declare it and never
+ * show the dialog (https://github.com/fdsimms/todo/issues/3124,
+ * https://github.com/anthropics/claude-code/issues/41110), which would leave the
+ * person waiting minutes for a link. Everyone else gets the link at once.
+ *  - Claude Code: https://code.claude.com/docs/en/mcp
+ *  - Cursor (1.5+): https://cursor.com/docs/context/mcp
+ *  - VS Code (1.102+): https://code.visualstudio.com/updates/v1_107
+ * ponytail: names matched by substring of clientInfo.name; confirm each by
+ * observation. A wrong name only costs the in-chat prompt, never safety.
+ */
+const SHOWS_ELICITATION = [/claude-code/i, /cursor/i, /visual studio code|vscode/i];
+
 export class HuskMcpServer {
   private readonly mcp: Server;
   private readonly manager: ComputerManager;
@@ -276,7 +290,8 @@ export class HuskMcpServer {
     // https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation
     // `elicitation: {}` means form mode; a client that lists only `url` has no form.
     const elicit = this.mcp.getClientCapabilities()?.elicitation;
-    if (elicit && (elicit.form !== undefined || elicit.url === undefined)) {
+    const client = this.mcp.getClientVersion()?.name ?? '';
+    if (elicit && (elicit.form !== undefined || elicit.url === undefined) && SHOWS_ELICITATION.some((re) => re.test(client))) {
       const stop = new AbortController();
       const onCallAbort = (): void => stop.abort();
       callSignal.addEventListener('abort', onCallAbort, { once: true });

@@ -48,12 +48,12 @@ afterEach(async () => {
 
 type Elicit = (message: string) => Promise<ElicitResult>;
 
-async function session(elicit?: Elicit) {
+async function session(elicit?: Elicit, clientName = 'claude-code') {
   const manager = { async ensure() { return computer; }, async create() { return computer; } } as unknown as ComputerManager;
   const workspaceStore = new WorkspaceStore({ root: mkdtempSync(join(tmpdir(), 'husk-handoff-')) });
   const server = new HuskMcpServer({ manager, ephemeral: false, logger: silent, workspaceStore });
   open.push(server);
-  const client = new Client({ name: 'probe', version: '0' }, { capabilities: elicit ? { elicitation: {} } : {} });
+  const client = new Client({ name: clientName, version: '0' }, { capabilities: elicit ? { elicitation: {} } : {} });
   const asked: string[] = [];
   if (elicit) {
     client.setRequestHandler(ElicitRequestSchema, async (req) => {
@@ -115,6 +115,18 @@ describe('hand_off over MCP, without in-chat prompts', () => {
 });
 
 describe('hand_off over MCP, with in-chat prompts', () => {
+  it('gives the link at once to a client that declares prompts but is not known to show them', async () => {
+    let asked = false;
+    const { call } = await session(async () => {
+      asked = true;
+      return new Promise<ElicitResult>(() => {});
+    }, 'claude-ai');
+    const r = await call('hand_off', { reason: 'Sign in.' });
+    expect(asked).toBe(false);
+    linkIn(r.text);
+    expect((await call('shell', { command: 'echo hi' })).isError).toBe(true);
+  });
+
   it('resumes when the person answers done, without giving the model the link', async () => {
     const { call, asked } = await session(async () => ({ action: 'accept', content: { done: true } }));
     const r = await call('hand_off', { reason: 'Enter the 2FA code.' });
