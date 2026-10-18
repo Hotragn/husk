@@ -365,6 +365,19 @@ POST /v1/approvals/:approvalId     body: { approve: boolean, remember?: boolean 
 An unanswered approval is denied after 120 seconds. [Approvals](/security/approvals) is
 the full behaviour.
 
+```text
+GET  /v1/handoffs                    -> { handoffs: PendingHandoff[] }
+GET  /v1/handoffs/:handoffId/screen  -> image/jpeg (header x-husk-viewport: <w>x<h>)
+POST /v1/handoffs/:handoffId/input   body: click | scroll | text | key  -> 204
+POST /v1/handoffs/:handoffId/done    -> { handoffId, outcome: "done" }
+```
+
+A handoff resumes only when a person posts `/done`. A dropped connection or a timeout
+leaves the run paused, and cancelling the run ends the wait. The screen and input
+endpoints work only while the handoff is open, never launch a browser, and accept mouse
+and keyboard events only: no navigation, no script, no raw CDP. Typed text is not
+logged. The console's Handoffs panel uses all four.
+
 <Note>
 `docs/API.md` shows the event as `{"type":"approval_required","approvalId":"apr_x","call":{…}}`.
 The server emits `request`, an `ApprovalRequest`, not `call`. `call` is what the

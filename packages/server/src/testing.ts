@@ -267,6 +267,8 @@ export interface FakeAgentScript {
   fail?: Error;
   /** Ask for approval on this tool call before finishing. */
   approvalFor?: { id: string; name: string; args: Record<string, unknown> };
+  /** Hand off to a person before finishing, as the hand_off tool does. */
+  handoffFor?: { reason: string; computerId?: string };
   /** Block until this resolves, so a test can cancel mid-run. */
   hold?: Promise<void>;
 }
@@ -287,6 +289,14 @@ export function fakeAgentFactory(script: FakeAgentScript = {}): AgentFactory {
 
     const body = async function* (opts: ServerRunOptions): AsyncGenerator<RunEvent> {
       yield { type: 'run_start', runId: 'agent_own_id', husk: 'fake', model: opts.model ?? 'auto' };
+      if (script.handoffFor && opts.onHandoff) {
+        const never = new AbortController().signal;
+        const { reason, computerId } = script.handoffFor;
+        await opts.onHandoff(
+          { runId: 'agent_own_id', huskId: 'fake', reason, ...(computerId ? { computerId } : {}) },
+          opts.signal ?? never,
+        );
+      }
       if (script.approvalFor && opts.onApproval) {
         const approved = await opts.onApproval({
           runId: 'agent_own_id',

@@ -14,6 +14,8 @@ export const SERVER_ERROR_CODES = [
   'E_HUSK_NOT_FOUND',
   'E_RUN_NOT_FOUND',
   'E_APPROVAL_NOT_FOUND',
+  'E_HANDOFF_NOT_FOUND',
+  'E_BROWSER_NOT_FOUND',
   'E_TRANSCRIPT_NOT_FOUND',
   'E_ROUTE_NOT_FOUND',
 ] as const;
@@ -137,7 +139,7 @@ export function installErrorHandling(app: FastifyInstance): void {
   });
 }
 
-type Missing = 'computer' | 'husk' | 'run' | 'approval' | 'transcript';
+type Missing = 'computer' | 'husk' | 'run' | 'approval' | 'handoff' | 'transcript';
 
 // These name real commands and real endpoints. A hint that sends someone to
 // `husk ls` -- which does not exist -- costs more trust than no hint at all.
@@ -146,6 +148,7 @@ const MISSING_HINTS: Record<Missing, string> = {
   husk: 'list them with `GET /v1/husks`, or look in ~/.husk/husks',
   run: 'list recent runs with `GET /v1/runs`',
   approval: 'approvals expire 120s after they are raised',
+  handoff: 'list the ones waiting with `GET /v1/handoffs`; a handoff ends when its run does',
   transcript: 'import it again with `husk import`',
 };
 

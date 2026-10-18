@@ -1,7 +1,9 @@
+import { livePageFor } from '@husk-ai/browser';
 import { HuskError, isHuskError } from '@husk-ai/core';
 import type {
   ApprovalRequest,
   Computer,
+  HandoffRequest,
   ComputerSpec,
   HuskSpec,
   ModelMessage,
@@ -11,6 +13,8 @@ import type {
 } from '@husk-ai/core';
 import { ApprovalRegistry } from './approvals.js';
 import type { PendingApproval } from './approvals.js';
+import { HandoffRegistry } from './handoffs.js';
+import type { PendingHandoff } from './handoffs.js';
 import type { ComputerSourceLike, ManagerLike, ResolvedDeps, ServerRunOptions } from './deps.js';
 import { EventBus } from './events.js';
 import { huskError } from './errors.js';
@@ -88,6 +92,7 @@ export interface RunnerOptions {
  */
 export class Runner {
   readonly approvals: ApprovalRegistry;
+  readonly handoffs = new HandoffRegistry();
   private readonly active = new Map<string, ActiveRun>();
 
   constructor(
@@ -123,6 +128,7 @@ export class Runner {
     const n = this.active.size;
     for (const run of this.active.values()) run.abort.abort(new HuskError('E_ABORTED', reason));
     this.approvals.denyAll();
+    this.handoffs.denyAll();
     return n;
   }
 
@@ -153,6 +159,26 @@ export class Runner {
     if (body.history) opts.history = body.history;
     if (body.model) opts.model = body.model;
     if (body.vars) opts.vars = body.vars;
+    // Not gated on approval mode: a handoff pauses the run, it does not act on
+    // the machine, so there is nothing for an approver to decide.
+    opts.onHandoff = async (request: HandoffRequest, runSignal: AbortSignal) => {
+      // Nobody may be watching yet, and the browser closes itself after five idle
+      // minutes. The login form the person is coming to fill in has to still be there.
+      const computerId = request.computerId;
+      const keepAlive = computerId ? setInterval(() => livePageFor(computerId), 60_000) : undefined;
+      keepAlive?.unref?.();
+      try {
+        return await this.handoffs.request(
+          { runId, husk: spec.name, reason: request.reason, ...(computerId ? { computerId } : {}), signal: runSignal },
+          (pending: PendingHandoff) => {
+            onEvent({ type: 'handoff_required', request });
+            this.bus.emit('runs', 'handoff_required', pending);
+          },
+        );
+      } finally {
+        if (keepAlive) clearInterval(keepAlive);
+      }
+    };
     if (approvalMode === 'ask') {
       opts.onApproval = (request: ApprovalRequest) => {
         // The approval queue is keyed on a tool call; a free-form ctx.confirm has
