@@ -88,3 +88,38 @@ describe('bearerToken', () => {
     expect(bearerToken(req())).toBeUndefined();
   });
 });
+
+describe('DNS rebinding, with no token', () => {
+  it('answers loopback names and refuses any other Host', async () => {
+    const { buildTestApp } = await import('./testing.js');
+    const harness = await buildTestApp();
+    try {
+      for (const host of ['localhost:7377', '127.0.0.1:7377', '[::1]:7377', 'localhost']) {
+        const ok = await harness.app.inject({ method: 'GET', url: '/v1/handoffs', headers: { host } });
+        expect(ok.statusCode, host).toBe(200);
+      }
+      for (const host of ['evil.example', 'evil.example:7377', '127.0.0.1.evil.example', '192.168.1.10:7377']) {
+        const res = await harness.app.inject({ method: 'GET', url: '/v1/handoffs', headers: { host } });
+        expect(res.statusCode, host).toBe(401);
+        expect(res.json().error.hint).toMatch(/HUSK_TOKEN/);
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it('leaves Host alone once a token is set, because the token is the defence', async () => {
+    const { buildTestApp } = await import('./testing.js');
+    const harness = await buildTestApp({ token: 'test-token-0123456789' });
+    try {
+      const res = await harness.app.inject({
+        method: 'GET',
+        url: '/v1/handoffs',
+        headers: { host: 'husk.example.com', authorization: 'Bearer test-token-0123456789' },
+      });
+      expect(res.statusCode).toBe(200);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+});
