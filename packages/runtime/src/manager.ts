@@ -1,6 +1,6 @@
 import { readFile, mkdir, rename, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { HuskError, createLogger, ensurePaths, notifyComputerDestroyed } from '@husk-ai/core';
+import { HuskError, chatIdentityOf, createLogger, ensurePaths, notifyComputerDestroyed } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -227,7 +227,10 @@ export class ComputerManager {
     for (const p of this.providers.values()) {
       try {
         const c = await p.get(id);
-        if (c) return c;
+        if (c) {
+          Object.assign(c.info, chatIdentityOf(c.info.spec?.labels));
+          return c;
+        }
       } catch {
         // One broken provider must not hide a machine owned by another.
       }
@@ -239,7 +242,7 @@ export class ComputerManager {
     const all: ComputerInfo[] = [];
     for (const p of this.providers.values()) {
       try {
-        all.push(...(await p.list()));
+        all.push(...(await p.list()).map((info) => ({ ...info, ...chatIdentityOf(info.spec?.labels) })));
       } catch (err) {
         this.log.debug(`provider ${p.name} could not list computers`, err);
       }

@@ -111,6 +111,13 @@ POST   /v1/computers/:id/stop   -> ComputerInfo
 POST   /v1/computers/:id/start  -> ComputerInfo
 ```
 
+A computer made from a chat app carries `platform` ("Claude Desktop", "Cursor",
+"Claude Code"), `chatLabel` ("Claude Desktop · chat started 10:42") and
+`identitySource`: `session` when the host gave the server process a session id,
+`named` for `--session`, or `first-call` when the chat carries the computer id itself.
+They come from the client's own name and the start time, never from chat titles or
+chat content.
+
 ### Exec
 
 ```

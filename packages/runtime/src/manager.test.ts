@@ -200,3 +200,23 @@ describe('status', () => {
     expect(rows[1]).toMatchObject({ available: true, isolated: false, reason: 'guardrails, not a sandbox' });
   });
 });
+
+describe('list() carries chat identity', () => {
+  it('lifts platform, chat label and identity source out of the labels', async () => {
+    const info = {
+      id: 'cmp_1',
+      name: 'x',
+      provider: 'docker',
+      state: 'running',
+      image: 'x',
+      workdir: '/work',
+      createdAt: '2026-10-18T10:42:00Z',
+      lastUsedAt: '2026-10-18T10:42:00Z',
+      spec: { labels: { 'husk.platform': 'Cursor', 'husk.chat': 'Cursor · chat started 10:42', 'husk.identity': 'first-call' } },
+    } as ComputerInfo;
+    const p = new FakeProvider('docker', 1, up(true));
+    p.list = async () => [info];
+    const [listed] = await manager([p]).list();
+    expect(listed).toMatchObject({ platform: 'Cursor', chatLabel: 'Cursor · chat started 10:42', identitySource: 'first-call' });
+  });
+});
