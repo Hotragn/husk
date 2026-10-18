@@ -64,6 +64,22 @@ claude mcp add husk-api  -- npx -y @husk-ai/mcp --session api  --flavor python
 claude mcp add husk-web  -- npx -y @husk-ai/mcp --session web  --flavor node
 ```
 
+## One computer per chat
+
+Each chat gets its own computer, made on its first Husk call. How Husk tells chats
+apart depends on what the app provides:
+
+| app | signal | result |
+| --- | --- | --- |
+| Claude Code | `CLAUDE_CODE_SESSION_ID`, one server process per session | one computer per session, no id needed |
+| `--session <key>` | your key | one durable, named computer |
+| anything else (Claude Desktop, Cursor, ...) | none; one process may serve every chat | the first call passes `computer: "new"` and gets an id; later calls pass that id |
+
+With no id, a call reuses the computer only when there is exactly one. With several, it
+creates nothing and asks the model which one it means. An id from outside this server
+process is refused. Each computer is labelled like "Claude Desktop · chat started
+10:42", from the app's own name and the time, never from the chat's title or content.
+
 ## What kind of machine you get
 
 Husk picks the best provider available and **tells the model which one it got**, in the

@@ -39,6 +39,9 @@ const computer = {
     return { exitCode: 0, stdout: 'ok', stderr: '', durationMs: 1, truncated: false, timedOut: false };
   },
   async destroy() {},
+  async refresh() {
+    return computer.info;
+  },
 } as unknown as Computer;
 
 const open: HuskMcpServer[] = [];
