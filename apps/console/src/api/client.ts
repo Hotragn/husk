@@ -399,6 +399,13 @@ export class HuskApi {
     return res.handoffs;
   }
 
+  /** `GET /v1/handoffs/:id`: one open handoff, e.g. the one a handoff link opens. */
+  getHandoff(handoffId: string, signal?: AbortSignal): Promise<PendingHandoff> {
+    return this.client.http.request<PendingHandoff>('GET', `/v1/handoffs/${enc(handoffId)}`, {
+      ...(signal ? { signal } : {}),
+    });
+  }
+
   /**
    * `GET /v1/handoffs/:id/screen` -> a JPEG and the page's CSS viewport.
    *

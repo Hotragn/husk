@@ -31,6 +31,16 @@ Works the same in Cursor, Zed, or anything else that speaks MCP:
 | `list_dir` | list a directory |
 | `expose_port` | publish a port and get a reachable URL |
 | `computer_info` | OS, kernel, CPU, memory, disk, network, installed runtimes |
+| `hand_off` | give the computer to the user for a login, 2FA code, CAPTCHA or payment prompt |
+| `hand_off_done` | take it back once the user says they are done |
+
+While a handoff is open every other computer tool refuses, so the model cannot type into
+the page you are signing in on. Clients that support MCP form elicitation (Claude Code,
+Cursor, VS Code) ask "I'm done" in the chat; others get a link to relay, and the model
+waits for your word. Nothing resumes on a timeout.
+
+Three prompts ship as one-click starters: **Set up a project**, **Research a topic with
+sources** and **Fill out a web form with me**. Claude Code lists them as `/husk:<name>`.
 
 `computer_info` exists so a model spends one turn learning the machine instead of four
 probing it with `uname`, `nproc`, `df` and `which python3`.

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { readViewerToken, storeViewerToken } from './viewerToken';
+import { linkedHandoffId, readViewerToken, storeViewerToken } from './viewerToken';
 
 describe('viewer authentication', () => {
   beforeEach(() => {
@@ -26,5 +26,13 @@ describe('viewer authentication', () => {
     expect(window.location.hash).toBe('#/files');
     storeViewerToken('');
     expect(readViewerToken().token).toBe('');
+  });
+
+  it('moves a handoff key out of the address bar and keeps only the handoff id', () => {
+    window.history.replaceState(null, '', '/#handoff=hnd_1&token=abc123');
+    expect(readViewerToken()).toEqual({ token: 'abc123', fromLink: true });
+    expect(window.location.hash).toBe('#handoff=hnd_1');
+    expect(window.location.href).not.toContain('abc123');
+    expect(linkedHandoffId()).toBe('hnd_1');
   });
 });

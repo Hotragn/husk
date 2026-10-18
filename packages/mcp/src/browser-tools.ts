@@ -73,6 +73,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
   {
     name: 'browser_type',
     description:
+      'Never type the user\'s passwords or codes yourself: call hand_off. ' +
       'Type into the field with this ref, replacing what is already there. Set submit to ' +
       'press Enter afterwards. Returns a fresh snapshot.',
     inputSchema: {

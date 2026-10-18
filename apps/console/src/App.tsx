@@ -16,7 +16,8 @@ import { ComputersPanel } from './panels/ComputersPanel';
 import { TerminalPanel } from './panels/TerminalPanel';
 import { FilesPanel } from './panels/FilesPanel';
 import { BrowserPanel } from './panels/BrowserPanel';
-import { HandoffsPanel, useHandoffs } from './panels/HandoffsPanel';
+import { HandoffsPanel, LinkedHandoff, useHandoffs } from './panels/HandoffsPanel';
+import { linkedHandoffId } from './state/viewerToken';
 import { HusksPanel } from './panels/HusksPanel';
 import { DoctorPanel } from './panels/DoctorPanel';
 import { EventsPanel } from './panels/EventsPanel';
@@ -54,12 +55,13 @@ export default function App() {
 function ConnectionShell() {
   const { health, status, token, error, retryNow } = useConnection();
   const { theme, toggle } = useTheme();
-  if (health && health.mode !== 'starter') return <ComputersProvider><Shell /></ComputersProvider>;
+  const handoffId = linkedHandoffId();
+  if (health && health.mode !== 'starter' && !handoffId) return <ComputersProvider><Shell /></ComputersProvider>;
   return <>
     <a className="skip-link" href="#main">Skip to content</a>
     <div className="starter-app">
       <header className="starter-header"><a className="starter-brand" href="#main">Husk <span>workspace</span></a><div className="btn-row"><StatusDot tone={status === 'connected' ? 'success' : status === 'disconnected' ? 'danger' : 'info'} label={status === 'connected' ? 'Connected' : status === 'disconnected' ? 'Disconnected' : 'Connecting'} /><Button onClick={toggle}>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</Button></div></header>
-      {status === 'disconnected' && !token ? <DisconnectedScreen /> : <main id="main" className="starter-main" tabIndex={-1}>{status === 'disconnected' ? <section className="workspace-welcome"><h1>Reconnect to your workspace</h1><p>{error?.message ?? 'Husk is not responding.'} Open the workspace again from your AI app to reconnect. Your saved files stay on this device.</p><Button onClick={retryNow}>Try again</Button></section> : health ? <HomePanel /> : <p role="status">Opening your workspace…</p>}</main>}
+      {status === 'disconnected' && !token ? <DisconnectedScreen /> : <main id="main" className="starter-main" tabIndex={-1}>{status === 'disconnected' ? <section className="workspace-welcome"><h1>Reconnect to your workspace</h1><p>{error?.message ?? 'Husk is not responding.'} Open the workspace again from your AI app to reconnect. Your saved files stay on this device.</p><Button onClick={retryNow}>Try again</Button></section> : health ? (handoffId ? <LinkedHandoff handoffId={handoffId} /> : <HomePanel />) : <p role="status">Opening your workspace…</p>}</main>}
     </div>
   </>;
 }

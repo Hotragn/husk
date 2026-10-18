@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { HuskApi } from '../api/client';
-import { HandoffsPanel } from './HandoffsPanel';
+import { HandoffsPanel, LinkedHandoff } from './HandoffsPanel';
 
 const api = new HuskApi({ baseUrl: 'http://localhost:7377', token: 'test-token' });
 vi.mock('../state/connection', () => ({ useConnection: () => ({ api }) }));
@@ -23,6 +23,9 @@ describe('Handoffs panel', () => {
         const path = new URL(input).pathname;
         const auth = new Headers(init.headers).get('authorization');
         requests.push({ path, method: init.method ?? 'GET', auth, ...(init.body ? { body: JSON.parse(String(init.body)) } : {}) });
+        if (path === '/v1/handoffs/hnd_1' && (init.method ?? 'GET') === 'GET') {
+          return open ? Response.json(handoff) : Response.json({ error: { code: 'E_HANDOFF_NOT_FOUND', message: 'gone' } }, { status: 404 });
+        }
         if (path === '/v1/handoffs') return Response.json({ handoffs: open ? [handoff] : [] });
         if (path === '/v1/handoffs/hnd_1/screen') {
           return new Response(new Blob(['jpeg']), { headers: { 'content-type': 'image/jpeg', 'x-husk-viewport': '1280x720' } });
@@ -69,5 +72,21 @@ describe('Handoffs panel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Yes, hand back to the agent' }));
     await waitFor(() => expect(requests.some((r) => r.path.endsWith('/done') && r.method === 'POST')).toBe(true));
     expect(await screen.findByText('Nothing is waiting on you')).toBeTruthy();
+  });
+
+  it('opens one handoff from a link, with the reason as text, and never lists the others', async () => {
+    const { container } = render(<LinkedHandoff handoffId="hnd_1" />);
+    expect(await screen.findByText(REASON)).toBeTruthy();
+    expect(container.querySelector('img[src="x"]')).toBeNull();
+    expect(requests.some((r) => r.path === '/v1/handoffs')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes, hand back to the agent' }));
+    expect(await screen.findByText('Handed back')).toBeTruthy();
+  });
+
+  it('says plainly when the linked handoff has ended', async () => {
+    open = false;
+    render(<LinkedHandoff handoffId="hnd_1" />);
+    expect(await screen.findByText('This handoff has ended')).toBeTruthy();
   });
 });

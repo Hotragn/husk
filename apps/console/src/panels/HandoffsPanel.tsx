@@ -115,6 +115,38 @@ export function HandoffsPanel() {
   );
 }
 
+/**
+ * One handoff, opened from the link a chat gave the person. The link's key
+ * opens this handoff and nothing else, so there is no list and no navigation.
+ */
+export function LinkedHandoff({ handoffId }: { handoffId: string }) {
+  const { api } = useConnection();
+  const [handoff, setHandoff] = useState<PendingHandoff | null>(null);
+  const [error, setError] = useState<DisplayError | null>(null);
+  const [finished, setFinished] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    api.getHandoff(handoffId, controller.signal).then(setHandoff, (err: unknown) => {
+      if (!controller.signal.aborted) setError(toDisplayError(err));
+    });
+    return () => controller.abort();
+  }, [api, handoffId]);
+
+  if (finished) {
+    return <EmptyState title="Handed back" body="Your AI chat has the computer again. You can close this tab." />;
+  }
+  if (error) {
+    return error.code === 'E_HANDOFF_NOT_FOUND' ? (
+      <EmptyState title="This handoff has ended" body="It was finished or the chat closed. Ask your AI chat for a new link if it still needs you." />
+    ) : (
+      <ErrorBlock error={error} />
+    );
+  }
+  if (!handoff) return <p role="status">Opening the computer…</p>;
+  return <HandoffView handoff={handoff} onDone={() => setFinished(true)} />;
+}
+
 function HandoffView({ handoff, onDone }: { handoff: PendingHandoff; onDone: () => void }) {
   const { api } = useConnection();
   const [frameUrl, setFrameUrl] = useState<string | null>(null);

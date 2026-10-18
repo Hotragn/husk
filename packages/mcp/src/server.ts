@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, GetPromptRequestSchema, ListPromptsRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { HUSK_VERSION, createLogger, quiet, redact } from '@husk-ai/core';
 import type { Computer, ComputerInfo, ComputerSpec, Logger } from '@husk-ai/core';
@@ -9,8 +9,10 @@ import { ComputerManager, ensureRunning } from '@husk-ai/runtime';
 import { audited } from '@husk-ai/core';
 import { callTool, toolsFor } from './tools.js';
 import { WorkspaceStore } from '@husk-ai/workspaces';
-import { startWorkspaceViewer } from '@husk-ai/server/workspace-viewer';
+import { HandoffRegistry, handoffLink, startWorkspaceViewer } from '@husk-ai/server/workspace-viewer';
 import type { WorkspaceProfile } from '@husk-ai/server/workspace-viewer';
+import { PROMPTS, getPrompt } from './prompts.js';
+import { HANDED_BACK, HANDOFF_TOOLS, HANDOFF_TOOL_NAMES, MAX_REASON, heldText, relayText } from './handoff-tools.js';
 import { WORKSPACE_TOOLS, WORKSPACE_TOOL_NAMES, WORKSPACE_INSTRUCTIONS, WorkspaceTools } from './workspace-tools.js';
 
 export interface HuskMcpOptions {
@@ -42,6 +44,23 @@ export interface HuskMcpOptions {
  *    machine this is, because a model that believes it is sandboxed when it is
  *    not will make worse decisions than one that knows.
  */
+/**
+ * Sent once at initialize, on every chat, and some hosts truncate long ones:
+ * kept with the workspace text under 300 words (instructions.test.ts).
+ */
+export const COMPUTER_INSTRUCTIONS =
+  'Husk gives you a computer, usually a Linux container; /work persists for this session. Call ' +
+  '`computer_info` once before assuming a runtime or even a POSIX shell: on Windows without WSL it is cmd.exe.\n' +
+  'Pick the tool: `browse` to read a public page fast; `browser_*` for logins, pages that need JavaScript, ' +
+  'forms and anything that needs a session; `shell` for everything else. Take a `browser_snapshot` before ' +
+  'you click or type, and act on its refs; never guess.\n' +
+  'On an error, read its hint and retry once with a fix. If it fails again, explain to the user instead of looping.\n' +
+  'For a login, 2FA, CAPTCHA or payment prompt, call `hand_off` and let the user do it. Never try to solve ' +
+  "a CAPTCHA, and never type the user's credentials yourself.";
+
+/** How long a tool call waits on the in-chat "Done?" before handing the model the link instead. */
+const ELICIT_WAIT_MS = 200_000;
+
 export class HuskMcpServer {
   private readonly mcp: Server;
   private readonly manager: ComputerManager;
@@ -58,7 +77,12 @@ export class HuskMcpServer {
   private profile: WorkspaceProfile;
   private readonly workspaceStore: WorkspaceStore;
   private readonly workspaceTools: WorkspaceTools;
-  private viewer?: Promise<{ url: string; close: () => Promise<void> }>;
+  private viewer?: Promise<{ url: string; origin: string; close: () => Promise<void> }>;
+  /** Handoffs open in this session. A person ends one; closing the session ends them all. */
+  private readonly handoffs = new HandoffRegistry();
+  private readonly closing = new AbortController();
+  /** Ended from the viewer, so a later hand_off_done for one is an answer, not an error. */
+  private readonly handedBack = new Set<string>();
   private confirmedProvider?: string;
 
   constructor(opts: HuskMcpOptions = {}) {
@@ -78,15 +102,11 @@ export class HuskMcpServer {
       {
         // `listChanged` is declared because the tool descriptions are not final
         // at this point: see `announceDegradation`.
-        capabilities: { tools: { listChanged: true } },
+        capabilities: { tools: { listChanged: true }, prompts: {} },
         instructions: WORKSPACE_INSTRUCTIONS + '\n' + (this.profile === 'starter'
           ? 'This session starts with workspace tools only. The user can enable computer tools in the viewer Advanced settings after reviewing the environment.'
           :
-          'Husk gives you a computer -- on almost every host a Linux container. Use `shell` ' +
-          'for anything a command line can do; the filesystem at /work persists across calls ' +
-          'in this session. Call `computer_info` once before assuming a runtime, a tool or ' +
-          'even a POSIX shell is there: on a Windows host without a working WSL this is ' +
-          'cmd.exe, and the first tool result will say so.'),
+          COMPUTER_INSTRUCTIONS),
       },
     );
 
@@ -94,12 +114,29 @@ export class HuskMcpServer {
   }
 
   private registerHandlers(): void {
-    this.mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...WORKSPACE_TOOLS, ...(this.profile === 'computer' ? toolsFor(this.degraded) : [])] }));
+    this.mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...WORKSPACE_TOOLS, ...(this.profile === 'computer' ? [...toolsFor(this.degraded), ...HANDOFF_TOOLS] : [])] }));
 
-    this.mcp.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
+    this.mcp.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: this.profile === 'computer' ? PROMPTS : [] }));
+    this.mcp.setRequestHandler(GetPromptRequestSchema, async (request) => getPrompt(request.params.name, request.params.arguments));
+
+    this.mcp.setRequestHandler(CallToolRequestSchema, async (request, extra): Promise<CallToolResult> => {
       const { name, arguments: args } = request.params;
       if (WORKSPACE_TOOL_NAMES.has(name)) return this.workspaceTools.call(name, (args ?? {}) as Record<string, unknown>);
       if (this.profile !== 'computer') return { isError: true, content: [{ type: 'text', text: 'Computer tools are disabled. The user can enable them from Advanced in the workspace viewer after reviewing the environment.' }] };
+      if (HANDOFF_TOOL_NAMES.has(name)) {
+        const a = (args ?? {}) as Record<string, unknown>;
+        try {
+          return name === 'hand_off' ? await this.handOff(a, extra.signal) : this.handOffDone(a);
+        } catch (err) {
+          return { isError: true, content: [{ type: 'text', text: redact((err as Error).message) }] };
+        }
+      }
+      // The person holds the computer until they say done. The model must not
+      // type into the page they are signing in on, or run commands under them.
+      const held = this.handoffs.list()[0];
+      if (held && name !== 'computer_info') {
+        return { isError: true, content: [{ type: 'text', text: heldText(held.handoffId, held.reason) }] };
+      }
       let computer: Computer;
       try {
         computer = await this.getComputer();
@@ -200,7 +237,93 @@ export class HuskMcpServer {
     return this.mcp;
   }
 
+  /**
+   * Give the computer to the person, and wait for them only where the client
+   * can ask them in-chat. Nothing here resumes on a timeout: a prompt that times
+   * out, errors or is dismissed leaves the handoff open, and the model is told
+   * to wait for the person's own word.
+   */
+  private async handOff(args: Record<string, unknown>, callSignal: AbortSignal): Promise<CallToolResult> {
+    const text = typeof args.reason === 'string' ? args.reason.trim() : '';
+    if (!text) throw new Error('hand_off needs a reason the user can read.');
+    if (text.length > MAX_REASON) throw new Error(`hand_off reason is over ${MAX_REASON} characters.`);
+    // Model text, headed for a person's screen.
+    const reason = redact(text);
+
+    const open = this.handoffs.list()[0];
+    if (open) throw new Error(heldText(open.handoffId, open.reason));
+
+    let handoffId = '';
+    const finished = this.handoffs.request(
+      {
+        runId: this.sessionKey,
+        husk: 'chat',
+        reason,
+        ...(this.computer ? { computerId: this.computer.id } : {}),
+        signal: this.closing.signal,
+      },
+      (pending) => {
+        handoffId = pending.handoffId;
+      },
+    );
+    void finished.then((outcome) => {
+      if (outcome === 'done') this.handedBack.add(handoffId);
+    });
+    const { origin } = await this.openViewerServer();
+    const link = handoffLink(origin, handoffId, this.handoffs.secretOf(handoffId) ?? '');
+
+    // In-chat "Done?" where the client declared form elicitation.
+    // https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation
+    // `elicitation: {}` means form mode; a client that lists only `url` has no form.
+    const elicit = this.mcp.getClientCapabilities()?.elicitation;
+    if (elicit && (elicit.form !== undefined || elicit.url === undefined)) {
+      const stop = new AbortController();
+      const onCallAbort = (): void => stop.abort();
+      callSignal.addEventListener('abort', onCallAbort, { once: true });
+      try {
+        const asked = this.mcp
+          .elicitInput(
+            {
+              mode: 'form',
+              message: `${reason}\n\nOpen ${link} on this device to see and use the computer's browser. Answer here when you are done.`,
+              requestedSchema: {
+                type: 'object',
+                properties: { done: { type: 'boolean', title: "I'm done", description: 'Hand the computer back to the AI.' } },
+                required: ['done'],
+              },
+            },
+            // Under the 240s that claude.ai and Claude Desktop allow a whole tool
+            // call (https://claude.com/docs/connectors/building), so the model
+            // still gets the link back. When this fires the handoff stays open.
+            { signal: stop.signal, timeout: ELICIT_WAIT_MS },
+          )
+          .then((r) => (r.action === 'accept' && r.content?.done === true ? 'done' : 'not-yet'))
+          .catch(() => 'not-yet' as const);
+        // The person may press Done in the viewer before answering the prompt.
+        const answer = await Promise.race([asked, finished.then((o) => (o === 'done' ? 'done' : 'not-yet'))]);
+        if (answer === 'done') {
+          if (this.handoffs.secretOf(handoffId)) this.handoffs.complete(handoffId);
+          return { content: [{ type: 'text', text: HANDED_BACK }] };
+        }
+      } finally {
+        stop.abort();
+        callSignal.removeEventListener('abort', onCallAbort);
+      }
+    }
+    return { content: [{ type: 'text', text: relayText(handoffId, reason, link) }] };
+  }
+
+  /** The model relays the person's "done". Only meaningful after hand_off. */
+  private handOffDone(args: Record<string, unknown>): CallToolResult {
+    const handoffId = typeof args.handoff === 'string' ? args.handoff : '';
+    if (this.handedBack.has(handoffId)) return { content: [{ type: 'text', text: HANDED_BACK }] };
+    if (!this.handoffs.secretOf(handoffId)) throw new Error(`There is no open handoff "${handoffId}".`);
+    this.handoffs.complete(handoffId);
+    return { content: [{ type: 'text', text: HANDED_BACK }] };
+  }
+
   async close(): Promise<void> {
+    this.closing.abort();
     if (this.viewer) await quiet(async () => (await this.viewer!).close());
     await quiet(() => this.mcp.close());
     if (this.ephemeral && this.computer) {
@@ -210,8 +333,13 @@ export class HuskMcpServer {
   }
 
   private async openViewer(): Promise<string> {
+    return (await this.openViewerServer()).url;
+  }
+
+  private openViewerServer(): Promise<{ url: string; origin: string; close: () => Promise<void> }> {
     this.viewer ??= startWorkspaceViewer({
       store: this.workspaceStore,
+      handoffs: this.handoffs,
       getProfile: () => this.profile,
       getCapabilities: async () => {
         const providers = await this.manager.status();
@@ -232,7 +360,7 @@ export class HuskMcpServer {
         await quiet(() => this.mcp.sendToolListChanged());
       },
     }).catch((error) => { this.viewer = undefined; throw error; });
-    return (await this.viewer).url;
+    return this.viewer;
   }
 }
 
