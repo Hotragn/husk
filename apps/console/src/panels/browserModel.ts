@@ -10,7 +10,7 @@
 
 import type { DisplayError } from '../api/client';
 import type { SnapshotNode } from '../api/wire';
-import { sharesHostNetwork } from '@husk-ai/core';
+import { sharesHostNetwork } from '@husk-ai/core/contracts';
 
 /**
  * Refs `click` and `type` can actually resolve.

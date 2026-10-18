@@ -1,14 +1,5 @@
-import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
-
-/**
- * `@husk-ai/sdk` pulls `@husk-ai/core`'s barrel, which re-exports two Node-only
- * modules (`config.js`, `ids.js`). Without these aliases the bundle throws on
- * import in the browser. See `src/shims/node-builtins.ts` for the detail and
- * for why this is an upstream bug, not a console one.
- */
-const nodeShim = fileURLToPath(new URL('./src/shims/node-builtins.ts', import.meta.url));
 
 /**
  * In production `@husk-ai/server` serves this bundle from its own origin
@@ -27,19 +18,6 @@ const target = process.env.HUSK_URL ?? 'http://127.0.0.1:7377';
 
 export default defineConfig({
   plugins: [react()],
-  resolve: {
-    alias: [
-      { find: /^node:crypto$/, replacement: nodeShim },
-      { find: /^node:os$/, replacement: nodeShim },
-      { find: /^node:fs$/, replacement: nodeShim },
-      { find: /^node:path$/, replacement: nodeShim },
-    ],
-  },
-  optimizeDeps: {
-    // The workspace link means Vite would otherwise pre-bundle @husk-ai/sdk and
-    // bake the unaliased node: imports into the dep cache.
-    exclude: ['@husk-ai/sdk'],
-  },
   server: {
     proxy: {
       '/v1': { target, changeOrigin: true, ws: true },

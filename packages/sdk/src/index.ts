@@ -27,4 +27,4 @@ export { decodeEvents, parseFrame, readFrames } from './sse.js';
 export type { SseFrame } from './sse.js';
 export * from './types.js';
 
-export { HuskError, isHuskError } from '@husk-ai/core';
+export { HuskError, isHuskError } from '@husk-ai/core/contracts';

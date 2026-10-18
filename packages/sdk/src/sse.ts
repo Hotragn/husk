@@ -1,4 +1,4 @@
-import { HuskError } from '@husk-ai/core';
+import { HuskError } from '@husk-ai/core/contracts';
 import { errorFromEventFrame } from './errors.js';
 
 /**

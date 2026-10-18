@@ -1,7 +1,3 @@
-// First, and it has to stay first: `@husk-ai/core`'s barrel builds a stderr
-// logger at import time, so `process` must exist before anything reaches
-// `@husk-ai/sdk`. See src/shims/process.ts.
-import './shims/process';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';

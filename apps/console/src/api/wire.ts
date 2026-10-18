@@ -24,7 +24,7 @@
  */
 
 import type { SnapshotNode } from '@husk-ai/browser';
-import type { BrowseBody } from '@husk-ai/core';
+import type { BrowseBody } from '@husk-ai/core/contracts';
 import type {
   ComputerInfo,
   ComputerListResponse,
@@ -110,7 +110,7 @@ export interface DirListResponse {
  * rather than a wire field, and the route's zod schema is `.strict()`, so
  * sending it would 422. The console used to rebuild that type by hand.
  */
-export type { BrowseLink, BrowsePage } from '@husk-ai/core';
+export type { BrowseLink, BrowsePage } from '@husk-ai/core/contracts';
 export type BrowseRequestBody = BrowseBody;
 
 /**

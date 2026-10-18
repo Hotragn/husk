@@ -1,5 +1,5 @@
-import { HuskError } from '@husk-ai/core';
-import type { HuskErrorCode } from '@husk-ai/core';
+import { HuskError } from '@husk-ai/core/contracts';
+import type { HuskErrorCode } from '@husk-ai/core/contracts';
 
 /**
  * The wire shape of a control-plane failure.
