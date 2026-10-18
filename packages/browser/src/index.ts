@@ -45,6 +45,7 @@ export {
   browserFor,
   closeAllBrowsers,
   closeBrowserFor,
+  livePageFor,
   warnIfDebugPortIsExposed,
 } from './session.js';
 export type { SessionOptions } from './session.js';
