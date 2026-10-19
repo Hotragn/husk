@@ -17,7 +17,7 @@ import type { ElicitResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Computer, Logger } from '@husk-ai/core';
 import type { ComputerManager } from '@husk-ai/runtime';
 import { WorkspaceStore } from '@husk-ai/workspaces';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HuskMcpServer } from './server.js';
 
 const silent = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger;
@@ -45,7 +45,10 @@ const computer = {
 } as unknown as Computer;
 
 const open: HuskMcpServer[] = [];
+// One chat per process, as Claude Code runs it; per-chat ids are identity.test.ts's.
+beforeEach(() => vi.stubEnv('CLAUDE_CODE_SESSION_ID', 'test-session'));
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(open.splice(0).map((s) => s.close()));
 });
 

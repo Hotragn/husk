@@ -100,22 +100,28 @@ describe('chats that share one server process', () => {
     expect(made).toHaveLength(2);
   });
 
-  it('reuse the only computer when a call names none', async () => {
+  it('never hand a second chat the first chat\'s computer when it names none', async () => {
     const { made, shell } = await connect('claude-ai');
-    await shell();
-    expect((await shell()).text).toContain('on cmp_1');
+    // Chat A's first call, with no id: nothing exists yet, so this can only be chat A's.
+    const a = await shell();
+    expect(a.text).toContain('Your computer id is cmp_1');
+    // A call with no id now could be chat B's first call. It is refused, not given cmp_1.
+    const b = await shell();
+    expect(b.isError).toBe(true);
+    expect(b.text).toContain('computer: "new"');
+    expect(b.text).not.toContain('on cmp_1');
     expect(made).toHaveLength(1);
   });
 
-  it('refuse an ambiguous call and create nothing', async () => {
+  it('refuse a call with no id once computers exist, without naming them, and create nothing', async () => {
     const { made, shell } = await connect('claude-ai');
     await shell('new');
     await shell('new');
     const r = await shell();
     expect(r.isError).toBe(true);
-    expect(r.text).toContain('Several Husk computers');
-    expect(r.text).toContain('cmp_1');
-    expect(r.text).toContain('cmp_2');
+    // Listing them would show one chat the other chats' ids.
+    expect(r.text).not.toContain('cmp_1');
+    expect(r.text).not.toContain('cmp_2');
     expect(made).toHaveLength(2);
   });
 

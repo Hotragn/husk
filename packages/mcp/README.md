@@ -75,8 +75,9 @@ apart depends on what the app provides:
 | `--session <key>` | your key | one durable, named computer |
 | anything else (Claude Desktop, Cursor, ...) | none; one process may serve every chat | the first call passes `computer: "new"` and gets an id; later calls pass that id |
 
-With no id, a call reuses the computer only when there is exactly one. With several, it
-creates nothing and asks the model which one it means. An id from outside this server
+A call with no id never reuses a computer, because it could be another chat's first
+call: it creates one only while none exists yet, and otherwise creates nothing and asks
+the model to pass its id, without naming the others. An id from outside this server
 process is refused. Each computer is labelled like "Claude Desktop · chat started
 10:42", from the app's own name and the time, never from the chat's title or content.
 

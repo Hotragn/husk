@@ -252,13 +252,14 @@ export class HuskMcpServer {
     // One process, one chat: there is only ever this one computer.
     if (this.identity !== 'first-call') return this.single();
     if (id === 'new') return this.createComputer();
-    if (this.computers.size <= 1) return this.single();
-    const known = [...this.computers.values()].map(
-      (c) => `${c.id} (${c.info.spec.labels?.[IDENTITY_LABELS.chat] ?? 'no label'})`,
-    );
+    // No id from a host that may share this process across chats. Creating is
+    // safe only while nothing exists: then the computer can only be this chat's.
+    // Reusing one could hand this chat another chat's computer, so never.
+    if (this.computers.size === 0) return this.single();
     return (
-      `Several Husk computers are open here: ${known.join(', ')}. Pass computer: "<id>" with the id an earlier ` +
-      'Husk result in this conversation gave you, or computer: "new" if this conversation has none yet.'
+      'Pass computer: "<id>" with the Husk computer id an earlier Husk result in this conversation gave you, ' +
+      'or computer: "new" if this conversation has none yet. Husk does not guess, because this app may run ' +
+      'other chats through the same Husk.'
     );
   }
 

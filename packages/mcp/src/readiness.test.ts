@@ -8,7 +8,11 @@ import { HuskMcpServer } from './server.js';
 import type { HuskMcpOptions } from './server.js';
 
 const close: Array<() => Promise<void>> = [];
-beforeEach(() => vi.stubEnv('HUSK_SESSION', undefined));
+beforeEach(() => {
+  vi.stubEnv('HUSK_SESSION', undefined);
+  // One chat per process, as Claude Code runs it; per-chat ids are identity.test.ts's.
+  vi.stubEnv('CLAUDE_CODE_SESSION_ID', 'test-session');
+});
 afterEach(async () => {
   for (const fn of close.splice(0)) await fn();
   vi.unstubAllEnvs();
