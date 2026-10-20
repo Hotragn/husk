@@ -23,7 +23,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { toDisplayError } from '../api/client';
 import type { DisplayError } from '../api/client';
-import type { HandoffInput, HandoffKey, PendingHandoff } from '../api/wire';
+import type { HandoffInput, HandoffKey, PendingHandoff, ScopedComputer } from '../api/wire';
 import { Button, EmptyState, ErrorBlock, PanelHeader, StatusLine, formatWhen } from '../components/primitives';
 import { useConnection } from '../state/connection';
 
@@ -145,6 +145,88 @@ export function LinkedHandoff({ handoffId }: { handoffId: string }) {
   }
   if (!handoff) return <p role="status">Opening the computer…</p>;
   return <HandoffView handoff={handoff} onDone={() => setFinished(true)} />;
+}
+
+const COMPUTER_EVERY_MS = 3_000;
+
+/**
+ * One chat's computer, opened from its in-chat card. The link's token opens
+ * this computer and nothing else. When a handoff is waiting on it, this is the
+ * take-over view; otherwise it says what state the computer is in and shows a
+ * read-only frame of its browser, if one is open.
+ */
+export function LinkedComputer() {
+  const { api } = useConnection();
+  const [computer, setComputer] = useState<ScopedComputer | null>(null);
+  const [error, setError] = useState<DisplayError | null>(null);
+  const [frameUrl, setFrameUrl] = useState<string | null>(null);
+  // The handoff the person just finished, so a later one on this computer still shows.
+  const [handedBack, setHandedBack] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let url: string | null = null;
+    const tick = async () => {
+      try {
+        const next = await api.scopedComputer(controller.signal);
+        setComputer(next);
+        setError(null);
+        if (!next.handoff) {
+          try {
+            const frame = await api.scopedComputerScreen(controller.signal);
+            const objectUrl = URL.createObjectURL(frame.image);
+            if (url) URL.revokeObjectURL(url);
+            url = objectUrl;
+            setFrameUrl(objectUrl);
+          } catch {
+            setFrameUrl(null);
+          }
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) setError(toDisplayError(err));
+      }
+      if (!controller.signal.aborted) timer = setTimeout(tick, COMPUTER_EVERY_MS);
+    };
+    void tick();
+    return () => {
+      controller.abort();
+      if (timer) clearTimeout(timer);
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [api]);
+
+  if (error) {
+    return error.code === 'E_COMPUTER_NOT_FOUND' ? (
+      <EmptyState title="This link has expired" body="Links from a chat last a few minutes. Open the computer again from your AI chat." />
+    ) : (
+      <ErrorBlock error={error} />
+    );
+  }
+  if (!computer) return <p role="status">Opening the computer…</p>;
+  if (computer.handoff && computer.handoff.handoffId !== handedBack) {
+    return <HandoffView key={computer.handoff.handoffId} handoff={computer.handoff} onDone={() => setHandedBack(computer.handoff!.handoffId)} />;
+  }
+  return (
+    <div className="row-gap-4">
+      <div className="card" role="status" aria-live="polite">
+        <h3>{computer.state === 'running' ? 'Computer running' : `Computer ${computer.state}`}</h3>
+        {computer.label ? <p className="field-note">{computer.label}</p> : null}
+        <p className="field-note">
+          {handedBack ? 'Handed back. ' : ''}Nothing needs you right now. If your AI hands this computer to you, it
+          appears here.
+        </p>
+      </div>
+      {frameUrl ? (
+        <figure className="handoff-screen">
+          <img src={frameUrl} alt="What this computer's browser is showing" draggable={false} />
+          <figcaption className="field-note">A look at its browser, refreshed every few seconds. View only.</figcaption>
+        </figure>
+      ) : (
+        <StatusLine text="No browser is open on this computer." />
+      )}
+    </div>
+  );
 }
 
 function HandoffView({ handoff, onDone }: { handoff: PendingHandoff; onDone: () => void }) {

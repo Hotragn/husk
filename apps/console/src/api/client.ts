@@ -36,6 +36,7 @@ import type {
   HuskSummary,
   ModelListResponse,
   PendingHandoff,
+  ScopedComputer,
   RunRequestBody,
   RunStreamEvent,
   BrowserStatus,
@@ -411,6 +412,16 @@ export class HuskApi {
     return res.handoffs;
   }
 
+  /** `GET /v1/scoped/computer`: the computer a card's short-lived link opens, and its waiting handoff. */
+  scopedComputer(signal?: AbortSignal): Promise<ScopedComputer> {
+    return this.client.http.request<ScopedComputer>('GET', '/v1/scoped/computer', { ...(signal ? { signal } : {}) });
+  }
+
+  /** `GET /v1/scoped/computer/screen`: a read-only frame of that computer's browser. */
+  scopedComputerScreen(signal?: AbortSignal): Promise<HandoffFrame> {
+    return this.frame('/v1/scoped/computer/screen', signal);
+  }
+
   /** `GET /v1/handoffs/:id`: one open handoff, e.g. the one a handoff link opens. */
   getHandoff(handoffId: string, signal?: AbortSignal): Promise<PendingHandoff> {
     return this.client.http.request<PendingHandoff>('GET', `/v1/handoffs/${enc(handoffId)}`, {
@@ -424,8 +435,13 @@ export class HuskApi {
    * Through `fetch` directly because the viewport rides in a response header,
    * which `Http.bytes` does not hand back.
    */
-  async handoffScreen(handoffId: string, signal?: AbortSignal): Promise<HandoffFrame> {
-    const url = this.client.http.url(`/v1/handoffs/${enc(handoffId)}/screen`);
+  handoffScreen(handoffId: string, signal?: AbortSignal): Promise<HandoffFrame> {
+    return this.frame(`/v1/handoffs/${enc(handoffId)}/screen`, signal);
+  }
+
+  /** A JPEG frame and the page's CSS viewport, which rides in `x-husk-viewport`. */
+  private async frame(path: string, signal?: AbortSignal): Promise<HandoffFrame> {
+    const url = this.client.http.url(path);
     const headers: Record<string, string> = {};
     if (this.token) headers.authorization = `Bearer ${this.token}`;
     let res: Response;

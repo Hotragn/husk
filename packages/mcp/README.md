@@ -64,6 +64,21 @@ claude mcp add husk-api  -- npx -y @husk-ai/mcp --session api  --flavor python
 claude mcp add husk-web  -- npx -y @husk-ai/mcp --session web  --flavor node
 ```
 
+## The computer card
+
+In apps that render MCP Apps (Claude Desktop, claude.ai, Cursor, VS Code, ChatGPT), a
+small card shows up in the chat when its computer starts (`computer_info`) and when it
+hands off (`hand_off`): **Computer running · Open**, or **Waiting for you · Take over**.
+
+- The card is a sandboxed `ui://husk/computer-card.html` view that makes no network
+  requests. It reaches Husk only through the app, calling two app-only tools
+  (`computer_card_state`, `computer_card_link`), and asks the app to open the link it
+  gets back.
+- That link carries a short-lived token scoped to that one computer, so a card in one
+  chat cannot open another chat's computer. It never carries the server token.
+- Apps that do not render cards never see those two tools. They get
+  `computer_open_ui`, which returns the same link as text.
+
 ## One computer per chat
 
 Each chat gets its own computer, made on its first Husk call. How Husk tells chats

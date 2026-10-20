@@ -21,7 +21,10 @@ describe('health and doctor', () => {
     expect(res.json().uptimeSec).toBeTypeOf('number');
   });
 
-  it('reports the honest state of the machine at /v1/doctor', async () => {
+  // Doctor probes the real machine, which is the point of this test. On Windows
+  // that includes wsl.exe, synchronously, with 8s and 15s timeouts, so a slow or
+  // broken WSL takes seconds; the budget covers that rather than letting WSL fail it.
+  it('reports the honest state of the machine at /v1/doctor', { timeout: 30_000 }, async () => {
     const res = await harness.app.inject({ method: 'GET', url: '/v1/doctor' });
     expect(res.statusCode).toBe(200);
     const body = res.json();

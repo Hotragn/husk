@@ -16,6 +16,8 @@ export interface ToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** MCP Apps metadata (`ui.resourceUri`, `ui.visibility`), for clients that render cards. */
+  _meta?: Record<string, unknown>;
 }
 
 export const TOOLS: ToolDef[] = [

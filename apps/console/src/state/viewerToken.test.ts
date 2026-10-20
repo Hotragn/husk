@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { linkedHandoffId, readViewerToken, storeViewerToken } from './viewerToken';
+import { linkedComputerId, linkedHandoffId, readViewerToken, storeViewerToken } from './viewerToken';
 
 describe('viewer authentication', () => {
   beforeEach(() => {
@@ -34,5 +34,15 @@ describe('viewer authentication', () => {
     expect(window.location.hash).toBe('#handoff=hnd_1');
     expect(window.location.href).not.toContain('abc123');
     expect(linkedHandoffId()).toBe('hnd_1');
+  });
+});
+
+describe('a computer link from an in-chat card', () => {
+  it('moves the token out of the address bar and keeps only the computer id', () => {
+    window.history.replaceState(null, '', '/#computer=cmp_1&token=def456');
+    expect(readViewerToken()).toEqual({ token: 'def456', fromLink: true });
+    expect(window.location.hash).toBe('#computer=cmp_1');
+    expect(window.location.href).not.toContain('def456');
+    expect(linkedComputerId()).toBe('cmp_1');
   });
 });

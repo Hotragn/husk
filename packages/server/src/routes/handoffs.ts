@@ -3,7 +3,6 @@ import { livePageFor } from '@husk-ai/browser';
 import type { Page } from '@husk-ai/browser';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { bearerToken } from '../auth.js';
 import { ctxOf } from '../context.js';
 import { huskError, invalidSpec } from '../errors.js';
 import type { HandoffRegistry, PendingHandoff } from '../handoffs.js';
@@ -61,10 +60,10 @@ const InputSchema = z.discriminatedUnion('type', [
 export interface HandoffRouteOptions {
   registry: HandoffRegistry;
   /**
-   * Scope each request to one handoff by its own key, for a viewer that is not
-   * behind the server-wide token. Without it, the caller's auth is all there is.
+   * For a viewer that is not behind the server-wide token: whether this request
+   * may open this handoff. Without it, the caller's auth is all there is.
    */
-  perHandoffKeys?: boolean;
+  authorize?: (req: FastifyRequest, handoff: PendingHandoff) => boolean;
   onDone?: (handoff: PendingHandoff) => void;
 }
 
@@ -82,15 +81,18 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
 export function registerHandoffRoutes(app: FastifyInstance, opts: HandoffRouteOptions): void {
   const { registry } = opts;
 
-  /** The open handoff, after checking the key when keys are in use. A wrong key is a 404, not a 401. */
+  /** The open handoff, if this request may open it. Not allowed looks the same as not there. */
   const open = (req: FastifyRequest): PendingHandoff => {
     const { handoffId } = req.params as { handoffId: string };
-    if (opts.perHandoffKeys && !registry.verify(handoffId, bearerToken(req) ?? '')) {
+    // Behind the server token: the plain 404, whose hint points at the list.
+    if (!opts.authorize) return registry.get(handoffId);
+    const handoff = registry.isOpen(handoffId) ? registry.get(handoffId) : undefined;
+    if (!handoff || !opts.authorize(req, handoff)) {
       throw huskError('E_HANDOFF_NOT_FOUND', 'no open handoff with that link', {
-        hint: 'the handoff has ended, or the link is wrong; ask your AI chat for a new one',
+        hint: 'the handoff has ended, or the link has expired; ask your AI chat for a new one',
       });
     }
-    return registry.get(handoffId);
+    return handoff;
   };
 
   /** The page the person needs, scoped to an open handoff. Never launches a browser. */
