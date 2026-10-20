@@ -180,6 +180,31 @@ describe('computers', () => {
     expect((await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}` })).statusCode).toBe(404);
   });
 
+  it("deletes a chat's computer only with the id typed back as confirm", async () => {
+    const created = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/computers',
+      payload: { provider: 'local', labels: { 'husk.via': 'mcp' } },
+    });
+    const id = created.json().id as string;
+    const del = (query: string) => harness.app.inject({ method: 'DELETE', url: `/v1/computers/${id}${query}` });
+
+    expect((await del('')).statusCode).toBe(422);
+    expect((await del('?confirm=cmp_other')).statusCode).toBe(422);
+    expect((await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}` })).statusCode).toBe(200);
+    expect((await del(`?confirm=${id}`)).statusCode).toBe(204);
+    expect((await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}` })).statusCode).toBe(404);
+  });
+
+  it('reports disk use without running anything in the computer', async () => {
+    const created = await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: { provider: 'local' } });
+    const id = created.json().id as string;
+    const disk = await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}/disk` });
+    expect(disk.statusCode).toBe(200);
+    expect(typeof disk.json().bytes).toBe('number');
+    expect((await harness.app.inject({ method: 'GET', url: '/v1/computers/cmp_missing/disk' })).statusCode).toBe(404);
+  });
+
   it('stops and starts', async () => {
     const created = await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: {} });
     const id = created.json().id as string;

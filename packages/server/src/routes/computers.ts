@@ -7,6 +7,7 @@ import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
 import { SseStream } from '../sse.js';
 import { browseInComputer } from '@husk-ai/core';
+import { localWorkspaceBytes } from '@husk-ai/runtime';
 
 const NetworkPolicySchema = z.object({
   mode: z.enum(['none', 'egress', 'full']),
@@ -103,10 +104,28 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete('/v1/computers/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
+    // A chat's computer holds that chat's work, and Husk never removes one on
+    // its own. Deleting it takes the id typed back as ?confirm=, which the
+    // console sends only after the person confirms.
+    const target = await manager.get(id);
+    if (target?.info.spec?.labels?.['husk.via'] === 'mcp' && (req.query as { confirm?: unknown }).confirm !== id) {
+      throw invalidSpec([`confirm: deleting a chat's computer needs ?confirm=${id}`]);
+    }
     const removed = await manager.destroy(id);
     if (!removed) throw notFound('computer', id);
     ctx.bus.emit('computers', 'computer_destroyed', { id });
     return reply.code(204).send();
+  });
+
+  // Measured from the host: no exec, so it works on a stopped computer and
+  // leaves its last-used time alone. Null where Husk cannot measure it yet.
+  app.get('/v1/computers/:id/disk', async (req) => {
+    const { id } = req.params as { id: string };
+    const { info } = await mustGet(app, id);
+    if (info.provider !== 'local') return { bytes: null, note: `not measured for ${info.provider} computers yet` };
+    const bytes = await localWorkspaceBytes(info);
+    if (bytes !== undefined) return { bytes };
+    return { bytes: null, note: info.spec.labels?.['husk.wslWorkspace'] ? 'its workspace is inside WSL' : 'its workspace could not be read' };
   });
 
   app.post('/v1/computers/:id/stop', async (req) => {

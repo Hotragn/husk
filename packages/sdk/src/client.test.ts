@@ -177,6 +177,15 @@ describe('responses', () => {
     await expect(new HuskClient({ fetch }).computers.destroy('c1')).resolves.toBeUndefined();
   });
 
+  it("sends a chat computer's id back as confirm only when asked to", async () => {
+    const { fetch, calls } = stub(() => new Response(null, { status: 204 }));
+    const client = new HuskClient({ fetch });
+    await client.computers.destroy('cmp_chat1');
+    await client.computers.destroy('cmp_chat1', { confirm: true });
+    expect(new URL(String(calls[0]!.url)).search).toBe('');
+    expect(new URL(String(calls[1]!.url)).searchParams.get('confirm')).toBe('cmp_chat1');
+  });
+
   it('streams exec events in order and swallows the terminating done frame', async () => {
     const { fetch } = stub(() =>
       sse(

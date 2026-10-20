@@ -64,6 +64,35 @@ claude mcp add husk-api  -- npx -y @husk-ai/mcp --session api  --flavor python
 claude mcp add husk-web  -- npx -y @husk-ai/mcp --session web  --flavor node
 ```
 
+## One computer per chat
+
+Each chat gets its own computer, made on its first Husk call. How Husk tells chats
+apart depends on what the app provides:
+
+| app | signal | result |
+| --- | --- | --- |
+| Claude Code | `CLAUDE_CODE_SESSION_ID`, one server process per session | one computer per session, no id needed |
+| `--session <key>` | your key | one durable, named computer |
+| anything else (Claude Desktop, Cursor, ...) | none; one process may serve every chat | the first call passes `computer: "new"` and gets an id; later calls pass that id |
+
+A call with no id never reuses a computer, because it could be another chat's first
+call: it creates one only while none exists yet, and otherwise creates nothing and asks
+the model to pass its id, without naming the others. An id from outside this server
+process is refused. Each computer is labelled like "Claude Desktop · chat started
+10:42", from the app's own name and the time, never from the chat's title or content.
+
+A chat's computer is never removed by Husk:
+
+- **Idle:** after 10 minutes with no Husk call it is stopped, using no CPU or memory.
+  The chat's next call starts it again.
+- **Restart:** when the app or the PC restarts, the chat still holds the id, and that id
+  wakes the same computer with its `/work` files and installed packages. Only ids bound
+  as a chat's computer in `~/.husk/computers/bindings.json` are woken; any other id is
+  refused.
+- **Disconnect:** the computer is stopped, not destroyed. `--keep` leaves it running.
+- **Delete:** only from the console's Computers table, after a confirmation. The table
+  shows each computer's app, chat label, last-used time and disk size.
+
 ## What kind of machine you get
 
 Husk picks the best provider available and **tells the model which one it got**, in the

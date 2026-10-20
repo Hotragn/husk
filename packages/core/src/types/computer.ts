@@ -87,6 +87,12 @@ export interface ComputerInfo {
    */
   imageFallback?: { wanted: string; reason: string };
   error?: string;
+  /** Which app made it. From its labels; see `chatIdentityOf`. */
+  platform?: string;
+  /** "Claude Desktop · chat started 10:42". Never a chat title or chat content. */
+  chatLabel?: string;
+  /** How Husk told this app's chats apart. */
+  identitySource?: 'session' | 'named' | 'first-call';
 }
 
 export interface PortBinding {

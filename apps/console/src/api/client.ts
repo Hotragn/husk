@@ -145,8 +145,20 @@ export class HuskApi {
     return this.client.computers.start(id, { timeoutMs: 120_000 });
   }
 
+  /**
+   * `DELETE /v1/computers/:id?confirm=<id>`. Call only after the person has
+   * confirmed: a chat's computer is refused without the id typed back.
+   */
   destroyComputer(id: string): Promise<void> {
-    return this.client.computers.destroy(id, { timeoutMs: 60_000 });
+    return this.client.http.request<void>('DELETE', `/v1/computers/${enc(id)}`, {
+      query: { confirm: id },
+      timeoutMs: 60_000,
+    });
+  }
+
+  /** `GET /v1/computers/:id/disk`, measured from the host. `bytes` is null where it is not measured. */
+  computerDisk(id: string, signal?: AbortSignal): Promise<{ bytes: number | null; note?: string }> {
+    return this.client.http.request('GET', `/v1/computers/${enc(id)}/disk`, { ...(signal ? { signal } : {}) });
   }
 
   // -- exec -----------------------------------------------------------------

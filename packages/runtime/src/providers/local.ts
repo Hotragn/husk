@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { connect } from 'node:net';
 import { createReadStream, createWriteStream, existsSync } from 'node:fs';
-import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { HuskError, clampText, ensurePaths, id as newId, paths } from '@husk-ai/core';
@@ -145,6 +145,19 @@ export function detectShell(force = false): ShellPlan {
       : 'Windows host shell (no WSL) -- commands are NOT Linux',
   };
   return cachedShell;
+}
+
+/**
+ * Use this plan instead of probing, or `undefined` to probe again.
+ *
+ * Probing runs `wsl.exe` synchronously with 8s and 15s timeouts, so on a
+ * Windows host with a slow or broken WSL anything that creates a local computer
+ * takes as long as WSL takes to fail. Tests about something other than shell
+ * detection pin a plan here rather than inheriting that.
+ */
+export function setShellPlan(plan: ShellPlan | undefined): void {
+  cachedShell = plan;
+  downgradedAt = undefined;
 }
 
 const WSL_MARKER = 'husk-wsl-ok';
@@ -861,6 +874,35 @@ class LocalComputer implements Computer {
  * These are the ones a failed destroy left behind before it learned to report
  * itself. Returned rather than deleted: reclaiming disk is the caller's call.
  */
+/**
+ * Bytes in a local computer's workspace, measured from the host, so it works
+ * on a stopped computer and does not count as use. Undefined when the
+ * workspace lives inside WSL, where the host cannot walk it cheaply.
+ */
+export async function localWorkspaceBytes(info: ComputerInfo): Promise<number | undefined> {
+  if (info.spec.labels?.['husk.wslWorkspace']) return undefined;
+  const root = info.spec.labels?.['husk.workspace'] ?? join(paths().workspaces, info.id);
+  let entries;
+  try {
+    entries = await readdir(root, { recursive: true, withFileTypes: true });
+  } catch (err) {
+    // No workspace folder means nothing on disk.
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 0 : undefined;
+  }
+  // Links are not followed, so nothing outside the workspace is counted.
+  // `parentPath` is Node 20.12+; `path` is the older name for the same thing.
+  const files = entries
+    .filter((e) => e.isFile())
+    .map((e) => join((e as { parentPath?: string; path?: string }).parentPath ?? (e as { path?: string }).path ?? root, e.name));
+  let total = 0;
+  // In batches: one at a time is slow on a big tree, all at once exhausts file handles.
+  for (let i = 0; i < files.length; i += 128) {
+    const sizes = await Promise.all(files.slice(i, i + 128).map((f) => lstat(f).then((s) => s.size, () => 0)));
+    for (const size of sizes) total += size;
+  }
+  return total;
+}
+
 export async function findOrphanedWorkspaces(): Promise<string[]> {
   const p = ensurePaths();
   const infos = await loadInfos();

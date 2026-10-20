@@ -15,6 +15,7 @@ export * from './browse.js';
 export * from './computer-info.js';
 export * from './windows-shell.js';
 export * from './identity.js';
+export * from './chat-identity.js';
 
 
 export type {

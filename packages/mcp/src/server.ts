@@ -3,11 +3,13 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, GetPromptRequestSchema, ListPromptsRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { HUSK_VERSION, createLogger, quiet, redact } from '@husk-ai/core';
+import { HUSK_VERSION, IDENTITY_LABELS, chatLabel, createLogger, platformName, quiet, redact } from '@husk-ai/core';
+import type { IdentitySource } from '@husk-ai/core';
 import type { Computer, ComputerInfo, ComputerSpec, Logger } from '@husk-ai/core';
 import { ComputerManager, ensureRunning } from '@husk-ai/runtime';
 import { audited } from '@husk-ai/core';
 import { callTool, toolsFor } from './tools.js';
+import type { ToolDef } from './tools.js';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { HandoffRegistry, handoffLink, startWorkspaceViewer } from '@husk-ai/server/workspace-viewer';
 import type { WorkspaceProfile } from '@husk-ai/server/workspace-viewer';
@@ -23,8 +25,13 @@ export interface HuskMcpOptions {
   sessionKey?: string;
   spec?: ComputerSpec;
   manager?: ComputerManager;
-  /** Destroy the machine when the client disconnects. Default true. */
+  /**
+   * Stop the machine when the client disconnects. Default true. A chat's
+   * computer is never destroyed by Husk: only the user deletes it.
+   */
   ephemeral?: boolean;
+  /** Stop a computer after this long with no tool call. Default 10 minutes. */
+  idleStopMs?: number;
   logger?: Logger;
   profile?: WorkspaceProfile;
   workspaceStore?: WorkspaceStore;
@@ -58,6 +65,9 @@ export const COMPUTER_INSTRUCTIONS =
   'For a login, 2FA, CAPTCHA or payment prompt, call `hand_off` and let the user do it. Never try to solve ' +
   "a CAPTCHA, and never type the user's credentials yourself.";
 
+/** Binding keys of computers made for a chat that carries its own id. */
+const CHAT_KEY_PREFIX = 'chat:';
+
 /** How long a tool call waits on the in-chat "Done?" before handing the model the link instead. */
 const ELICIT_WAIT_MS = 200_000;
 
@@ -83,9 +93,20 @@ export class HuskMcpServer {
   private readonly spec: ComputerSpec;
   private readonly ephemeral: boolean;
   private readonly log: Logger;
-  private computer: Computer | undefined;
+  /** How this process tells its chats apart. Fixed at startup. */
+  private readonly identity: IdentitySource;
+  private readonly hostSessionId = process.env.CLAUDE_CODE_SESSION_ID;
+  /** This process's computers. One for a session; one per chat when chats share the process. */
+  private readonly computers = new Map<string, Computer>();
   private creating: Promise<Computer> | undefined;
-  private announced = false;
+  /** Computers whose first tool result has gone out with the isolation note. */
+  private readonly announced = new Set<string>();
+  private readonly idleStopMs: number;
+  /** Per computer: tool calls in flight, and the timer that stops it once there are none. */
+  private readonly inFlight = new Map<string, number>();
+  private readonly idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Idle stops in progress. A call that arrives mid-stop waits for it, then starts the computer. */
+  private readonly stopping = new Map<string, Promise<void>>();
   /** Set once a computer exists and turns out not to be Linux. */
   private degraded = false;
   private profile: WorkspaceProfile;
@@ -103,8 +124,14 @@ export class HuskMcpServer {
     this.manager = opts.manager ?? new ComputerManager();
     this.namedSession = opts.sessionKey !== undefined || process.env.HUSK_SESSION !== undefined;
     this.sessionKey = opts.sessionKey ?? process.env.HUSK_SESSION ?? `mcp-${randomUUID()}`;
+    // Claude Code runs one server process per session and says which, in
+    // CLAUDE_CODE_SESSION_ID (https://code.claude.com/docs/en/env-vars). Other
+    // hosts may share one process across every chat, so there the chat itself
+    // carries its computer id forward.
+    this.identity = this.namedSession ? 'named' : this.hostSessionId ? 'session' : 'first-call';
     this.spec = opts.spec ?? {};
     this.ephemeral = opts.ephemeral ?? true;
+    this.idleStopMs = opts.idleStopMs ?? 10 * 60 * 1000;
     this.profile = opts.profile ?? 'computer';
     this.workspaceStore = opts.workspaceStore ?? new WorkspaceStore();
     this.workspaceTools = new WorkspaceTools(this.workspaceStore, () => this.openViewer());
@@ -128,7 +155,7 @@ export class HuskMcpServer {
   }
 
   private registerHandlers(): void {
-    this.mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...WORKSPACE_TOOLS, ...(this.profile === 'computer' ? [...toolsFor(this.degraded), ...HANDOFF_TOOLS] : [])] }));
+    this.mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...WORKSPACE_TOOLS, ...(this.profile === 'computer' ? this.withComputerArg([...toolsFor(this.degraded), ...HANDOFF_TOOLS]) : [])] }));
 
     this.mcp.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: this.profile === 'computer' ? PROMPTS : [] }));
     this.mcp.setRequestHandler(GetPromptRequestSchema, async (request) => getPrompt(request.params.name, request.params.arguments));
@@ -140,43 +167,61 @@ export class HuskMcpServer {
       if (HANDOFF_TOOL_NAMES.has(name)) {
         const a = (args ?? {}) as Record<string, unknown>;
         try {
-          return name === 'hand_off' ? await this.handOff(a, extra.signal) : this.handOffDone(a);
+          if (name === 'hand_off_done') return this.handOffDone(a);
+          // A handoff with no computer is still a handoff ("approve it on your phone"),
+          // and "new" means this chat has none yet: nothing is created just to hand it off.
+          const wanted = a.computer === 'new' ? undefined : a.computer;
+          const target = wanted !== undefined || this.computers.size === 1 ? await this.resolve(wanted) : undefined;
+          if (typeof target === 'string') return { isError: true, content: [{ type: 'text', text: target }] };
+          return await this.handOff(a, extra.signal, target);
         } catch (err) {
           return { isError: true, content: [{ type: 'text', text: redact((err as Error).message) }] };
         }
       }
-      // The person holds the computer until they say done. The model must not
-      // type into the page they are signing in on, or run commands under them.
-      const held = this.handoffs.list()[0];
-      if (held && name !== 'computer_info') {
-        return { isError: true, content: [{ type: 'text', text: heldText(held.handoffId, held.reason) }] };
-      }
+      const { computer: requested, ...toolArgs } = (args ?? {}) as Record<string, unknown>;
       let computer: Computer;
       try {
-        computer = await this.getComputer();
+        const resolved = await this.resolve(requested);
+        if (typeof resolved === 'string') return { isError: true, content: [{ type: 'text', text: resolved }] };
+        computer = resolved;
       } catch (err) {
         const error = err as Error & { hint?: string };
         const text = `Computer unavailable: ${error.message}\n${error.hint ?? 'Run husk doctor to check the provider, then retry.'}`;
         return { isError: true, content: [{ type: 'text', text: redact(text) }] };
       }
-      const toolArgs = (args ?? {}) as Record<string, unknown>;
+      // The person holds the computer until they say done. The model must not
+      // type into the page they are signing in on, or run commands under them.
+      const held = this.handoffs.list().find((h) => !h.computerId || h.computerId === computer.id);
+      if (held && name !== 'computer_info') {
+        return { isError: true, content: [{ type: 'text', text: heldText(held.handoffId, held.reason) }] };
+      }
 
       // Every call, at the one place they all pass through. An audit log that
       // has to be remembered at each new tool is an audit log with holes -- and
       // this path had no log at all until now, which is the more embarrassing
       // version of the same problem.
-      const result = await audited(
-        { computerId: computer.id, via: 'mcp', tool: name, args: toolArgs },
-        () => callTool(computer, name, toolArgs),
-        // MCP tools report failure in the result rather than by throwing, so
-        // the wrapper is told how to recognise one.
-        (r) => (r.isError ? firstText(r.content) : undefined),
-      );
+      this.busy(computer.id, +1);
+      let result: Awaited<ReturnType<typeof callTool>>;
+      try {
+        result = await audited(
+          { computerId: computer.id, via: 'mcp', tool: name, args: toolArgs },
+          () => callTool(computer, name, toolArgs),
+          // MCP tools report failure in the result rather than by throwing, so
+          // the wrapper is told how to recognise one.
+          (r) => (r.isError ? firstText(r.content) : undefined),
+        );
+      } finally {
+        this.busy(computer.id, -1);
+      }
 
       const content = [...result.content];
-      if (!this.announced) {
-        this.announced = true;
-        content.unshift({ type: 'text', text: `${this.isolationNote(computer)}\n` });
+      if (!this.announced.has(computer.id)) {
+        this.announced.add(computer.id);
+        const carry =
+          this.identity === 'first-call'
+            ? ` Your computer id is ${computer.id}: pass computer: "${computer.id}" on every later Husk call in this conversation.`
+            : '';
+        content.unshift({ type: 'text', text: `${this.isolationNote(computer)}${carry}\n` });
       }
       return { content, ...(result.isError ? { isError: true } : {}) };
     });
@@ -213,31 +258,166 @@ export class HuskMcpServer {
     await quiet(() => this.mcp.sendToolListChanged());
   }
 
-  /** Create the machine on first use, and only once even under concurrent calls. */
-  private async getComputer(): Promise<Computer> {
-    this.creating ??= (async () => {
-      if (this.computer) return ensureRunning(this.computer);
-      const spec = {
-        name: `mcp-${this.sessionKey}`,
-        idleTimeoutSec: 3600,
-        persist: true,
-        ...this.spec,
-      };
-      // Only explicit sessions need a durable binding. Anonymous sessions own
-      // their workspace, so disconnecting can remove it with the computer.
-      const c = this.namedSession
-        ? await this.manager.ensure(this.sessionKey, spec)
-        : await this.manager.create(spec);
-      this.log.info(`computer ready: ${c.id} (${c.info.provider})`);
-      this.computer = c;
-      await this.announceDegradation(c);
-      return c;
-    })();
+  /**
+   * The computer a call is for. A string is a refusal to hand back to the model:
+   * an id this process does not own, or no id when more than one would fit.
+   * Nothing is guessed and nothing is created on an ambiguous call.
+   */
+  private async resolve(requested: unknown): Promise<Computer | string> {
+    const id = typeof requested === 'string' ? requested.trim() : '';
+    if (id && id !== 'new') {
+      const own = this.computers.get(id) ?? (await this.wake(id));
+      if (own) return this.ready(own);
+      return (
+        `There is no Husk computer "${id}" for this conversation. Use the id an earlier Husk result in this ` +
+        'conversation gave you, or pass computer: "new" if this conversation has none yet.'
+      );
+    }
+    // One process, one chat: there is only ever this one computer.
+    if (this.identity !== 'first-call') return this.single();
+    if (id === 'new') return this.createComputer();
+    // No id from a host that may share this process across chats. Creating is
+    // safe only while nothing exists: then the computer can only be this chat's.
+    // Reusing one could hand this chat another chat's computer, so never.
+    if (this.computers.size === 0) return this.single();
+    return (
+      'Pass computer: "<id>" with the Husk computer id an earlier Husk result in this conversation gave you, ' +
+      'or computer: "new" if this conversation has none yet. Husk does not guess, because this app may run ' +
+      'other chats through the same Husk.'
+    );
+  }
+
+  /**
+   * A chat's computer from an earlier process: the app restarted, or the PC did.
+   * Only an id bound as a chat computer is woken -- never another session's,
+   * a named one, or anything made outside MCP -- and its /work comes back with it.
+   */
+  private async wake(id: string): Promise<Computer | undefined> {
+    if (this.identity !== 'first-call') return undefined;
+    const key = await this.manager.keyFor(id);
+    if (!key?.startsWith(CHAT_KEY_PREFIX)) return undefined;
+    const found = await this.manager.get(id);
+    if (!found || found.info.state === 'destroyed') return undefined;
+    this.computers.set(found.id, found);
+    return found;
+  }
+
+  /** Count a call in or out, and stop the computer once it has been idle for a while. */
+  private busy(id: string, delta: 1 | -1): void {
+    const n = (this.inFlight.get(id) ?? 0) + delta;
+    this.inFlight.set(id, n);
+    const timer = this.idleTimers.get(id);
+    if (timer) clearTimeout(timer);
+    this.idleTimers.delete(id);
+    if (n === 0) this.arm(id);
+  }
+
+  private arm(id: string): void {
+    const t = setTimeout(() => void this.idleStop(id), this.idleStopMs);
+    t.unref?.();
+    this.idleTimers.set(id, t);
+  }
+
+  /**
+   * Idle: stop it so it uses no CPU or memory. Its files stay, and the chat's
+   * next call starts it again. Not while the person holds it in a handoff.
+   */
+  private async idleStop(id: string): Promise<void> {
+    this.idleTimers.delete(id);
+    const c = this.computers.get(id);
+    if (!c || (this.inFlight.get(id) ?? 0) > 0) return;
+    if (this.handoffs.list().some((h) => h.computerId === id)) return this.arm(id);
+    const stop = quiet(() => c.stop()).then(() => undefined);
+    this.stopping.set(id, stop);
+    try {
+      await stop;
+      this.log.info(`computer ${id} idle, stopped`);
+    } finally {
+      this.stopping.delete(id);
+    }
+  }
+
+  /**
+   * Running and ready for a call. If an idle stop is under way, wait for it to
+   * finish first: `docker stop` takes seconds, and inspect says "running" until
+   * it is done, so starting a call in the middle would exec into a dying container.
+   */
+  private async ready(c: Computer): Promise<Computer> {
+    await this.stopping.get(c.id);
+    return ensureRunning(c);
+  }
+
+  /** The only computer, created once even under concurrent calls. */
+  private async single(): Promise<Computer> {
+    const only = [...this.computers.values()][0];
+    if (only) return this.ready(only);
+    this.creating ??= this.createComputer();
     try {
       return await this.creating;
     } finally {
       this.creating = undefined;
     }
+  }
+
+  private async createComputer(): Promise<Computer> {
+    const platform = platformName(this.mcp.getClientVersion()?.name);
+    const n = this.computers.size;
+    const spec = {
+      name: n === 0 ? `mcp-${this.sessionKey}` : `mcp-${this.sessionKey}-${n + 1}`,
+      persist: true,
+      ...this.spec,
+      // Never reaped: an idle or lifetime limit would destroy it, and a chat's
+      // computer goes only when the user deletes it. Idle means stopped instead.
+      idleTimeoutSec: 0,
+      maxLifetimeSec: 0,
+      labels: {
+        ...(this.spec.labels ?? {}),
+        'husk.via': 'mcp',
+        [IDENTITY_LABELS.platform]: platform,
+        [IDENTITY_LABELS.chat]: chatLabel(platform, this.identity),
+        [IDENTITY_LABELS.identity]: this.identity,
+      },
+    };
+    // Every chat's computer is bound, so a later process can wake it by id.
+    const c = await this.manager.ensure(this.bindingKey(), spec);
+    this.log.info(`computer ready: ${c.id} (${c.info.provider})`);
+    this.computers.set(c.id, c);
+    await this.announceDegradation(c);
+    return c;
+  }
+
+  private bindingKey(): string {
+    if (this.identity === 'named') return this.sessionKey;
+    if (this.identity === 'session') return `claude-code:${this.hostSessionId}`;
+    return `${CHAT_KEY_PREFIX}${randomUUID()}`;
+  }
+
+  /**
+   * Where chats share this process, every computer tool takes the computer's
+   * id. Each chat's own history carries its own id, which is the only signal
+   * that is valid on every host.
+   */
+  private withComputerArg(tools: ToolDef[]): ToolDef[] {
+    if (this.identity !== 'first-call') return tools;
+    return tools.map((t) =>
+      t.name === 'hand_off_done'
+        ? t
+        : {
+            ...t,
+            inputSchema: {
+              ...t.inputSchema,
+              properties: {
+                ...((t.inputSchema.properties ?? {}) as Record<string, unknown>),
+                computer: {
+                  type: 'string',
+                  description:
+                    'Which Husk computer: the id an earlier Husk result in this conversation gave you. ' +
+                    'If this conversation has none yet, pass "new".',
+                },
+              },
+            },
+          },
+    );
   }
 
   async connectStdio(): Promise<void> {
@@ -257,14 +437,14 @@ export class HuskMcpServer {
    * out, errors or is dismissed leaves the handoff open, and the model is told
    * to wait for the person's own word.
    */
-  private async handOff(args: Record<string, unknown>, callSignal: AbortSignal): Promise<CallToolResult> {
+  private async handOff(args: Record<string, unknown>, callSignal: AbortSignal, computer?: Computer): Promise<CallToolResult> {
     const text = typeof args.reason === 'string' ? args.reason.trim() : '';
     if (!text) throw new Error('hand_off needs a reason the user can read.');
     if (text.length > MAX_REASON) throw new Error(`hand_off reason is over ${MAX_REASON} characters.`);
     // Model text, headed for a person's screen.
     const reason = redact(text);
 
-    const open = this.handoffs.list()[0];
+    const open = this.handoffs.list().find((h) => !h.computerId || !computer || h.computerId === computer.id);
     if (open) throw new Error(heldText(open.handoffId, open.reason));
 
     // Before the handoff opens: if the viewer cannot start, nothing is left
@@ -276,7 +456,7 @@ export class HuskMcpServer {
         runId: this.sessionKey,
         husk: 'chat',
         reason,
-        ...(this.computer ? { computerId: this.computer.id } : {}),
+        ...(computer ? { computerId: computer.id } : {}),
         signal: this.closing.signal,
       },
       (pending) => {
@@ -343,10 +523,11 @@ export class HuskMcpServer {
     this.closing.abort();
     if (this.viewer) await quiet(async () => (await this.viewer!).close());
     await quiet(() => this.mcp.close());
-    if (this.ephemeral && this.computer) {
-      // A named local computer owns user files. Destroying it would delete them.
-      await quiet(() => this.namedSession ? this.computer!.stop() : this.computer!.destroy());
-    }
+    for (const t of this.idleTimers.values()) clearTimeout(t);
+    this.idleTimers.clear();
+    // Stopped, never destroyed: the chat may come back after a restart, and only
+    // the user deletes a chat's computer.
+    if (this.ephemeral) for (const c of this.computers.values()) await quiet(() => c.stop());
   }
 
   private async openViewer(): Promise<string> {
