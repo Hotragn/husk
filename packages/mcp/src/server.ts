@@ -1,7 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, GetPromptRequestSchema, ListPromptsRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { HUSK_VERSION, IDENTITY_LABELS, chatLabel, createLogger, platformName, quiet, redact } from '@husk-ai/core';
 import type { IdentitySource } from '@husk-ai/core';
@@ -11,7 +18,9 @@ import { audited } from '@husk-ai/core';
 import { callTool, toolsFor } from './tools.js';
 import type { ToolDef } from './tools.js';
 import { WorkspaceStore } from '@husk-ai/workspaces';
-import { HandoffRegistry, handoffLink, startWorkspaceViewer } from '@husk-ai/server/workspace-viewer';
+import { HandoffRegistry, ScopedTokens, computerLink, handoffLink, startWorkspaceViewer } from '@husk-ai/server/workspace-viewer';
+import { CARD_APP_TOOLS, CARD_APP_TOOL_NAMES, CARD_HTML, CARD_MIME, CARD_URI, OPEN_UI_TOOL, UI_EXTENSION } from './card.js';
+import type { CardState } from './card.js';
 import type { WorkspaceProfile } from '@husk-ai/server/workspace-viewer';
 import { PROMPTS, getPrompt } from './prompts.js';
 import { HANDED_BACK, HANDOFF_TOOLS, HANDOFF_TOOL_NAMES, MAX_REASON, heldText, relayText } from './handoff-tools.js';
@@ -116,6 +125,8 @@ export class HuskMcpServer {
   /** Handoffs open in this session. A person ends one; closing the session ends them all. */
   private readonly handoffs = new HandoffRegistry();
   private readonly closing = new AbortController();
+  /** Short-lived links, each scoped to one computer or one computer-less handoff. */
+  private readonly tokens = new ScopedTokens();
   /** Ended from the viewer, so a later hand_off_done for one is an answer, not an error. */
   private readonly handedBack = new Set<string>();
   private confirmedProvider?: string;
@@ -143,7 +154,7 @@ export class HuskMcpServer {
       {
         // `listChanged` is declared because the tool descriptions are not final
         // at this point: see `announceDegradation`.
-        capabilities: { tools: { listChanged: true }, prompts: {} },
+        capabilities: { tools: { listChanged: true }, prompts: {}, resources: {} },
         instructions: WORKSPACE_INSTRUCTIONS + '\n' + (this.profile === 'starter'
           ? 'This session starts with workspace tools only. The user can enable computer tools in the viewer Advanced settings after reviewing the environment.'
           :
@@ -155,7 +166,19 @@ export class HuskMcpServer {
   }
 
   private registerHandlers(): void {
-    this.mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...WORKSPACE_TOOLS, ...(this.profile === 'computer' ? this.withComputerArg([...toolsFor(this.degraded), ...HANDOFF_TOOLS]) : [])] }));
+    this.mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [...WORKSPACE_TOOLS, ...(this.profile === 'computer' ? this.computerTools() : [])],
+    }));
+
+    // The computer card, for clients that render MCP Apps. CSP is left empty on
+    // purpose: the card makes no network requests, so the host's restrictive default fits.
+    this.mcp.setRequestHandler(ListResourcesRequestSchema, async () => ({
+      resources: [{ uri: CARD_URI, name: 'Husk computer card', mimeType: CARD_MIME }],
+    }));
+    this.mcp.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      if (request.params.uri !== CARD_URI) throw new Error(`Unknown resource ${request.params.uri}`);
+      return { contents: [{ uri: CARD_URI, mimeType: CARD_MIME, text: CARD_HTML, _meta: { ui: { csp: {} } } }] };
+    });
 
     this.mcp.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: this.profile === 'computer' ? PROMPTS : [] }));
     this.mcp.setRequestHandler(GetPromptRequestSchema, async (request) => getPrompt(request.params.name, request.params.arguments));
@@ -164,6 +187,8 @@ export class HuskMcpServer {
       const { name, arguments: args } = request.params;
       if (WORKSPACE_TOOL_NAMES.has(name)) return this.workspaceTools.call(name, (args ?? {}) as Record<string, unknown>);
       if (this.profile !== 'computer') return { isError: true, content: [{ type: 'text', text: 'Computer tools are disabled. The user can enable them from Advanced in the workspace viewer after reviewing the environment.' }] };
+      if (CARD_APP_TOOL_NAMES.has(name)) return this.cardTool(name, (args ?? {}) as Record<string, unknown>);
+      if (name === OPEN_UI_TOOL.name) return this.openUi((args ?? {}) as Record<string, unknown>);
       if (HANDOFF_TOOL_NAMES.has(name)) {
         const a = (args ?? {}) as Record<string, unknown>;
         try {
@@ -223,7 +248,9 @@ export class HuskMcpServer {
             : '';
         content.unshift({ type: 'text', text: `${this.isolationNote(computer)}${carry}\n` });
       }
-      return { content, ...(result.isError ? { isError: true } : {}) };
+      // computer_info is where a chat's card first appears; it needs the state, never a token.
+      const card = name === 'computer_info' && this.rendersCards() ? { structuredContent: { ...(await this.cardState(computer.id)) } } : {};
+      return { content, ...card, ...(result.isError ? { isError: true } : {}) };
     });
   }
 
@@ -465,8 +492,10 @@ export class HuskMcpServer {
     );
     void finished.then((outcome) => {
       if (outcome === 'done') this.handedBack.add(handoffId);
+      // A link minted for this handoff alone dies with it.
+      this.tokens.revoke(`handoff:${handoffId}`);
     });
-    const link = handoffLink(origin, handoffId, this.handoffs.secretOf(handoffId) ?? '');
+    const link = handoffLink(origin, handoffId, this.tokens.mint(computer ? `computer:${computer.id}` : `handoff:${handoffId}`));
 
     // In-chat "Done?" where the client declared form elicitation.
     // https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation
@@ -499,7 +528,7 @@ export class HuskMcpServer {
         // The person may press Done in the viewer before answering the prompt.
         const answer = await Promise.race([asked, finished.then((o) => (o === 'done' ? 'done' : 'not-yet'))]);
         if (answer === 'done') {
-          if (this.handoffs.secretOf(handoffId)) this.handoffs.complete(handoffId);
+          if (this.handoffs.isOpen(handoffId)) this.handoffs.complete(handoffId);
           return { content: [{ type: 'text', text: HANDED_BACK }] };
         }
       } finally {
@@ -507,14 +536,99 @@ export class HuskMcpServer {
         callSignal.removeEventListener('abort', onCallAbort);
       }
     }
-    return { content: [{ type: 'text', text: relayText(handoffId, reason, link) }] };
+    const card = computer && this.rendersCards() ? { structuredContent: { ...(await this.cardState(computer.id)) } } : {};
+    return { content: [{ type: 'text', text: relayText(handoffId, reason, link) }], ...card };
+  }
+
+  /** Whether the client renders MCP Apps cards: it lists the UI extension with our MIME type. */
+  private rendersCards(): boolean {
+    const caps = this.mcp.getClientCapabilities() as { extensions?: Record<string, { mimeTypes?: unknown }> } | undefined;
+    const mimeTypes = caps?.extensions?.[UI_EXTENSION]?.mimeTypes;
+    return Array.isArray(mimeTypes) && mimeTypes.includes(CARD_MIME);
+  }
+
+  /**
+   * The computer tools this client sees. Card-capable clients get the card on
+   * computer_info and hand_off, plus the two app-only tools the card calls;
+   * other clients never see those, since they would show them to the model.
+   */
+  private computerTools(): ToolDef[] {
+    const base = [...toolsFor(this.degraded), ...HANDOFF_TOOLS, OPEN_UI_TOOL];
+    if (!this.rendersCards()) return this.withComputerArg(base);
+    const withCard = base.map((t) =>
+      t.name === 'computer_info' || t.name === 'hand_off' ? { ...t, _meta: { ui: { resourceUri: CARD_URI } } } : t,
+    );
+    return [...this.withComputerArg(withCard), ...CARD_APP_TOOLS];
+  }
+
+  /** A computer this process owns, or a chat's computer from an earlier process. Never creates one. */
+  private async known(id: unknown): Promise<Computer | undefined> {
+    if (typeof id !== 'string' || !id) return undefined;
+    return this.computers.get(id) ?? (await this.wake(id));
+  }
+
+  private async describe(computerId: string): Promise<{ computerId: string; label?: string; state: string } | undefined> {
+    const c = this.computers.get(computerId);
+    if (!c) return undefined;
+    const label = c.info.spec.labels?.[IDENTITY_LABELS.chat];
+    let state = c.info.state;
+    try {
+      state = (await c.refresh()).state;
+    } catch {
+      // the last known state will do for a status card
+    }
+    return { computerId, ...(label ? { label } : {}), state };
+  }
+
+  private async cardState(computerId: string): Promise<CardState> {
+    const described = (await this.describe(computerId)) ?? { computerId, state: 'unknown' };
+    const held = this.handoffs.list().find((h) => h.computerId === computerId);
+    return { ...described, ...(held ? { waiting: { handoffId: held.handoffId, reason: held.reason } } : {}) };
+  }
+
+  /** A fresh link for one computer: its handoff if one is waiting, otherwise a look at it. */
+  private async linkFor(computerId: string): Promise<string> {
+    const { origin } = await this.openViewerServer();
+    const token = this.tokens.mint(`computer:${computerId}`);
+    const held = this.handoffs.list().find((h) => h.computerId === computerId);
+    return held ? handoffLink(origin, held.handoffId, token) : computerLink(origin, computerId, token);
+  }
+
+  /**
+   * The card's two tools. Neither creates, starts or counts as using a
+   * computer: a status card polling every few seconds must not keep one awake.
+   */
+  private async cardTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
+    const c = await this.known(args.computer);
+    if (!c) return { isError: true, content: [{ type: 'text', text: 'There is no Husk computer with that id here.' }] };
+    if (name === 'computer_card_state') {
+      const state = await this.cardState(c.id);
+      return { content: [{ type: 'text', text: state.waiting ? 'Waiting for you' : `Computer ${state.state}` }], structuredContent: { ...state } };
+    }
+    const url = await this.linkFor(c.id);
+    return { content: [{ type: 'text', text: url }], structuredContent: { url } };
+  }
+
+  /** The plain-link fallback: what a card would open, as text the model can pass on. */
+  private async openUi(args: Record<string, unknown>): Promise<CallToolResult> {
+    const resolved = await this.resolve(args.computer);
+    if (typeof resolved === 'string') return { isError: true, content: [{ type: 'text', text: resolved }] };
+    const url = await this.linkFor(resolved.id);
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Give the user this link to open on this device: ${url}\nIt shows this chat's computer, and lets them take over if it is waiting for them. It expires after 10 minutes unused.`,
+        },
+      ],
+    };
   }
 
   /** The model relays the person's "done". Only meaningful after hand_off. */
   private handOffDone(args: Record<string, unknown>): CallToolResult {
     const handoffId = typeof args.handoff === 'string' ? args.handoff : '';
     if (this.handedBack.has(handoffId)) return { content: [{ type: 'text', text: HANDED_BACK }] };
-    if (!this.handoffs.secretOf(handoffId)) throw new Error(`There is no open handoff "${handoffId}".`);
+    if (!this.handoffs.isOpen(handoffId)) throw new Error(`There is no open handoff "${handoffId}".`);
     this.handoffs.complete(handoffId);
     return { content: [{ type: 'text', text: HANDED_BACK }] };
   }
@@ -537,7 +651,7 @@ export class HuskMcpServer {
   private openViewerServer(): Promise<{ url: string; origin: string; close: () => Promise<void> }> {
     this.viewer ??= startWorkspaceViewer({
       store: this.workspaceStore,
-      handoffs: this.handoffs,
+      handoffs: { registry: this.handoffs, tokens: this.tokens, describe: (id) => this.describe(id) },
       getProfile: () => this.profile,
       getCapabilities: async () => {
         const providers = await this.manager.status();

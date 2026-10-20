@@ -22,6 +22,8 @@ How Husk uses this:
   [packages/mcp/README.md](../packages/mcp/README.md).
 - **In-chat "I'm done".** Offered only to clients whose name matches `SHOWS_ELICITATION`
   in `packages/mcp/src/server.ts`; everyone else gets the handoff link to relay.
+- **Computer card.** Shown where MCP Apps render; elsewhere, `computer_open_ui` gives
+  the same link as text. Claude Code gets the link.
 - **`list_changed`.** Sent when the tool list really changes, such as a degraded host.
   It is never relied on: a client that ignores it keeps the original descriptions.
 

@@ -55,7 +55,7 @@ export function platformName(clientName: string | undefined): string {
   const raw = (clientName ?? '').trim();
   const known: Array<[RegExp, string]> = [
     [/^claude-code$/i, 'Claude Code'],
-    [/^claude-ai$/i, 'Claude Desktop'],
+    [/^claude-(ai|desktop)$/i, 'Claude Desktop'],
     [/^cursor/i, 'Cursor'],
     [/^(visual studio code|vscode)/i, 'VS Code'],
     [/^windsurf/i, 'Windsurf'],
