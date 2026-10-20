@@ -223,6 +223,12 @@ export class ComputerManager {
     }
   }
 
+  /** The key a computer is bound under by `ensure`, or undefined if it has none. */
+  async keyFor(id: string): Promise<string | undefined> {
+    for (const [key, bound] of Object.entries(await readBindings())) if (bound === id) return key;
+    return undefined;
+  }
+
   async get(id: string): Promise<Computer | null> {
     for (const p of this.providers.values()) {
       try {

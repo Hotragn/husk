@@ -15,8 +15,14 @@ import { HuskMcpServer } from './server.js';
 
 const silent = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger;
 
+/**
+ * A manager whose computers and bindings outlive any one server, the way
+ * ~/.husk does, so two servers in a row stand in for an app restart.
+ */
 function fakeManager() {
   const made: Computer[] = [];
+  const bindings = new Map<string, string>();
+  const activity = { starts: 0, stops: 0 };
   const make = async (spec: ComputerSpec) => {
     const id = `cmp_${made.length + 1}`;
     const info = {
@@ -39,13 +45,37 @@ function fakeManager() {
       async refresh() {
         return info;
       },
-      async destroy() {},
-      async stop() {},
+      async start() {
+        activity.starts++;
+        info.state = 'running';
+      },
+      async stop() {
+        activity.stops++;
+        info.state = 'stopped';
+      },
+      async destroy() {
+        info.state = 'destroyed';
+      },
     } as unknown as Computer;
     made.push(c);
     return c;
   };
-  return { made, manager: { create: make, ensure: async (_k: string, s: ComputerSpec) => make(s) } as unknown as ComputerManager };
+  const manager = {
+    create: make,
+    async ensure(key: string, spec: ComputerSpec) {
+      const c = await make({ ...spec, labels: { ...(spec.labels ?? {}), 'husk.key': key } });
+      bindings.set(key, c.id);
+      return c;
+    },
+    async keyFor(id: string) {
+      for (const [k, v] of bindings) if (v === id) return k;
+      return undefined;
+    },
+    async get(id: string) {
+      return made.find((c) => c.id === id) ?? null;
+    },
+  } as unknown as ComputerManager;
+  return { made, bindings, activity, manager };
 }
 
 let saved: string | undefined;
@@ -59,9 +89,21 @@ afterEach(() => {
   else process.env.CLAUDE_CODE_SESSION_ID = saved;
 });
 
-async function connect(clientName: string) {
-  const { made, manager } = fakeManager();
-  const server = new HuskMcpServer({ manager, ephemeral: false, logger: silent });
+type Fake = ReturnType<typeof fakeManager>;
+const servers: HuskMcpServer[] = [];
+afterEach(async () => {
+  await Promise.all(servers.splice(0).map((x) => x.close()));
+});
+
+async function connect(clientName: string, opts: { fake?: Fake; idleStopMs?: number; ephemeral?: boolean } = {}) {
+  const fake = opts.fake ?? fakeManager();
+  const server = new HuskMcpServer({
+    manager: fake.manager,
+    ephemeral: opts.ephemeral ?? false,
+    logger: silent,
+    ...(opts.idleStopMs ? { idleStopMs: opts.idleStopMs } : {}),
+  });
+  servers.push(server);
   const client = new Client({ name: clientName, version: '1.0' });
   const [c, s] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.server.connect(s), client.connect(c)]);
@@ -72,7 +114,7 @@ async function connect(clientName: string) {
     })) as { isError?: boolean; content: Array<{ text: string }> };
     return { isError: r.isError === true, text: r.content.map((x) => x.text).join('\n') };
   };
-  return { made, client, shell, server };
+  return { made: fake.made, fake, client, shell, server };
 }
 
 const idIn = (text: string) => /Your computer id is (cmp_\d+)/.exec(text)?.[1] ?? '';
@@ -161,5 +203,55 @@ describe('a host that names its session', () => {
     expect(made).toHaveLength(1);
     expect(made[0]?.info.spec.labels?.['husk.identity']).toBe('session');
     expect(made[0]?.info.spec.labels?.['husk.chat']).toMatch(/^Claude Code · session started \d\d:\d\d$/);
+  });
+});
+
+describe('a chat computer outlives the process', () => {
+  it('wakes after an app restart, by the id the chat carries, with its files', async () => {
+    const fake = fakeManager();
+    const before = await connect('claude-ai', { fake, ephemeral: true });
+    const id = idIn((await before.shell('new')).text);
+    await before.server.close();
+    expect(fake.made[0]?.info.state).toBe('stopped');
+
+    // A new process, as after a restart: it has never seen this id.
+    const after = await connect('claude-ai', { fake });
+    const r = await after.shell(id);
+    expect(r.isError).toBe(false);
+    expect(r.text).toContain(`on ${id}`);
+    expect(fake.made).toHaveLength(1);
+    expect(fake.made[0]?.info.state).toBe('running');
+  });
+
+  it('stops when idle, and starts again when the chat calls', async () => {
+    const fake = fakeManager();
+    const { shell } = await connect('claude-ai', { fake, idleStopMs: 30 });
+    const id = idIn((await shell('new')).text);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(fake.made[0]?.info.state).toBe('stopped');
+    expect(fake.activity.stops).toBe(1);
+    expect((await shell(id)).text).toContain(`on ${id}`);
+    expect(fake.activity.starts).toBe(1);
+  });
+
+  it('never destroys a chat computer on disconnect', async () => {
+    const fake = fakeManager();
+    const { shell, server } = await connect('claude-ai', { fake, ephemeral: true });
+    await shell('new');
+    await server.close();
+    expect(fake.made[0]?.info.state).toBe('stopped');
+  });
+
+  it('refuses a guessed id, and an id bound to something other than a chat', async () => {
+    const fake = fakeManager();
+    // A named session's computer exists, under its own key.
+    await fake.manager.ensure('husk:qa-run', {});
+    const { shell } = await connect('claude-ai', { fake });
+    const named = await shell('cmp_1');
+    expect(named.isError).toBe(true);
+    const guessed = await shell('cmp_2');
+    expect(guessed.isError).toBe(true);
+    expect(fake.made).toHaveLength(1);
+    expect(fake.made[0]?.info.state).toBe('running');
   });
 });

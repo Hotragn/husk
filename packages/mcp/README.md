@@ -81,6 +81,18 @@ the model to pass its id, without naming the others. An id from outside this ser
 process is refused. Each computer is labelled like "Claude Desktop · chat started
 10:42", from the app's own name and the time, never from the chat's title or content.
 
+A chat's computer is never removed by Husk:
+
+- **Idle:** after 10 minutes with no Husk call it is stopped, using no CPU or memory.
+  The chat's next call starts it again.
+- **Restart:** when the app or the PC restarts, the chat still holds the id, and that id
+  wakes the same computer with its `/work` files and installed packages. Only ids bound
+  as a chat's computer in `~/.husk/computers/bindings.json` are woken; any other id is
+  refused.
+- **Disconnect:** the computer is stopped, not destroyed. `--keep` leaves it running.
+- **Delete:** only from the console's Computers table, after a confirmation. The table
+  shows each computer's app, chat label, last-used time and disk size.
+
 ## What kind of machine you get
 
 Husk picks the best provider available and **tells the model which one it got**, in the
