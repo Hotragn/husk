@@ -108,6 +108,9 @@ POST   /v1/computers            body: ComputerSpec -> 201 ComputerInfo
 GET    /v1/computers/:id        -> ComputerInfo
 DELETE /v1/computers/:id        -> 204   (a chat's computer needs ?confirm=<id>)
 GET    /v1/computers/:id/disk   -> { "bytes": number | null, "note"?: string }
+GET    /v1/computers/:id/stats  -> { cpuPercent, memoryBytes, memoryLimitBytes, diskBytes, notes? }
+GET    /v1/computers/:id/thumbnail -> image/jpeg of an already-open browser, else 404
+GET    /v1/overview             -> { computers: ComputerInfo[], activeRuns: ActiveRun[], handoffs: PendingHandoff[] }
 POST   /v1/computers/:id/stop   -> ComputerInfo
 POST   /v1/computers/:id/start  -> ComputerInfo
 ```
@@ -124,6 +127,12 @@ Husk never deletes a chat's computer on its own: it has no idle or lifetime limi
 workspace from the host, so it works on a stopped computer and does not count as use.
 Local computers report bytes; for other providers, or a workspace inside WSL, `bytes` is
 null and `note` says why.
+
+`stats` reports CPU and memory from `docker stats` / `podman stats` while a container
+computer runs, and disk as `disk` does. Anything not measured is `null`, with a note;
+nothing is estimated. `thumbnail` never launches a browser: with none open it answers
+`E_BROWSER_NOT_FOUND`. `overview` is what the console's Home shows: every computer, each
+active run with its `computerId`, `step` and current `tool`, and the open handoffs.
 
 ### Exec
 

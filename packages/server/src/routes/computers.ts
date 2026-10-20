@@ -7,6 +7,7 @@ import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
 import { SseStream } from '../sse.js';
 import { browseInComputer } from '@husk-ai/core';
+import { livePageFor } from '@husk-ai/browser';
 import { localWorkspaceBytes } from '@husk-ai/runtime';
 
 const NetworkPolicySchema = z.object({
@@ -88,6 +89,14 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/v1/computers', async () => ({ computers: await manager.list() }));
 
+  // Everything the console's overview needs, in one call: every computer, what
+  // each run is doing and which computer it is on, and who is waiting on a person.
+  app.get('/v1/overview', async () => ({
+    computers: await manager.list(),
+    activeRuns: ctx.runner.listActive(),
+    handoffs: ctx.runner.handoffs.list(),
+  }));
+
   app.post('/v1/computers', async (req: FastifyRequest, reply: FastifyReply) => {
     const spec = parseOr422(ComputerSpecSchema, req.body) as ComputerSpec;
     const computer = await manager.create(spec);
@@ -126,6 +135,47 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
     const bytes = await localWorkspaceBytes(info);
     if (bytes !== undefined) return { bytes };
     return { bytes: null, note: info.spec.labels?.['husk.wslWorkspace'] ? 'its workspace is inside WSL' : 'its workspace could not be read' };
+  });
+
+  // CPU and memory where the provider can measure them (Docker and Podman, while
+  // running), and disk from the host. Every number not measured is null with a
+  // note; nothing is estimated.
+  app.get('/v1/computers/:id/stats', async (req) => {
+    const { id } = req.params as { id: string };
+    const computer = await mustGet(app, id);
+    const { info } = computer;
+    const notes: string[] = [];
+    let usage: { cpuPercent?: number; memoryBytes?: number; memoryLimitBytes?: number } = {};
+    if (info.state !== 'running') notes.push('CPU and memory are measured only while it runs');
+    else if (!computer.usage) notes.push(`CPU and memory are not available for ${info.provider} computers`);
+    else {
+      try {
+        usage = await computer.usage();
+      } catch (err) {
+        notes.push(`could not read CPU and memory: ${clampText((err as Error).message, 200)}`);
+      }
+    }
+    const diskBytes = info.provider === 'local' ? ((await localWorkspaceBytes(info)) ?? null) : null;
+    if (diskBytes === null) notes.push(`disk is not measured for ${info.provider} computers yet`);
+    return {
+      cpuPercent: usage.cpuPercent ?? null,
+      memoryBytes: usage.memoryBytes ?? null,
+      memoryLimitBytes: usage.memoryLimitBytes ?? null,
+      diskBytes,
+      ...(notes.length ? { notes } : {}),
+    };
+  });
+
+  // A small frame of the computer's browser, only if one is already open.
+  // Never launches Chromium: an overview must not start a 111 MB download.
+  app.get('/v1/computers/:id/thumbnail', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const page = livePageFor(id);
+    if (!page) {
+      throw huskError('E_BROWSER_NOT_FOUND', 'this computer has no browser open', { hint: 'nothing to show until a run opens a page' });
+    }
+    const frame = await page.frame(40);
+    return reply.header('cache-control', 'no-store').type('image/jpeg').send(Buffer.from(frame.data, 'base64'));
   });
 
   app.post('/v1/computers/:id/stop', async (req) => {

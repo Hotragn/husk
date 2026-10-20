@@ -37,6 +37,8 @@ import type {
   ModelListResponse,
   PendingHandoff,
   ScopedComputer,
+  Overview,
+  ComputerStats,
   RunRequestBody,
   RunStreamEvent,
   BrowserStatus,
@@ -155,6 +157,21 @@ export class HuskApi {
       query: { confirm: id },
       timeoutMs: 60_000,
     });
+  }
+
+  /** `GET /v1/overview`: computers, what each run is doing, and who is waiting on a person. */
+  overview(signal?: AbortSignal): Promise<Overview> {
+    return this.client.http.request<Overview>('GET', '/v1/overview', { ...(signal ? { signal } : {}) });
+  }
+
+  /** `GET /v1/computers/:id/stats`. */
+  computerStats(id: string, signal?: AbortSignal): Promise<ComputerStats> {
+    return this.client.http.request<ComputerStats>('GET', `/v1/computers/${enc(id)}/stats`, { ...(signal ? { signal } : {}) });
+  }
+
+  /** `GET /v1/computers/:id/thumbnail`: a frame of an already-open browser, or a 404. */
+  async computerThumbnail(id: string, signal?: AbortSignal): Promise<Blob> {
+    return (await this.frame(`/v1/computers/${enc(id)}/thumbnail`, signal)).image;
   }
 
   /** `GET /v1/computers/:id/disk`, measured from the host. `bytes` is null where it is not measured. */

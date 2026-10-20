@@ -323,3 +323,29 @@ export interface ScopedComputer {
   state: string;
   handoff: PendingHandoff | null;
 }
+
+/** One running run, from `GET /v1/overview`. */
+export interface ActiveRunInfo {
+  runId: string;
+  husk: string;
+  startedAt: string;
+  computerId?: string;
+  step?: number;
+  tool?: string;
+}
+
+/** `GET /v1/overview`. */
+export interface Overview {
+  computers: ComputerInfo[];
+  activeRuns: ActiveRunInfo[];
+  handoffs: PendingHandoff[];
+}
+
+/** `GET /v1/computers/:id/stats`. Null means not measured; `notes` says why. */
+export interface ComputerStats {
+  cpuPercent: number | null;
+  memoryBytes: number | null;
+  memoryLimitBytes: number | null;
+  diskBytes: number | null;
+  notes?: string[];
+}

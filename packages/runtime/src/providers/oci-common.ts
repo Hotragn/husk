@@ -11,6 +11,7 @@ import type {
   Computer,
   ComputerInfo,
   ComputerProvider,
+  ComputerUsage,
   ComputerSpec,
   DirEntry,
   ExecRequest,
@@ -264,6 +265,39 @@ interface SnapshotRecord {
 
 function snapshotDir(): string {
   return join(ensurePaths().cache, 'snapshots');
+}
+
+const UNITS: Record<string, number> = {
+  B: 1,
+  KB: 1e3,
+  MB: 1e6,
+  GB: 1e9,
+  TB: 1e12,
+  KIB: 1024,
+  MIB: 1024 ** 2,
+  GIB: 1024 ** 3,
+  TIB: 1024 ** 4,
+};
+
+function parseSize(text: string): number | undefined {
+  const m = /^([\d.]+)\s*([a-z]+)$/i.exec(text.trim());
+  if (!m) return undefined;
+  const unit = UNITS[m[2]!.toUpperCase()];
+  return unit === undefined ? undefined : Math.round(Number(m[1]) * unit);
+}
+
+/** `"1.23%|12.5MiB / 1.94GiB"` -> numbers. Anything it cannot read is left out, not guessed. */
+export function parseStatsLine(line: string): ComputerUsage {
+  const [cpu, mem] = line.trim().split('|');
+  const out: ComputerUsage = {};
+  const pct = cpu ? Number(cpu.trim().replace(/%$/, '')) : NaN;
+  if (Number.isFinite(pct)) out.cpuPercent = pct;
+  const [used, limit] = (mem ?? '').split('/');
+  const usedBytes = used ? parseSize(used) : undefined;
+  const limitBytes = limit ? parseSize(limit) : undefined;
+  if (usedBytes !== undefined) out.memoryBytes = usedBytes;
+  if (limitBytes !== undefined) out.memoryLimitBytes = limitBytes;
+  return out;
 }
 
 export class OciComputer implements Computer {
@@ -675,6 +709,16 @@ export class OciComputer implements Computer {
         : 'on Docker Desktop the container network lives inside a VM; run the engine natively, or reach the service from another container',
       details: { ip, port, provider: this.cfg.provider },
     });
+  }
+
+  /**
+   * CPU and memory from `<engine> stats --no-stream`, using the documented
+   * `CPUPerc` and `MemUsage` placeholders.
+   * https://docs.docker.com/reference/cli/docker/container/stats/
+   */
+  async usage(): Promise<ComputerUsage> {
+    const { stdout } = await this.cli(['stats', '--no-stream', '--format', '{{.CPUPerc}}|{{.MemUsage}}', this.native], 20_000);
+    return parseStatsLine(stdout);
   }
 
   async stop(): Promise<void> {

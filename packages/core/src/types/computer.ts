@@ -183,7 +183,17 @@ export interface Computer {
 
   /** Optional capabilities -- callers must feature-detect. */
   snapshot?(name?: string): Promise<{ id: string; sizeBytes?: number }>;
+  /** Live CPU and memory, where the provider can measure them. Only while running. */
+  usage?(): Promise<ComputerUsage>;
   restore?(snapshotId: string): Promise<void>;
+}
+
+/** What a running computer is using right now. Absent fields were not measurable. */
+export interface ComputerUsage {
+  /** Percent of one CPU, as `docker stats` reports it (can exceed 100 on several cores). */
+  cpuPercent?: number;
+  memoryBytes?: number;
+  memoryLimitBytes?: number;
 }
 
 export interface Availability {
