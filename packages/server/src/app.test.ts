@@ -498,6 +498,9 @@ describe('running a husk', () => {
       { type: 'computer_ready', computerId: 'cmp_busy', provider: 'docker' },
       { type: 'step_start', step: 3 },
       { type: 'tool_start', call: { type: 'tool_call', id: 'c1', name: 'shell', args: {} } },
+      // Two calls in one turn run concurrently; the first to finish must not hide the other.
+      { type: 'tool_start', call: { type: 'tool_call', id: 'c2', name: 'browser_goto', args: {} } },
+      { type: 'tool_end', call: { type: 'tool_call', id: 'c2', name: 'browser_goto', args: {} }, output: '', isError: false, durationMs: 1 },
     ];
     const slow = await buildTestApp({ agent: fakeAgentFactory({ progress, hold }) });
     try {

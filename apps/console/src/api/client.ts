@@ -171,17 +171,7 @@ export class HuskApi {
 
   /** `GET /v1/computers/:id/thumbnail`: a frame of an already-open browser, or a 404. */
   async computerThumbnail(id: string, signal?: AbortSignal): Promise<Blob> {
-    const url = this.client.http.url(`/v1/computers/${enc(id)}/thumbnail`);
-    const headers: Record<string, string> = {};
-    if (this.token) headers.authorization = `Bearer ${this.token}`;
-    let res: Response;
-    try {
-      res = await fetch(url, { headers, cache: 'no-store', ...(signal ? { signal } : {}) });
-    } catch (err) {
-      throw transportError(err, url);
-    }
-    if (!res.ok) throw errorFromResponse(res.status, await safeJson(res), url);
-    return res.blob();
+    return (await this.frame(`/v1/computers/${enc(id)}/thumbnail`, signal)).image;
   }
 
   /** `GET /v1/computers/:id/disk`, measured from the host. `bytes` is null where it is not measured. */

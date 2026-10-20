@@ -78,9 +78,45 @@ describe('Overview panel', () => {
     ]);
   });
 
-  it('says not available rather than inventing numbers, and shows no thumbnail without a browser', async () => {
-    const { container } = render(<OverviewPanel onOpen={() => {}} />);
+  it('says not available rather than inventing numbers', async () => {
+    render(<OverviewPanel onOpen={() => {}} />);
     expect((await screen.findAllByText('CPU not available · memory not available · disk not available')).length).toBeGreaterThan(0);
+  });
+
+  it('looks at a browser only when asked, since a frame counts as using the computer', async () => {
+    const { container } = render(<OverviewPanel onOpen={() => {}} />);
+    await screen.findByText('Running triage · step 2 · shell');
+    expect(requests.some((p) => p.endsWith('/thumbnail'))).toBe(false);
+    const busy = screen.getByRole('article', { name: 'cmp_busy' });
+    fireEvent.click(within(busy).getByRole('button', { name: 'Look at browser' }));
+    expect(await within(busy).findByText('No browser is open on this computer.')).toBeTruthy();
+    expect(requests.filter((p) => p.endsWith('/thumbnail'))).toEqual(['/v1/computers/cmp_busy/thumbnail']);
     expect(container.querySelector('.overview-thumb')).toBeNull();
+  });
+
+  it('shows a handoff that has no computer card, with Take over', async () => {
+    const onOpen = vi.fn();
+    overview.handoffs.push({ handoffId: 'hnd_9', runId: 'run_9', husk: 'billing', reason: 'Approve the payment.', createdAt: '' });
+    try {
+      render(<OverviewPanel onOpen={onOpen} />);
+      const block = (await screen.findByText('Approve the payment.')).closest('.overview-waiting') as HTMLElement;
+      fireEvent.click(within(block).getByRole('button', { name: 'Take over' }));
+      expect(onOpen).toHaveBeenCalledWith('handoffs', '');
+    } finally {
+      overview.handoffs.pop();
+    }
+  });
+
+  it('counts computers in other states so the summary adds up', async () => {
+    overview.computers.push(computer('cmp_err', 'error' as never, '2026-10-20T06:00:00Z'));
+    try {
+      const { container } = render(<OverviewPanel onOpen={() => {}} />);
+      await screen.findByText('Running triage · step 2 · shell');
+      expect(container.querySelector('.overview-summary')?.textContent?.replace(/\s+/g, ' ')).toBe(
+        '3 running · 1 waiting on you · 1 stopped · 1 other',
+      );
+    } finally {
+      overview.computers.pop();
+    }
   });
 });

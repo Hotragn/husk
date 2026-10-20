@@ -78,7 +78,8 @@ interface ActiveRun {
   /** What the run is doing now, from its own events, for the computers overview. */
   computerId?: string;
   step?: number;
-  tool?: string;
+  /** Tool calls in flight, by call id: a turn's calls run concurrently. */
+  tools?: Map<string, string>;
 }
 
 /** One running run, as the overview shows it. */
@@ -130,7 +131,7 @@ export class Runner {
       startedAt: new Date(r.startedAt).toISOString(),
       ...(r.computerId ? { computerId: r.computerId } : {}),
       ...(r.step !== undefined ? { step: r.step } : {}),
-      ...(r.tool ? { tool: r.tool } : {}),
+      ...(r.tools?.size ? { tool: [...new Set(r.tools.values())].join(', ') } : {}),
     }));
   }
 
@@ -140,8 +141,8 @@ export class Runner {
     if (!run) return;
     if (e.type === 'computer_ready') run.computerId = e.computerId;
     else if (e.type === 'step_start') run.step = e.step;
-    else if (e.type === 'tool_start') run.tool = e.call.name;
-    else if (e.type === 'tool_end' || e.type === 'tool_denied') delete run.tool;
+    else if (e.type === 'tool_start') (run.tools ??= new Map()).set(e.call.id, e.call.name);
+    else if (e.type === 'tool_end' || e.type === 'tool_denied') run.tools?.delete(e.call.id);
   }
 
   cancel(runId: string): boolean {

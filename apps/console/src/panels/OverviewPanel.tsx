@@ -3,10 +3,11 @@
  *
  * One `GET /v1/overview` every few seconds gives the computers, what each run is
  * doing and on which computer, and the handoffs waiting on a person. Cards are
- * sorted waiting first, then busy, then idle. A browser thumbnail appears only
- * when that computer already has a browser open -- the server never launches
- * one for it -- and CPU, memory and disk are shown only where they were
- * measured. Model text (handoff reasons) and app text (chat labels) are text.
+ * sorted waiting first, then busy, then idle. A look at the browser is taken
+ * only when asked for -- a frame runs the driver inside the computer, which
+ * counts as use, so polling it would make every computer look busy -- and the
+ * server never launches a browser for it. CPU, memory and disk are shown only
+ * where they were measured. Model text and app text are rendered as text.
  */
 
 import { useEffect, useState } from 'react';
@@ -58,7 +59,11 @@ export function OverviewPanel({ onOpen }: { onOpen: (target: OverviewTarget, com
   const rows = overview.data ? sortRows(overview.data) : [];
   const running = rows.filter((r) => r.computer.state === 'running').length;
   const stopped = rows.filter((r) => r.computer.state === 'stopped').length;
+  const other = rows.length - running - stopped;
   const waiting = overview.data?.handoffs.length ?? 0;
+  // A handoff raised before its run had a computer has no card to sit on.
+  const listed = new Set(rows.map((r) => r.computer.id));
+  const unplaced = overview.data?.handoffs.filter((h) => !h.computerId || !listed.has(h.computerId)) ?? [];
 
   const stop = async (id: string) => {
     try {
@@ -81,6 +86,12 @@ export function OverviewPanel({ onOpen }: { onOpen: (target: OverviewTarget, com
         <p className="overview-summary" role="status">
           <strong>{running}</strong> running · <strong className={waiting ? 'overview-waiting-count' : undefined}>{waiting}</strong>{' '}
           waiting on you · <strong>{stopped}</strong> stopped
+          {other > 0 ? (
+            <>
+              {' '}
+              · <strong>{other}</strong> other
+            </>
+          ) : null}
         </p>
       ) : null}
 
@@ -93,6 +104,16 @@ export function OverviewPanel({ onOpen }: { onOpen: (target: OverviewTarget, com
           body="A computer starts the first time a chat or a husk needs one. Nothing runs in advance."
         />
       ) : null}
+
+      {unplaced.map((h) => (
+        <div key={h.handoffId} className="overview-waiting" role="status">
+          <strong>Waiting for you · {h.husk}</strong>
+          <p className="handoff-reason">{h.reason}</p>
+          <Button variant="primary" onClick={() => onOpen('handoffs', h.computerId ?? '')}>
+            Take over
+          </Button>
+        </div>
+      ))}
 
       <div className="overview-grid">
         {rows.map((row) => (
@@ -151,7 +172,7 @@ function ComputerCard({
         </div>
       ) : null}
 
-      {computer.state === 'running' ? <Thumbnail id={computer.id} /> : null}
+      {computer.state === 'running' ? <BrowserLook id={computer.id} /> : null}
       <StatsLine id={computer.id} running={computer.state === 'running'} />
 
       <div className="btn-row">
@@ -174,43 +195,49 @@ function ComputerCard({
   );
 }
 
-/** The browser, if one is already open. Nothing at all otherwise. */
-function Thumbnail({ id }: { id: string }) {
+/**
+ * One look at the browser, when asked. Not polled: taking a frame runs the
+ * driver in the computer, which counts as use, so a polled thumbnail would
+ * reset every computer's idle time while this page is open.
+ */
+function BrowserLook({ id }: { id: string }) {
   const { api } = useConnection();
   const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    const controller = new AbortController();
-    let current: string | null = null;
-    const tick = async () => {
-      if (document.visibilityState === 'hidden') return;
-      try {
-        const blob = await api.computerThumbnail(id, controller.signal);
-        const next = URL.createObjectURL(blob);
-        if (current) URL.revokeObjectURL(current);
-        current = next;
-        setUrl(next);
-      } catch {
-        if (current) URL.revokeObjectURL(current);
-        current = null;
-        setUrl(null);
-      }
-    };
-    void tick();
-    const timer = setInterval(() => void tick(), 5000);
-    return () => {
-      controller.abort();
-      clearInterval(timer);
-      if (current) URL.revokeObjectURL(current);
-    };
-  }, [api, id]);
-  return url ? <img className="overview-thumb" src={url} alt={`The browser on ${id}`} /> : null;
+  const [none, setNone] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => () => {
+    if (url) URL.revokeObjectURL(url);
+  }, [url]);
+  const look = async () => {
+    setBusy(true);
+    try {
+      setUrl(URL.createObjectURL(await api.computerThumbnail(id)));
+      setNone(false);
+    } catch {
+      setUrl(null);
+      setNone(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div>
+      {url ? <img className="overview-thumb" src={url} alt={`The browser on ${id}`} /> : null}
+      {none ? <p className="field-note">No browser is open on this computer.</p> : null}
+      <Button size="sm" loading={busy} onClick={() => void look()}>
+        {url ? 'Look again' : 'Look at browser'}
+      </Button>
+    </div>
+  );
 }
 
 /** CPU, memory and disk where measured; "not available" where not. Never an estimate. */
 function StatsLine({ id, running }: { id: string; running: boolean }) {
   const { api } = useConnection();
   const stats = useResource<ComputerStats>((signal) => api.computerStats(id, signal), [api, id, running], true, {
-    refreshMs: running ? 10_000 : 0,
+    // Only while the tab is visible (useResource), and not often: each Docker
+    // computer's numbers cost a `docker stats` run.
+    refreshMs: running ? 30_000 : 0,
   });
   const s = stats.data;
   if (!s) return null;
