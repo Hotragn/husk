@@ -105,6 +105,8 @@ export class HuskMcpServer {
   /** Per computer: tool calls in flight, and the timer that stops it once there are none. */
   private readonly inFlight = new Map<string, number>();
   private readonly idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Idle stops in progress. A call that arrives mid-stop waits for it, then starts the computer. */
+  private readonly stopping = new Map<string, Promise<void>>();
   /** Set once a computer exists and turns out not to be Linux. */
   private degraded = false;
   private profile: WorkspaceProfile;
@@ -166,8 +168,10 @@ export class HuskMcpServer {
         const a = (args ?? {}) as Record<string, unknown>;
         try {
           if (name === 'hand_off_done') return this.handOffDone(a);
-          // A handoff with no computer is still a handoff ("approve it on your phone").
-          const target = a.computer !== undefined || this.computers.size === 1 ? await this.resolve(a.computer) : undefined;
+          // A handoff with no computer is still a handoff ("approve it on your phone"),
+          // and "new" means this chat has none yet: nothing is created just to hand it off.
+          const wanted = a.computer === 'new' ? undefined : a.computer;
+          const target = wanted !== undefined || this.computers.size === 1 ? await this.resolve(wanted) : undefined;
           if (typeof target === 'string') return { isError: true, content: [{ type: 'text', text: target }] };
           return await this.handOff(a, extra.signal, target);
         } catch (err) {
@@ -263,7 +267,7 @@ export class HuskMcpServer {
     const id = typeof requested === 'string' ? requested.trim() : '';
     if (id && id !== 'new') {
       const own = this.computers.get(id) ?? (await this.wake(id));
-      if (own) return ensureRunning(own);
+      if (own) return this.ready(own);
       return (
         `There is no Husk computer "${id}" for this conversation. Use the id an earlier Husk result in this ` +
         'conversation gave you, or pass computer: "new" if this conversation has none yet.'
@@ -323,14 +327,30 @@ export class HuskMcpServer {
     const c = this.computers.get(id);
     if (!c || (this.inFlight.get(id) ?? 0) > 0) return;
     if (this.handoffs.list().some((h) => h.computerId === id)) return this.arm(id);
-    await quiet(() => c.stop());
-    this.log.info(`computer ${id} idle, stopped`);
+    const stop = quiet(() => c.stop()).then(() => undefined);
+    this.stopping.set(id, stop);
+    try {
+      await stop;
+      this.log.info(`computer ${id} idle, stopped`);
+    } finally {
+      this.stopping.delete(id);
+    }
+  }
+
+  /**
+   * Running and ready for a call. If an idle stop is under way, wait for it to
+   * finish first: `docker stop` takes seconds, and inspect says "running" until
+   * it is done, so starting a call in the middle would exec into a dying container.
+   */
+  private async ready(c: Computer): Promise<Computer> {
+    await this.stopping.get(c.id);
+    return ensureRunning(c);
   }
 
   /** The only computer, created once even under concurrent calls. */
   private async single(): Promise<Computer> {
     const only = [...this.computers.values()][0];
-    if (only) return ensureRunning(only);
+    if (only) return this.ready(only);
     this.creating ??= this.createComputer();
     try {
       return await this.creating;

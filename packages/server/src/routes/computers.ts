@@ -124,7 +124,8 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
     const { info } = await mustGet(app, id);
     if (info.provider !== 'local') return { bytes: null, note: `not measured for ${info.provider} computers yet` };
     const bytes = await localWorkspaceBytes(info);
-    return bytes === undefined ? { bytes: null, note: 'its workspace is inside WSL' } : { bytes };
+    if (bytes !== undefined) return { bytes };
+    return { bytes: null, note: info.spec.labels?.['husk.wslWorkspace'] ? 'its workspace is inside WSL' : 'its workspace could not be read' };
   });
 
   app.post('/v1/computers/:id/stop', async (req) => {

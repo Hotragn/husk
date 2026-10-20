@@ -889,12 +889,16 @@ export async function localWorkspaceBytes(info: ComputerInfo): Promise<number | 
     // No workspace folder means nothing on disk.
     return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 0 : undefined;
   }
+  // Links are not followed, so nothing outside the workspace is counted.
+  // `parentPath` is Node 20.12+; `path` is the older name for the same thing.
+  const files = entries
+    .filter((e) => e.isFile())
+    .map((e) => join((e as { parentPath?: string; path?: string }).parentPath ?? (e as { path?: string }).path ?? root, e.name));
   let total = 0;
-  for (const e of entries) {
-    if (!e.isFile()) continue; // links are not followed, so nothing outside the workspace is counted
-    // `parentPath` is Node 20.12+; `path` is the older name for the same thing.
-    const dir = (e as { parentPath?: string; path?: string }).parentPath ?? (e as { path?: string }).path ?? root;
-    total += (await lstat(join(dir, e.name)).catch(() => ({ size: 0 }))).size;
+  // In batches: one at a time is slow on a big tree, all at once exhausts file handles.
+  for (let i = 0; i < files.length; i += 128) {
+    const sizes = await Promise.all(files.slice(i, i + 128).map((f) => lstat(f).then((s) => s.size, () => 0)));
+    for (const size of sizes) total += size;
   }
   return total;
 }

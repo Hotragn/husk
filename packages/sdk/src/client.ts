@@ -115,8 +115,13 @@ class ComputersApi {
     return this.http.request<ComputerInfo>('GET', `/v1/computers/${enc(id)}`, opts);
   }
 
-  destroy(id: string, opts: CallOptions = {}): Promise<void> {
-    return this.http.request<void>('DELETE', `/v1/computers/${enc(id)}`, opts);
+  /**
+   * A chat's computer (one made over MCP) is deleted only with `confirm: true`,
+   * which sends its id back as `?confirm=`. Ask the person before passing it.
+   */
+  destroy(id: string, opts: CallOptions & { confirm?: boolean } = {}): Promise<void> {
+    const { confirm, ...rest } = opts;
+    return this.http.request<void>('DELETE', `/v1/computers/${enc(id)}`, { ...rest, ...(confirm ? { query: { confirm: id } } : {}) });
   }
 
   stop(id: string, opts: CallOptions = {}): Promise<ComputerInfo> {

@@ -22,7 +22,7 @@ const silent = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Lo
 function fakeManager() {
   const made: Computer[] = [];
   const bindings = new Map<string, string>();
-  const activity = { starts: 0, stops: 0 };
+  const activity = { starts: 0, stops: 0, stopMs: 0 };
   const make = async (spec: ComputerSpec) => {
     const id = `cmp_${made.length + 1}`;
     const info = {
@@ -40,6 +40,7 @@ function fakeManager() {
       id,
       info,
       async exec() {
+        if (info.state !== 'running') throw new Error(`computer ${id} is ${info.state}`);
         return { exitCode: 0, stdout: `on ${id}`, stderr: '', durationMs: 1, truncated: false, timedOut: false };
       },
       async refresh() {
@@ -51,6 +52,8 @@ function fakeManager() {
       },
       async stop() {
         activity.stops++;
+        // Like `docker stop`: it takes a while, and inspect says running until it is done.
+        await new Promise((r) => setTimeout(r, activity.stopMs));
         info.state = 'stopped';
       },
       async destroy() {
@@ -253,5 +256,32 @@ describe('a chat computer outlives the process', () => {
     expect(guessed.isError).toBe(true);
     expect(fake.made).toHaveLength(1);
     expect(fake.made[0]?.info.state).toBe('running');
+  });
+});
+
+describe('a call that arrives while the computer is being stopped for idleness', () => {
+  it('waits for the stop, starts it again, and runs', async () => {
+    const fake = fakeManager();
+    fake.activity.stopMs = 80;
+    const { shell } = await connect('claude-ai', { fake, idleStopMs: 20 });
+    const id = idIn((await shell('new')).text);
+    await new Promise((r) => setTimeout(r, 50)); // the idle stop has begun, not finished
+    expect(fake.activity.stops).toBe(1);
+    const r = await shell(id);
+    expect(r.isError).toBe(false);
+    expect(r.text).toContain(`on ${id}`);
+    expect(fake.activity.starts).toBe(1);
+  });
+});
+
+describe('hand_off from a chat with no computer yet', () => {
+  it('treats computer "new" as none, and creates nothing', async () => {
+    const fake = fakeManager();
+    const { client } = await connect('claude-ai', { fake });
+    const r = (await client.callTool({ name: 'hand_off', arguments: { reason: 'Approve it on your phone.', computer: 'new' } })) as {
+      isError?: boolean;
+    };
+    expect(r.isError).not.toBe(true);
+    expect(fake.made).toHaveLength(0);
   });
 });

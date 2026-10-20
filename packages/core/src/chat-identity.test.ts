@@ -26,3 +26,11 @@ describe('chat identity', () => {
     expect(chatIdentityOf(undefined)).toEqual({});
   });
 });
+
+describe('platformName matching', () => {
+  it('matches a known client only at the start of its name', () => {
+    expect(platformName('optimized-agent')).toBe('optimized-agent');
+    expect(platformName('authorized-cli')).toBe('authorized-cli');
+    expect(platformName('zed-editor')).toBe('Zed');
+  });
+});

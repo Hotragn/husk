@@ -56,10 +56,10 @@ export function platformName(clientName: string | undefined): string {
   const known: Array<[RegExp, string]> = [
     [/^claude-code$/i, 'Claude Code'],
     [/^claude-ai$/i, 'Claude Desktop'],
-    [/cursor/i, 'Cursor'],
-    [/visual studio code|^vscode/i, 'VS Code'],
-    [/windsurf/i, 'Windsurf'],
-    [/zed/i, 'Zed'],
+    [/^cursor/i, 'Cursor'],
+    [/^(visual studio code|vscode)/i, 'VS Code'],
+    [/^windsurf/i, 'Windsurf'],
+    [/^zed/i, 'Zed'],
   ];
   for (const [re, name] of known) if (re.test(raw)) return name;
   const clean = raw.replace(/[^\w .()-]/g, '').trim().slice(0, 40);
