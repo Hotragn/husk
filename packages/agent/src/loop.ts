@@ -608,7 +608,9 @@ class Run {
       return 'aborted';
     } finally {
       this.budget.resume();
-      if (!this.abort.signal.aborted) this.armTimer(this.budget.remainingMs);
+      // Another handoff in the same turn may still be waiting; its person's
+      // time does not count either, so the limit restarts only after the last.
+      if (!this.abort.signal.aborted && !this.budget.paused) this.armTimer(this.budget.remainingMs);
     }
   }
 

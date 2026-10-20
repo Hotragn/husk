@@ -329,24 +329,40 @@ export class Runner {
         router: this.deps.router,
         computers: await this.computerSource(body),
       });
+      // Approvals and handoffs pause the agent inside a tool call, so the event
+      // that says so cannot wait for the agent's next event: it would arrive only
+      // once the person had already answered. Wake the loop as soon as one lands.
+      let wake: (() => void) | undefined;
       const opts = this.buildOptions(spec, body, runId, abort.signal, (e) => {
-        if (e.type === 'approval_required') sideChannel.push(e);
+        if (e.type === 'approval_required' || e.type === 'handoff_required') {
+          sideChannel.push(e);
+          wake?.();
+        }
       });
 
-      for await (const raw of agent.stream(opts)) {
-        while (sideChannel.length) {
-          const side = sideChannel.shift()!;
-          record(side);
-          yield side;
+      const events = agent.stream(opts)[Symbol.asyncIterator]();
+      for (;;) {
+        const next = events.next();
+        let step: IteratorResult<RunEvent> | undefined;
+        for (;;) {
+          // Asking for the next event can itself raise one synchronously, before
+          // there is anything to wake, so drain what is queued before waiting.
+          while (sideChannel.length) {
+            const side = sideChannel.shift()!;
+            record(side);
+            yield side;
+          }
+          if (step) break;
+          const woken = new Promise<undefined>((resolve) => {
+            wake = () => resolve(undefined);
+          });
+          step = await Promise.race([next, woken]);
+          wake = undefined;
         }
-        const event = this.normalise(raw, runId);
+        if (step.done) break;
+        const event = this.normalise(step.value, runId);
         record(event);
         yield event;
-      }
-      while (sideChannel.length) {
-        const side = sideChannel.shift()!;
-        record(side);
-        yield side;
       }
 
       const result = last ?? this.failureResult(runId, new Error('agent stream ended without a run_end'), startedAt);

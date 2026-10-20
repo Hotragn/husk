@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { HUSK_VERSION } from '@husk-ai/core';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { consoleAssetsPath } from '@husk-ai/console-assets';
+import { hostnameOf, isLoopbackHost } from './auth.js';
 import { sendError } from './errors.js';
 import type { HandoffRegistry } from './handoffs.js';
 import { registerHandoffRoutes } from './routes/handoffs.js';
@@ -30,7 +31,8 @@ export async function createWorkspaceViewer(options: WorkspaceViewerOptions = {}
   const token = options.token ?? randomBytes(32).toString('hex');
   app.addHook('onRequest', async (req, reply) => {
     const host = req.headers.host ?? '';
-    if (!/^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(host)) return reply.code(403).send({ error: { message: 'Use the local workspace link.' } });
+    const name = hostnameOf(host);
+    if (!name || !isLoopbackHost(name)) return reply.code(403).send({ error: { message: 'Use the local workspace link.' } });
     if (req.headers.origin && req.headers.origin !== `http://${host}`) return reply.code(403).send({ error: { message: 'Cross-origin workspace requests are not allowed.' } });
     if (!req.url.startsWith('/v1/')) return;
     // Checked per handoff by its own key in the routes below.

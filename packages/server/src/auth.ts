@@ -81,7 +81,9 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
       // reachable from any web page through DNS rebinding: evil.example resolves
       // to 127.0.0.1 and the browser sends `Host: evil.example`. Answering only
       // loopback names closes that, and costs nothing a local client sends.
-      if (isLoopbackHost(hostnameOf(req.headers.host))) return;
+      // A missing Host is not a loopback name: only a request that names one passes.
+      const host = hostnameOf(req.headers.host);
+      if (host && isLoopbackHost(host)) return;
       await reply.code(401).send({
         error: {
           code: 'E_NO_CREDENTIALS',

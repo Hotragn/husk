@@ -99,6 +99,22 @@ describe('handoff over HTTP', () => {
     expect(result.statusCode).toBe(200);
   });
 
+  it('streams handoff_required while the run is still paused, not after the person answers', async () => {
+    harness = await buildTestApp({ agent: fakeAgentFactory({ handoffFor: { reason: 'Enter the 2FA code' } }) });
+    const runner = harness.app.husk.runner;
+    const events = runner.stream(sampleSpec(), { input: 'go' }, new AbortController().signal)[Symbol.asyncIterator]();
+    let e = await events.next();
+    while (!e.done && e.value.type !== 'handoff_required') e = await events.next();
+    expect(e.done ? undefined : e.value.type).toBe('handoff_required');
+    // The event arrived with the handoff still open: nobody has answered yet.
+    const open = runner.handoffs.list();
+    expect(open).toHaveLength(1);
+    runner.handoffs.complete(open[0]!.handoffId);
+    let last: string | undefined;
+    for (let r = await events.next(); !r.done; r = await events.next()) last = r.value.type;
+    expect(last).toBe('run_end');
+  });
+
   it('answers an unknown handoff with a 404 and the hint', async () => {
     harness = await buildTestApp();
     const res = await harness.app.inject({ method: 'POST', url: '/v1/handoffs/hnd_nope/done' });

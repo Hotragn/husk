@@ -267,6 +267,9 @@ export class HuskMcpServer {
     const open = this.handoffs.list()[0];
     if (open) throw new Error(heldText(open.handoffId, open.reason));
 
+    // Before the handoff opens: if the viewer cannot start, nothing is left
+    // holding the computer with no link to finish it.
+    const { origin } = await this.openViewerServer();
     let handoffId = '';
     const finished = this.handoffs.request(
       {
@@ -283,7 +286,6 @@ export class HuskMcpServer {
     void finished.then((outcome) => {
       if (outcome === 'done') this.handedBack.add(handoffId);
     });
-    const { origin } = await this.openViewerServer();
     const link = handoffLink(origin, handoffId, this.handoffs.secretOf(handoffId) ?? '');
 
     // In-chat "Done?" where the client declared form elicitation.
