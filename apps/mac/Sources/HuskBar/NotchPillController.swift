@@ -44,14 +44,11 @@ final class NotchPillController {
     }
 
     private func currentNotch() -> CGRect? {
-        for screen in NSScreen.screens {
-            if let rect = notchRect(screenFrame: screen.frame,
-                                    safeAreaTop: screen.safeAreaInsets.top,
-                                    topLeftArea: screen.auxiliaryTopLeftArea,
-                                    topRightArea: screen.auxiliaryTopRightArea) {
-                return rect
-            }
+        let screens = NSScreen.screens.map {
+            ScreenGeometry(frame: $0.frame, safeAreaTop: $0.safeAreaInsets.top,
+                           topLeftArea: $0.auxiliaryTopLeftArea, topRightArea: $0.auxiliaryTopRightArea)
         }
+        if case let .notch(rect) = pillPlacement(screens: screens) { return rect }
         return nil
     }
 }
@@ -79,7 +76,7 @@ struct PillView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(overview.computers) { computer in
-                            row(computer, waiting: overview.handoffs.first { $0.computerId == computer.id })
+                            row(computer, status: status(of: computer, in: overview))
                         }
                     }
                 }
@@ -96,15 +93,15 @@ struct PillView: View {
         .accessibilityLabel(model.summary.pillText ?? "Husk")
     }
 
-    private func row(_ computer: Computer, waiting: Handoff?) -> some View {
+    private func row(_ computer: Computer, status: ComputerStatus) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(computer.title).font(.system(size: 11, weight: .medium)).lineLimit(1)
-            if let waiting {
-                Text(waiting.reason).font(.system(size: 10)).foregroundColor(.orange).lineLimit(2)
+            if case let .waiting(reason) = status {
+                Text(reason).font(.system(size: 10)).foregroundColor(.orange).lineLimit(2)
                 Button("Take over", action: model.takeOver).buttonStyle(.borderless).font(.system(size: 10))
             } else {
                 HStack {
-                    Text([computer.platform, computer.state].compactMap { $0 }.joined(separator: " · "))
+                    Text([computer.platform, status.label].compactMap { $0 }.joined(separator: " · "))
                         .font(.system(size: 10)).foregroundColor(.gray)
                     Button("Open", action: model.open).buttonStyle(.borderless).font(.system(size: 10))
                 }

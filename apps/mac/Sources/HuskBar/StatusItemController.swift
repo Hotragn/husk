@@ -33,14 +33,12 @@ final class StatusItemController: NSObject {
             menu.addItem(disabled(problem))
         } else if let overview, !overview.computers.isEmpty {
             for computer in overview.computers {
-                let waiting = overview.handoffs.first { $0.computerId == computer.id }
-                let line = [computer.title, computer.platform, waiting == nil ? computer.state : "waiting for you"]
-                    .compactMap { $0 }
-                    .joined(separator: " · ")
+                let state = status(of: computer, in: overview)
+                let line = [computer.title, computer.platform, state.label].compactMap { $0 }.joined(separator: " · ")
                 let entry = NSMenuItem(title: line, action: nil, keyEquivalent: "")
                 let sub = NSMenu()
-                if let waiting {
-                    sub.addItem(disabled(waiting.reason))
+                if case let .waiting(reason) = state {
+                    sub.addItem(disabled(reason))
                     sub.addItem(action("Take over", #selector(doTakeOver)))
                 }
                 sub.addItem(action("Open", #selector(doOpen)))

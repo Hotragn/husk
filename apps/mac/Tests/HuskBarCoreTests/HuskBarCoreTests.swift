@@ -86,3 +86,61 @@ final class NotchGeometryTests: XCTestCase {
         XCTAssertEqual(pill.width, 220)
     }
 }
+
+final class PlacementTests: XCTestCase {
+    private let builtIn = ScreenGeometry(frame: CGRect(x: 0, y: 0, width: 1512, height: 982), safeAreaTop: 32,
+                                         topLeftArea: CGRect(x: 0, y: 950, width: 661, height: 32),
+                                         topRightArea: CGRect(x: 851, y: 950, width: 661, height: 32))
+    private let external = ScreenGeometry(frame: CGRect(x: 1512, y: 0, width: 2560, height: 1440), safeAreaTop: 0,
+                                          topLeftArea: nil, topRightArea: nil)
+
+    func testUsesTheNotchOnTheBuiltInDisplay() {
+        XCTAssertEqual(pillPlacement(screens: [builtIn]), .notch(CGRect(x: 661, y: 950, width: 190, height: 32)))
+    }
+
+    func testFindsTheNotchEvenWhenAnExternalDisplayIsMain() {
+        XCTAssertEqual(pillPlacement(screens: [external, builtIn]), .notch(CGRect(x: 661, y: 950, width: 190, height: 32)))
+    }
+
+    func testFallsBackToTheMenuBarWithNoNotch() {
+        XCTAssertEqual(pillPlacement(screens: [external]), .menuBarOnly)
+        XCTAssertEqual(pillPlacement(screens: []), .menuBarOnly)
+    }
+}
+
+final class ComputerStatusTests: XCTestCase {
+    func testWaitingWinsOverTheMachineState() {
+        let c = Computer(id: "cmp_1", state: "running", provider: "docker")
+        let o = Overview(computers: [c], activeRuns: [], handoffs: [Handoff(handoffId: "hnd_1", reason: "Sign in.", computerId: "cmp_1")])
+        XCTAssertEqual(status(of: c, in: o), .waiting(reason: "Sign in."))
+        XCTAssertEqual(status(of: c, in: o).label, "waiting for you")
+    }
+
+    func testReportsRunningStoppedAndOtherStates() {
+        let empty = Overview(computers: [], activeRuns: [], handoffs: [])
+        XCTAssertEqual(status(of: Computer(id: "a", state: "running", provider: "docker"), in: empty), .running)
+        XCTAssertEqual(status(of: Computer(id: "b", state: "stopped", provider: "local"), in: empty), .stopped)
+        XCTAssertEqual(status(of: Computer(id: "c", state: "error", provider: "docker"), in: empty), .other("error"))
+    }
+
+    func testAHandoffForAnotherComputerDoesNotMarkThisOne() {
+        let c = Computer(id: "cmp_1", state: "running", provider: "docker")
+        let o = Overview(computers: [c], activeRuns: [], handoffs: [Handoff(handoffId: "hnd_1", reason: "Sign in.", computerId: "cmp_2")])
+        XCTAssertEqual(status(of: c, in: o), .running)
+    }
+}
+
+final class TokenLoadingTests: XCTestCase {
+    func testAnEmptyTokenIsNoToken() {
+        XCTAssertNil(ServerConfig(environment: ["HUSK_TOKEN": ""])?.token)
+    }
+
+    func testAnEmptyURLFallsBackToTheDefault() {
+        XCTAssertEqual(ServerConfig(environment: ["HUSK_URL": ""])?.baseURL.absoluteString, "http://127.0.0.1:7377")
+    }
+
+    func testRefusesANonHTTPScheme() {
+        XCTAssertNil(ServerConfig(environment: ["HUSK_URL": "file:///etc/passwd"]))
+        XCTAssertNil(ServerConfig(environment: ["HUSK_URL": "ftp://127.0.0.1:7377"]))
+    }
+}

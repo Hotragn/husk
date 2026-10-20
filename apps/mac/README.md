@@ -16,8 +16,21 @@ and SDK do, stores nothing, and never asks for credentials. It needs no Full Dis
 Access, Accessibility or screen-recording permission. **Open** and **Take over** open
 the console in your browser, without the token in the URL.
 
-> This was written on Windows and has not been built or run on a Mac yet. Treat the
-> steps below as the first test, and the checklist as what to confirm.
+## What CI proves, and what it can't
+
+The `mac` workflow runs on GitHub's `macos-latest` runner for every change under
+`apps/mac/`. It runs `swift build`, `swift test`, `xcodebuild -scheme HuskBar`, and
+`scripts/bundle.sh`, and uploads the unsigned `Husk Bar.app` as an artifact. The tests
+cover:
+
+- computer and handoff states, and the pill text;
+- choosing the notch or the menu-bar fallback from given screen geometry;
+- reading `HUSK_URL` and `HUSK_TOKEN`, and refusing a non-loopback server;
+- decoding the overview.
+
+CI cannot show how the notch pill looks and feels on real hardware: its position against
+a real notch, hover and expand, and behaviour as displays come and go. That is what the
+checklist below is for, run on a Mac.
 
 ## Build
 
