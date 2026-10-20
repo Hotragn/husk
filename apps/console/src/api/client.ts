@@ -36,6 +36,7 @@ import type {
   HuskSummary,
   ModelListResponse,
   PendingHandoff,
+  ScopedComputer,
   RunRequestBody,
   RunStreamEvent,
   BrowserStatus,
@@ -409,6 +410,27 @@ export class HuskApi {
       ...(signal ? { signal } : {}),
     });
     return res.handoffs;
+  }
+
+  /** `GET /v1/scoped/computer`: the computer a card's short-lived link opens, and its waiting handoff. */
+  scopedComputer(signal?: AbortSignal): Promise<ScopedComputer> {
+    return this.client.http.request<ScopedComputer>('GET', '/v1/scoped/computer', { ...(signal ? { signal } : {}) });
+  }
+
+  /** `GET /v1/scoped/computer/screen`: a read-only frame of that computer's browser. */
+  async scopedComputerScreen(signal?: AbortSignal): Promise<HandoffFrame> {
+    const url = this.client.http.url('/v1/scoped/computer/screen');
+    const headers: Record<string, string> = {};
+    if (this.token) headers.authorization = `Bearer ${this.token}`;
+    let res: Response;
+    try {
+      res = await fetch(url, { headers, cache: 'no-store', ...(signal ? { signal } : {}) });
+    } catch (err) {
+      throw transportError(err, url);
+    }
+    if (!res.ok) throw errorFromResponse(res.status, await safeJson(res), url);
+    const [w, h] = (res.headers.get('x-husk-viewport') ?? '').split('x').map(Number);
+    return { image: await res.blob(), width: w && w > 0 ? w : 0, height: h && h > 0 ? h : 0 };
   }
 
   /** `GET /v1/handoffs/:id`: one open handoff, e.g. the one a handoff link opens. */

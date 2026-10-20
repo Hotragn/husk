@@ -315,3 +315,11 @@ export interface BrowserStatus {
   source?: 'system' | 'cached' | 'downloaded';
   version?: string;
 }
+
+/** `GET /v1/scoped/computer`: the one computer a card's link opens. */
+export interface ScopedComputer {
+  computerId: string;
+  label?: string;
+  state: string;
+  handoff: PendingHandoff | null;
+}

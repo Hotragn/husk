@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { HuskApi } from '../api/client';
-import { HandoffsPanel, LinkedHandoff } from './HandoffsPanel';
+import { HandoffsPanel, LinkedComputer, LinkedHandoff } from './HandoffsPanel';
 
 const api = new HuskApi({ baseUrl: 'http://localhost:7377', token: 'test-token' });
 vi.mock('../state/connection', () => ({ useConnection: () => ({ api }) }));
@@ -88,5 +88,50 @@ describe('Handoffs panel', () => {
     open = false;
     render(<LinkedHandoff handoffId="hnd_1" />);
     expect(await screen.findByText('This handoff has ended')).toBeTruthy();
+  });
+});
+
+describe('a computer opened from its in-chat card', () => {
+  let scoped: Response | (() => Response);
+  beforeEach(() => {
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:frame', revokeObjectURL: () => {} }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) => {
+        const path = new URL(input).pathname;
+        if (path === '/v1/scoped/computer') return typeof scoped === 'function' ? scoped() : scoped;
+        if (path === '/v1/scoped/computer/screen') return Response.json({ error: { code: 'E_BROWSER_NOT_FOUND', message: 'no' } }, { status: 404 });
+        if (path === '/v1/handoffs/hnd_1/screen') {
+          return new Response(new Blob(['jpeg']), { headers: { 'content-type': 'image/jpeg', 'x-husk-viewport': '1280x720' } });
+        }
+        return Response.json({ error: { code: 'E_ROUTE_NOT_FOUND', message: 'no' } }, { status: 404 });
+      }),
+    );
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('says it is running, with its label as text, when nothing needs the person', async () => {
+    scoped = () => Response.json({ computerId: 'cmp_1', state: 'running', label: '<b>Claude Desktop</b> · chat started 10:42', handoff: null });
+    const { container } = render(<LinkedComputer />);
+    expect(await screen.findByText('Computer running')).toBeTruthy();
+    expect(screen.getByText('<b>Claude Desktop</b> · chat started 10:42')).toBeTruthy();
+    expect(container.querySelector('b')).toBeNull();
+    expect(await screen.findByText('No browser is open on this computer.')).toBeTruthy();
+  });
+
+  it('becomes the take-over view when a handoff is waiting on it', async () => {
+    scoped = () => Response.json({ computerId: 'cmp_1', state: 'running', handoff });
+    render(<LinkedComputer />);
+    expect(await screen.findByText(REASON)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Done' })).toBeTruthy();
+  });
+
+  it('says plainly when the link has expired', async () => {
+    scoped = () => Response.json({ error: { code: 'E_COMPUTER_NOT_FOUND', message: 'no computer with that link' } }, { status: 404 });
+    render(<LinkedComputer />);
+    expect(await screen.findByText('This link has expired')).toBeTruthy();
   });
 });
