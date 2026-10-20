@@ -309,10 +309,19 @@ does not count, so a tunnel that falls over mid-login leaves the run waiting. Th
 A run with nobody to take the handoff refuses it at once rather than waiting.
 
 The MCP server (`@husk-ai/mcp`) serves the same per-handoff routes, minus the list, on
-its loopback viewer, for chats whose own model calls `hand_off`. There each handoff has
-its own key, carried in the link's `#fragment` and sent back as a bearer token; it opens
-that one handoff and nothing else, and it stops working when the handoff ends. The
-viewer's own token does not open a handoff.
+its loopback viewer, for chats whose own model calls `hand_off`, plus two routes for the
+computer a chat's card opens. These are served by the MCP viewer only, not by `husk serve`:
+
+- `GET /v1/scoped/computer` returns `{ computerId, label?, state, handoff: PendingHandoff | null }`.
+- `GET /v1/scoped/computer/screen` returns a read-only `image/jpeg` of its browser.
+
+There a request carries a short-lived token, scoped to one computer (`computer:<id>`,
+which also opens that computer's handoffs) or to one computer-less handoff
+(`handoff:<id>`). It rides in the link's `#fragment` and is sent back as a bearer
+token. It dies after 10 minutes unused, stays alive while a viewer uses it, and never
+outlives 8 hours; a computer-less handoff's token ends with the handoff. Neither the
+viewer's own token nor the server token opens these routes, and a scoped token does not
+open the workspace API.
 
 ### Runs
 
