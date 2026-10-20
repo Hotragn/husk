@@ -35,7 +35,7 @@ const NETWORK_MODES = ['none', 'egress', 'full'] as const;
 type Flavor = (typeof FLAVORS)[number];
 type NetworkMode = (typeof NETWORK_MODES)[number];
 
-function stateTone(state: ComputerInfo['state']): Tone {
+export function stateTone(state: ComputerInfo['state']): Tone {
   switch (state) {
     case 'running':
       return 'success';

@@ -23,6 +23,7 @@ import { DoctorPanel } from './panels/DoctorPanel';
 import { EventsPanel } from './panels/EventsPanel';
 import { DisconnectedScreen } from './panels/DisconnectedScreen';
 import { HomePanel } from './panels/HomePanel';
+import { OverviewPanel } from './panels/OverviewPanel';
 
 const PANELS = ['home', 'handoffs', 'computers', 'terminal', 'files', 'browser', 'husks', 'doctor', 'events'] as const;
 type PanelId = (typeof PANELS)[number];
@@ -166,7 +167,14 @@ function Shell() {
           <DisconnectedScreen />
         ) : (
           <main id="main" className="app-main" tabIndex={-1}>
-            {panel === 'home' ? <HomePanel /> : null}
+            {panel === 'home' ? (
+              <OverviewPanel
+                onOpen={(target, id) => {
+                  setActiveComputer(id);
+                  go(target);
+                }}
+              />
+            ) : null}
             {panel === 'computers' ? (
               <ComputersPanel activeId={activeComputer} onSelect={setActiveComputer} />
             ) : null}
