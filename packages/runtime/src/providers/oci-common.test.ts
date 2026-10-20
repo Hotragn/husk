@@ -383,3 +383,21 @@ describe('pullable', () => {
     expect(probe.fellBack).toBe(true);
   });
 });
+
+describe('parseStatsLine', () => {
+  it('reads CPU and memory from docker stats output', async () => {
+    const { parseStatsLine } = await import('./oci-common.js');
+    expect(parseStatsLine('1.23%|12.5MiB / 1.94GiB\n')).toEqual({
+      cpuPercent: 1.23,
+      memoryBytes: Math.round(12.5 * 1024 ** 2),
+      memoryLimitBytes: Math.round(1.94 * 1024 ** 3),
+    });
+    expect(parseStatsLine('150.5%|800kB / 2GB')).toEqual({ cpuPercent: 150.5, memoryBytes: 800_000, memoryLimitBytes: 2e9 });
+  });
+
+  it('leaves out what it cannot read instead of guessing', async () => {
+    const { parseStatsLine } = await import('./oci-common.js');
+    expect(parseStatsLine('--|-- / --')).toEqual({});
+    expect(parseStatsLine('')).toEqual({});
+  });
+});

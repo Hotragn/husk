@@ -271,6 +271,8 @@ export interface FakeAgentScript {
   handoffFor?: { reason: string; computerId?: string };
   /** Block until this resolves, so a test can cancel mid-run. */
   hold?: Promise<void>;
+  /** Emitted before `hold`, so a test can look at a run mid-flight. */
+  progress?: RunEvent[];
 }
 
 export function fakeAgentFactory(script: FakeAgentScript = {}): AgentFactory {
@@ -311,6 +313,7 @@ export function fakeAgentFactory(script: FakeAgentScript = {}): AgentFactory {
           ? { type: 'tool_start', call: { type: 'tool_call', ...script.approvalFor } }
           : { type: 'tool_denied', call: { type: 'tool_call', ...script.approvalFor }, reason: 'denied' };
       }
+      for (const e of script.progress ?? []) yield e;
       if (script.hold) await script.hold;
       if (opts.signal?.aborted) throw new Error('aborted');
       if (script.fail) throw script.fail;

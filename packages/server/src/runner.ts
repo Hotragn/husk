@@ -75,6 +75,20 @@ interface ActiveRun {
   husk: string;
   abort: AbortController;
   startedAt: number;
+  /** What the run is doing now, from its own events, for the computers overview. */
+  computerId?: string;
+  step?: number;
+  tool?: string;
+}
+
+/** One running run, as the overview shows it. */
+export interface ActiveRunInfo {
+  runId: string;
+  husk: string;
+  startedAt: string;
+  computerId?: string;
+  step?: number;
+  tool?: string;
 }
 
 export interface RunnerOptions {
@@ -109,12 +123,25 @@ export class Runner {
     return this.active.size;
   }
 
-  listActive(): Array<{ runId: string; husk: string; startedAt: string }> {
+  listActive(): ActiveRunInfo[] {
     return [...this.active.values()].map((r) => ({
       runId: r.runId,
       husk: r.husk,
       startedAt: new Date(r.startedAt).toISOString(),
+      ...(r.computerId ? { computerId: r.computerId } : {}),
+      ...(r.step !== undefined ? { step: r.step } : {}),
+      ...(r.tool ? { tool: r.tool } : {}),
     }));
+  }
+
+  /** Keep the active run's computer, step and current tool up to date. */
+  private track(runId: string, e: ServerRunEvent): void {
+    const run = this.active.get(runId);
+    if (!run) return;
+    if (e.type === 'computer_ready') run.computerId = e.computerId;
+    else if (e.type === 'step_start') run.step = e.step;
+    else if (e.type === 'tool_start') run.tool = e.call.name;
+    else if (e.type === 'tool_end' || e.type === 'tool_denied') delete run.tool;
   }
 
   cancel(runId: string): boolean {
@@ -253,6 +280,7 @@ export class Runner {
     const events: ServerRunEvent[] = [];
     const collect = (e: ServerRunEvent) => {
       events.push(e);
+      this.track(runId, e);
     };
 
     try {
@@ -320,6 +348,7 @@ export class Runner {
 
     const record = (e: ServerRunEvent) => {
       written.push(e);
+      this.track(runId, e);
       if (e.type === 'run_end') last = e.result;
     };
 

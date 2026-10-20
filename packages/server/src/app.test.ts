@@ -1,4 +1,5 @@
 import { HUSK_VERSION } from '@husk-ai/core';
+import type { RunEvent } from '@husk-ai/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildTestApp, fakeAgentFactory, sampleSpec } from './testing.js';
 import type { TestApp } from './testing.js';
@@ -206,6 +207,24 @@ describe('computers', () => {
     expect(disk.statusCode).toBe(200);
     expect(typeof disk.json().bytes).toBe('number');
     expect((await harness.app.inject({ method: 'GET', url: '/v1/computers/cmp_missing/disk' })).statusCode).toBe(404);
+  });
+
+  it('reports stats honestly: disk for a local computer, and no invented CPU or memory', async () => {
+    const created = await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: { provider: 'local' } });
+    const id = created.json().id as string;
+    const stats = (await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}/stats` })).json();
+    expect(typeof stats.diskBytes).toBe('number');
+    expect(stats.cpuPercent).toBeNull();
+    expect(stats.memoryBytes).toBeNull();
+    expect(stats.notes.join(' ')).toMatch(/not available for local/);
+    expect((await harness.app.inject({ method: 'GET', url: '/v1/computers/cmp_missing/stats' })).statusCode).toBe(404);
+  });
+
+  it('shows no thumbnail, and launches nothing, when no browser is open', async () => {
+    const created = await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: { provider: 'local' } });
+    const thumb = await harness.app.inject({ method: 'GET', url: `/v1/computers/${created.json().id}/thumbnail` });
+    expect(thumb.statusCode).toBe(404);
+    expect(thumb.json().error.code).toBe('E_BROWSER_NOT_FOUND');
   });
 
   it('stops and starts', async () => {
@@ -464,6 +483,37 @@ describe('running a husk', () => {
       await inflight;
       const listed = await slow.app.inject({ method: 'GET', url: '/v1/runs' });
       expect(listed.json().runs[0].status).toBe('error');
+    } finally {
+      release();
+      await slow.cleanup();
+    }
+  });
+
+  it('shows on the overview which computer a run is on, its step and its tool', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((r) => {
+      release = r;
+    });
+    const progress: RunEvent[] = [
+      { type: 'computer_ready', computerId: 'cmp_busy', provider: 'docker' },
+      { type: 'step_start', step: 3 },
+      { type: 'tool_start', call: { type: 'tool_call', id: 'c1', name: 'shell', args: {} } },
+    ];
+    const slow = await buildTestApp({ agent: fakeAgentFactory({ progress, hold }) });
+    try {
+      await slow.app.inject({ method: 'POST', url: '/v1/husks', payload: { spec: sampleSpec() } });
+      const inflight = slow.app.inject({ method: 'POST', url: '/v1/husks/triage/run', payload: { input: 'hi' } });
+      let overview = (await slow.app.inject({ method: 'GET', url: '/v1/overview' })).json();
+      for (let i = 0; i < 300 && overview.activeRuns[0]?.tool !== 'shell'; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        overview = (await slow.app.inject({ method: 'GET', url: '/v1/overview' })).json();
+      }
+      expect(overview.activeRuns[0]).toMatchObject({ husk: 'triage', computerId: 'cmp_busy', step: 3, tool: 'shell' });
+      expect(overview).toHaveProperty('computers');
+      expect(overview).toHaveProperty('handoffs');
+      release();
+      await inflight;
+      expect((await slow.app.inject({ method: 'GET', url: '/v1/overview' })).json().activeRuns).toEqual([]);
     } finally {
       release();
       await slow.cleanup();

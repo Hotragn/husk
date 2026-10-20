@@ -34,6 +34,7 @@ export type {
   Computer,
   Availability,
   ComputerProvider,
+  ComputerUsage,
 } from './types/computer.js';
 
 export type {
