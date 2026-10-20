@@ -147,6 +147,19 @@ export function detectShell(force = false): ShellPlan {
   return cachedShell;
 }
 
+/**
+ * Use this plan instead of probing, or `undefined` to probe again.
+ *
+ * Probing runs `wsl.exe` synchronously with 8s and 15s timeouts, so on a
+ * Windows host with a slow or broken WSL anything that creates a local computer
+ * takes as long as WSL takes to fail. Tests about something other than shell
+ * detection pin a plan here rather than inheriting that.
+ */
+export function setShellPlan(plan: ShellPlan | undefined): void {
+  cachedShell = plan;
+  downgradedAt = undefined;
+}
+
 const WSL_MARKER = 'husk-wsl-ok';
 
 function wslWorks(distro: string): boolean {

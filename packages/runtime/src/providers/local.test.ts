@@ -1,8 +1,8 @@
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { LocalProvider, windowsHint, windowsReason } from './local.js';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { LocalProvider, setShellPlan, windowsHint, windowsReason } from './local.js';
 import type { ShellPlan } from './local.js';
 import type { Computer } from '@husk-ai/core';
 import { ComputerManager } from '../manager.js';
@@ -122,6 +122,14 @@ describe.skipIf(process.platform === 'win32')('local provider /work contract', (
  * was sandboxed.
  */
 describe('the local provider', () => {
+  // These are about the registry, not the shell. On Windows, detecting the shell
+  // runs wsl.exe synchronously for up to 8s + 15s per distro, and a slow or
+  // broken WSL made whichever test created the first computer here time out.
+  beforeAll(() => {
+    if (process.platform === 'win32') setShellPlan({ kind: 'windows', degradation: 'wsl-absent', label: 'test: Windows host shell' });
+  });
+  afterAll(() => setShellPlan(undefined));
+
   it('can remove a registered computer after its workspace disappears', async () => {
     const computer = await freshComputer();
     const provider = new LocalProvider();
