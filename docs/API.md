@@ -106,7 +106,8 @@ is `null` when the provider could not be probed at all; `isolationKind` is
 GET    /v1/computers            -> { "computers": ComputerInfo[] }
 POST   /v1/computers            body: ComputerSpec -> 201 ComputerInfo
 GET    /v1/computers/:id        -> ComputerInfo
-DELETE /v1/computers/:id        -> 204
+DELETE /v1/computers/:id        -> 204   (a chat's computer needs ?confirm=<id>)
+GET    /v1/computers/:id/disk   -> { "bytes": number | null, "note"?: string }
 POST   /v1/computers/:id/stop   -> ComputerInfo
 POST   /v1/computers/:id/start  -> ComputerInfo
 ```
@@ -117,6 +118,12 @@ A computer made from a chat app carries `platform` ("Claude Desktop", "Cursor",
 `named` for `--session`, or `first-call` when the chat carries the computer id itself.
 They come from the client's own name and the start time, never from chat titles or
 chat content.
+
+Husk never deletes a chat's computer on its own: it has no idle or lifetime limit, and
+`DELETE` refuses one (422) unless `?confirm=` repeats its id. `GET .../disk` measures the
+workspace from the host, so it works on a stopped computer and does not count as use.
+Local computers report bytes; for other providers, or a workspace inside WSL, `bytes` is
+null and `note` says why.
 
 ### Exec
 

@@ -6,7 +6,7 @@
  * `local` provider says so in its own row, not in a footnote.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useConnection } from '../state/connection';
 import { useComputers } from '../state/computers';
 import { useResource } from '../state/useResource';
@@ -23,6 +23,7 @@ import {
   Skeleton,
   StatusDot,
   StatusLine,
+  formatBytes,
   formatWhen,
 } from '../components/primitives';
 import { IsolationBadge } from './DoctorPanel';
@@ -115,8 +116,10 @@ export function ComputersPanel({
 
   const destroy = useCallback(
     (c: ComputerInfo) => {
+      const whose = c.chatLabel ? ` (${c.chatLabel})` : '';
       const ok = window.confirm(
-        `Destroy ${c.id}? Its filesystem at ${c.nativeId ?? c.workdir} goes with it. This cannot be undone.`,
+        `Delete ${c.id}${whose}? Its files at ${c.nativeId ?? c.workdir} and everything installed on it go with it. ` +
+          'This cannot be undone.',
       );
       if (ok) void act(c.id, () => api.destroyComputer(c.id));
     },
@@ -163,6 +166,10 @@ export function ComputersPanel({
               <tr>
                 <th scope="col">State</th>
                 <th scope="col">ID</th>
+                <th scope="col">App</th>
+                <th scope="col">Chat</th>
+                <th scope="col">Last used</th>
+                <th scope="col">Disk</th>
                 <th scope="col">Provider</th>
                 <th scope="col">Isolation</th>
                 <th scope="col">Image</th>
@@ -198,6 +205,12 @@ export function ComputersPanel({
                       {c.id}
                       {c.name && c.name !== c.id ? <span className="field-note"> · {c.name}</span> : null}
                     </td>
+                    <td>{c.platform ?? '—'}</td>
+                    <td>{c.chatLabel ?? '—'}</td>
+                    <td className="mono tnum">{formatWhen(c.lastUsedAt)}</td>
+                    <td className="mono tnum">
+                      <DiskSize id={c.id} />
+                    </td>
                     <td className="mono">{c.provider}</td>
                     <td>
                       {provider === undefined ? (
@@ -230,8 +243,8 @@ export function ComputersPanel({
                             Start
                           </Button>
                         )}
-                        <Button size="sm" variant="danger" loading={busy} onClick={() => destroy(c)} aria-label={`Destroy ${c.id}`}>
-                          Destroy
+                        <Button size="sm" variant="danger" loading={busy} onClick={() => destroy(c)} aria-label={`Delete ${c.id}`}>
+                          Delete
                         </Button>
                       </div>
                     </td>
@@ -454,4 +467,17 @@ function CreateComputer({
       ) : null}
     </div>
   );
+}
+
+/** Disk used by one computer, measured on the host. A dash where Husk does not measure it. */
+function DiskSize({ id }: { id: string }) {
+  const { api } = useConnection();
+  const [disk, setDisk] = useState<{ bytes: number | null; note?: string } | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    api.computerDisk(id, controller.signal).then(setDisk, () => setDisk({ bytes: null, note: 'could not measure' }));
+    return () => controller.abort();
+  }, [api, id]);
+  if (!disk) return <span aria-label="measuring">…</span>;
+  return disk.bytes === null ? <span title={disk.note}>—</span> : <>{formatBytes(disk.bytes)}</>;
 }
