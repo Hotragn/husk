@@ -179,6 +179,13 @@ describe('a card link opens one computer and nothing else', () => {
     expect((await fetch(`${origin}/v1/workspaces`, { headers: { authorization: `Bearer ${tokenIn(a)}` } })).status).toBe(401);
   });
 
+  it('does not create a computer just to show one', async () => {
+    const { call, made } = await connect(false);
+    const r = await call('computer_open_ui', { computer: 'new' });
+    expect(r.isError).toBe(true);
+    expect(made).toHaveLength(0);
+  });
+
   it('gives a plain link for a client without cards', async () => {
     const { call } = await connect(false);
     await call('shell', { command: 'echo', computer: 'new' });

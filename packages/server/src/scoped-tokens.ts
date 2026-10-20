@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
 /**
  * Short-lived tokens that each open one thing: a computer (`computer:<id>`), or
@@ -25,28 +25,28 @@ export class ScopedTokens {
     return token;
   }
 
-  /** The scope this token opens, or undefined. Each successful use extends it. */
+  /**
+   * The scope this token opens, or undefined. Each successful use extends it.
+   * A map lookup is fine here: tokens are 256 random bits, so timing a lookup
+   * tells a guesser nothing that would narrow the search.
+   */
   verify(token: string): string | undefined {
-    if (!/^[0-9a-f]{64}$/.test(token)) return undefined;
-    // Compare against every live token in constant time per entry, so a guess
-    // learns nothing from timing about how close it came.
-    const supplied = Buffer.from(token);
-    let match: string | undefined;
-    for (const key of this.tokens.keys()) {
-      if (timingSafeEqual(Buffer.from(key), supplied)) match = key;
-    }
-    if (!match) return undefined;
-    const entry = this.tokens.get(match)!;
+    const entry = this.tokens.get(token);
+    if (!entry) return undefined;
     const t = this.now();
     if (t > entry.idleUntil || t > entry.deadline) {
-      this.tokens.delete(match);
+      this.tokens.delete(token);
       return undefined;
     }
     entry.idleUntil = Math.min(t + this.idleMs, entry.deadline);
     return entry.scope;
   }
 
-  /** End every token for a scope, e.g. when its handoff ends or its computer is deleted. */
+  /**
+   * End every token for a scope, e.g. when its handoff ends. A computer deleted
+   * elsewhere is not revoked here; its tokens open nothing once it is gone,
+   * and they idle out.
+   */
   revoke(scope: string): void {
     for (const [token, entry] of this.tokens) if (entry.scope === scope) this.tokens.delete(token);
   }

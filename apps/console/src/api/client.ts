@@ -418,19 +418,8 @@ export class HuskApi {
   }
 
   /** `GET /v1/scoped/computer/screen`: a read-only frame of that computer's browser. */
-  async scopedComputerScreen(signal?: AbortSignal): Promise<HandoffFrame> {
-    const url = this.client.http.url('/v1/scoped/computer/screen');
-    const headers: Record<string, string> = {};
-    if (this.token) headers.authorization = `Bearer ${this.token}`;
-    let res: Response;
-    try {
-      res = await fetch(url, { headers, cache: 'no-store', ...(signal ? { signal } : {}) });
-    } catch (err) {
-      throw transportError(err, url);
-    }
-    if (!res.ok) throw errorFromResponse(res.status, await safeJson(res), url);
-    const [w, h] = (res.headers.get('x-husk-viewport') ?? '').split('x').map(Number);
-    return { image: await res.blob(), width: w && w > 0 ? w : 0, height: h && h > 0 ? h : 0 };
+  scopedComputerScreen(signal?: AbortSignal): Promise<HandoffFrame> {
+    return this.frame('/v1/scoped/computer/screen', signal);
   }
 
   /** `GET /v1/handoffs/:id`: one open handoff, e.g. the one a handoff link opens. */
@@ -446,8 +435,13 @@ export class HuskApi {
    * Through `fetch` directly because the viewport rides in a response header,
    * which `Http.bytes` does not hand back.
    */
-  async handoffScreen(handoffId: string, signal?: AbortSignal): Promise<HandoffFrame> {
-    const url = this.client.http.url(`/v1/handoffs/${enc(handoffId)}/screen`);
+  handoffScreen(handoffId: string, signal?: AbortSignal): Promise<HandoffFrame> {
+    return this.frame(`/v1/handoffs/${enc(handoffId)}/screen`, signal);
+  }
+
+  /** A JPEG frame and the page's CSS viewport, which rides in `x-husk-viewport`. */
+  private async frame(path: string, signal?: AbortSignal): Promise<HandoffFrame> {
+    const url = this.client.http.url(path);
     const headers: Record<string, string> = {};
     if (this.token) headers.authorization = `Bearer ${this.token}`;
     let res: Response;

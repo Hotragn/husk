@@ -611,9 +611,24 @@ export class HuskMcpServer {
 
   /** The plain-link fallback: what a card would open, as text the model can pass on. */
   private async openUi(args: Record<string, unknown>): Promise<CallToolResult> {
-    const resolved = await this.resolve(args.computer);
-    if (typeof resolved === 'string') return { isError: true, content: [{ type: 'text', text: resolved }] };
-    const url = await this.linkFor(resolved.id);
+    // Opens a computer this chat already has; it never creates one just to show it.
+    const existing =
+      this.identity === 'first-call' ? await this.known(args.computer) : [...this.computers.values()][0];
+    if (!existing) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text:
+              this.identity === 'first-call'
+                ? 'Pass computer: "<id>" with the id an earlier Husk result in this conversation gave you. If this conversation has no computer yet, there is nothing to open.'
+                : 'This conversation has no Husk computer yet, so there is nothing to open.',
+          },
+        ],
+      };
+    }
+    const url = await this.linkFor(existing.id);
     return {
       content: [
         {

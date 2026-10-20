@@ -160,7 +160,8 @@ export function LinkedComputer() {
   const [computer, setComputer] = useState<ScopedComputer | null>(null);
   const [error, setError] = useState<DisplayError | null>(null);
   const [frameUrl, setFrameUrl] = useState<string | null>(null);
-  const [handedBack, setHandedBack] = useState(false);
+  // The handoff the person just finished, so a later one on this computer still shows.
+  const [handedBack, setHandedBack] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -203,8 +204,8 @@ export function LinkedComputer() {
     );
   }
   if (!computer) return <p role="status">Opening the computer…</p>;
-  if (computer.handoff && !handedBack) {
-    return <HandoffView key={computer.handoff.handoffId} handoff={computer.handoff} onDone={() => setHandedBack(true)} />;
+  if (computer.handoff && computer.handoff.handoffId !== handedBack) {
+    return <HandoffView key={computer.handoff.handoffId} handoff={computer.handoff} onDone={() => setHandedBack(computer.handoff!.handoffId)} />;
   }
   return (
     <div className="row-gap-4">

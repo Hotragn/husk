@@ -129,6 +129,32 @@ describe('a computer opened from its in-chat card', () => {
     expect(screen.getByRole('button', { name: 'Done' })).toBeTruthy();
   });
 
+  it('shows a later handoff on the same computer after the person finished the first', async () => {
+    let current: typeof handoff | null = handoff;
+    scoped = () => Response.json({ computerId: 'cmp_1', state: 'running', handoff: current });
+    const realFetch = globalThis.fetch as unknown as (input: string, init?: RequestInit) => Promise<Response>;
+    vi.stubGlobal('fetch', vi.fn(async (input: string, init: RequestInit = {}) => {
+      if (new URL(input).pathname === '/v1/handoffs/hnd_1/done') {
+        current = null;
+        return Response.json({ handoffId: 'hnd_1', outcome: 'done' });
+      }
+      return realFetch(input, init);
+    }));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<LinkedComputer />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Yes, hand back to the agent' }));
+      expect(await screen.findByText(/Nothing needs you right now/)).toBeTruthy();
+      // The model hands off again: a new handoff on the same computer.
+      current = { ...handoff, handoffId: 'hnd_2', reason: 'Enter the 2FA code.' };
+      await vi.advanceTimersByTimeAsync(3500);
+      expect(await screen.findByText('Enter the 2FA code.')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('says plainly when the link has expired', async () => {
     scoped = () => Response.json({ error: { code: 'E_COMPUTER_NOT_FOUND', message: 'no computer with that link' } }, { status: 404 });
     render(<LinkedComputer />);
