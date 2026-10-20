@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { HuskError } from '@husk-ai/core';
 import { browserFor } from '@husk-ai/browser';
 import type { SnapshotNode } from '@husk-ai/browser';
-import { defineTool, type AgentTool } from '../types.js';
+import { defineTool, type AgentTool, type AgentToolContext } from '../types.js';
 
 /**
  * A real browser, in the agent's own computer.
@@ -19,14 +19,13 @@ import { defineTool, type AgentTool } from '../types.js';
  * "Delete".
  */
 
-function sessionOf(ctx: { computer?: unknown }): ReturnType<typeof browserFor> {
-  const computer = (ctx as { computer?: Parameters<typeof browserFor>[0] }).computer;
-  if (!computer) {
-    throw new HuskError('E_TOOL_ERROR', 'the browser needs a computer, and this husk has none', {
-      hint: 'set computer.enabled: true in husk.yaml',
-    });
-  }
-  return browserFor(computer);
+/**
+ * The machine comes up on first use, so a run whose first tool is the browser
+ * has no `ctx.computer` yet. Acquiring it here is what the shell and file tools
+ * already do; reading `ctx.computer` instead failed with "this husk has none".
+ */
+async function sessionOf(ctx: AgentToolContext): Promise<ReturnType<typeof browserFor>> {
+  return browserFor(ctx.computer ?? (await ctx.acquireComputer()));
 }
 
 function renderSnapshot(nodes: SnapshotNode[]): string {
@@ -57,7 +56,7 @@ export const browserGoto = defineTool<
   needsComputer: true,
 
   async handler(input, ctx) {
-    const session = sessionOf(ctx);
+    const session = await sessionOf(ctx);
     const result = await session.goto(input.url, { timeoutMs: (input.timeoutSec ?? 30) * 1000 });
     const page = await session.activePage();
     return {
@@ -89,7 +88,7 @@ export const browserSnapshot = defineTool<{ limit?: number }, { url: string; nod
   needsComputer: true,
 
   async handler(input, ctx) {
-    const page = await sessionOf(ctx).activePage();
+    const page = await (await sessionOf(ctx)).activePage();
     return { url: await page.url(), nodes: await page.snapshot({ limit: input.limit ?? 400 }) };
   },
 
@@ -113,7 +112,7 @@ export const browserClick = defineTool<{ ref: string }, { url: string; nodes: Sn
   dangerous: true,
 
   async handler(input, ctx) {
-    const page = await sessionOf(ctx).activePage();
+    const page = await (await sessionOf(ctx)).activePage();
     // Waits for the load only when the click actually started one. Waiting
     // unconditionally cost a flat 5s on every click that opened a menu, which
     // is most of them.
@@ -148,7 +147,7 @@ export const browserType = defineTool<
   dangerous: true,
 
   async handler(input, ctx) {
-    const page = await sessionOf(ctx).activePage();
+    const page = await (await sessionOf(ctx)).activePage();
     await page.type(input.ref, input.text);
     if (input.submit) {
       await page.press('Enter');
@@ -182,7 +181,7 @@ export const browserScreenshot = defineTool<
   needsComputer: true,
 
   async handler(input, ctx) {
-    const session = sessionOf(ctx);
+    const session = await sessionOf(ctx);
     const page = await session.activePage();
     const data = await page.screenshot({ fullPage: input.fullPage === true });
     const bytes = Buffer.from(data, 'base64');

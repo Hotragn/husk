@@ -9,6 +9,7 @@ import { resolveDeps } from './deps.js';
 import type { ServerDeps } from './deps.js';
 import { installErrorHandling } from './errors.js';
 import { approvalRoutes } from './routes/approvals.js';
+import { handoffRoutes } from './routes/handoffs.js';
 import { archiveRoutes } from './routes/archive.js';
 import { browserRoutes } from './routes/browser.js';
 import { computerRoutes } from './routes/computers.js';
@@ -100,6 +101,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   await app.register(sessionRoutes);
   await app.register(modelRoutes);
   await app.register(approvalRoutes);
+  await app.register(handoffRoutes);
   await app.register(eventRoutes);
   await registerWorkspaceRoutes(app, options.workspaceStore);
 

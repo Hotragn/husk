@@ -32,6 +32,13 @@ export function assertBindIsSafe(host: string, token: string | undefined): void 
   );
 }
 
+/** The host part of a `Host` header: `[::1]:7377` -> `[::1]`, `localhost:7377` -> `localhost`. */
+export function hostnameOf(header: string | undefined): string {
+  const h = (header ?? '').trim();
+  if (h.startsWith('[')) return h.slice(0, h.indexOf(']') + 1);
+  return h.split(':')[0] ?? '';
+}
+
 function constantTimeEquals(a: string, b: string): boolean {
   const ab = Buffer.from(a, 'utf8');
   const bb = Buffer.from(b, 'utf8');
@@ -69,7 +76,23 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
   app.decorate('huskAuthEnabled', Boolean(token));
 
   app.addHook('onRequest', async (req, reply) => {
-    if (!token) return;
+    if (!token) {
+      // No token is only allowed on a loopback bind, but a loopback bind is still
+      // reachable from any web page through DNS rebinding: evil.example resolves
+      // to 127.0.0.1 and the browser sends `Host: evil.example`. Answering only
+      // loopback names closes that, and costs nothing a local client sends.
+      // A missing Host is not a loopback name: only a request that names one passes.
+      const host = hostnameOf(req.headers.host);
+      if (host && isLoopbackHost(host)) return;
+      await reply.code(401).send({
+        error: {
+          code: 'E_NO_CREDENTIALS',
+          message: 'this server has no token, so it answers only to localhost, 127.0.0.1 and [::1]',
+          hint: 'reach it by a loopback address, or set HUSK_TOKEN to serve it under another name',
+        },
+      });
+      return;
+    }
     const path = req.url.split('?')[0] ?? '/';
     if (PUBLIC_PATHS.has(path)) return;
     if (req.method === 'OPTIONS') return;

@@ -29,7 +29,7 @@ import type {
   Transcript,
   TranscriptSource,
   Usage,
-} from '@husk-ai/core';
+} from '@husk-ai/core/contracts';
 
 // -- health and capability ---------------------------------------------------
 

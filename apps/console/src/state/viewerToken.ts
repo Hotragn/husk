@@ -6,7 +6,10 @@ export function readViewerToken(): { token: string; fromLink: boolean } {
   const linked = fragment.get('token');
   if (linked !== null) {
     storeViewerToken(linked);
-    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    // A handoff link keeps its (non-secret) handoff id so the app knows what to open.
+    const handoff = fragment.get('handoff');
+    const keep = handoff ? `#handoff=${encodeURIComponent(handoff)}` : '';
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${keep}`);
     return { token: linked, fromLink: true };
   }
   try {
@@ -14,6 +17,11 @@ export function readViewerToken(): { token: string; fromLink: boolean } {
   } catch {
     return { token: '', fromLink: false };
   }
+}
+
+/** The handoff a handoff link opened, if this tab came from one. */
+export function linkedHandoffId(): string | null {
+  return new URLSearchParams(window.location.hash.slice(1)).get('handoff');
 }
 
 export function storeViewerToken(token: string): void {

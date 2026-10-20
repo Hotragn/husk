@@ -65,8 +65,32 @@ export class Budget {
     this.pricing = p;
   }
 
+  /** Time the run has spent on its own clock, not counting any pause. */
+  private pausedTotalMs = 0;
+  private pausedSince: number | undefined;
+  /** Open pauses. Tool calls run concurrently, so two handoffs can overlap. */
+  private pauses = 0;
+
   get elapsedMs(): number {
-    return this.now() - this.startedAt;
+    const open = this.pausedSince === undefined ? 0 : this.now() - this.pausedSince;
+    return this.now() - this.startedAt - this.pausedTotalMs - open;
+  }
+
+  /** Stop the clock while the run waits on a person. Counted: each pause needs its own resume. */
+  pause(): void {
+    if (this.pauses++ === 0) this.pausedSince = this.now();
+  }
+
+  /** End one pause. The clock restarts only when the last open pause ends. */
+  resume(): void {
+    if (this.pauses === 0) return;
+    if (--this.pauses > 0 || this.pausedSince === undefined) return;
+    this.pausedTotalMs += this.now() - this.pausedSince;
+    this.pausedSince = undefined;
+  }
+
+  get paused(): boolean {
+    return this.pauses > 0;
   }
 
   get remainingMs(): number {

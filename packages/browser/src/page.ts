@@ -406,6 +406,55 @@ export class Page {
     return data;
   }
 
+  /**
+   * One frame for a person watching: a JPEG of the viewport, and the viewport's
+   * size in CSS pixels so a click on the image can be mapped back whatever the
+   * device scale. One driver invocation.
+   */
+  async frame(quality = 70): Promise<{ data: string; width: number; height: number }> {
+    const [metrics, shot] = await this.run([
+      { op: 'send', method: 'Page.getLayoutMetrics', params: {}, session: true },
+      { op: 'send', method: 'Page.captureScreenshot', params: { format: 'jpeg', quality }, session: true },
+    ]);
+    const vp = ((metrics ?? {}) as CdpParams)['cssLayoutViewport'] as
+      | { clientWidth?: number; clientHeight?: number }
+      | undefined;
+    const data = ((shot ?? {}) as CdpParams)['data'];
+    if (typeof data !== 'string' || !vp?.clientWidth || !vp.clientHeight) {
+      throw new HuskError('E_EXEC_FAILED', 'Chromium returned no frame', {
+        hint: 'the page may be mid-navigation; try again',
+      });
+    }
+    return { data, width: vp.clientWidth, height: vp.clientHeight };
+  }
+
+  /**
+   * Input from a person, at viewport coordinates.
+   *
+   * Only `Input.*` commands: a person gets a mouse and a keyboard, not script.
+   * Nothing here can evaluate in the page or read the profile.
+   */
+  async clickAt(x: number, y: number, opts: { button?: 'left' | 'right'; clickCount?: 1 | 2 } = {}): Promise<void> {
+    const button = opts.button ?? 'left';
+    const base = { x, y, button, clickCount: opts.clickCount ?? 1 };
+    await this.run([
+      { op: 'send', method: 'Input.dispatchMouseEvent', params: { type: 'mouseMoved', x, y, button: 'none', buttons: 0 }, session: true },
+      { op: 'send', method: 'Input.dispatchMouseEvent', params: { ...base, type: 'mousePressed', buttons: button === 'left' ? 1 : 2 }, session: true },
+      { op: 'send', method: 'Input.dispatchMouseEvent', params: { ...base, type: 'mouseReleased', buttons: 0 }, session: true },
+    ]);
+  }
+
+  async wheelAt(x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
+    await this.run([
+      { op: 'send', method: 'Input.dispatchMouseEvent', params: { type: 'mouseWheel', x, y, deltaX, deltaY }, session: true },
+    ]);
+  }
+
+  /** Text into whatever has focus. An input event, not an evaluate. */
+  async insertText(text: string): Promise<void> {
+    await this.run([{ op: 'send', method: 'Input.insertText', params: { text }, session: true }]);
+  }
+
   private async centreOf(ref: string): Promise<{ x: number; y: number; backendNodeId: number }> {
     const backendNodeId = backendNodeIdOf(ref);
     if (backendNodeId === null) {

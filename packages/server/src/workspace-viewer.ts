@@ -4,6 +4,10 @@ import type { FastifyInstance } from 'fastify';
 import { HUSK_VERSION } from '@husk-ai/core';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { consoleAssetsPath } from '@husk-ai/console-assets';
+import { hostnameOf, isLoopbackHost } from './auth.js';
+import { sendError } from './errors.js';
+import type { HandoffRegistry } from './handoffs.js';
+import { registerHandoffRoutes } from './routes/handoffs.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 
 export type WorkspaceProfile = 'starter' | 'computer';
@@ -14,6 +18,11 @@ export interface WorkspaceViewerOptions {
   getProfile?: () => WorkspaceProfile;
   getCapabilities?: () => Promise<unknown>;
   setProfile?: (profile: WorkspaceProfile) => Promise<void>;
+  /**
+   * Handoffs a person can take over from this viewer. Each is opened by its own
+   * key, never by the viewer token, so a handoff link reaches one handoff only.
+   */
+  handoffs?: HandoffRegistry;
 }
 
 /** Explicitly requested companion: loopback only, bearer protected, no shell routes. */
@@ -22,9 +31,12 @@ export async function createWorkspaceViewer(options: WorkspaceViewerOptions = {}
   const token = options.token ?? randomBytes(32).toString('hex');
   app.addHook('onRequest', async (req, reply) => {
     const host = req.headers.host ?? '';
-    if (!/^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(host)) return reply.code(403).send({ error: { message: 'Use the local workspace link.' } });
+    const name = hostnameOf(host);
+    if (!name || !isLoopbackHost(name)) return reply.code(403).send({ error: { message: 'Use the local workspace link.' } });
     if (req.headers.origin && req.headers.origin !== `http://${host}`) return reply.code(403).send({ error: { message: 'Cross-origin workspace requests are not allowed.' } });
     if (!req.url.startsWith('/v1/')) return;
+    // Checked per handoff by its own key in the routes below.
+    if (options.handoffs && req.url.startsWith('/v1/handoffs/')) return;
     const supplied = req.headers.authorization?.replace(/^Bearer\s+/i, '') ?? '';
     const a = Buffer.from(supplied), b = Buffer.from(token);
     if (a.length !== b.length || !timingSafeEqual(a, b)) return reply.code(401).send({ error: { message: 'Open the workspace link from your AI chat to reconnect.' } });
@@ -50,13 +62,32 @@ export async function createWorkspaceViewer(options: WorkspaceViewerOptions = {}
     }
   });
   await registerWorkspaceRoutes(app, options.store);
+  if (options.handoffs) {
+    const registry = options.handoffs;
+    await app.register(async (scope) => {
+      scope.setErrorHandler((error, _req, reply) => sendError(reply, error));
+      registerHandoffRoutes(scope, { registry, perHandoffKeys: true });
+    });
+  }
   await app.register((await import('@fastify/static')).default, { root: options.consoleDir ?? consoleAssetsPath, prefix: '/', index: ['index.html'] });
   await app.ready();
   return { app, token };
 }
 
-export async function startWorkspaceViewer(options: WorkspaceViewerOptions = {}): Promise<{ url: string; close: () => Promise<void> }> {
+export async function startWorkspaceViewer(options: WorkspaceViewerOptions = {}): Promise<{ url: string; origin: string; close: () => Promise<void> }> {
   const { app, token } = await createWorkspaceViewer(options);
   const address = await app.listen({ host: '127.0.0.1', port: 0 });
-  return { url: `${address}/#token=${encodeURIComponent(token)}`, close: () => app.close() };
+  return { url: `${address}/#token=${encodeURIComponent(token)}`, origin: address, close: () => app.close() };
 }
+
+/**
+ * The link a person opens to take over one handoff. The key rides in the
+ * fragment, which browsers never send, so it stays out of requests, logs and
+ * Referer headers; the console moves it to session storage and strips it.
+ */
+export function handoffLink(origin: string, handoffId: string, key: string): string {
+  return `${origin}/#handoff=${encodeURIComponent(handoffId)}&token=${encodeURIComponent(key)}`;
+}
+
+export { HandoffRegistry } from './handoffs.js';
+export type { PendingHandoff } from './handoffs.js';

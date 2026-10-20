@@ -31,7 +31,9 @@ invents endpoints the other does not know about.
   sensible `HuskError`.
 - Auth: when `HUSK_TOKEN` is set, every request needs `Authorization: Bearer <token>`.
   When it is not set the server binds loopback only, and **refuses to start on a
-  non-loopback host without a token**. `/health` is always unauthenticated.
+  non-loopback host without a token**. Without a token it also answers only requests
+  whose `Host` is `localhost`, `127.x` or `[::1]`, so a web page cannot reach it through
+  DNS rebinding. `/health` is always unauthenticated.
 - Streaming endpoints are Server-Sent Events: `Content-Type: text/event-stream`, one
   `data:` line per event carrying a JSON object, a heartbeat comment every 15 s, and a
   terminating `event: done`.
@@ -259,6 +261,44 @@ question it missed.
 
 An unanswered approval times out after 120 s and the call is denied. Absent
 means no: approval is a security boundary.
+
+### Handoff to a person
+
+A husk that names the `hand_off` tool can stop and wait for someone to sign in or
+enter a 2FA code. The run is paused, not failed:
+
+```
+GET  /v1/handoffs                    -> { "handoffs": PendingHandoff[] }
+GET  /v1/handoffs/:handoffId         -> PendingHandoff
+GET  /v1/handoffs/:handoffId/screen  -> image/jpeg, header x-husk-viewport: <w>x<h>
+POST /v1/handoffs/:handoffId/input   body: one of
+       { "type": "click",  "x": 0, "y": 0, "button"?: "left"|"right", "double"?: true }
+       { "type": "scroll", "x": 0, "y": 0, "dx"?: 0, "dy": 300 }
+       { "type": "text",   "text": "up to 2000 chars" }
+       { "type": "key",    "key": "Enter"|"Tab"|"Escape"|"Backspace"|"Delete"|"Arrow*"|"Home"|"End"|"PageUp"|"PageDown" }
+                                     -> 204
+POST /v1/handoffs/:handoffId/done    -> { handoffId, outcome: "done" }
+```
+
+The screen and input endpoints work only while that handoff is open, on that run's
+own browser. They never launch one: with no browser up, they answer
+`E_BROWSER_NOT_FOUND`. Input is a closed list of mouse and keyboard events sent as
+`Input.*` commands by the driver inside the computer. There is no navigate, no script
+and no raw CDP, and the debug port is never exposed, so this works the same on Windows
+as on Linux. Coordinates are CSS pixels of the viewport the screen header reports.
+Typed text is not logged and not put on the event bus. The console's **Handoffs**
+panel is a client for these four endpoints.
+
+Only `POST .../done` resumes the run. There is no timeout and a dropped connection
+does not count, so a tunnel that falls over mid-login leaves the run waiting. The run's
+`timeoutSec` stops counting while the person holds it. Cancelling the run ends the wait.
+A run with nobody to take the handoff refuses it at once rather than waiting.
+
+The MCP server (`@husk-ai/mcp`) serves the same per-handoff routes, minus the list, on
+its loopback viewer, for chats whose own model calls `hand_off`. There each handoff has
+its own key, carried in the link's `#fragment` and sent back as a bearer token; it opens
+that one handoff and nothing else, and it stops working when the handoff ends. The
+viewer's own token does not open a handoff.
 
 ### Runs
 

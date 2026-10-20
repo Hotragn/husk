@@ -110,6 +110,19 @@ export class BrowserSession {
     this.idleTimer.unref?.();
   }
 
+  /**
+   * The live page if Chromium is already up, and never a launch.
+   *
+   * For a person watching a handoff: showing them the screen must not start a
+   * 111 MB download, and their watching counts as use, so the idle close does
+   * not shut the browser in the middle of a login.
+   */
+  livePage(): Page | undefined {
+    if (!this.page || !this.conn || this.conn.closed) return undefined;
+    this.touch();
+    return this.page;
+  }
+
   /** The live page, launching Chromium if this is the first call. */
   async activePage(): Promise<Page> {
     this.touch();
@@ -360,6 +373,11 @@ export function browserFor(computer: Computer, opts: SessionOptions = {}): Brows
   const created = new BrowserSession(computer, opts);
   sessions.set(computer.id, created);
   return created;
+}
+
+/** The live page on this computer, if its browser is already up. Never launches. */
+export function livePageFor(computerId: string): Page | undefined {
+  return sessions.get(computerId)?.livePage();
 }
 
 export async function closeBrowserFor(computerId: string): Promise<void> {
