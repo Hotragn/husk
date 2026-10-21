@@ -37,6 +37,29 @@ export const COMMANDS: HelpEntry[] = [
     examples: ['husk onboard', 'husk onboard --json | jq .next'],
   },
   {
+    name: 'setup',
+    group: 'system',
+    summary: 'Pick the computer, connect your chat apps, start Husk',
+    usage: 'husk setup [--computer <name>] [--flavor <f>] [--apps all|<id,id>] [--yes] [--remove]',
+    details:
+      "Chooses where your chats' computers run (docker, podman, local, ssh, fly), adds Husk to the\n"
+      + 'chat apps you pick, and starts the one Husk every chat goes through, printing its console link.\n\n'
+      + 'Apps it knows: claude-desktop, claude-code, cursor, vscode, windsurf, codex, gemini. For an app\n'
+      + 'with a JSON config it backs the file up, then changes only its own "husk" entry, and refuses a\n'
+      + 'file it cannot parse. Claude Code and Codex are changed through their own commands.\n'
+      + 'Re-run it to change the computer; --remove takes Husk out of every app it is in.',
+    flags: [
+      ['--computer <name>', 'docker, podman, local, ssh, fly, or auto'],
+      ['--flavor <f>', 'base, python, node or full (full has a browser); containers only'],
+      ['--apps <list>', '"all" for every app found, or ids such as claude-desktop,cursor'],
+      ['--yes', 'do not ask; needed to change anything without a terminal'],
+      ['--remove', 'take Husk out of every connected app'],
+      ['--no-start', 'do not start Husk now'],
+      ['--json', 'what was chosen and changed'],
+    ],
+    examples: ['husk setup', 'husk setup --computer docker --flavor full --apps all --yes', 'husk setup --remove'],
+  },
+  {
     name: 'doctor',
     group: 'system',
     summary: 'Show exactly what this machine can and cannot do',

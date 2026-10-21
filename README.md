@@ -65,6 +65,24 @@ archive and checks restart persistence, access control, assets, downloads, and Z
 ## Computer tools for developers
 
 ```bash
+npx @husk-ai/cli setup
+```
+
+`setup` asks where your chats' computers should run (Docker, Podman, this machine, SSH or
+Fly, with the reason any of them is unavailable and its fix), adds Husk to the chat apps
+it finds (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Codex, Gemini CLI),
+and starts the one Husk every chat goes through, printing its console link. It backs up
+each app's config file before changing it and touches only its own `husk` entry.
+`--remove` takes it out again. The console's **Connect** page does the same.
+
+> [!NOTE]
+> `setup`, the shared Husk and the console's Connect page are on `main` and not yet
+> published: npm has 0.1.4. Until the next release, run it from a checkout with
+> `npm ci && npm run build && node packages/cli/dist/bin.js setup`.
+
+To add Husk to one app by hand instead:
+
+```bash
 claude mcp add husk -- npx -y @husk-ai/mcp
 ```
 

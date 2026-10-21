@@ -45,6 +45,9 @@ import type {
   ValidateResult,
   ActivityEntry,
   BotDraft,
+  ComputerChoice,
+  ConnectResult,
+  SetupState,
 } from './wire';
 
 export { HuskError, isHuskError };
@@ -182,6 +185,26 @@ export class HuskApi {
   /** `POST /v1/computers/:id/bot`: a husk draft distilled from the chat that owns this computer. */
   makeBot(id: string, useModel = false): Promise<BotDraft> {
     return this.client.http.request<BotDraft>('POST', `/v1/computers/${enc(id)}/bot`, { body: { useModel }, timeoutMs: 600_000 });
+  }
+
+  // -- setup ----------------------------------------------------------------
+
+  /** `GET /v1/setup`: the chat apps on this machine and the computers it can run. */
+  setupState(signal?: AbortSignal): Promise<SetupState> {
+    return this.client.http.request<SetupState>('GET', '/v1/setup', { ...(signal ? { signal } : {}), timeoutMs: 20_000 });
+  }
+
+  connectApp(id: string, choice: ComputerChoice): Promise<ConnectResult> {
+    return this.client.http.request<ConnectResult>('POST', `/v1/setup/apps/${enc(id)}`, { body: choice, timeoutMs: 90_000 });
+  }
+
+  disconnectApp(id: string): Promise<ConnectResult> {
+    return this.client.http.request<ConnectResult>('DELETE', `/v1/setup/apps/${enc(id)}`, { timeoutMs: 90_000 });
+  }
+
+  /** `POST /v1/setup/test`: a throwaway computer, one command, then removed. */
+  testComputer(choice: ComputerChoice): Promise<{ ok: boolean; provider: string; output: string; ms: number }> {
+    return this.client.http.request('POST', '/v1/setup/test', { body: choice, timeoutMs: 300_000 });
   }
 
   /** `GET /v1/computers/:id/stats`. */

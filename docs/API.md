@@ -261,6 +261,27 @@ up to four times a second, or `{"type":"idle"}` once while no browser is open. I
 launches one. The driver answers one request at a time from inside the computer, so this
 asks for each frame rather than subscribing to Chrome's own screencast.
 
+## Setup
+
+What the console's Connect page and `husk setup` use:
+
+```
+GET    /v1/setup               -> { apps: ChatApp[], computers: ProviderStatus[] }
+POST   /v1/setup/apps/:app     body: { provider?, flavor? } -> ConnectResult
+DELETE /v1/setup/apps/:app     -> ConnectResult
+POST   /v1/setup/test          body: { provider?, flavor? } -> { ok, provider, output, ms }
+```
+
+`:app` is one of `claude-desktop`, `claude-code`, `cursor`, `vscode`, `windsurf`,
+`codex`, `gemini`. A `ChatApp` is `{ id, name, found, connected, where, after }`:
+whether it is on this machine, whether Husk is already in it, the file Husk edits or
+the command it runs, and what to do next (usually restart the app). Connecting writes
+the launch line `npx -y @husk-ai/mcp [--provider p] [--flavor f]`. For an app with a
+JSON config, the file is backed up first (`ConnectResult.backup`), only the `husk`
+entry changes, and a file that is not plain JSON is refused and left untouched.
+Claude Code and Codex are changed through their own `mcp add` / `mcp remove`
+commands. `test` makes a throwaway computer, runs `uname -sr`, and removes it.
+
 ## Husks
 
 ```

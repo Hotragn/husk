@@ -18,6 +18,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./daemon": {
+      "types": "./dist/daemon.d.ts",
+      "import": "./dist/daemon.js"
+    },
     "./tools": {
       "types": "./dist/tools.d.ts",
       "import": "./dist/tools.js"

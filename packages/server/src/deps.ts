@@ -143,6 +143,8 @@ export interface ServerDeps {
   createAdapter?: AdapterFactory;
   /** Runs one chat tool on a computer: `@husk-ai/mcp`'s tools. Without it, the tool route answers 501. */
   runTool?: ToolRunner;
+  /** Whose chat apps the Connect page reads and edits. The real home unless a test says otherwise. */
+  chatAppsHome?: string;
 }
 
 /** The MCP result shape: content parts, and whether the tool failed. */
@@ -164,6 +166,7 @@ export interface ResolvedDeps extends Required<Pick<ServerDeps, 'manager' | 'rou
   startedAt: number;
   createAdapter: AdapterFactory;
   runTool?: ToolRunner;
+  chatAppsHome?: string;
 }
 
 export function resolveConfig(partial: Partial<ServerConfig> = {}): ServerConfig {
@@ -196,6 +199,7 @@ export function resolveDeps(deps: ServerDeps): ResolvedDeps {
     startedAt: (deps.now ?? Date.now)(),
     createAdapter: deps.createAdapter ?? createAdapter,
     ...(deps.runTool ? { runTool: deps.runTool } : {}),
+    ...(deps.chatAppsHome ? { chatAppsHome: deps.chatAppsHome } : {}),
   };
 }
 

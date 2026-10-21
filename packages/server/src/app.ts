@@ -21,6 +21,7 @@ import { runRoutes } from './routes/runs.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { createTriggerHost } from './triggers/index.js';
 import { toolRoutes } from './routes/tools.js';
+import { setupRoutes } from './routes/setup.js';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 
@@ -108,6 +109,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   await app.register(approvalRoutes);
   await app.register(handoffRoutes);
   await app.register(toolRoutes);
+  await app.register(setupRoutes);
   await app.register(eventRoutes);
   await registerWorkspaceRoutes(app, options.workspaceStore);
 
