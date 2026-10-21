@@ -105,6 +105,11 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
     const path = req.url.split('?')[0] ?? '/';
     if (PUBLIC_PATHS.has(path)) return;
     if (req.method === 'OPTIONS') return;
+    // The console's own page and assets. They hold no data: every API call the
+    // page makes carries the token, and the API is all under /v1. Without this
+    // the console could never load from a link, because the token rides in the
+    // #fragment, which a browser does not send.
+    if ((req.method === 'GET' || req.method === 'HEAD') && !path.startsWith('/v1')) return;
     if (publicPrefixes.some((p) => path === p || path.startsWith(p))) return;
 
     const supplied = bearerToken(req) ?? queryToken(req);
