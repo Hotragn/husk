@@ -1,5 +1,5 @@
-import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 
@@ -79,18 +79,42 @@ function appData(home: string): string {
   return (real && process.env.XDG_CONFIG_HOME) || join(home, '.config');
 }
 
+/** A file's text, without the byte-order mark Windows PowerShell 5.1 and older Notepad write. */
 function readText(file: string): string | undefined {
   try {
-    return readFileSync(file, 'utf8');
+    return readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
   } catch {
     return undefined;
   }
 }
 
-/** Whether a command is on PATH, without running it. */
+/**
+ * The absolute path of a command on PATH, without running it. Husk runs that
+ * exact file, never the bare name: cmd.exe would look in the current folder
+ * first, where an untrusted project could plant a `claude.cmd`.
+ */
+export function findOnPath(bin: string): string | undefined {
+  const exts = process.platform === 'win32' ? ['.cmd', '.exe', '.bat'] : [''];
+  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const full = join(dir, bin + ext);
+      if (existsSync(full)) return full;
+    }
+  }
+  return undefined;
+}
+
 export function onPath(bin: string): boolean {
-  const exts = process.platform === 'win32' ? ['.cmd', '.exe', '.bat', ''] : [''];
-  return (process.env.PATH ?? '').split(delimiter).some((dir) => dir && exts.some((ext) => existsSync(join(dir, bin + ext))));
+  return findOnPath(bin) !== undefined;
+}
+
+/** Write-then-rename in the same folder, so a crash never leaves half a config. */
+function writeAtomic(file: string, text: string): void {
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = `${file}.husk-${process.pid}.tmp`;
+  writeFileSync(tmp, text, 'utf8');
+  renameSync(tmp, file);
 }
 
 export function chatAppDefs(home = homedir()): AppDef[] {
@@ -191,36 +215,57 @@ function backupOf(file: string, now: Date): string | undefined {
 }
 
 /**
- * Run an app's own CLI. On Windows these are `.cmd` shims, which only start
- * through a shell; every argument is a fixed token from this file or the
- * launch line, never text from a page or a chat, so the shell sees no input.
+ * Run an app's own CLI, by its absolute path, from the home folder, without
+ * blocking: the shared Husk serving every chat runs this too. On Windows the
+ * CLIs are `.cmd` shims, which only start through a shell; every argument is
+ * a fixed token from this file or the launch line, never text from a page or
+ * a chat, and SAFE_TOKEN keeps out every character cmd.exe treats specially.
  */
-function runCli(bin: string, args: string[]): { ok: boolean; output: string } {
-  const r = spawnSync(bin, args, { encoding: 'utf8', timeout: 60_000, windowsHide: true, shell: process.platform === 'win32' });
-  return { ok: r.status === 0, output: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() || (r.error?.message ?? '') };
+function runCli(exe: string, args: string[]): Promise<{ ok: boolean; output: string }> {
+  const win = process.platform === 'win32';
+  return new Promise((resolveRun) => {
+    execFile(
+      win ? `"${exe}"` : exe,
+      win ? args.map((a) => (a.includes(' ') ? `"${a}"` : a)) : args,
+      { cwd: homedir(), timeout: 60_000, windowsHide: true, shell: win, encoding: 'utf8' },
+      (err, stdout, stderr) => resolveRun({ ok: !err, output: `${stdout ?? ''}${stderr ?? ''}`.trim() || (err?.message ?? '') }),
+    );
+  });
+}
+
+/** A test or sandbox home cannot redirect another program's own config, so those apps are left alone there. */
+function cliRefused(def: CliApp, home: string | undefined): ConnectResult | undefined {
+  if (home === undefined || home === homedir()) return undefined;
+  return { id: def.id, ok: false, message: `${def.name} keeps its settings in the real home folder, so Husk changes it only for the real user` };
 }
 
 const SAFE_TOKEN = /^[A-Za-z0-9@/._=-]+$/;
 
-/** Add Husk to one app, or update its entry. */
-export function connectChatApp(id: ChatAppId, launch: HuskLaunch, opts: { home?: string; now?: Date } = {}): ConnectResult {
+/** Add Husk to one app, or update its entry, keeping any fields the person added to it. */
+export async function connectChatApp(id: ChatAppId, launch: HuskLaunch, opts: { home?: string; now?: Date } = {}): Promise<ConnectResult> {
   const def = chatAppDefs(opts.home).find((d) => d.id === id);
   if (!def) return { id, ok: false, message: `unknown app ${id}` };
   if (def.kind === 'cli') {
+    const refused = cliRefused(def, opts.home);
+    if (refused) return refused;
     const args = def.add(launch);
     if (!args.every((a) => SAFE_TOKEN.test(a))) return { id, ok: false, message: 'the launch line has characters Husk will not pass to a shell' };
-    if (!onPath(def.bin)) return { id, ok: false, message: `${def.bin} is not on PATH; install ${def.name} first` };
-    runCli(def.bin, def.remove); // replace, so a changed computer choice takes effect
-    const r = runCli(def.bin, args);
-    return { id, ok: r.ok, message: r.ok ? `added to ${def.name}. ${def.after}` : `${def.bin} said: ${r.output}` };
+    const exe = findOnPath(def.bin);
+    if (!exe || /[&|<>^%"!]/.test(exe)) return { id, ok: false, message: `${def.bin} is not on PATH; install ${def.name} first` };
+    // Replace, so a changed computer choice takes effect.
+    const removed = await runCli(exe, def.remove);
+    const r = await runCli(exe, args);
+    if (r.ok) return { id, ok: true, message: `added to ${def.name}. ${def.after}` };
+    const lost = removed.ok ? ' Its earlier Husk entry was removed first, so run setup again once this is fixed.' : '';
+    return { id, ok: false, message: `${def.bin} said: ${r.output}${lost}` };
   }
   try {
     const config = parseConfig(def);
     const servers = { ...((config[def.key] as Record<string, unknown> | undefined) ?? {}) };
-    servers.husk = { ...(def.extra ?? {}), command: launch.command, args: launch.args };
+    const prev = servers.husk && typeof servers.husk === 'object' ? (servers.husk as Record<string, unknown>) : {};
+    servers.husk = { ...prev, ...(def.extra ?? {}), command: launch.command, args: launch.args };
     const backup = backupOf(def.file, opts.now ?? new Date());
-    mkdirSync(dirname(def.file), { recursive: true });
-    writeFileSync(def.file, `${JSON.stringify({ ...config, [def.key]: servers }, null, 2)}\n`, 'utf8');
+    writeAtomic(def.file, `${JSON.stringify({ ...config, [def.key]: servers }, null, 2)}\n`);
     return { id, ok: true, message: `added to ${def.name}. ${def.after}`, ...(backup ? { backup } : {}) };
   } catch (err) {
     return { id, ok: false, message: (err as Error).message };
@@ -228,11 +273,15 @@ export function connectChatApp(id: ChatAppId, launch: HuskLaunch, opts: { home?:
 }
 
 /** Take Husk out of one app. Its other servers are left as they are. */
-export function disconnectChatApp(id: ChatAppId, opts: { home?: string; now?: Date } = {}): ConnectResult {
+export async function disconnectChatApp(id: ChatAppId, opts: { home?: string; now?: Date } = {}): Promise<ConnectResult> {
   const def = chatAppDefs(opts.home).find((d) => d.id === id);
   if (!def) return { id, ok: false, message: `unknown app ${id}` };
   if (def.kind === 'cli') {
-    const r = runCli(def.bin, def.remove);
+    const refused = cliRefused(def, opts.home);
+    if (refused) return refused;
+    const exe = findOnPath(def.bin);
+    if (!exe) return { id, ok: false, message: `${def.bin} is not on PATH` };
+    const r = await runCli(exe, def.remove);
     return { id, ok: r.ok, message: r.ok ? `removed from ${def.name}` : `${def.bin} said: ${r.output}` };
   }
   try {
@@ -241,7 +290,7 @@ export function disconnectChatApp(id: ChatAppId, opts: { home?: string; now?: Da
     if (!('husk' in servers)) return { id, ok: true, message: `${def.name} did not have Husk` };
     delete servers.husk;
     const backup = backupOf(def.file, opts.now ?? new Date());
-    writeFileSync(def.file, `${JSON.stringify({ ...config, [def.key]: servers }, null, 2)}\n`, 'utf8');
+    writeAtomic(def.file, `${JSON.stringify({ ...config, [def.key]: servers }, null, 2)}\n`);
     return { id, ok: true, message: `removed from ${def.name}`, ...(backup ? { backup } : {}) };
   } catch (err) {
     return { id, ok: false, message: (err as Error).message };

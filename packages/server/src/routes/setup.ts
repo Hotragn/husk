@@ -34,6 +34,16 @@ export async function setupRoutes(app: FastifyInstance): Promise<void> {
     return id as ChatAppId;
   };
 
+  // A browser sends a cross-site POST with a plain text body without asking
+  // first. Requiring JSON makes it ask (a CORS preflight), which this server
+  // refuses, so another website cannot connect Husk to your apps.
+  app.addHook('onRequest', async (req) => {
+    if (req.method !== 'POST' || !req.url.startsWith('/v1/setup')) return;
+    if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) {
+      throw huskError('E_SPEC_INVALID', 'setup requests must be JSON', { hint: 'send Content-Type: application/json' });
+    }
+  });
+
   app.get('/v1/setup', async () => ({
     apps: apps(),
     computers: await ctx.deps.manager.status(),
