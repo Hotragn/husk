@@ -111,7 +111,7 @@ try {
   const goto = await tool(id, 'browser_goto', { url: 'https://example.com' });
   check('the browser renders a page', !goto.isError && /Example Domain/i.test(textOf(goto)), textOf(goto).slice(0, 200));
   const snap = await tool(id, 'browser_snapshot');
-  check('a snapshot lists the page', !snap.isError && /Example Domain/i.test(textOf(snap)));
+  check('a snapshot lists the page', !snap.isError && /Example Domain/i.test(textOf(snap)), `${snap.isError ? 'error: ' : ''}${textOf(snap).slice(0, 400)}`);
 
   // 4. The live screen sends real frames.
   const frame = await new Promise((resolveFrame, reject) => {
