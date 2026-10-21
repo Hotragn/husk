@@ -168,11 +168,14 @@ function MakeBot({ computer }: { computer: ComputerInfo }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<DisplayError | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  /** A bot by this name already exists: saving would replace it, so the person decides. */
+  const [clash, setClash] = useState(false);
 
   const make = async () => {
     setBusy(true);
     setError(null);
     setSaved(null);
+    setClash(false);
     try {
       setDraft(await api.makeBot(computer.id));
     } catch (err) {
@@ -181,11 +184,23 @@ function MakeBot({ computer }: { computer: ComputerInfo }) {
       setBusy(false);
     }
   };
-  const save = async () => {
+  const save = async (replace: boolean) => {
     if (!draft) return;
     setBusy(true);
+    setError(null);
     try {
-      const summary = await api.saveHusk(draft.spec.name, draft.yaml);
+      if (!replace) {
+        const exists = await api.getHusk(draft.spec.name).then(
+          () => true,
+          () => false,
+        );
+        if (exists) {
+          setClash(true);
+          return;
+        }
+      }
+      const summary = await api.createHusk(draft.yaml);
+      setClash(false);
       setSaved(summary.name);
     } catch (err) {
       setError(toDisplayError(err));
@@ -220,13 +235,19 @@ function MakeBot({ computer }: { computer: ComputerInfo }) {
         </>
       ) : null}
       {saved ? <p role="status">Saved as {saved}. Run it from Husks.</p> : null}
+      {clash && draft ? (
+        <p role="alert">
+          A bot called <strong>{draft.spec.name}</strong> already exists. Saving replaces it. Rename this one in Husks, or
+          replace it.
+        </p>
+      ) : null}
       <div className="btn-row">
         <Button loading={busy && !draft} onClick={() => void make()}>
           {draft ? 'Distill again' : 'Make this a bot'}
         </Button>
         {draft && !saved ? (
-          <Button variant="primary" loading={busy} onClick={() => void save()}>
-            Save as a bot
+          <Button variant="primary" loading={busy} onClick={() => void save(clash)}>
+            {clash ? `Replace ${draft.spec.name}` : 'Save as a bot'}
           </Button>
         ) : null}
       </div>

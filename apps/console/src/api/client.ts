@@ -438,6 +438,11 @@ export class HuskApi {
     return this.client.http.request<ValidateResult>('POST', '/v1/husks/validate', { body: { yaml } });
   }
 
+  /** `POST /v1/husks` -> `HuskSummary`: a new husk. It replaces one of the same name, so ask first. */
+  createHusk(yaml: string): Promise<HuskSummary> {
+    return this.client.http.request<HuskSummary>('POST', '/v1/husks', { body: { yaml } });
+  }
+
   /** `PUT /v1/husks/:name` -> `HuskSummary`. */
   saveHusk(name: string, yaml: string): Promise<HuskSummary> {
     return this.client.http.request<HuskSummary>('PUT', `/v1/husks/${enc(name)}`, { body: { yaml } });
