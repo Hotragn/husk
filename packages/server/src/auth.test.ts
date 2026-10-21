@@ -123,3 +123,19 @@ describe('DNS rebinding, with no token', () => {
     }
   });
 });
+
+describe('the console page behind a token', () => {
+  it('loads without the token, while every API route still needs it', async () => {
+    const { buildTestApp } = await import('./testing.js');
+    const harness = await buildTestApp({ token: 'server-token' });
+    try {
+      // No console bundle in tests, so the page is a 404 -- but not a 401.
+      expect((await harness.app.inject({ method: 'GET', url: '/' })).statusCode).not.toBe(401);
+      expect((await harness.app.inject({ method: 'GET', url: '/assets/index.js' })).statusCode).not.toBe(401);
+      expect((await harness.app.inject({ method: 'GET', url: '/v1/computers' })).statusCode).toBe(401);
+      expect((await harness.app.inject({ method: 'POST', url: '/', payload: {} })).statusCode).toBe(401);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+});
