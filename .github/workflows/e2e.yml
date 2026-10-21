@@ -1,0 +1,31 @@
+name: e2e
+
+# The whole chat path on a real Docker computer with a real browser:
+# scripts/e2e-computers.mjs. GitHub's Linux runners have Docker; the unit
+# suites run everywhere else without it.
+
+on:
+  push:
+    branches: [main]
+    paths: ['packages/**', 'scripts/e2e-computers.mjs', '.github/workflows/e2e.yml']
+  pull_request:
+    paths: ['packages/**', 'scripts/e2e-computers.mjs', '.github/workflows/e2e.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  computers:
+    name: chat tools on a docker computer
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: docker version
+      - run: npm run e2e:computers

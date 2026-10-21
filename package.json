@@ -22,6 +22,7 @@
     "build:packages": "npm run build -w @husk-ai/core -w @husk-ai/runtime -w @husk-ai/models -w @husk-ai/sessions -w @husk-ai/browser -w @husk-ai/agent -w @husk-ai/adapters -w @husk-ai/workspaces -w @husk-ai/sdk -w @husk-ai/console -w @husk-ai/console-assets -w @husk-ai/server -w @husk-ai/mcp -w @husk-ai/cli",
     "bundle:mcpb": "node scripts/build-mcpb.mjs",
     "smoke:starter": "node scripts/starter-smoke.mjs",
+    "e2e:computers": "node scripts/e2e-computers.mjs",
     "drift": "node scripts/drift-check.mjs",
     "links": "node scripts/link-check.mjs",
     "preflight": "node scripts/preflight.mjs",
