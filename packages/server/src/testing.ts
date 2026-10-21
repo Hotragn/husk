@@ -357,6 +357,7 @@ export async function buildTestApp(
     triggers?: boolean;
     approvalTimeoutMs?: number;
     createAdapter?: AdapterFactory;
+    modelProviders?: ModelProvider[];
   } = {},
 ): Promise<TestApp> {
   const { store, root, cleanup } = await tempStore();
@@ -367,7 +368,7 @@ export async function buildTestApp(
     manager: overrides.manager ?? manager,
     router: overrides.router ?? router,
     store,
-    modelProviders: [fakeModelProvider],
+    modelProviders: overrides.modelProviders ?? [fakeModelProvider],
     agentFactory: overrides.agent ?? fakeAgentFactory(),
     logger: createLogger({ level: 'silent' }),
     config: {

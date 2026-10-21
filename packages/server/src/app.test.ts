@@ -1,7 +1,7 @@
 import { HUSK_VERSION } from '@husk-ai/core';
 import type { RunEvent } from '@husk-ai/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildTestApp, fakeAgentFactory, sampleSpec } from './testing.js';
+import { buildTestApp, fakeAgentFactory, fakeModelProvider, sampleSpec } from './testing.js';
 import type { TestApp } from './testing.js';
 
 let harness: TestApp;
@@ -25,6 +25,23 @@ describe('health and doctor', () => {
   // Doctor probes the real machine, which is the point of this test. On Windows
   // that includes wsl.exe, synchronously, with 8s and 15s timeouts, so a slow or
   // broken WSL takes seconds; the budget covers that rather than letting WSL fail it.
+  // #121: the control plane's doctor took the first model Ollama listed.
+  it('selects the preferred model, not the first one listed', { timeout: 30_000 }, async () => {
+    await harness.cleanup();
+    const local = (name: string, parameterCount: number) => ({
+      id: `ollama/${name}`, provider: 'ollama', name, displayName: name, contextWindow: 32_768,
+      maxOutputTokens: 4096, supportsTools: true, supportsVision: false, supportsStreaming: true, free: true, parameterCount,
+    });
+    harness = await buildTestApp({
+      modelProviders: [{
+        ...fakeModelProvider, id: 'ollama', displayName: 'Ollama',
+        listModels: async () => [local('qwen2.5:1.5b', 1.5e9), local('qwen2.5:7b', 7.6e9)],
+      }],
+    });
+    const report = (await harness.app.inject({ method: 'GET', url: '/v1/doctor' })).json();
+    expect(report.selection.model).toBe('ollama/qwen2.5:7b');
+  });
+
   it('reports the honest state of the machine at /v1/doctor', { timeout: 30_000 }, async () => {
     const res = await harness.app.inject({ method: 'GET', url: '/v1/doctor' });
     expect(res.statusCode).toBe(200);
