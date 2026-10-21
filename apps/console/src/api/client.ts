@@ -43,6 +43,8 @@ import type {
   RunStreamEvent,
   BrowserStatus,
   ValidateResult,
+  ActivityEntry,
+  BotDraft,
 } from './wire';
 
 export { HuskError, isHuskError };
@@ -93,11 +95,16 @@ export class HuskApi {
     });
   }
 
-  /** The websocket origin for this base URL. `http:` -> `ws:`, `https:` -> `wss:`. */
+  /**
+   * The websocket URL for a path. `http:` -> `ws:`, `https:` -> `wss:`. A browser
+   * cannot put a header on a websocket, so the token rides in the query, which
+   * the server accepts for websocket upgrades only.
+   */
   socketUrl(path: string, query?: Record<string, string | number>): string {
     const url = new URL(this.baseUrl + path);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     for (const [k, v] of Object.entries(query ?? {})) url.searchParams.set(k, String(v));
+    if (this.token) url.searchParams.set('token', this.token);
     return url.toString();
   }
 
@@ -162,6 +169,19 @@ export class HuskApi {
   /** `GET /v1/overview`: computers, what each run is doing, and who is waiting on a person. */
   overview(signal?: AbortSignal): Promise<Overview> {
     return this.client.http.request<Overview>('GET', '/v1/overview', { ...(signal ? { signal } : {}) });
+  }
+
+  /** `GET /v1/computers/:id/activity`: every tool call on it, oldest first. */
+  async computerActivity(id: string, signal?: AbortSignal): Promise<ActivityEntry[]> {
+    const res = await this.client.http.request<{ entries: ActivityEntry[] }>('GET', `/v1/computers/${enc(id)}/activity`, {
+      ...(signal ? { signal } : {}),
+    });
+    return res.entries;
+  }
+
+  /** `POST /v1/computers/:id/bot`: a husk draft distilled from the chat that owns this computer. */
+  makeBot(id: string, useModel = false): Promise<BotDraft> {
+    return this.client.http.request<BotDraft>('POST', `/v1/computers/${enc(id)}/bot`, { body: { useModel }, timeoutMs: 600_000 });
   }
 
   /** `GET /v1/computers/:id/stats`. */

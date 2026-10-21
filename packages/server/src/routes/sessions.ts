@@ -6,7 +6,7 @@ import type { DistilledAgent, HuskSpec, Transcript, TranscriptImporter, Transcri
 import type { FastifyInstance } from 'fastify';
 import { stringify as stringifyYaml } from 'yaml';
 import { ctxOf } from '../context.js';
-import { huskError } from '../errors.js';
+import { huskError, notFound } from '../errors.js';
 import { SseStream } from '../sse.js';
 
 /**
@@ -206,9 +206,57 @@ async function distill(
   return new Ctor(provider).distill(transcript);
 }
 
+/**
+ * The transcript file of a Claude Code session: `<project>/<session id>.jsonl`
+ * under Claude Code's projects directory. The id is checked to be a plain
+ * token first, so it can never name a path of its own.
+ */
+export async function claudeCodeTranscript(sessionId: string, roots = DEFAULT_LOCATIONS['claude-code'] ?? []): Promise<string | undefined> {
+  if (!/^[A-Za-z0-9-]{8,80}$/.test(sessionId)) return undefined;
+  for (const root of roots) {
+    const projects = await readdir(root, { withFileTypes: true }).catch(() => []);
+    for (const project of projects) {
+      if (!project.isDirectory()) continue;
+      const file = join(root, String(project.name), `${sessionId}.jsonl`);
+      if (await stat(file).then((s) => s.isFile(), () => false)) return file;
+    }
+  }
+  return undefined;
+}
+
 export async function sessionRoutes(app: FastifyInstance): Promise<void> {
   const ctx = ctxOf(app);
   const { store, router } = ctx.deps;
+
+  /**
+   * "Make this a bot": distill the chat that owns this computer into a husk
+   * draft. Only a Claude Code chat can be read back, because its transcript is
+   * a file named after the session id Husk recorded; for any other app the
+   * person exports the chat and imports it.
+   */
+  app.post('/v1/computers/:id/bot', async (req) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { useModel?: boolean; model?: string };
+    const computer = await ctx.deps.manager.get(id);
+    if (!computer) throw notFound('computer', id);
+    const sessionId = computer.info.spec?.labels?.['husk.session'];
+    const path = sessionId ? await claudeCodeTranscript(sessionId) : undefined;
+    if (!path) {
+      throw huskError('E_IMPORT_FAILED', 'Husk cannot read this chat back from its app', {
+        hint: sessionId
+          ? 'its Claude Code transcript was not found under ~/.claude/projects'
+          : 'only Claude Code chats can be read directly; export the chat and use Husks, Import a chat',
+      });
+    }
+    const importers = await loadImporters();
+    const importer = await pickImporter(importers, { path, source: 'claude-code' });
+    const transcript = (await importer.parse({ path }))[0];
+    if (!transcript) throw huskError('E_IMPORT_FAILED', 'the chat has no messages yet');
+    await store.saveTranscript(transcript);
+    const distilled = await distill(transcript, body.useModel === true, router, body.model);
+    const spec = await specFromDistilled(distilled, transcript);
+    return { transcriptId: transcript.id, distilled, spec, yaml: stringifyYaml(spec, { lineWidth: 100 }) };
+  });
 
   app.get('/v1/sessions/discover', async (req) => {
     const q = req.query as { source?: TranscriptSource; path?: string };

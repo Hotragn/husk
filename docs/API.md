@@ -112,6 +112,7 @@ GET    /v1/computers/:id/stats  -> { cpuPercent, memoryBytes, memoryLimitBytes, 
 GET    /v1/computers/:id/thumbnail -> image/jpeg of an already-open browser, else 404
 GET    /v1/overview             -> { computers: ComputerInfo[], activeRuns: ActiveRun[], handoffs: PendingHandoff[], activity: { [id]: ActivityEntry } }
 GET    /v1/computers/:id/activity -> { "entries": ActivityEntry[] }   (oldest first, the last 200)
+POST   /v1/computers/:id/bot    body: { "useModel"?: boolean } -> { transcriptId, spec, yaml, distilled }
 POST   /v1/computers/:id/stop   -> ComputerInfo
 POST   /v1/computers/:id/start  -> ComputerInfo
 ```
@@ -141,6 +142,13 @@ run or a chat (`via: "mcp"`). `summary` is a short, redacted look at the call's 
 taken from an allowlist of arguments (a shell command, a path, a URL, an element ref).
 Tools that carry typed text, such as `browser_type`, never have one. The log is in
 memory and starts empty when the server restarts.
+
+`bot` distills the chat that owns a computer into a husk draft, for the console's "Make
+this a bot". It is a draft: nothing is saved until the caller `PUT`s the YAML to
+`/v1/husks/:name`. Only a Claude Code chat can be read back, because Husk records its
+session id (`husk.session`) and Claude Code names the transcript after it; for any
+other computer it answers `E_IMPORT_FAILED`, and the hint says to export the chat and
+import it.
 
 ### Chat tools
 

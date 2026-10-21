@@ -339,7 +339,33 @@ export interface Overview {
   computers: ComputerInfo[];
   activeRuns: ActiveRunInfo[];
   handoffs: PendingHandoff[];
+  /** The last tool call on each computer, chats included. Absent from older servers. */
+  activity?: Record<string, ActivityEntry>;
 }
+
+/** One tool call on a computer. `summary` never carries typed text. */
+export interface ActivityEntry {
+  at: string;
+  tool: string;
+  ok: boolean;
+  ms: number;
+  via: string;
+  summary?: string;
+}
+
+/** `POST /v1/computers/:id/bot`: a draft husk.yaml from the chat, to review before saving. */
+export interface BotDraft {
+  transcriptId: string;
+  yaml: string;
+  spec: { name: string };
+  distilled: { confidence?: number; notes?: string[] };
+}
+
+/** One message on `WS /v1/computers/:id/screen`. */
+export type ScreenMessage =
+  | { type: 'frame'; data: string; width: number; height: number }
+  | { type: 'idle'; message: string }
+  | { type: 'error'; code: string; message: string };
 
 /** `GET /v1/computers/:id/stats`. Null means not measured; `notes` says why. */
 export interface ComputerStats {

@@ -12,19 +12,20 @@
 
 import { useEffect, useState } from 'react';
 import { toDisplayError } from '../api/client';
-import type { ActiveRunInfo, ComputerInfo, ComputerStats, DoctorReport, Overview, PendingHandoff } from '../api/wire';
+import type { ActiveRunInfo, ActivityEntry, ComputerInfo, ComputerStats, DoctorReport, Overview, PendingHandoff } from '../api/wire';
 import { Badge, Button, EmptyState, ErrorBlock, PanelHeader, StatusDot, formatBytes, formatWhen } from '../components/primitives';
 import { useConnection } from '../state/connection';
 import { useResource } from '../state/useResource';
 import { stateTone } from './ComputersPanel';
 import { IsolationBadge } from './DoctorPanel';
 
-export type OverviewTarget = 'terminal' | 'files' | 'browser' | 'handoffs';
+export type OverviewTarget = 'chat' | 'terminal' | 'files' | 'browser' | 'handoffs';
 
 interface Row {
   computer: ComputerInfo;
   run?: ActiveRunInfo;
   handoff?: PendingHandoff;
+  last?: ActivityEntry;
 }
 
 /** Waiting on you first, then busy, then idle; most recently used first within each. */
@@ -32,7 +33,8 @@ export function sortRows(overview: Overview): Row[] {
   const rows: Row[] = overview.computers.map((computer) => {
     const run = overview.activeRuns.find((r) => r.computerId === computer.id);
     const handoff = overview.handoffs.find((h) => h.computerId === computer.id);
-    return { computer, ...(run ? { run } : {}), ...(handoff ? { handoff } : {}) };
+    const last = overview.activity?.[computer.id];
+    return { computer, ...(run ? { run } : {}), ...(handoff ? { handoff } : {}), ...(last ? { last } : {}) };
   });
   const rank = (r: Row) => (r.handoff ? 0 : r.run ? 1 : 2);
   return rows.sort(
@@ -141,7 +143,7 @@ function ComputerCard({
   onOpen: (target: OverviewTarget, computerId: string) => void;
   onStop: () => void;
 }) {
-  const { computer, run, handoff } = row;
+  const { computer, run, handoff, last } = row;
   const name = computer.chatLabel ?? (computer.name && computer.name !== computer.id ? computer.name : computer.id);
   const activity = run
     ? `Running ${run.husk}${run.step !== undefined ? ` · step ${run.step}` : ''}${run.tool ? ` · ${run.tool}` : ''}`
@@ -161,6 +163,13 @@ function ComputerCard({
         <span className="field-note mono">{computer.id}</span>
       </div>
       <p className="field-note">{activity}</p>
+      {last && !run ? (
+        <p className="field-note">
+          Last: <strong>{last.tool}</strong>
+          {last.summary ? <code className="mono"> {last.summary}</code> : null} · {formatWhen(last.at)}
+          {last.ok ? '' : ' · failed'}
+        </p>
+      ) : null}
 
       {handoff ? (
         <div className="overview-waiting" role="status">
@@ -176,6 +185,9 @@ function ComputerCard({
       <StatsLine id={computer.id} running={computer.state === 'running'} />
 
       <div className="btn-row">
+        <Button size="sm" variant="primary" onClick={() => onOpen('chat', computer.id)} aria-label={`Open ${name}`}>
+          Open
+        </Button>
         <Button size="sm" onClick={() => onOpen('terminal', computer.id)}>
           Terminal
         </Button>
