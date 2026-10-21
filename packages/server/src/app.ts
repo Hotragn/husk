@@ -1,7 +1,7 @@
 import { HUSK_VERSION } from '@husk-ai/core';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
-import { assertBindIsSafe, installAuth } from './auth.js';
+import { assertBindIsSafe, installAuth, isLoopbackHost } from './auth.js';
 import { installConsole } from './console.js';
 import { createContext } from './context.js';
 import type { ServerContext } from './context.js';
@@ -78,6 +78,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     token: config.token,
     publicPrefixes: ['/assets/', '/favicon', '/v1/a/'],
     scopeOf: (t) => ctx.scoped.verify(t),
+    loopbackOnly: isLoopbackHost(config.host),
   });
 
   app.addHook('onSend', async (_req, reply, payload) => {
