@@ -931,7 +931,7 @@ export async function localWorkspaceBytes(info: ComputerInfo): Promise<number | 
 }
 
 export async function findOrphanedWorkspaces(): Promise<string[]> {
-  const p = ensurePaths();
+  const p = paths(); // read-only: never creates ~/.husk
   const infos = await loadInfos();
   const known = new Set(
     infos.map((i: ComputerInfo) => i.spec.labels?.['husk.workspace'] ?? join(p.workspaces, i.id)),

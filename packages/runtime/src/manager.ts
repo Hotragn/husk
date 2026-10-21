@@ -1,6 +1,6 @@
 import { readFile, mkdir, rename, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { HuskError, chatIdentityOf, createLogger, ensurePaths, notifyComputerDestroyed } from '@husk-ai/core';
+import { HuskError, chatIdentityOf, createLogger, notifyComputerDestroyed, paths } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -332,7 +332,8 @@ export class ComputerManager {
 // ---------------------------------------------------------------------------
 
 function bindingsFile(): string {
-  return join(ensurePaths().computers, 'bindings.json');
+  // Reading must not create ~/.husk; writeBindings makes the directory itself.
+  return join(paths().computers, 'bindings.json');
 }
 
 async function readBindings(): Promise<Record<string, string>> {
