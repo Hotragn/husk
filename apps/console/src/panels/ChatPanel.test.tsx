@@ -36,8 +36,10 @@ class FakeSocket {
 }
 
 let calls: Array<{ method: string; path: string; body?: string }>;
+let existing = false;
 beforeEach(() => {
   calls = [];
+  existing = false;
   // A socket from the last test must never stand in for this one's.
   FakeSocket.last = undefined;
   vi.stubGlobal('WebSocket', FakeSocket);
@@ -51,7 +53,9 @@ beforeEach(() => {
         return Response.json({ entries: [{ at: '2026-10-21T10:43:00Z', tool: 'shell', ok: true, ms: 120, via: 'mcp', summary: 'npm test' }] });
       if (path === '/v1/computers/cmp_chat/bot')
         return Response.json({ transcriptId: 'tr_1', yaml: 'name: ci-triage\n', spec: { name: 'ci-triage' }, distilled: { confidence: 0.16, notes: ['Review the persona before shipping.'] } });
-      if (path === '/v1/husks/ci-triage') return Response.json({ name: 'ci-triage', displayName: 'x', description: '', model: 'auto' });
+      if (path === '/v1/husks/ci-triage' && (init?.method ?? 'GET') === 'GET')
+        return existing ? Response.json({ spec: { name: 'ci-triage' }, yaml: '' }) : Response.json({ error: { code: 'E_HUSK_NOT_FOUND', message: 'no' } }, { status: 404 });
+      if (path === '/v1/husks' && init?.method === 'POST') return Response.json({ name: 'ci-triage', displayName: 'x', description: '', model: 'auto' }, { status: 201 });
       return Response.json({ error: { code: 'E_ROUTE_NOT_FOUND', message: 'no' } }, { status: 404 });
     }),
   );
@@ -89,14 +93,26 @@ describe('Chat panel', () => {
     expect(ws.closed).toBe(true);
   });
 
-  it('shows the bot draft before saving it, then saves it', async () => {
+  it('shows the bot draft before saving it, then creates it', async () => {
     render(<ChatPanel computerId="cmp_chat" onOpen={() => {}} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Make this a bot' }));
     expect(await screen.findByText(/confidence 16%/)).toBeTruthy();
     expect(screen.getByText('Review the persona before shipping.')).toBeTruthy();
-    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/v1/husks')).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Save as a bot' }));
     expect(await screen.findByText('Saved as ci-triage. Run it from Husks.')).toBeTruthy();
-    expect(calls.find((c) => c.method === 'PUT')?.path).toBe('/v1/husks/ci-triage');
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/v1/husks')).toBeTruthy();
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+  });
+
+  it('asks before replacing a bot that already has the name', async () => {
+    existing = true;
+    render(<ChatPanel computerId="cmp_chat" onOpen={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Make this a bot' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save as a bot' }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/v1/husks')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Replace ci-triage' }));
+    expect(await screen.findByText('Saved as ci-triage. Run it from Husks.')).toBeTruthy();
   });
 });

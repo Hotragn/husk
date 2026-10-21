@@ -78,7 +78,8 @@ export async function run(argv: string[], probes?: DoctorProbes): Promise<number
     ui.print(`  ${ui.dim('no terminal here, so nothing was changed. Pass')} ${ui.cyan('--yes')} ${ui.dim('to connect them.')}`);
     return EXIT_OK;
   }
-  const results: ConnectResult[] = chosen.map((id) => connectChatApp(id, launch));
+  const results: ConnectResult[] = [];
+  for (const id of chosen) results.push(await connectChatApp(id, launch));
   for (const r of results) report1(r, apps);
 
   // 3. Husk itself, so the console can show every chat from the first call.
@@ -187,6 +188,6 @@ async function remove(apps: ChatApp[], assumeYes: boolean): Promise<number> {
     ui.print(ui.dim('nothing changed'));
     return EXIT_OK;
   }
-  for (const a of connected) report1(disconnectChatApp(a.id), apps);
+  for (const a of connected) report1(await disconnectChatApp(a.id), apps);
   return EXIT_OK;
 }

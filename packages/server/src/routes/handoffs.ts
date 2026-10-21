@@ -93,6 +93,32 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
 
   /** Ends every chat handoff when the server closes, so none is left holding a computer. */
   const chatHandoffs = new AbortController();
+  /**
+   * A chat holds its handoff by polling it. One that stops polling for a
+   * minute has gone (crashed, killed, closed), and nobody is left to resume:
+   * the handoff is cancelled -- never marked done -- so the computer is free.
+   */
+  const lastSeen = new Map<string, number>();
+  const LEASE_MS = 60_000;
+  const sweep = setInterval(() => {
+    const now = Date.now();
+    for (const [handoffId, seen] of lastSeen) {
+      if (now - seen < LEASE_MS) continue;
+      lastSeen.delete(handoffId);
+      if (ctx.runner.handoffs.isOpen(handoffId)) ctx.runner.handoffs.cancel(handoffId);
+    }
+  }, 15_000);
+  sweep.unref();
+  app.addHook('onClose', async () => clearInterval(sweep));
+
+  // How a chat's handoff stands. The server token only: a link has no business here.
+  app.get('/v1/handoffs/:handoffId/state', async (req: FastifyRequest) => {
+    if (req.huskScope !== undefined) throw huskError('E_HANDOFF_NOT_FOUND', 'no open handoff with that link');
+    const { handoffId } = req.params as { handoffId: string };
+    const state = ctx.runner.handoffs.state(handoffId);
+    if (state === 'open' && lastSeen.has(handoffId)) lastSeen.set(handoffId, Date.now());
+    return { handoffId, state: state ?? 'unknown' };
+  });
   const Opened = z.object({ reason: z.string().trim().min(1).max(500), label: z.string().max(120).optional() }).strict();
 
   app.post('/v1/computers/:id/handoffs', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -108,7 +134,13 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
       .request({ runId: 'chat', husk: parsed.data.label ?? 'chat', reason: redact(parsed.data.reason), computerId: id, signal: chatHandoffs.signal }, (p) => {
         opened = p;
       })
-      .then((outcome) => ctx.bus.emit('runs', outcome === 'done' ? 'handoff_completed' : 'handoff_cancelled', { computerId: id }));
+      .then((outcome) => {
+        if (opened) lastSeen.delete(opened.handoffId);
+        // The link minted for this handoff dies with it; a later handoff mints its own.
+        ctx.scoped.revoke(`computer:${id}`);
+        ctx.bus.emit('runs', outcome === 'done' ? 'handoff_completed' : 'handoff_cancelled', { computerId: id });
+      });
+    if (opened) lastSeen.set(opened.handoffId, Date.now());
     ctx.bus.emit('runs', 'handoff_requested', opened);
     return reply.code(201).send({ ...opened!, token: ctx.scoped.mint(`computer:${id}`) });
   });
