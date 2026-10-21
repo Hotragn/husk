@@ -28,6 +28,15 @@ describe('the MCP tool list', () => {
     }
   });
 
+  it('turns a bad browser_run into a message before any browser is touched', async () => {
+    const say = async (args: Record<string, unknown>) =>
+      (await callTool(noComputer, 'browser_run', args)).content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
+    expect(await say({})).toMatch(/non-empty list/);
+    expect(await say({ actions: [{ do: 'eval', code: 'alert(1)' }] })).toMatch(/action 1: do must be one of/);
+    expect(await say({ actions: [{ do: 'snapshot' }, { do: 'click' }] })).toMatch(/action 2: say which element/);
+    expect(await say({ actions: [{ do: 'wait' }] })).toMatch(/wait needs text, url or selector/);
+  });
+
   it('advertises the whole browser module, not a subset someone remembered', () => {
     const names = new Set(TOOLS.map((t) => t.name));
     for (const tool of BROWSER_TOOLS) expect(names).toContain(tool.name);

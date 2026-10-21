@@ -191,7 +191,20 @@ async function measureBrowser(id) {
     ['browser_wait_for', await timed('browser_wait_for', { text: 'Go' }, 5)],
     ['browser_screenshot', await timed('browser_screenshot', {}, 3)],
   ];
+  // The same three steps as one browser_run, where the tool exists.
+  const three = [{ do: 'goto', url }, { do: 'wait', text: 'Go' }, { do: 'snapshot' }];
+  const probe = await tool(id, 'browser_run', { actions: [{ do: 'snapshot' }] });
+  if (!/unknown/.test(textOf(probe))) {
+    rows.push(['goto+wait+snapshot', rows[0][1] + rows[2][1] + rows[1][1]]);
+    rows.push(['  as one browser_run', await timed('browser_run', { actions: three }, 3)]);
+    const run = await tool(id, 'browser_run', { actions: [{ do: 'goto', url }, { do: 'click', role: 'button', name: 'Go' }, { do: 'snapshot' }] });
+    check('browser_run clicks by role and name and snapshots, in one call', !run.isError && /button "Go"/.test(textOf(run)), textOf(run).slice(0, 300));
+  }
 
+  // Watching is not using: the computer's last-used time must not move while
+  // only the screen is open.
+  const usedAt = async () => (await api('GET', `/v1/computers/${id}`)).body.lastUsedAt;
+  const usedBefore = await usedAt();
   const seconds = 10;
   const frames = await new Promise((resolveCount, reject) => {
     let count = 0;
@@ -213,14 +226,34 @@ async function measureBrowser(id) {
     ws.onerror = () => reject(new Error('screen socket failed'));
   });
   const fps = (frames / seconds).toFixed(1);
+  const usedAfter = await usedAt();
 
-  const lines = [...rows.map(([name, ms]) => `${name.padEnd(20)} ${String(ms).padStart(6)} ms (median)`), `${'screen at ?fps=4'.padEnd(20)} ${fps.padStart(6)} frames/s`];
+  const lines = [
+    ...rows.map(([name, ms]) => `${name.padEnd(20)} ${String(ms).padStart(6)} ms (median)`),
+    `${'screen at ?fps=4'.padEnd(20)} ${fps.padStart(6)} frames/s`,
+    `${'watching moved lastUsedAt'.padEnd(20)} ${usedBefore === usedAfter ? 'no' : `yes (${usedBefore} -> ${usedAfter})`}`,
+  ];
   console.log(`\n== browser speed ==\n${lines.join('\n')}\n`);
   if (process.env.GITHUB_STEP_SUMMARY) {
     const { appendFileSync } = await import('node:fs');
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Browser speed\n\n\`\`\`\n${lines.join('\n')}\n\`\`\`\n`);
   }
   check('the browser speed was measured', rows.every(([, ms]) => ms > 0) && frames > 0, `${fps} frames/s`);
+  check('watching the screen does not count as using the computer', usedBefore === usedAfter, `${usedBefore} -> ${usedAfter}`);
+
+  // Fast because it is one long-lived driver, not because it quietly fell back.
+  // Its own command line holds a backslash and a zero, not a NUL, so it does not count itself.
+  const count = String.raw`python3 -c "
+import glob
+n = 0
+for f in glob.glob('/proc/[0-9]*/cmdline'):
+    try:
+        n += b'driver.py\0--serve' in open(f, 'rb').read()
+    except OSError:
+        pass
+print(n)"`;
+  const drivers = textOf(await tool(id, 'shell', { command: count })).trim();
+  check('one long-lived driver serves the computer', drivers === '1', `${drivers} running`);
 }
 
 try {
@@ -250,9 +283,10 @@ try {
   const goto = await tool(id, 'browser_goto', { url: 'https://example.com' });
   check('the browser renders a page', !goto.isError && /Example Domain/i.test(textOf(goto)), JSON.stringify(textOf(goto).slice(0, 200)));
   const snap = await tool(id, 'browser_snapshot');
-  // Elements with refs a model can click, e.g. `e24  link "Learn more"`. Not a
-  // page heading: example.com changes its text, and the title is not in the tree.
-  const refs = textOf(snap).match(/^e\d+ {2}\w+/gm) ?? [];
+  // Elements with refs a model can click, e.g. `e24  link "Learn more"`, indented
+  // by depth in the compact tree. Not a page heading: example.com changes its
+  // text, and the title is not in the tree.
+  const refs = textOf(snap).match(/^ *e\d+ {2}\w+/gm) ?? [];
   check('a snapshot lists elements with refs', !snap.isError && refs.length > 0, `${refs.length} elements; ${JSON.stringify(textOf(snap).slice(0, 200))}`);
 
   // 4. The live screen sends real frames.

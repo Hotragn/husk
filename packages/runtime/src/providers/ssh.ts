@@ -670,6 +670,10 @@ class SshComputer implements Computer {
     return this.info;
   }
 
+  markUsed(): void {
+    this.touch();
+  }
+
   private touch(): void {
     this.info.lastUsedAt = new Date().toISOString();
     void persistInfo(this.info).catch(() => {});

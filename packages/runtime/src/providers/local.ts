@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { connect } from 'node:net';
 import { createReadStream, createWriteStream, existsSync } from 'node:fs';
 import { cp, lstat, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
@@ -9,6 +9,7 @@ import type {
   Availability,
   Computer,
   ComputerInfo,
+  ComputerProcess,
   ComputerProvider,
   ComputerSpec,
   DirEntry,
@@ -16,9 +17,11 @@ import type {
   ExecResult,
   PortBinding,
   ProviderName,
+  SpawnRequest,
   WriteFileOptions,
 } from '@husk-ai/core';
 import { loadInfos, persistInfo as persist } from '../registry.js';
+import { wireSpawned } from './spawned.js';
 import {
   GUEST_ROOT,
   GUEST_TMP,
@@ -435,10 +438,30 @@ class LocalComputer implements Computer {
     }
   }
 
-  private async execOnce(req: ExecRequest): Promise<ExecResult> {
-    this.assertLive();
-    const started = Date.now();
+  markUsed(): void {
+    this.touch();
+  }
 
+  /**
+   * A process with stdin held open, started the way `exec` starts one.
+   *
+   * The workspace root always exists by now, so unlike `exec` this needs no
+   * `mkdir` and can stay synchronous. Not use by itself; see `SpawnRequest`.
+   */
+  spawn(req: SpawnRequest): ComputerProcess {
+    const { file, args, spawnEnv, hostCwd } = this.invocationFor(req);
+    const child = spawn(file, args, { cwd: hostCwd, env: spawnEnv, windowsHide: true, detached: process.platform !== 'win32' });
+    return wireSpawned(child, req, () => killProcessTree(child));
+  }
+
+  /** Policy, paths and environment for one command, shared by `exec` and `spawn`. */
+  private invocationFor(req: { cmd: string | string[]; cwd?: string; env?: Record<string, string> }): {
+    file: string;
+    args: string[];
+    spawnEnv: Record<string, string>;
+    hostCwd: string;
+  } {
+    this.assertLive();
     const labels = this.info.spec.labels ?? {};
     const decision = evaluateCommand(req.cmd, {
       deny: splitList(labels['husk.denyCommands']),
@@ -453,14 +476,19 @@ class LocalComputer implements Computer {
 
     const guestCwd = req.cwd ? normaliseGuestPath(req.cwd) : GUEST_ROOT;
     const hostCwd = this.mapPath(req.cwd ?? GUEST_ROOT);
-    await mkdir(hostCwd, { recursive: true });
 
     const { env } = scrubEnv(process.env, { ...this.info.spec.env, ...req.env });
     // scrubEnv passes the caller's own PWD through; the command starts in the
     // workspace, so $PWD should say the same thing `pwd` does.
     env.PWD = hostCwd;
     const script = typeof req.cmd === 'string' ? req.cmd : shellQuote(req.cmd);
-    const { file, args, spawnEnv } = this.buildInvocation(script, hostCwd, guestCwd, env);
+    return { ...this.buildInvocation(script, hostCwd, guestCwd, env), hostCwd };
+  }
+
+  private async execOnce(req: ExecRequest): Promise<ExecResult> {
+    const started = Date.now();
+    const { file, args, spawnEnv, hostCwd } = this.invocationFor(req);
+    await mkdir(hostCwd, { recursive: true });
 
     const maxBytes = req.maxOutputBytes ?? 256 * 1024;
     const out = new OutputBuffer(maxBytes);
@@ -477,22 +505,7 @@ class LocalComputer implements Computer {
         detached: process.platform !== 'win32',
       });
 
-      const killTree = () => {
-        if (child.pid === undefined) return;
-        if (process.platform === 'win32') {
-          spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
-        } else {
-          try {
-            process.kill(-child.pid, 'SIGKILL');
-          } catch {
-            try {
-              child.kill('SIGKILL');
-            } catch {
-              /* already gone */
-            }
-          }
-        }
-      };
+      const killTree = () => killProcessTree(child);
 
       const timeoutSec = req.timeoutSec ?? 120;
       const timer =
@@ -1199,4 +1212,22 @@ export async function portAnswers(port: number, attempts = 3): Promise<boolean> 
     if (i < attempts - 1) await new Promise((r) => setTimeout(r, 150));
   }
   return false;
+}
+
+/** Kill a shell and everything it started: its process group on posix, the tree on Windows. */
+function killProcessTree(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+    return;
+  }
+  try {
+    process.kill(-child.pid, 'SIGKILL');
+  } catch {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  }
 }

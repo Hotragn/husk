@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HuskError, isHuskError } from '@husk-ai/core';
-import type { Computer, ExecRequest, ExecResult } from '@husk-ai/core';
+import type { Computer, ComputerProcess, ExecRequest, ExecResult, SpawnRequest } from '@husk-ai/core';
 import { CdpConnection, ComputerDriverTransport, DRIVER_SCRATCH_PATH, createTarget, waitResultOf } from './cdp.js';
 import type { CdpTransport, DriverRequest, DriverResult } from './cdp.js';
 import { DRIVER_SOURCE } from './driver.js';
@@ -360,5 +360,101 @@ describe('createTarget', () => {
   it('fails loudly when Chromium answers without a target id', async () => {
     const conn = new CdpConnection(fakeTransport([{ somethingElse: true }]));
     expect(await codeOf(() => createTarget(conn))).toBe('E_EXEC_FAILED');
+  });
+});
+
+/**
+ * A computer that can hold a process open, playing the long-lived driver:
+ * each line in is a request, and `answer` decides what goes back.
+ */
+function spawningComputer(answer: (req: Record<string, unknown>, out: (obj: unknown) => void, exit: (code: number) => void) => void) {
+  const c = okComputer([{ oneShot: true }]) as FakeComputer & { spawns: SpawnRequest[] };
+  c.spawns = [];
+  (c as { spawn?: Computer['spawn'] }).spawn = (req: SpawnRequest): ComputerProcess => {
+    c.spawns.push(req);
+    let gone = false;
+    const exit = (code: number) => {
+      if (gone) return;
+      gone = true;
+      req.onExit(code);
+    };
+    const out = (obj: unknown) => req.onStdout(`${JSON.stringify(obj)}\n`);
+    return {
+      write: (data) => {
+        for (const line of data.split('\n').filter(Boolean)) answer(JSON.parse(line) as Record<string, unknown>, out, exit);
+      },
+      kill: () => exit(137),
+    };
+  };
+  return c;
+}
+
+describe('ComputerDriverTransport keeps one driver running where it can', () => {
+  it('starts it once and sends every request to it, with no exec per call', async () => {
+    const c = spawningComputer((req, out) => out({ id: req['id'], ok: true, results: (req['steps'] as unknown[]).map(() => ({ served: true })) }));
+    const t = new ComputerDriverTransport(c, 9222);
+    await t.run({ steps: [{ op: 'send', method: 'A' }] });
+    const res = await t.run({ steps: [{ op: 'send', method: 'A' }, { op: 'send', method: 'B' }] });
+    expect(res.results).toEqual([{ served: true }, { served: true }]);
+    expect(c.spawns).toHaveLength(1);
+    expect(c.spawns[0]?.cmd).toEqual(['python3', DRIVER_SCRATCH_PATH, '--serve', '9222']);
+    expect(c.calls).toHaveLength(0);
+  });
+
+  it('puts a reply split across chunks back together', async () => {
+    const c = spawningComputer((req) => {
+      const line = `${JSON.stringify({ id: req['id'], ok: true, results: [{ big: 'x'.repeat(5000) }] })}\n`;
+      const spawned = c.spawns[0]!;
+      for (let i = 0; i < line.length; i += 1000) spawned.onStdout(line.slice(i, i + 1000));
+    });
+    const res = await new ComputerDriverTransport(c, 9222).run({ steps: [{ op: 'send', method: 'A' }] });
+    expect((res.results[0] as { big: string }).big).toHaveLength(5000);
+  });
+
+  it('falls back to one exec per request when the driver dies before it ever answers', async () => {
+    const c = spawningComputer((_req, _out, exit) => exit(1));
+    const t = new ComputerDriverTransport(c, 9222);
+    expect((await t.run({ steps: [{ op: 'send', method: 'A' }] })).results).toEqual([{ oneShot: true }]);
+    expect((await t.run({ steps: [{ op: 'send', method: 'A' }] })).results).toEqual([{ oneShot: true }]);
+    expect(c.spawns).toHaveLength(1);
+    expect(c.calls).toHaveLength(2);
+    expect(await t.screencast('T1', 4)).toBe(false);
+  });
+
+  it('restarts a driver that dies after it has answered, failing only the call in flight', async () => {
+    let n = 0;
+    const c = spawningComputer((req, out, exit) => {
+      n++;
+      if (n === 2) exit(1);
+      else out({ id: req['id'], ok: true, results: [{}] });
+    });
+    const t = new ComputerDriverTransport(c, 9222);
+    await t.run({ steps: [{ op: 'send', method: 'A' }] });
+    expect(await codeOf(() => t.run({ steps: [{ op: 'send', method: 'A' }] }))).toBe('E_COMPUTER_FAILED');
+    await expect(t.run({ steps: [{ op: 'send', method: 'A' }] })).resolves.toMatchObject({ results: [{}] });
+    expect(c.spawns).toHaveLength(2);
+  });
+
+  it('maps a served failure onto the same error a one-shot one gets', async () => {
+    const c = spawningComputer((req, out) => out({ id: req['id'], ok: false, kind: 'bad_target', message: 'gone' }));
+    expect(await codeOf(() => new ComputerDriverTransport(c, 9222).run({ steps: [] }))).toBe('E_TOOL_ERROR');
+  });
+
+  it('passes pushed frames to listeners, and stops casting on request', async () => {
+    const seen: string[] = [];
+    const c = spawningComputer((req, out) => {
+      out({ id: req['id'], ok: true });
+      if (req['op'] === 'screencast') out({ event: 'frame', targetId: 'T1', data: 'JPEG', width: 800, height: 600 });
+      if (req['op'] === 'screencastStop') seen.push('stopped');
+    });
+    const t = new ComputerDriverTransport(c, 9222);
+    t.onScreencast((e) => seen.push(e.type === 'frame' ? `${e.targetId}:${e.frame.data}:${e.frame.width}` : e.reason));
+    expect(await t.screencast('T1', 4)).toBe(true);
+    await t.stopScreencast('T1');
+    expect(seen).toEqual(['T1:JPEG:800', 'stopped']);
+  });
+
+  it('says it cannot cast where the provider cannot hold a process open', async () => {
+    expect(await new ComputerDriverTransport(okComputer([{}]), 9222).screencast('T1', 4)).toBe(false);
   });
 });

@@ -8,7 +8,8 @@ import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
 import { SseStream } from '../sse.js';
 import { browseInComputer } from '@husk-ai/core';
-import { livePageFor } from '@husk-ai/browser';
+import { browserSessionFor, livePageFor } from '@husk-ai/browser';
+import type { BrowserSession } from '@husk-ai/browser';
 import { localWorkspaceBytes } from '@husk-ai/runtime';
 
 const NetworkPolicySchema = z.object({
@@ -324,20 +325,25 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
   /**
    * The computer's browser, live, for as long as somebody watches.
    *
-   * The driver answers one request at a time from inside the computer, so this
-   * cannot subscribe to Chrome's own screencast. It asks for the next frame as
-   * soon as the last one is sent, capped at SCREEN_FPS -- a few frames a second,
-   * which is enough to watch a page being driven. It never launches a browser:
-   * with none open it says so once a second until one appears. It stops the
-   * moment the socket closes, so nothing is spent on a screen nobody is looking at.
+   * Frames are pushed: Chrome's own screencast, through the long-lived driver
+   * in the computer, acked no faster than SCREEN_FPS and held to this viewer's
+   * `fps`. One screencast serves every viewer of a computer and stops when the
+   * last one leaves. Where the provider cannot keep a driver running, this asks
+   * for one frame at a time instead, as it always did. Watching is not using:
+   * only a tool call moves the computer's last-used time, so a screen left open
+   * never keeps a computer awake. It never launches a browser: with none open
+   * it says so once until one appears.
    */
   app.get('/v1/computers/:id/screen', { websocket: true }, (socket, req) => {
     const { id } = req.params as { id: string };
     // `?fps=1` for a small screen among many, such as a card on Home. Never above the cap.
     const fps = Math.min(SCREEN_FPS, Math.max(1, Number((req.query as { fps?: string }).fps) || SCREEN_FPS));
     let open = true;
+    let stopWatching: (() => void) | undefined;
     socket.on('close', () => {
       open = false;
+      stopWatching?.();
+      stopWatching = undefined;
     });
     const send = (obj: unknown) => {
       if (open && socket.readyState === socket.OPEN) socket.send(JSON.stringify(obj));
@@ -351,16 +357,38 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
         return;
       }
       let idle = false;
+      let watched: BrowserSession | undefined;
+      let polling = false;
       while (open) {
         const started = Date.now();
-        const page = livePageFor(id);
-        if (!page) {
+        const session = browserSessionFor(id);
+        // Asking keeps an open browser from closing for idleness while it is watched.
+        const page = session?.livePage();
+        if (watched && watched !== session) {
+          // Closed and made again: the old session's cast is gone with it.
+          stopWatching?.();
+          stopWatching = undefined;
+          watched = undefined;
+          polling = false;
+        }
+        if (!page || !session) {
           if (!idle) send({ type: 'idle', message: 'no browser is open on this computer yet' });
           idle = true;
           await pause(1000);
           continue;
         }
         idle = false;
+        if (!watched) {
+          watched = session;
+          const stop = await session.watchScreen(fps, (frame) => send({ type: 'frame', ...frame }));
+          if (!open) stop?.();
+          else if (stop) stopWatching = stop;
+          else polling = true;
+        }
+        if (!polling) {
+          await pause(1000);
+          continue;
+        }
         let wait = 1000 / fps;
         try {
           const frame = await page.frame(60);

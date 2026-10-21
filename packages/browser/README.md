@@ -17,15 +17,17 @@ govern.
 loopback, and the answer to that is not to widen the bind address — an
 unauthenticated CDP port is a remote-code-execution primitive. So husk does not
 connect to the browser from the host, and does not publish the port: it runs a
-small Python CDP client *in the computer* and reads one JSON object back off
-stdout. Nothing here calls `exposePort`, and `--remote-debugging-address` does
-not appear anywhere in this package.
+small Python CDP client *in the computer* and reads JSON back off its stdout.
+Nothing here calls `exposePort`, and `--remote-debugging-address` does not
+appear anywhere in this package.
 
-A round trip is one process start plus one websocket handshake — about 165 ms on
-the `local` provider on WSL2, of which roughly 145 ms is that provider's own
-cost of starting any process at all. Each `Page` method is one driver invocation
-wherever the CDP sequence allows it, which is the lever if that ever stops being
-fast enough.
+Where the provider can hold a process's stdin open (`Computer.spawn`: Docker,
+Podman, `local`), one driver lives as long as the browser and keeps one
+websocket to it, so a command costs its CDP round trips and nothing else, and
+the live screen is Chrome's own screencast pushed through it. Elsewhere each
+request is one process start plus one websocket handshake — about 165 ms on
+WSL2. Either way a request is a list of steps, and `Page.actions` (the
+`browser_run` tool) makes several whole page actions one request.
 
 ## Example
 
@@ -67,17 +69,18 @@ await browser.close();
   `chrome-linux/headless_shell` — a different directory *and* a different binary
   name. That mapping is the thing most likely to rot silently, so it is data
   with a unit test rather than an `if` in the install path.
-- **`driver.py`** — the CDP client, executed **inside the computer**. One
-  process per command: connect to Chromium on the machine's own loopback, run a
-  short list of steps, print one JSON object, exit. It needs nothing but
-  `python3`, which every flavour has.
-- **`cdp.ts`** — the transport. Runs `driver.py` through `Computer.exec` and
-  turns its JSON into results or a `HuskError`, keeping apart the failures that
-  need different fixes: the browser is not listening, it died holding your
-  command, the page never answered, Chromium refused the command, the driver
-  could not run at all.
+- **`driver.py`** — the CDP client, executed **inside the computer**, talking
+  to Chromium on the machine's own loopback. `--serve` keeps it running and
+  answers newline-delimited requests by id, and pushes screencast frames acked
+  no faster than the viewer's rate; without it, one request in, one answer out,
+  exit. It needs nothing but `python3`, which every flavour has.
+- **`cdp.ts`** — the transport. Holds one `driver.py --serve` per browser, falls
+  back to one `Computer.exec` per request where it cannot, and turns the JSON
+  into results or a `HuskError`, keeping apart the failures that need different
+  fixes: the browser is not listening, it died holding your command, the page
+  never answered, Chromium refused the command, the driver could not run at all.
 - **`page.ts`** — `goto`, `snapshot`, `click`, `type`, `press`, `screenshot`,
-  `evaluate`, `content`, `text`, `waitForLoad`.
+  `evaluate`, `content`, `text`, `waitForLoad`, and `actions` for several at once.
 - **`session.ts`** — one browser per computer, launched lazily and closed after
   five idle minutes, because a resident Chromium is a few hundred megabytes of
   RSS and a machine with four of them gets OOM-killed. The user-data-dir is
@@ -85,8 +88,11 @@ await browser.close();
 
 ## Refs, not coordinates
 
-`snapshot()` flattens `Accessibility.getFullAXTree` into
-`{ ref, role, name, value }`. A `ref` of `e42` is Chromium's backend node id, so
+`snapshot()` turns `Accessibility.getFullAXTree` into a compact tree of
+`{ ref, role, name, value, depth }`, by ego-lite's rules (MIT, Copyright (c)
+2026 CitroLabs; see `THIRD_PARTY_NOTICES.md`): blank text and empty containers
+go, a container with one child becomes that child, and groups, refs, order and
+frame boundaries stay. A `ref` of `e42` is Chromium's backend node id, so
 it identifies the same element across snapshots for as long as the element is in
 the document. There is deliberately no `click(x, y)`: a model that infers a
 pixel from a screenshot will eventually click the wrong thing, and the wrong

@@ -10,6 +10,7 @@ import type {
   Availability,
   Computer,
   ComputerInfo,
+  ComputerProcess,
   ComputerProvider,
   ComputerUsage,
   ComputerSpec,
@@ -18,11 +19,13 @@ import type {
   ExecResult,
   PortBinding,
   ProviderName,
+  SpawnRequest,
   WriteFileOptions,
 } from '@husk-ai/core';
 import { type ImagePlan, installScript, resolveImage } from '../images.js';
 import { OutputBuffer, evaluateCommand } from '../policy.js';
 import { expired, forgetInfo, lastUsedTimes, touchInfo } from '../registry.js';
+import { wireSpawned } from './spawned.js';
 
 /**
  * Everything Docker and Podman have in common, which is very nearly everything.
@@ -355,11 +358,10 @@ export class OciComputer implements Computer {
     return this.info;
   }
 
-  async exec(req: ExecRequest): Promise<ExecResult> {
-    // Same policy as the local provider. A container limits the blast radius of a
-    // destructive command; it does not make running one a good idea.
+  /** Same policy as the local provider. A container limits the blast radius of a destructive command; it does not make running one a good idea. */
+  private assertAllowed(cmd: string | string[]): void {
     const labels = this.info.spec.labels ?? {};
-    const decision = evaluateCommand(req.cmd, {
+    const decision = evaluateCommand(cmd, {
       deny: splitList(labels['husk.denyCommands']),
       allow: splitList(labels['husk.allowCommands']),
     });
@@ -369,6 +371,28 @@ export class OciComputer implements Computer {
         details: { rule: decision.rule },
       });
     }
+  }
+
+  markUsed(): void {
+    this.info.lastUsedAt = new Date().toISOString();
+    void touchInfo(this.info.id).catch(() => {});
+  }
+
+  /** `exec -i` with stdin left open. Not use by itself; see `SpawnRequest`. */
+  spawn(req: SpawnRequest): ComputerProcess {
+    this.assertAllowed(req.cmd);
+    const args = buildExecArgs(this.cfg, {
+      containerId: this.native,
+      cmd: req.cmd,
+      ...(req.cwd ? { cwd: req.cwd } : {}),
+      ...(req.env ? { env: req.env } : {}),
+      ...(req.user ? { user: req.user } : {}),
+    });
+    return wireSpawned(spawn(this.cfg.binary, args, { windowsHide: true }), req);
+  }
+
+  async exec(req: ExecRequest): Promise<ExecResult> {
+    this.assertAllowed(req.cmd);
 
     const args = buildExecArgs(this.cfg, {
       containerId: this.native,

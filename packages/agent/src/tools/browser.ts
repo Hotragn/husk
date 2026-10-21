@@ -31,7 +31,7 @@ async function sessionOf(ctx: AgentToolContext): Promise<ReturnType<typeof brows
 function renderSnapshot(nodes: SnapshotNode[]): string {
   if (nodes.length === 0) return 'the page exposes no accessible elements';
   return nodes
-    .map((n) => `${n.ref}  ${n.role}${n.name ? ` "${n.name}"` : ''}${n.value ? ` = "${n.value}"` : ''}`)
+    .map((n) => `${'  '.repeat(n.depth ?? 0)}${n.ref}  ${n.role}${n.name ? ` "${n.name}"` : ''}${n.value ? ` = "${n.value}"` : ''}`)
     .join('\n');
 }
 

@@ -20,6 +20,8 @@ export interface AxNodeLike {
   value?: { value?: unknown };
   backendDOMNodeId?: number;
   properties?: Array<{ name?: string; value?: { value?: unknown } }>;
+  parentId?: string;
+  childIds?: string[];
 }
 
 export interface SnapshotNode {
@@ -28,6 +30,8 @@ export interface SnapshotNode {
   role: string;
   name: string;
   value?: string;
+  /** Nesting in the compact tree, 0 at the top. Absent from `flattenAxTree`, which has no tree. */
+  depth?: number;
 }
 
 /** Roles worth showing even when they carry no accessible name. */
@@ -105,6 +109,107 @@ export function flattenAxTree(nodes: AxNodeLike[], opts: { limit?: number } = {}
   return out;
 }
 
+/** Text roles. A text node is page text, so only an empty one is ever dropped. */
+const TEXT_ROLES: ReadonlySet<string> = new Set(['StaticText', 'text']);
+
+/** Pieces of text Chromium splits out of a text node: the node already carries them. */
+const DROP_ROLES: ReadonlySet<string> = new Set(['InlineTextBox', 'LineBreak']);
+
+/**
+ * Nodes kept even when they are unnamed and empty, because what they are is
+ * the information: a picture, a frame boundary, a list item or a table cell.
+ */
+const SEMANTIC_ROLES: ReadonlySet<string> = new Set([
+  'image', 'img', 'graphics-document', 'SvgRoot', 'svg', 'canvas', 'Canvas', 'Iframe', 'IframePresentational',
+  'listitem', 'cell', 'gridcell', 'columnheader', 'rowheader', 'main', 'navigation', 'banner', 'contentinfo',
+  'complementary', 'form', 'search', 'dialog', 'alertdialog',
+]);
+
+/** Whitespace, NBSP and zero-width formatting characters count as no text at all. */
+function clean(v: unknown): string {
+  return str(v).replace(/[​-‍⁠﻿]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+interface Built {
+  node: SnapshotNode;
+  children: Built[];
+}
+
+/**
+ * `Accessibility.getFullAXTree` as a compact tree, in document order.
+ *
+ * The rules are ego-lite's (docs/native-snapshot-ref-requirement.md in
+ * citrolabs/ego-lite, MIT, Copyright (c) 2026 CitroLabs): drop text that is
+ * empty or only whitespace, drop an unnamed container left with no children,
+ * and replace an unnamed container that has one child with that child. An
+ * unnamed container with several children stays, because it is what keeps two
+ * groups of siblings apart. Named nodes, interactive ones and the semantic
+ * roles above always stay, so refs, order and frame boundaries survive, and
+ * page text is never dropped for being non-interactive. One addition of
+ * husk's: a lone text child that only repeats its parent's name is dropped,
+ * since the parent's line already says it -- a link is one line, not two.
+ *
+ * A flat list of nodes with no `childIds` is a forest of leaves, so old
+ * fixtures and partial trees still come out in order.
+ */
+export function compactAxTree(nodes: AxNodeLike[], opts: { limit?: number } = {}): SnapshotNode[] {
+  const limit = opts.limit ?? 1000;
+  const byId = new Map<string, AxNodeLike>();
+  for (const n of nodes) if (n.nodeId !== undefined) byId.set(str(n.nodeId), n);
+  const seen = new Set<AxNodeLike>();
+
+  const build = (n: AxNodeLike, index: number): Built[] => {
+    if (seen.has(n)) return [];
+    seen.add(n);
+    const role = str(n.role?.value);
+    const kids = (n.childIds ?? []).flatMap((id, i) => {
+      const child = byId.get(id);
+      return child ? build(child, i) : [];
+    });
+    if (DROP_ROLES.has(role)) return [];
+
+    const name = clean(n.name?.value);
+    const value = clean(n.value?.value);
+    const ref = n.backendDOMNodeId !== undefined ? `e${n.backendDOMNodeId}` : `a${str(n.nodeId) || index}`;
+    const node: SnapshotNode = { ref, role, name, ...(value ? { value } : {}) };
+
+    if (TEXT_ROLES.has(role)) return name ? [{ node, children: [] }] : [];
+    // The document itself is the frame everything is in; its children start at the top.
+    if (role === 'RootWebArea' && !n.parentId) return kids;
+    // An ignored node is not a node to a reader at all.
+    if (n.ignored || !role) return kids;
+
+    const container = !name && !value && !INTERACTIVE_ROLES.has(role) && !SEMANTIC_ROLES.has(role);
+    if (container) {
+      if (kids.length <= 1) return kids;
+      return [{ node, children: kids }];
+    }
+    const only = kids.length === 1 ? kids[0] : undefined;
+    if (only && only.children.length === 0 && TEXT_ROLES.has(only.node.role) && only.node.name === name) {
+      return [{ node, children: [] }];
+    }
+    return [{ node, children: kids }];
+  };
+
+  const roots = nodes.filter((n) => !n.parentId || !byId.has(n.parentId));
+  const forest = roots.flatMap((n, i) => build(n, i));
+
+  const out: SnapshotNode[] = [];
+  const refs = new Set<string>();
+  const walk = (list: Built[], depth: number): void => {
+    for (const b of list) {
+      if (out.length >= limit) return;
+      if (!refs.has(b.node.ref)) {
+        refs.add(b.node.ref);
+        out.push({ ...b.node, depth });
+      }
+      walk(b.children, depth + 1);
+    }
+  };
+  walk(forest, 0);
+  return out;
+}
+
 /** The DOM node a ref points at, or null when the ref is not clickable. */
 export function backendNodeIdOf(ref: string): number | null {
   const m = /^e(\d+)$/.exec(ref);
@@ -161,13 +266,13 @@ export function keyDescriptor(name: string): { key: string; code: string; keyCod
 /**
  * One tab, addressed by its target id.
  *
- * There is deliberately no long-lived session id here. A CDP session belongs to
- * a websocket, and this package's websockets last exactly one driver
- * invocation; a target id belongs to the browser and outlives all of them. So
- * the driver re-attaches on every call, and the domain enables a fresh session
- * needs are replayed as a prelude. Three extra commands on a loopback socket
- * cost well under a millisecond; getting this wrong costs a protocol error on
- * every second call.
+ * There is deliberately no session id here. A CDP session belongs to a
+ * websocket: a served driver keeps one per tab for as long as it runs, a
+ * one-shot driver attaches afresh on every call, and a target id outlives
+ * both. So the domain enables a fresh session needs are replayed as a prelude
+ * on every call, whichever kind answers. Three extra commands on a loopback
+ * socket cost well under a millisecond; getting this wrong costs a protocol
+ * error on every second call.
  *
  * Each public method is one driver invocation wherever the CDP sequence allows
  * it, and two where husk has to do arithmetic in the middle -- a click needs
@@ -363,19 +468,29 @@ export class Page {
 
     const res = (tree ?? {}) as CdpParams;
     const nodes = Array.isArray(res['nodes']) ? (res['nodes'] as AxNodeLike[]) : [];
-    const flat = flattenAxTree(nodes, opts);
-
     const unreachable = ((frames ?? {}) as { result?: { value?: unknown } }).result?.value;
-    if (Array.isArray(unreachable) && unreachable.length > 0) {
-      flat.push({
-        ref: 'x0',
-        role: 'UnreachableFrames',
-        name:
-          `${unreachable.length} cross-origin iframe${unreachable.length === 1 ? '' : 's'} on this page ` +
-          `cannot be read or clicked from here: ${unreachable.map(String).join(', ')}`,
-      });
-    }
-    return flat;
+    return snapshotOf(nodes, unreachable, opts);
+  }
+
+  /**
+   * Several page actions in one driver round, stopping at the first that fails.
+   *
+   * Code over calls, ego-lite's idea (MIT, Copyright (c) 2026 CitroLabs): the
+   * cost of a browser tool is mostly the round trip, so a model that knows its
+   * next five steps should pay for one. The actions are data and the driver
+   * runs them; the only page script involved is what this file builds from
+   * JSON-quoted arguments. Gotos must already be policy-checked -- `session.ts`
+   * does it, as it does for `goto`.
+   */
+  async actions(list: PageAction[]): Promise<ActionOutcome[]> {
+    let budget = 10_000;
+    const steps: DriverStep[] = list.map((a) => {
+      const step = actionStep(a);
+      budget += step.timeoutMs ?? 30_000;
+      return step;
+    });
+    const results = await this.run(steps, budget);
+    return list.map((a, i) => outcomeOf(a, results[i]));
   }
 
   /** Base64 png (or jpeg). `fullPage` captures past the viewport. */
@@ -591,25 +706,11 @@ export class Page {
     timeoutMs = 15_000,
   ): Promise<{ found: boolean; waitedMs: number }> {
     const started = Date.now();
-    const probe = what.selector
-      ? `!!document.querySelector(${JSON.stringify(what.selector)})`
-      : `document.body ? document.body.innerText.includes(${JSON.stringify(what.text ?? '')}) : false`;
-    const want = what.gone === true ? 'false' : 'true';
-
     const [result] = await this.run([
       {
         op: 'send',
         method: 'Runtime.evaluate',
-        params: evalParams(
-          `(async () => {
-             const deadline = Date.now() + ${Math.max(0, timeoutMs)};
-             while (Date.now() < deadline) {
-               if ((${probe}) === ${want}) return true;
-               await new Promise((r) => setTimeout(r, 100));
-             }
-             return (${probe}) === ${want};
-           })()`,
-        ),
+        params: evalParams(waitExpression(what, timeoutMs)),
         session: true,
         // The page's own clock decides; the transport only has to outlast it.
         timeoutMs: timeoutMs + 5000,
@@ -751,6 +852,133 @@ export class Page {
       .run([{ op: 'send', method: 'Target.closeTarget', params: { targetId: this.targetId }, soft: true }])
       .catch(() => undefined);
   }
+}
+
+/**
+ * The page-side wait loop: true once the text, URL or selector is there (or
+ * gone), false at the deadline. Polling rather than a MutationObserver, so a
+ * one-shot driver -- a process per call -- waits the same way a served one does.
+ */
+export function waitExpression(what: { text?: string; url?: string; selector?: string; gone?: boolean }, timeoutMs: number): string {
+  const probe = what.selector
+    ? `!!document.querySelector(${JSON.stringify(what.selector)})`
+    : what.url !== undefined
+      ? `location.href.includes(${JSON.stringify(what.url)})`
+      : `document.body ? document.body.innerText.includes(${JSON.stringify(what.text ?? '')}) : false`;
+  const want = what.gone === true ? 'false' : 'true';
+  return `(async () => {
+     const deadline = Date.now() + ${Math.max(0, timeoutMs)};
+     while (Date.now() < deadline) {
+       if ((${probe}) === ${want}) return true;
+       await new Promise((r) => setTimeout(r, 100));
+     }
+     return (${probe}) === ${want};
+   })()`;
+}
+
+/** Which element an action means: a ref from a snapshot, or a role and its accessible name. */
+export interface ElementTarget {
+  ref?: string;
+  role?: string;
+  name?: string;
+}
+
+/** One step of `browser_run`. Data only: the driver does it, nothing evaluates it. */
+export type PageAction =
+  | { do: 'goto'; url: string; timeoutMs?: number }
+  | ({ do: 'click' } & ElementTarget)
+  | ({ do: 'fill'; text: string; submit?: boolean } & ElementTarget)
+  | { do: 'wait'; text?: string; url?: string; selector?: string; gone?: boolean; timeoutMs?: number }
+  | { do: 'snapshot'; limit?: number }
+  | { do: 'screenshot'; fullPage?: boolean };
+
+/** What one action did. `skipped` follows an earlier failure; `error` is that failure. */
+export interface ActionOutcome {
+  do: PageAction['do'];
+  ok: boolean;
+  skipped?: boolean;
+  error?: string;
+  url?: string;
+  loaded?: boolean;
+  ref?: string;
+  navigated?: boolean;
+  waitedMs?: number;
+  nodes?: SnapshotNode[];
+  /** Base64 PNG, for `screenshot`. */
+  data?: string;
+}
+
+function actionStep(a: PageAction): DriverStep {
+  const base = { op: 'action' as const, session: true };
+  switch (a.do) {
+    case 'goto': {
+      const load = a.timeoutMs ?? 30_000;
+      return { ...base, do: 'goto', url: a.url, loadTimeoutMs: load, timeoutMs: load + 30_000 };
+    }
+    case 'click':
+      return { ...base, do: 'click', ...target(a), timeoutMs: 30_000 };
+    case 'fill':
+      return { ...base, do: 'fill', ...target(a), text: a.text, ...(a.submit ? { submit: true } : {}), timeoutMs: 30_000 };
+    case 'wait': {
+      const wait = a.timeoutMs ?? 15_000;
+      const what = a.selector !== undefined ? `selector ${a.selector}` : a.url !== undefined ? `url ${JSON.stringify(a.url)}` : `text ${JSON.stringify(a.text ?? '')}`;
+      return {
+        ...base,
+        do: 'wait',
+        expression: waitExpression(a, wait),
+        what,
+        ...(a.gone ? { gone: true } : {}),
+        // The page's own clock decides; the driver only has to outlast it.
+        timeoutMs: wait + 5000,
+      };
+    }
+    case 'snapshot':
+      return { ...base, do: 'snapshot', framesExpression: unreachableFramesExpression(), timeoutMs: 30_000 };
+    case 'screenshot':
+      return { ...base, do: 'screenshot', ...(a.fullPage ? { fullPage: true } : {}), timeoutMs: 60_000 };
+  }
+}
+
+function target(a: ElementTarget): ElementTarget {
+  return {
+    ...(a.ref !== undefined ? { ref: a.ref } : {}),
+    ...(a.role !== undefined ? { role: a.role } : {}),
+    ...(a.name !== undefined ? { name: a.name } : {}),
+  };
+}
+
+function outcomeOf(a: PageAction, raw: unknown): ActionOutcome {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  if (r['skipped'] === true) return { do: a.do, ok: false, skipped: true };
+  if (typeof r['error'] === 'string') return { do: a.do, ok: false, error: r['error'] };
+  const out: ActionOutcome = { do: a.do, ok: true };
+  if (typeof r['url'] === 'string') out.url = r['url'];
+  if (typeof r['loaded'] === 'boolean') out.loaded = r['loaded'];
+  if (typeof r['ref'] === 'string') out.ref = r['ref'];
+  if (typeof r['navigated'] === 'boolean') out.navigated = r['navigated'];
+  if (typeof r['waitedMs'] === 'number') out.waitedMs = r['waitedMs'];
+  if (typeof r['data'] === 'string') out.data = r['data'];
+  if (a.do === 'snapshot') {
+    const nodes = Array.isArray(r['nodes']) ? (r['nodes'] as AxNodeLike[]) : [];
+    out.nodes = snapshotOf(nodes, r['unreachable'], a.limit !== undefined ? { limit: a.limit } : {});
+  }
+  return out;
+}
+
+/** The compact tree, plus a line saying which frames it could not see into. */
+function snapshotOf(nodes: AxNodeLike[], unreachable: unknown, opts: { limit?: number }): SnapshotNode[] {
+  const tree = compactAxTree(nodes, opts);
+  if (Array.isArray(unreachable) && unreachable.length > 0) {
+    tree.push({
+      ref: 'x0',
+      role: 'UnreachableFrames',
+      name:
+        `${unreachable.length} cross-origin iframe${unreachable.length === 1 ? '' : 's'} on this page ` +
+        `cannot be read or clicked from here: ${unreachable.map(String).join(', ')}`,
+      depth: 0,
+    });
+  }
+  return tree;
 }
 
 /** The one shape every `Runtime.evaluate` in this file uses. */
