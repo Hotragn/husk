@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { HuskApi } from '../api/client';
 import type { Overview } from '../api/wire';
 import { ChatPanel } from './ChatPanel';
@@ -38,6 +38,8 @@ class FakeSocket {
 let calls: Array<{ method: string; path: string; body?: string }>;
 beforeEach(() => {
   calls = [];
+  // A socket from the last test must never stand in for this one's.
+  FakeSocket.last = undefined;
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal(
     'fetch',
@@ -69,6 +71,7 @@ describe('Chat panel', () => {
   it('opens the live screen with the token, and says when no browser is open', async () => {
     render(<ChatPanel computerId="cmp_chat" onOpen={() => {}} />);
     await screen.findByText('Claude Code · chat started 10:42');
+    await waitFor(() => expect(FakeSocket.last).toBeDefined());
     const ws = FakeSocket.last!;
     expect(ws.url).toBe('ws://localhost:7377/v1/computers/cmp_chat/screen?token=test-token');
     act(() => ws.say({ type: 'idle', message: 'x' }));
@@ -80,6 +83,7 @@ describe('Chat panel', () => {
   it('closes the screen when the panel goes away', async () => {
     const { unmount } = render(<ChatPanel computerId="cmp_chat" onOpen={() => {}} />);
     await screen.findByText('Claude Code · chat started 10:42');
+    await waitFor(() => expect(FakeSocket.last).toBeDefined());
     const ws = FakeSocket.last!;
     unmount();
     expect(ws.closed).toBe(true);
