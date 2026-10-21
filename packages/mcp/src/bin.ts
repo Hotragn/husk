@@ -108,9 +108,25 @@ async function main(): Promise<void> {
  * error: the first is already serving.
  */
 async function runDaemon(): Promise<void> {
-  const [{ serve }, { runTool }] = await Promise.all([import('@husk-ai/server'), import('./tools.js')]);
+  const [{ serve }, { runTool }, { DEFAULT_CONFIG }] = await Promise.all([
+    import('@husk-ai/server'),
+    import('./tools.js'),
+    import('@husk-ai/core'),
+  ]);
+  // Two chats starting at once both launch one. The loser leaves before it
+  // starts anything -- no triggers, no reaper -- rather than after a failed bind.
+  const port = Number(process.env.HUSK_PORT) || DEFAULT_CONFIG.port;
+  const answering = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) }).then(
+    (r) => r.ok,
+    () => false,
+  );
+  if (answering) {
+    process.stderr.write('husk daemon: a Husk already answers on the port; exiting\n');
+    process.exit(0);
+  }
   try {
-    await serve({ daemon: true, deps: { runTool } });
+    // Nobody configures a Husk a chat started in the background, so it mints its own token.
+    await serve({ daemon: true, mintToken: true, deps: { runTool } });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
       process.stderr.write('husk daemon: the port is taken, so another Husk is already serving; exiting\n');

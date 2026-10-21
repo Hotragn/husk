@@ -17,10 +17,30 @@ export function runtimeBin({ isPackaged, resourcesPath, appPath }) {
 
 /**
  * How a chat app starts this install's Husk: the app's own binary, run as
- * Node, on the bundled bin.js. Nothing for the person to install.
+ * Node, on the bundled bin.js. Nothing for the person to install. A Linux
+ * AppImage mounts itself at a new path on every run, so there the chat app
+ * starts the AppImage itself with `--husk-mcp`.
  */
-export function launchFor(execPath, bin) {
+export function launchFor(execPath, bin, env = {}) {
+  if (env.APPIMAGE) return { command: env.APPIMAGE, args: ['--husk-mcp'] };
   return { command: execPath, args: [bin], env: { ELECTRON_RUN_AS_NODE: '1' } };
+}
+
+/** How the app starts the shared Husk so it outlives the app (and, on Linux, its mount). */
+export function daemonCommand({ execPath, bin, env }) {
+  if (env.APPIMAGE) {
+    const { ELECTRON_RUN_AS_NODE: _drop, ...rest } = env;
+    return { command: env.APPIMAGE, args: ['--husk-mcp', '--daemon'], env: rest };
+  }
+  return { command: execPath, args: [bin, '--daemon'], env: { ...env, ELECTRON_RUN_AS_NODE: '1' } };
+}
+
+/** a > b for x.y.z versions. */
+export function isNewer(a, b) {
+  const pa = String(a).split('.').map((n) => Number.parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => Number.parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) > (pb[i] ?? 0);
+  return false;
 }
 
 export function huskHome(env = process.env) {

@@ -17,7 +17,7 @@ import { ComputerManager, ensureRunning } from '@husk-ai/runtime';
 import { audited } from '@husk-ai/core';
 import { callTool, toolsFor } from './tools.js';
 import type { ToolDef, ToolResult } from './tools.js';
-import { DaemonUnreachable, connectDaemon } from './daemon.js';
+import { DaemonUnreachable, RunLocally, connectDaemon } from './daemon.js';
 import type { DaemonClient } from './daemon.js';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { HandoffRegistry, ScopedTokens, computerLink, handoffLink, startWorkspaceViewer } from '@husk-ai/server/workspace-viewer';
@@ -139,6 +139,8 @@ export class HuskMcpServer {
    * person holding this computer?" keeps working unchanged.
    */
   private readonly remoteHandoffs = new Map<string, string>();
+  /** Computers the shared Husk cannot see, so their tools -- and browser -- stay in this process. */
+  private readonly localComputers = new Set<string>();
   private readonly useDaemon: boolean;
   /** Handoffs open in this session. A person ends one; closing the session ends them all. */
   private readonly handoffs = new HandoffRegistry();
@@ -274,16 +276,22 @@ export class HuskMcpServer {
    * The shared Husk audits the calls it runs, so they are audited once either way.
    */
   private async runTool(computer: Computer, name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<ToolResult> {
-    const daemon = await this.shared();
+    const daemon = this.localComputers.has(computer.id) ? undefined : await this.shared();
     if (daemon) {
       try {
         return await daemon.callTool(computer.id, name, args, signal);
       } catch (err) {
-        if (!(err instanceof DaemonUnreachable)) {
+        if (err instanceof RunLocally) {
+          this.log.info(`${err.message}; its tools run in this process`);
+          this.localComputers.add(computer.id);
+        } else if (err instanceof DaemonUnreachable) {
+          // Nothing ran there. This call runs here, and the next one looks for
+          // the shared Husk again, starting one if it is gone.
+          this.log.warn(`${err.message}; running this call in this process`);
+          this.daemon = undefined;
+        } else {
           return { isError: true, content: [{ type: 'text', text: redact(`the shared husk did not answer: ${(err as Error).message}`) }] };
         }
-        this.log.warn(`${(err as Error).message}; running tools in this process from now on`);
-        this.daemon = Promise.resolve(undefined);
       }
     }
     return audited(
@@ -525,13 +533,20 @@ export class HuskMcpServer {
 
     // In the shared Husk when there is one: it holds this chat's browser, and its
     // console, the overview and Husk Bar show the person what is waiting.
-    const daemon = computer ? await this.shared() : undefined;
-    const remote = daemon && computer
-      ? await daemon.openHandoff(computer.id, reason, computer.info.spec.labels?.[IDENTITY_LABELS.chat])
-      : undefined;
+    // Only where its browser is: a computer whose tools run here hands off here.
+    const daemon = computer && !this.localComputers.has(computer.id) ? await this.shared() : undefined;
+    let remote: { handoffId: string; token: string } | undefined;
+    if (daemon && computer) {
+      try {
+        remote = await daemon.openHandoff(computer.id, reason, computer.info.spec.labels?.[IDENTITY_LABELS.chat]);
+      } catch (err) {
+        if (err instanceof RunLocally) this.localComputers.add(computer.id);
+        this.log.warn(`handing off in this process: ${(err as Error).message}`);
+      }
+    }
     // Before the handoff opens: if the viewer cannot start, nothing is left
     // holding the computer with no link to finish it.
-    const origin = daemon && remote ? daemon.url : (await this.openViewerServer()).origin;
+    const origin = remote && daemon ? daemon.url : (await this.openViewerServer()).origin;
     let handoffId = '';
     const finished = this.handoffs.request(
       {
@@ -706,7 +721,9 @@ export class HuskMcpServer {
 
   /** The model relays the person's "done". Only meaningful after hand_off. */
   private async handOffDone(args: Record<string, unknown>): Promise<CallToolResult> {
-    const handoffId = typeof args.handoff === 'string' ? args.handoff : '';
+    const given = typeof args.handoff === 'string' ? args.handoff : '';
+    // The shared Husk's refusal names its own id; accept that one too.
+    const handoffId = [...this.remoteHandoffs].find(([, remote]) => remote === given)?.[0] ?? given;
     if (this.handedBack.has(handoffId)) return { content: [{ type: 'text', text: HANDED_BACK }] };
     if (!this.handoffs.isOpen(handoffId)) throw new Error(`There is no open handoff "${handoffId}".`);
     await this.completeHandoff(handoffId);
@@ -717,7 +734,15 @@ export class HuskMcpServer {
   private async completeHandoff(handoffId: string): Promise<void> {
     const remoteId = this.remoteHandoffs.get(handoffId);
     const daemon = remoteId ? await this.shared() : undefined;
-    if (daemon && remoteId) await daemon.complete(remoteId).catch((err) => this.log.warn(`could not finish ${remoteId}: ${(err as Error).message}`));
+    if (daemon && remoteId) {
+      try {
+        await daemon.complete(remoteId);
+      } catch (err) {
+        // Not handed back there, so not here either: the model must not resume
+        // on a computer the shared Husk still holds for the person.
+        throw new Error(`Could not hand the computer back: ${(err as Error).message}. Ask the user to press Done in the Husk console.`);
+      }
+    }
     if (this.handoffs.isOpen(handoffId)) this.handoffs.complete(handoffId);
   }
 
@@ -728,10 +753,16 @@ export class HuskMcpServer {
    */
   private mirror(daemon: DaemonClient, localId: string, remoteId: string, finished: Promise<unknown>): void {
     this.remoteHandoffs.set(localId, remoteId);
+    // Polling also tells the shared Husk this chat is still here; a chat that
+    // stops polling for a minute has its handoff cancelled there.
     const poll = setInterval(() => {
-      void daemon.isOpen(remoteId).then(
-        (open) => {
-          if (!open && this.handoffs.isOpen(localId)) this.handoffs.complete(localId);
+      void daemon.state(remoteId).then(
+        (state) => {
+          if (state === 'open' || !this.handoffs.isOpen(localId)) return;
+          // Done only when the person said so. Cancelled, expired, or lost in a
+          // restart is not done, and the model is not told it was.
+          if (state === 'done') this.handoffs.complete(localId);
+          else this.handoffs.cancel(localId);
         },
         () => undefined,
       );
@@ -745,6 +776,17 @@ export class HuskMcpServer {
   }
 
   async close(): Promise<void> {
+    // Free this chat's computers in the shared Husk before going, briefly: the
+    // process exits right after, and a lost cancel would hold a computer until
+    // the shared Husk's lease runs out.
+    const remotes = [...this.remoteHandoffs.values()];
+    const daemon = remotes.length && this.daemon ? await this.daemon : undefined;
+    if (daemon) {
+      await Promise.race([
+        Promise.allSettled(remotes.map((r) => daemon.cancel(r))),
+        new Promise((r) => setTimeout(r, 2000)),
+      ]);
+    }
     this.closing.abort();
     if (this.viewer) await quiet(async () => (await this.viewer!).close());
     await quiet(() => this.mcp.close());

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { consoleUrl, external, launchFor, newlyWaiting, readDaemonRecord, runtimeBin, sameOrigin, trayStatus } from './lib.mjs';
+import { consoleUrl, daemonCommand, external, isNewer, launchFor, newlyWaiting, readDaemonRecord, runtimeBin, sameOrigin, trayStatus } from './lib.mjs';
 
 test('the bundled Husk is in resources when packaged, and the monorepo build from a checkout', () => {
   assert.equal(
@@ -11,6 +11,20 @@ test('the bundled Husk is in resources when packaged, and the monorepo build fro
     join('/Applications/Husk.app/Contents/Resources', 'runtime', 'node_modules', '@husk-ai', 'mcp', 'dist', 'bin.js'),
   );
   assert.ok(runtimeBin({ isPackaged: false, resourcesPath: '', appPath: '/repo/apps/desktop' }).endsWith(join('packages', 'mcp', 'dist', 'bin.js')));
+});
+
+test('inside a Linux AppImage, chat apps and the daemon start the AppImage itself', () => {
+  const env = { APPIMAGE: '/home/me/Husk.AppImage', ELECTRON_RUN_AS_NODE: '1', PATH: '/usr/bin' };
+  assert.deepEqual(launchFor('/tmp/.mount_x/husk', '/tmp/.mount_x/bin.js', env), { command: '/home/me/Husk.AppImage', args: ['--husk-mcp'] });
+  const d = daemonCommand({ execPath: '/tmp/.mount_x/husk', bin: '/tmp/.mount_x/bin.js', env });
+  assert.equal(d.command, '/home/me/Husk.AppImage');
+  assert.deepEqual(d.args, ['--husk-mcp', '--daemon']);
+  assert.equal(d.env.ELECTRON_RUN_AS_NODE, undefined);
+});
+
+test('versions compare numerically', () => {
+  assert.equal(isNewer('0.10.0', '0.9.9'), true);
+  assert.equal(isNewer('0.2.0', '0.2.0'), false);
 });
 
 test('chat apps run the app binary as Node, with nothing else installed', () => {

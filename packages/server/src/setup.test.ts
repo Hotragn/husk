@@ -52,3 +52,14 @@ describe('the Connect page routes', { timeout: 30_000 }, () => {
     expect(harness.manager.computers.size).toBe(0);
   });
 });
+
+describe('the Connect page against another website', { timeout: 30_000 }, () => {
+  it('refuses a setup POST that is not JSON, which is how a cross-site form or fetch arrives', async () => {
+    home = mkdtempSync(join(tmpdir(), 'husk-connect-'));
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    harness = await buildTestApp({ chatAppsHome: home });
+    const res = await harness.app.inject({ method: 'POST', url: '/v1/setup/apps/cursor', headers: { 'content-type': 'text/plain' }, payload: '{}' });
+    expect(res.statusCode).toBe(422);
+    expect((await harness.app.inject({ method: 'POST', url: '/v1/setup/test', headers: { 'content-type': 'text/plain' }, payload: '' })).statusCode).toBe(422);
+  });
+});

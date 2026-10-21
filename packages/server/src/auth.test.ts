@@ -108,9 +108,9 @@ describe('DNS rebinding, with no token', () => {
     }
   });
 
-  it('leaves Host alone once a token is set, because the token is the defence', async () => {
+  it('leaves Host alone on a non-loopback bind with a token, where the token is the defence', async () => {
     const { buildTestApp } = await import('./testing.js');
-    const harness = await buildTestApp({ token: 'test-token-0123456789' });
+    const harness = await buildTestApp({ token: 'test-token-0123456789', host: '0.0.0.0' });
     try {
       const res = await harness.app.inject({
         method: 'GET',
@@ -134,6 +134,44 @@ describe('the console page behind a token', () => {
       expect((await harness.app.inject({ method: 'GET', url: '/assets/index.js' })).statusCode).not.toBe(401);
       expect((await harness.app.inject({ method: 'GET', url: '/v1/computers' })).statusCode).toBe(401);
       expect((await harness.app.inject({ method: 'POST', url: '/', payload: {} })).statusCode).toBe(401);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+});
+
+describe('the token cannot be walked around', () => {
+  it('refuses a percent-encoded /v1 path, which the router decodes', async () => {
+    const { buildTestApp } = await import('./testing.js');
+    const harness = await buildTestApp({ token: 'server-token' });
+    try {
+      for (const url of ['/%761/computers', '/%76%31/computers', '/v%31/computers', '/%76%31/overview']) {
+        expect((await harness.app.inject({ method: 'GET', url })).statusCode, url).toBe(401);
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it('refuses a request from another website, even with a valid token', async () => {
+    const { buildTestApp } = await import('./testing.js');
+    const harness = await buildTestApp({ token: 'server-token' });
+    try {
+      const auth = { authorization: 'Bearer server-token' };
+      expect((await harness.app.inject({ method: 'GET', url: '/v1/computers', headers: { ...auth, origin: 'https://evil.example' } })).statusCode).toBe(403);
+      expect((await harness.app.inject({ method: 'GET', url: '/v1/computers', headers: { ...auth, origin: 'http://127.0.0.1:7377' } })).statusCode).toBe(200);
+      expect((await harness.app.inject({ method: 'GET', url: '/v1/computers', headers: { ...auth, origin: 'http://localhost:5173' } })).statusCode).toBe(200);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it('answers only loopback names on a loopback bind, token or not', async () => {
+    const { buildTestApp } = await import('./testing.js');
+    const harness = await buildTestApp({ token: 'server-token' });
+    try {
+      const res = await harness.app.inject({ method: 'GET', url: '/v1/computers', headers: { authorization: 'Bearer server-token', host: 'evil.example' } });
+      expect(res.statusCode).toBe(403);
     } finally {
       await harness.cleanup();
     }

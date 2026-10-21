@@ -12,6 +12,7 @@ import type { Computer, Logger } from '@husk-ai/core';
 import type { ComputerManager } from '@husk-ai/runtime';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RunLocally } from './daemon.js';
 import type { DaemonClient } from './daemon.js';
 import { HuskMcpServer } from './server.js';
 
@@ -24,6 +25,7 @@ const computer = { id: 'cmp_chat', info, async refresh() { return info; }, async
 
 function fakeShared() {
   const open = new Set<string>();
+  const ended = new Map<string, 'done' | 'aborted'>();
   const log: string[] = [];
   const shared: DaemonClient = {
     url: 'http://127.0.0.1:7377',
@@ -36,12 +38,12 @@ function fakeShared() {
       open.add('hnd_remote');
       return { handoffId: 'hnd_remote', token: 'linktoken' };
     },
-    async isOpen(h) { return open.has(h); },
-    async complete(h) { log.push(`done ${h}`); open.delete(h); },
-    async cancel(h) { log.push(`cancel ${h}`); open.delete(h); },
+    async state(h) { return open.has(h) ? 'open' : (ended.get(h) ?? 'unknown'); },
+    async complete(h) { log.push(`done ${h}`); open.delete(h); ended.set(h, 'done'); },
+    async cancel(h) { log.push(`cancel ${h}`); open.delete(h); ended.set(h, 'aborted'); },
     async linkToken() { return 'cardtoken'; },
   };
-  return { shared, open, log };
+  return { shared, open, ended, log };
 }
 
 const servers: HuskMcpServer[] = [];
@@ -100,6 +102,7 @@ describe('with the shared Husk', { timeout: 30_000 }, () => {
     await call('shell', { command: 'ls' });
     await call('hand_off', { reason: 'Approve the payment' });
     f.open.delete('hnd_remote'); // the console's Done
+    f.ended.set('hnd_remote', 'done');
     await new Promise((r) => setTimeout(r, 2_500));
     expect((await call('shell', { command: 'ls' })).isError).toBe(false);
   });
@@ -112,5 +115,38 @@ describe('with the shared Husk', { timeout: 30_000 }, () => {
     await servers.pop()!.close();
     await new Promise((r) => setTimeout(r, 50));
     expect(f.log).toContain('cancel hnd_remote');
+  });
+
+  it('does not tell the model "handed back" when the shared Husk cancelled the handoff', async () => {
+    const f = fakeShared();
+    const call = await chat(f.shared);
+    await call('shell', { command: 'ls' });
+    const handed = await call('hand_off', { reason: 'Sign in' });
+    const localId = /handoff "(hnd_[a-z0-9]+)"/i.exec(handed.text)?.[1] ?? '';
+    f.open.delete('hnd_remote');
+    f.ended.set('hnd_remote', 'aborted'); // expired, or lost in a restart
+    await new Promise((r) => setTimeout(r, 2_500));
+    const done = await call('hand_off_done', { handoff: localId });
+    expect(done.isError).toBe(true);
+  });
+
+  it("runs a computer's tools here when the shared Husk cannot see it", async () => {
+    const f = fakeShared();
+    f.shared.callTool = async () => {
+      throw new RunLocally('cannot see it');
+    };
+    const call = await chat(f.shared);
+    const r = await call('shell', { command: 'ls' });
+    // The fake computer's own exec throws "ran locally": the call came here.
+    expect(r.text).toContain('ran locally');
+  });
+
+  it("accepts the shared Husk's own handoff id in hand_off_done", async () => {
+    const f = fakeShared();
+    const call = await chat(f.shared);
+    await call('shell', { command: 'ls' });
+    await call('hand_off', { reason: 'Sign in' });
+    expect((await call('hand_off_done', { handoff: 'hnd_remote' })).isError).toBe(false);
+    expect(f.log).toContain('done hnd_remote');
   });
 });

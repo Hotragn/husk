@@ -33,12 +33,12 @@ describe('chat apps', () => {
     for (const def of chatAppDefs(home)) expect(def.dir.startsWith(home)).toBe(true);
   });
 
-  it('adds itself to a JSON config, keeps the other servers, and backs the file up', () => {
+  it('adds itself to a JSON config, keeps the other servers, and backs the file up', async () => {
     fresh();
     const file = fileOf('claude-desktop');
     mkdirSync(dirOf('claude-desktop'), { recursive: true });
     writeFileSync(file, JSON.stringify({ mcpServers: { other: { command: 'x' } }, theme: 'dark' }));
-    const r = connectChatApp('claude-desktop', huskLaunch({ provider: 'docker' }), { home });
+    const r = await connectChatApp('claude-desktop', huskLaunch({ provider: 'docker' }), { home });
     expect(r.ok).toBe(true);
     expect(r.backup && existsSync(r.backup)).toBe(true);
     const after = JSON.parse(readFileSync(file, 'utf8'));
@@ -49,31 +49,31 @@ describe('chat apps', () => {
     expect(detectChatApps(home).find((a) => a.id === 'claude-desktop')?.connected).toBe(true);
   });
 
-  it('writes VS Code its own shape', () => {
+  it('writes VS Code its own shape', async () => {
     fresh();
     mkdirSync(dirOf('vscode'), { recursive: true });
-    connectChatApp('vscode', huskLaunch(), { home });
+    await connectChatApp('vscode', huskLaunch(), { home });
     expect(JSON.parse(readFileSync(fileOf('vscode'), 'utf8'))).toEqual({ servers: { husk: { type: 'stdio', command: 'npx', args: ['-y', '@husk-ai/mcp'] } } });
   });
 
-  it('refuses to edit a file it cannot parse, and leaves it exactly as it was', () => {
+  it('refuses to edit a file it cannot parse, and leaves it exactly as it was', async () => {
     fresh();
     mkdirSync(dirOf('cursor'), { recursive: true });
     const text = '{ // a comment\n "mcpServers": {} }';
     writeFileSync(fileOf('cursor'), text);
-    const r = connectChatApp('cursor', huskLaunch(), { home });
+    const r = await connectChatApp('cursor', huskLaunch(), { home });
     expect(r.ok).toBe(false);
     expect(r.message).toContain('not plain JSON');
     expect(readFileSync(fileOf('cursor'), 'utf8')).toBe(text);
     expect(readdirSync(dirOf('cursor'))).toEqual(['mcp.json']);
   });
 
-  it('removes only itself', () => {
+  it('removes only itself', async () => {
     fresh();
     mkdirSync(dirOf('gemini'), { recursive: true });
     writeFileSync(fileOf('gemini'), JSON.stringify({ mcpServers: { other: { command: 'x' } } }));
-    connectChatApp('gemini', huskLaunch(), { home });
-    expect(disconnectChatApp('gemini', { home }).ok).toBe(true);
+    await connectChatApp('gemini', huskLaunch(), { home });
+    expect((await disconnectChatApp('gemini', { home })).ok).toBe(true);
     expect(JSON.parse(readFileSync(fileOf('gemini'), 'utf8'))).toEqual({ mcpServers: { other: { command: 'x' } } });
   });
 });
@@ -89,16 +89,61 @@ describe('the launch line', () => {
     });
   });
 
+  it('keeps chat apps on the desktop app when a chat, not the app, started this Husk', () => {
+    const self = { electron: '44.6.0', execPath: 'C:/Program Files/Husk/Husk.exe', script: 'C:/Program Files/Husk/resources/runtime/bin.js' };
+    expect(baseLaunch({ ELECTRON_RUN_AS_NODE: '1' } as NodeJS.ProcessEnv, self)).toEqual({
+      command: self.execPath, args: [self.script], env: { ELECTRON_RUN_AS_NODE: '1' },
+    });
+    expect(baseLaunch({ APPIMAGE: '/home/me/Husk.AppImage' } as NodeJS.ProcessEnv, self)).toEqual({ command: '/home/me/Husk.AppImage', args: ['--husk-mcp'] });
+    expect(baseLaunch({} as NodeJS.ProcessEnv, { execPath: 'node' }).command).toBe('npx');
+  });
+
   it('falls back to npx when HUSK_LAUNCH is missing or malformed', () => {
     expect(baseLaunch({} as NodeJS.ProcessEnv).command).toBe('npx');
     expect(baseLaunch({ HUSK_LAUNCH: '{nope' } as NodeJS.ProcessEnv).command).toBe('npx');
     expect(baseLaunch({ HUSK_LAUNCH: JSON.stringify({ command: 1 }) } as NodeJS.ProcessEnv).command).toBe('npx');
   });
 
-  it('writes the env into a JSON config', () => {
+  it('writes the env into a JSON config', async () => {
     fresh();
     mkdirSync(dirOf('cursor'), { recursive: true });
-    connectChatApp('cursor', { command: 'Husk.exe', args: ['bin.js'], env: { ELECTRON_RUN_AS_NODE: '1' } }, { home });
+    await connectChatApp('cursor', { command: 'Husk.exe', args: ['bin.js'], env: { ELECTRON_RUN_AS_NODE: '1' } }, { home });
     expect(JSON.parse(readFileSync(fileOf('cursor'), 'utf8')).mcpServers.husk).toEqual({ command: 'Husk.exe', args: ['bin.js'], env: { ELECTRON_RUN_AS_NODE: '1' } });
+  });
+
+  it('puts Claude Code’s -e after the server name, because -e takes several values', () => {
+    const def = chatAppDefs(home || undefined).find((d) => d.id === 'claude-code') as { add: (l: unknown) => string[] };
+    expect(def.add({ command: 'Husk.exe', args: ['bin.js'], env: { ELECTRON_RUN_AS_NODE: '1' } })).toEqual([
+      'mcp', 'add', '--scope', 'user', 'husk', '-e', 'ELECTRON_RUN_AS_NODE=1', '--', 'Husk.exe', 'bin.js',
+    ]);
+  });
+});
+
+describe('editing configs safely', () => {
+  it('reads a file saved with a byte-order mark', async () => {
+    fresh();
+    mkdirSync(dirOf('cursor'), { recursive: true });
+    writeFileSync(fileOf('cursor'), '﻿{"mcpServers":{"husk":{"command":"old"}}}');
+    expect(detectChatApps(home).find((a) => a.id === 'cursor')?.connected).toBe(true);
+    expect((await connectChatApp('cursor', huskLaunch(), { home })).ok).toBe(true);
+  });
+
+  it('keeps fields the person added to the husk entry, and leaves no temp file', async () => {
+    fresh();
+    mkdirSync(dirOf('cursor'), { recursive: true });
+    writeFileSync(fileOf('cursor'), JSON.stringify({ mcpServers: { husk: { command: 'old', env: { HUSK_TOKEN: 'x' }, disabled: false } } }));
+    await connectChatApp('cursor', huskLaunch({ provider: 'docker' }), { home });
+    expect(JSON.parse(readFileSync(fileOf('cursor'), 'utf8')).mcpServers.husk).toEqual({
+      command: 'npx', args: ['-y', '@husk-ai/mcp', '--provider', 'docker'], env: { HUSK_TOKEN: 'x' }, disabled: false,
+    });
+    expect(readdirSync(dirOf('cursor')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('never runs claude or codex for a home that is not the real one', async () => {
+    fresh();
+    const r = await connectChatApp('claude-code', huskLaunch(), { home });
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('real home folder');
+    expect((await disconnectChatApp('codex', { home })).ok).toBe(false);
   });
 });

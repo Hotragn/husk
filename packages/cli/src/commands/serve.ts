@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG, HuskError, readDaemonRecord } from '@husk-ai/core';
+import { DEFAULT_CONFIG, HuskError } from '@husk-ai/core';
 import { parse, parseCount } from '../args.js';
 import { orientBriefly } from '../lib/first-run.js';
 import { interruptSignal } from '../signal.js';
@@ -64,8 +64,8 @@ export async function run(argv: string[]): Promise<number> {
   }
 
   ui.print(`${ui.green('✓')} control plane on ${ui.bold(server.url)}`);
-  const token = readDaemonRecord()?.token;
-  if (token) ui.print(`  console  ${server.url}/#token=${token}   ${ui.dim('(the token is in ~/.husk/daemon.json)')}`);
+  // Never the token itself: terminals keep scrollback and logs get shared.
+  ui.print(`  console  ${server.url}/${process.env.HUSK_TOKEN ? ui.dim('  (sign in with your HUSK_TOKEN)') : ''}`);
   ui.print(ui.dim(`  health   ${server.url}/health`));
   ui.print(ui.dim(`  doctor   ${server.url}/v1/doctor`));
   ui.print(ui.dim(`  clients  new HuskClient({ baseUrl: "${server.url}" })  // @husk-ai/sdk`));

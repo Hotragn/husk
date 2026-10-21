@@ -2,18 +2,21 @@
 // icon that says when a chat is waiting for you.
 //
 // The app carries its own copy of Husk and runs it with Electron's built-in
-// Node (ELECTRON_RUN_AS_NODE), so neither the app nor the chat apps it
-// connects need Node installed. It never edits a chat app's settings by
-// itself: that happens on the console's Connect page, at the person's click.
+// Node, so neither the app nor the chat apps it connects need Node installed.
+// It never edits a chat app's settings by itself: that happens on the
+// console's Connect page, at the person's click.
 
 import { spawn } from 'node:child_process';
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { app, BrowserWindow, Menu, Notification, Tray, nativeImage, shell } from 'electron';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { app, BrowserWindow, Menu, Notification, Tray, dialog, nativeImage, shell } from 'electron';
 import {
   consoleUrl,
+  daemonCommand,
   external,
   huskHome,
+  isNewer,
   launchFor,
   newlyWaiting,
   readDaemonRecord,
@@ -28,58 +31,91 @@ const POLL_MS = 5000;
 // no provider anything, print what loaded, stop the Husk it started, and quit.
 // CI and a quick local check use it; a person never sees it.
 const SMOKE = process.env.HUSK_DESKTOP_SMOKE === '1';
+const BIN = runtimeBin({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() });
+
+/** ~/.husk, owner-only, as the rest of Husk makes it. */
+function home() {
+  mkdirSync(huskHome(), { recursive: true, mode: 0o700 });
+  return huskHome();
+}
 
 /** What the app did, in ~/.husk/desktop.log: a GUI app has no terminal to say it in. */
 function log(line) {
   try {
-    mkdirSync(huskHome(), { recursive: true });
-    appendFileSync(join(huskHome(), 'desktop.log'), `${new Date().toISOString()} ${line}
-`);
+    appendFileSync(join(home(), 'desktop.log'), `${new Date().toISOString()} ${line}\n`, { mode: 0o600 });
   } catch {
     // nowhere left to say it
   }
   if (SMOKE) console.log(line);
 }
-process.on('uncaughtException', (err) => log(`error: ${err.stack ?? err}`));
-process.on('unhandledRejection', (err) => log(`error: ${err?.stack ?? err}`));
-
-if (!app.requestSingleInstanceLock()) app.quit();
 
 let win;
 let tray;
 let rec;
 let waiting = [];
+let recovering;
 
-/** A Husk that answers, started by this app if none does. */
+/** Version of the Husk this app carries. */
+function bundledVersion() {
+  try {
+    return JSON.parse(readFileSync(join(dirname(BIN), '..', 'package.json'), 'utf8')).version;
+  } catch {
+    return undefined;
+  }
+}
+
+async function health(r) {
+  try {
+    const res = await fetch(`${r.url}/health`, { signal: AbortSignal.timeout(1500) });
+    return res.ok ? await res.json() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function askToStop(r) {
+  const res = await fetch(`${r.url}/v1/shutdown`, {
+    method: 'POST',
+    headers: r.token ? { authorization: `Bearer ${r.token}` } : {},
+    signal: AbortSignal.timeout(3000),
+  }).catch(() => undefined);
+  return res?.status === 202;
+}
+
+/** A Husk that answers, and is this app's version or newer, started by this app if needed. */
 async function ensureHusk() {
-  const bin = runtimeBin({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() });
-  if (!existsSync(bin)) throw new Error(`the bundled Husk is missing at ${bin}`);
+  if (!existsSync(BIN)) throw new Error(`the bundled Husk is missing at ${BIN}`);
   const live = async () => {
     const r = readDaemonRecord();
-    if (!r) return undefined;
-    try {
-      const res = await fetch(`${r.url}/health`, { signal: AbortSignal.timeout(1500) });
-      return res.ok ? r : undefined;
-    } catch {
-      return undefined;
-    }
+    return r && (await health(r)) ? r : undefined;
   };
   let found = await live();
+  const mine = bundledVersion();
+  if (found && mine) {
+    const theirs = (await health(found))?.version;
+    // An older Husk (an earlier app, or an npx chat) steps aside for this one,
+    // unless someone is mid-run or mid-handoff.
+    if (theirs && isNewer(mine, theirs) && (await askToStop(found))) {
+      for (let i = 0; i < 40 && (await live()); i++) await new Promise((r) => setTimeout(r, 250));
+      found = undefined;
+    }
+  }
   if (found) return found;
 
-  mkdirSync(huskHome(), { recursive: true });
-  const log = openSync(join(huskHome(), 'daemon.log'), 'a');
+  const fd = openSync(join(home(), 'daemon.log'), 'a', 0o600);
   try {
-    spawn(process.execPath, [bin, '--daemon'], {
+    const { command, args, env } = daemonCommand({ execPath: process.execPath, bin: BIN, env: process.env });
+    spawn(command, args, {
+      cwd: huskHome(),
       detached: true,
-      stdio: ['ignore', log, log],
+      stdio: ['ignore', fd, fd],
       windowsHide: true,
-      // The Husk it starts tells the Connect page to write this app's binary
-      // into chat apps, instead of `npx`.
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', HUSK_LAUNCH: JSON.stringify(launchFor(process.execPath, bin)) },
+      // The Husk it starts tells the Connect page to write this app into chat
+      // apps, instead of `npx`.
+      env: { ...env, HUSK_LAUNCH: JSON.stringify(launchFor(process.execPath, BIN, process.env)) },
     }).unref();
   } finally {
-    closeSync(log);
+    closeSync(fd);
   }
   for (let i = 0; i < 80 && !found; i++) {
     await new Promise((r) => setTimeout(r, 250));
@@ -99,6 +135,10 @@ function firstRun() {
 }
 
 function openWindow(panel) {
+  if (!rec) {
+    new Notification({ title: 'Husk is still starting', body: 'Try again in a moment.' }).show();
+    return;
+  }
   if (win && !win.isDestroyed()) {
     if (panel) void win.webContents.executeJavaScript(`location.hash = '#/${panel}'`);
     win.show();
@@ -121,11 +161,7 @@ function openWindow(panel) {
           '[document.title, location.hash, document.body.innerText.slice(0, 160).split(/\\s+/).join(" ")].join(" | ")',
         );
         log(`SMOKE loaded ${seen.replace(/token=[0-9a-f]+/, 'token=<redacted>')}`);
-        try {
-          process.kill(rec.pid);
-        } catch {
-          // already gone
-        }
+        await askToStop(rec);
         app.exit(seen.includes('Husk') ? 0 : 1);
       }, 3000);
     });
@@ -160,11 +196,12 @@ function refreshTray(status) {
       { label: 'Quit (chats keep their computers)', click: () => app.exit(0) },
       {
         label: 'Quit and stop Husk',
-        click: () => {
-          try {
-            process.kill(rec.pid);
-          } catch {
-            // already gone
+        click: async () => {
+          // Asked, never killed: a pid in a file may belong to something else
+          // by now, and a clean stop flushes Husk's records.
+          if (rec && !(await askToStop(rec))) {
+            dialog.showErrorBox('Husk is busy', 'A run or a handoff is in progress, so Husk was left running. Quit again when it finishes.');
+            return;
           }
           app.exit(0);
         },
@@ -173,14 +210,32 @@ function refreshTray(status) {
   );
 }
 
+/** Husk restarted (new token) or stopped: find it, or start it, and point the window at it. */
+async function recover() {
+  recovering ??= (async () => {
+    const next = readDaemonRecord();
+    const fresh = next && (await health(next)) ? next : await ensureHusk().catch((err) => {
+      log(`Husk could not be restarted: ${err.message}`);
+      return undefined;
+    });
+    if (fresh && (fresh.pid !== rec?.pid || fresh.token !== rec?.token)) {
+      rec = fresh;
+      if (win && !win.isDestroyed()) void win.loadURL(consoleUrl(rec));
+    }
+  })().finally(() => {
+    recovering = undefined;
+  });
+  return recovering;
+}
+
 async function poll() {
   let overview;
   try {
     const res = await fetch(`${rec.url}/v1/overview`, { headers: rec.token ? { authorization: `Bearer ${rec.token}` } : {} });
     if (res.ok) overview = await res.json();
+    else if (res.status === 401) await recover();
   } catch {
-    // Husk restarted or stopped: find it again next time.
-    rec = readDaemonRecord() ?? rec;
+    await recover();
   }
   const status = trayStatus(overview);
   for (const h of newlyWaiting(waiting, status.waiting)) {
@@ -192,11 +247,41 @@ async function poll() {
   refreshTray(status);
 }
 
-app.on('second-instance', () => openWindow());
-// Closing the window leaves Husk in the tray; chats keep their computers.
-app.on('window-all-closed', () => {});
+/**
+ * `Husk --husk-mcp [args]`: be the MCP server a chat app starts. The Linux
+ * AppImage needs this: it mounts itself somewhere new on every run, so a chat
+ * app cannot be pointed at a file inside it, only at the AppImage itself.
+ */
+async function runMcp() {
+  const at = process.argv.indexOf('--husk-mcp');
+  process.argv = [process.execPath, BIN, ...process.argv.slice(at + 1)];
+  app.dock?.hide();
+  await import(pathToFileURL(BIN).href);
+}
 
-app.whenReady().then(async () => {
+async function startApp() {
+  process.on('uncaughtException', (err) => log(`error: ${err.stack ?? err}`));
+  process.on('unhandledRejection', (err) => log(`error: ${err?.stack ?? err}`));
+  if (!app.requestSingleInstanceLock()) {
+    app.exit(0);
+    return;
+  }
+  app.on('second-instance', () => openWindow());
+  // Closing the window leaves Husk in the tray; chats keep their computers.
+  app.on('window-all-closed', () => {});
+
+  await app.whenReady();
+  // A Mac app run from the disk image or from Downloads gets a path that goes
+  // away, and chat apps would be pointed at it. Move it first.
+  if (process.platform === 'darwin' && app.isPackaged && !app.isInApplicationsFolder() && !SMOKE) {
+    const { response } = await dialog.showMessageBox({
+      message: 'Move Husk to your Applications folder?',
+      detail: 'Your chat apps start Husk from where it is installed, so it needs a place that stays put.',
+      buttons: ['Move to Applications', 'Not now'],
+    });
+    if (response === 0 && app.moveToApplicationsFolder()) return;
+    log('running outside Applications; chat apps connected from here may lose Husk when it moves');
+  }
   tray = new Tray(nativeImage.createFromPath(ICON).resize({ width: 16, height: 16 }));
   tray.on('click', () => openWindow());
   refreshTray(trayStatus(undefined));
@@ -211,5 +296,7 @@ app.whenReady().then(async () => {
   openWindow(SMOKE ? 'husks' : firstRun() ? 'connect' : undefined);
   await poll();
   setInterval(() => void poll(), POLL_MS);
-});
+}
 
+if (process.argv.includes('--husk-mcp')) void runMcp();
+else void startApp();
