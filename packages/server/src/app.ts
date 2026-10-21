@@ -73,7 +73,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   const websocket = (await import('@fastify/websocket')).default;
   await app.register(websocket, { options: { maxPayload: 4 * 1024 * 1024 } });
 
-  installAuth(app, { token: config.token, publicPrefixes: ['/assets/', '/favicon'] });
+  installAuth(app, { token: config.token, publicPrefixes: ['/assets/', '/favicon', '/v1/a/'] });
 
   app.addHook('onSend', async (_req, reply, payload) => {
     void reply.header('X-Husk-Version', HUSK_VERSION);

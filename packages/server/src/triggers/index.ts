@@ -1,3 +1,4 @@
+import type { Adapter, InboundHttpHandler } from '@husk-ai/adapters';
 import type { HuskSpec, Trigger } from '@husk-ai/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ctxOf } from '../context.js';
@@ -7,6 +8,14 @@ import { CronBindings } from './cron.js';
 import { extractInput, headerString, mountKey, wantsStream } from './http.js';
 import type { HttpMount } from './http.js';
 import { verifyHmacSignature } from './webhook.js';
+
+type ChatTrigger = Extract<Trigger, { type: 'discord' | 'slack' | 'telegram' }>;
+
+const TOKEN_ENV: Record<ChatTrigger['type'], string> = {
+  discord: 'DISCORD_BOT_TOKEN',
+  slack: 'SLACK_BOT_TOKEN',
+  telegram: 'TELEGRAM_BOT_TOKEN',
+};
 
 export interface MountedTrigger {
   husk: string;
@@ -28,6 +37,10 @@ export class TriggerHost {
   private readonly httpMounts = new Map<string, HttpMount>();
   private readonly webhookMounts = new Map<string, { husk: string; secret?: string }>();
   private readonly cron: CronBindings;
+  /** Running chat adapters, keyed `husk:type`, with the trigger they were built from. */
+  private readonly adapters = new Map<string, { adapter: Adapter; controller: AbortController; config: string }>();
+  /** Inbound HTTP routes an adapter mounted (Slack's Events API), under /v1/a. */
+  private readonly adapterRoutes = new Map<string, InboundHttpHandler>();
   private mounted: MountedTrigger[] = [];
 
   constructor(
@@ -54,6 +67,7 @@ export class TriggerHost {
     this.webhookMounts.clear();
     const keepCron = new Set<string>();
     const mounted: MountedTrigger[] = [];
+    const wantAdapters = new Map<string, { husk: string; trigger: ChatTrigger }>();
 
     for (const spec of specs) {
       for (const trigger of spec.triggers) {
@@ -87,14 +101,90 @@ export class TriggerHost {
             // server keep working.
             this.ctx.deps.log.error(`husk ${spec.name}: ${(err as Error).message}`);
           }
+        } else if (trigger.type === 'discord' || trigger.type === 'slack' || trigger.type === 'telegram') {
+          const key = `${spec.name}:${trigger.type}`;
+          if (wantAdapters.has(key)) {
+            this.ctx.deps.log.error(`husk ${spec.name}: a second ${trigger.type} trigger was ignored; one per husk`);
+            continue;
+          }
+          wantAdapters.set(key, { husk: spec.name, trigger });
         }
+        // `cli` triggers mean `husk run` and need nothing mounted.
       }
     }
 
+    mounted.push(...(await this.syncAdapters(wantAdapters)));
     this.cron.retain(keepCron);
     this.mounted = mounted;
     this.ctx.bus.emit('triggers', 'triggers_synced', { count: mounted.length, triggers: mounted });
     return mounted;
+  }
+
+
+  /**
+   * Start, keep or stop chat adapters so they match the husks on disk. An adapter
+   * whose trigger did not change keeps running, so a sync never drops a Discord
+   * gateway connection for an unrelated edit.
+   */
+  private async syncAdapters(want: Map<string, { husk: string; trigger: ChatTrigger }>): Promise<MountedTrigger[]> {
+    for (const [key, running] of this.adapters) {
+      const next = want.get(key);
+      if (next && JSON.stringify(next.trigger) === running.config) continue;
+      this.adapters.delete(key);
+      running.controller.abort();
+      await running.adapter.stop().catch((err) => this.ctx.deps.log.warn(`stopping ${key}: ${(err as Error).message}`));
+      const cut = key.lastIndexOf(':');
+      this.ctx.bus.emit('adapters', 'adapter_stopped', { husk: key.slice(0, cut), type: key.slice(cut + 1) });
+    }
+
+    const mounted: MountedTrigger[] = [];
+    if (!this.ctx.deps.config.adapters) return mounted;
+    for (const [key, { husk, trigger }] of want) {
+      const env = process.env;
+      const tokenEnv = TOKEN_ENV[trigger.type];
+      const detail = env[tokenEnv] ? `${tokenEnv} is set` : `idle -- ${tokenEnv} is not set`;
+      if (this.adapters.has(key)) {
+        mounted.push({ husk, type: trigger.type, at: trigger.type, detail });
+        continue;
+      }
+      const options =
+        trigger.type === 'telegram'
+          ? { allowlist: trigger.allowlist }
+          : { channels: trigger.channels, mentionOnly: trigger.mentionOnly };
+      const adapter = this.ctx.deps.createAdapter(trigger.type, options);
+      if (!adapter) continue;
+      const controller = new AbortController();
+      try {
+        await adapter.start({
+          husk,
+          log: this.ctx.deps.log,
+          signal: controller.signal,
+          env,
+          run: (input, opts) => this.runAdapter(husk, input, opts.signal),
+          mountHttp: (path, handler) => {
+            const route = `/${husk}${path}`;
+            this.adapterRoutes.set(route, handler);
+            return () => this.adapterRoutes.delete(route);
+          },
+        });
+      } catch (err) {
+        // One bad adapter takes out that trigger, loudly; the others keep working.
+        controller.abort();
+        this.ctx.deps.log.error(`husk ${husk}: the ${trigger.type} trigger did not start: ${(err as Error).message}`);
+        continue;
+      }
+      this.adapters.set(key, { adapter, controller, config: JSON.stringify(trigger) });
+      this.ctx.bus.emit('adapters', 'adapter_started', { husk, type: trigger.type });
+      mounted.push({ husk, type: trigger.type, at: trigger.type, detail });
+    }
+    return mounted;
+  }
+
+  private async runAdapter(husk: string, input: string, signal?: AbortSignal): Promise<string> {
+    const loaded = await this.ctx.deps.store.tryReadHusk(husk);
+    if (!loaded) throw new Error(`no husk named ${husk}`);
+    const result = await this.ctx.runner.run(loaded.spec, { input }, signal);
+    return result.text || '(the agent produced no text)';
   }
 
   private async fireCron(husk: string, prompt: string): Promise<void> {
@@ -183,6 +273,23 @@ export class TriggerHost {
       return this.runFor(mount.husk, input, reply);
     });
 
+    // Public: the adapter that mounted the route checks the platform's own
+    // signature (Slack's signing secret) before anything runs.
+    this.app.all('/v1/a/*', async (req, reply) => {
+      const handler = lookup(this.adapterRoutes, req);
+      if (!handler) return this.missing(reply, `no chat adapter mounted at ${req.url}`);
+      const headers: Record<string, string | undefined> = {};
+      for (const [name, value] of Object.entries(req.headers)) headers[name] = Array.isArray(value) ? value[0] : value;
+      const res = await handler({
+        method: req.method,
+        headers,
+        rawBody: req.rawBody ?? Buffer.alloc(0),
+        query: req.query as Record<string, string | undefined>,
+      });
+      if (res.headers) void reply.headers(res.headers);
+      return reply.code(res.status).send(res.body ?? '');
+    });
+
     this.app.get('/v1/triggers', async () => ({ triggers: this.list(), cron: this.cron.list() }));
   }
 
@@ -193,6 +300,15 @@ export class TriggerHost {
   stop(): void {
     this.ctx.scheduler.stop();
     this.cron.clear();
+    this.stopAdapters();
+  }
+
+  stopAdapters(): void {
+    for (const [key, running] of this.adapters) {
+      running.controller.abort();
+      void running.adapter.stop().catch((err) => this.ctx.deps.log.warn(`stopping ${key}: ${(err as Error).message}`));
+    }
+    this.adapters.clear();
   }
 }
 
@@ -201,6 +317,7 @@ export function createTriggerHost(app: FastifyInstance): TriggerHost {
   const host = new TriggerHost(app, ctx);
   ctx.triggers = host;
   host.register();
+  app.addHook('onClose', async () => host.stopAdapters());
   return host;
 }
 

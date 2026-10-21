@@ -1,6 +1,6 @@
 ---
 title: Triggers
-description: http, cron and webhook are mounted by the server. discord, slack and telegram are built and not connected.
+description: http, webhook and cron are mounted by the server, and discord, slack and telegram start a chat adapter.
 order: 5
 ---
 
@@ -24,7 +24,7 @@ curl -s localhost:7377/v1/triggers | jq
 
 ## What is actually mounted
 
-The spec accepts seven trigger types. `TriggerHost.sync()` has branches for three.
+The spec accepts seven trigger types. `husk serve` mounts six; `cli` needs nothing mounted.
 
 | Type | Mounted | Where |
 | --- | --- | --- |
@@ -32,36 +32,42 @@ The spec accepts seven trigger types. `TriggerHost.sync()` has branches for thre
 | `webhook` | yes | `POST /v1/w/<husk><path>` |
 | `cron` | yes | The in-process scheduler |
 | `cli` | n/a | It is the default; it means "no server surface", which is correct |
-| `discord` | **no** | — |
-| `slack` | **no** | — |
-| `telegram` | **no** | — |
+| `discord` | yes | A Discord gateway connection, when `DISCORD_BOT_TOKEN` is set |
+| `slack` | yes | Socket Mode with `SLACK_APP_TOKEN`, or the Events API at `POST /v1/a/<husk>/slack/events` with `SLACK_SIGNING_SECRET` |
+| `telegram` | yes | Long polling, when `TELEGRAM_BOT_TOKEN` is set |
 
-<NotYet>
-`discord`, `slack` and `telegram` triggers parse, validate, save, and appear in a
-husk's summary — and then do nothing. `TriggerHost.sync()` is an `if / else if` chain
-covering `http`, `webhook` and `cron`; anything else falls through with no branch, no
-warning, and no entry in `GET /v1/triggers`.
+## discord, slack and telegram
 
-The adapters themselves are complete. `@husk-ai/adapters` ships a Discord gateway client
-with resume and heartbeat handling, a Slack adapter with both Socket Mode and a
-signature-verified Events API endpoint, and a Telegram long-poller with an allowlist.
-`@husk-ai/server` declares `@husk-ai/adapters` as a dependency and never imports it.
-`ServerConfig.adapters` is resolved, defaulted to `true`, and never read. The `adapters`
-event topic exists and nothing emits on it.
+```yaml
+triggers:
+  - type: discord
+    channels: ['1234567890123456789']   # empty means every channel the bot can see
+    mentionOnly: true                   # DMs always count as a mention
+  - type: slack
+    channels: []
+  - type: telegram
+    allowlist: [alice, '123456789']     # usernames or numeric ids
+```
 
-If you need one of these today, construct the adapter yourself — `createAdapter(kind,
-options)` is the intended factory — and supply an `AdapterContext` with a `run()`
-function. Nothing in the server implements that context, so `mountHttp` (which the
-Slack Events API mode and the whole webhook adapter depend on) has no implementation
-outside the test harness.
-</NotYet>
+Each one starts a chat adapter from `@husk-ai/adapters` inside `husk serve`. A message
+the adapter accepts becomes a run of that husk, and the run's final text is the reply.
+One of each type per husk; a second is ignored with an error in the log.
 
-<Note>
-Connecting one yourself is about 40 lines: construct the adapter, and hand it an
-`AdapterContext` whose `run()` posts to `POST /v1/husks/:name/run`.
-[The Discord guide](/guides/discord-bot#step-6-the-glue) is that script, tested against
-a running control plane.
-</Note>
+The token is read from the server's environment when the adapter starts, so set it
+before `husk serve`. With no token the adapter stays idle, and `GET /v1/triggers` says
+which variable it is waiting for:
+
+```json
+{ "husk": "support-bot", "type": "discord", "at": "discord", "detail": "idle -- DISCORD_BOT_TOKEN is not set" }
+```
+
+An adapter whose trigger did not change keeps running when you edit the husk, so saving
+an unrelated change does not drop the Discord connection. Deleting the husk stops it.
+`husk serve` with `adapters: false` in its config starts none of them.
+
+The Slack Events API route is the one route under `/v1/` that does not take the server
+token, because Slack cannot send it. The adapter checks Slack's signature on the raw
+body before anything runs, and answers only on the path it mounted.
 
 ## http
 

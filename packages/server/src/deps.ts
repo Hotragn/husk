@@ -1,3 +1,5 @@
+import { createAdapter } from '@husk-ai/adapters';
+import type { Adapter, SlackAdapterOptions, TelegramAdapterOptions } from '@husk-ai/adapters';
 import { DEFAULT_CONFIG, createLogger } from '@husk-ai/core';
 import type {
   Availability,
@@ -137,7 +139,11 @@ export interface ServerDeps {
   config?: Partial<ServerConfig>;
   /** Injected for deterministic tests. */
   now?: () => number;
+  /** Builds the chat adapters behind discord, slack and telegram triggers. Injected in tests. */
+  createAdapter?: AdapterFactory;
 }
+
+export type AdapterFactory = (kind: string, options?: TelegramAdapterOptions & SlackAdapterOptions) => Adapter | undefined;
 
 export interface ResolvedDeps extends Required<Pick<ServerDeps, 'manager' | 'router' | 'store'>> {
   modelProviders: ModelProvider[];
@@ -146,6 +152,7 @@ export interface ResolvedDeps extends Required<Pick<ServerDeps, 'manager' | 'rou
   config: ServerConfig;
   now: () => number;
   startedAt: number;
+  createAdapter: AdapterFactory;
 }
 
 export function resolveConfig(partial: Partial<ServerConfig> = {}): ServerConfig {
@@ -176,6 +183,7 @@ export function resolveDeps(deps: ServerDeps): ResolvedDeps {
     config: resolveConfig(deps.config),
     now: deps.now ?? Date.now,
     startedAt: (deps.now ?? Date.now)(),
+    createAdapter: deps.createAdapter ?? createAdapter,
   };
 }
 
