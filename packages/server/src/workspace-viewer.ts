@@ -2,15 +2,14 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import Fastify from 'fastify';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { Buffer } from 'node:buffer';
-import { livePageFor } from '@husk-ai/browser';
-import { HUSK_VERSION, HuskError } from '@husk-ai/core';
+import { HUSK_VERSION } from '@husk-ai/core';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { consoleAssetsPath } from '@husk-ai/console-assets';
 import { bearerToken, hostnameOf, isLoopbackHost } from './auth.js';
-import { huskError, sendError } from './errors.js';
+import { sendError } from './errors.js';
 import type { HandoffRegistry } from './handoffs.js';
 import type { ScopedTokens } from './scoped-tokens.js';
-import { registerHandoffRoutes } from './routes/handoffs.js';
+import { registerHandoffRoutes, registerScopedComputerRoutes, scopeCovers } from './routes/handoffs.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 
 export type WorkspaceProfile = 'starter' | 'computer';
@@ -76,45 +75,13 @@ export async function createWorkspaceViewer(options: WorkspaceViewerOptions = {}
   if (options.handoffs) {
     const { registry, tokens, describe } = options.handoffs;
     const scopeOf = (req: FastifyRequest): string | undefined => tokens.verify(bearerToken(req) ?? '');
-    const notYours = () =>
-      new HuskError('E_COMPUTER_NOT_FOUND', 'no computer with that link', {
-        hint: 'the link has expired; ask your AI chat to open the computer again',
-      });
-    const computerOf = (req: FastifyRequest): string => {
-      const scope = scopeOf(req);
-      if (!scope?.startsWith('computer:')) throw notYours();
-      return scope.slice('computer:'.length);
-    };
     await app.register(async (scoped) => {
       scoped.setErrorHandler((error, _req, reply) => sendError(reply, error));
       registerHandoffRoutes(scoped, {
         registry,
-        authorize: (req, h) => {
-          const scope = scopeOf(req);
-          return (h.computerId !== undefined && scope === `computer:${h.computerId}`) || scope === `handoff:${h.handoffId}`;
-        },
+        authorize: (req, h) => scopeCovers(scopeOf(req), h),
       });
-      // What a computer link opens: its state, and the handoff waiting on it, if any.
-      scoped.get('/v1/scoped/computer', async (req) => {
-        const id = computerOf(req);
-        const computer = await describe(id);
-        if (!computer) throw notYours();
-        return { ...computer, handoff: registry.list().find((h) => h.computerId === id) ?? null };
-      });
-      // A read-only look at its browser. Taking over goes through a handoff.
-      scoped.get('/v1/scoped/computer/screen', async (req, reply) => {
-        const page = livePageFor(computerOf(req));
-        if (!page) {
-          throw huskError('E_BROWSER_NOT_FOUND', 'this computer has no browser open', {
-            hint: 'nothing to show until your AI opens a page',
-          });
-        }
-        const frame = await page.frame();
-        return reply
-          .header('x-husk-viewport', `${frame.width}x${frame.height}`)
-          .type('image/jpeg')
-          .send(Buffer.from(frame.data, 'base64'));
-      });
+      registerScopedComputerRoutes(scoped, { scopeOf, describe, registry });
     });
   }
   await app.register((await import('@fastify/static')).default, { root: options.consoleDir ?? consoleAssetsPath, prefix: '/', index: ['index.html'] });
@@ -142,6 +109,6 @@ export function computerLink(origin: string, computerId: string, token: string):
   return `${origin}/#computer=${encodeURIComponent(computerId)}&token=${encodeURIComponent(token)}`;
 }
 
-export { HandoffRegistry } from './handoffs.js';
+export { HandoffRegistry, heldText } from './handoffs.js';
 export { ScopedTokens } from './scoped-tokens.js';
 export type { PendingHandoff } from './handoffs.js';

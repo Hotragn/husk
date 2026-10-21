@@ -20,6 +20,7 @@ import { modelRoutes } from './routes/models.js';
 import { runRoutes } from './routes/runs.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { createTriggerHost } from './triggers/index.js';
+import { toolRoutes } from './routes/tools.js';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 
@@ -28,11 +29,6 @@ export interface CreateAppOptions extends ServerDeps {
   unsafeAllowAnyBind?: boolean;
   approvalTimeoutMs?: number;
   workspaceStore?: WorkspaceStore;
-  /**
-   * Extra routes, registered after the API and before the console's catch-all.
-   * This is how `@husk-ai/mcp` adds the tool route without the server importing it.
-   */
-  plugins?: Array<(app: FastifyInstance) => Promise<void> | void>;
 }
 
 /**
@@ -78,7 +74,11 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   const websocket = (await import('@fastify/websocket')).default;
   await app.register(websocket, { options: { maxPayload: 4 * 1024 * 1024 } });
 
-  installAuth(app, { token: config.token, publicPrefixes: ['/assets/', '/favicon', '/v1/a/'] });
+  installAuth(app, {
+    token: config.token,
+    publicPrefixes: ['/assets/', '/favicon', '/v1/a/'],
+    scopeOf: (t) => ctx.scoped.verify(t),
+  });
 
   app.addHook('onSend', async (_req, reply, payload) => {
     void reply.header('X-Husk-Version', HUSK_VERSION);
@@ -107,6 +107,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   await app.register(modelRoutes);
   await app.register(approvalRoutes);
   await app.register(handoffRoutes);
+  await app.register(toolRoutes);
   await app.register(eventRoutes);
   await registerWorkspaceRoutes(app, options.workspaceStore);
 
@@ -116,8 +117,6 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     host.start();
     log.debug(`mounted ${host.list().length} trigger(s)`);
   }
-
-  for (const plugin of options.plugins ?? []) await plugin(app);
 
   // Last: it installs the SPA fallback not-found handler, which must not shadow
   // any API route registered above.

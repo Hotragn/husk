@@ -108,9 +108,9 @@ async function main(): Promise<void> {
  * error: the first is already serving.
  */
 async function runDaemon(): Promise<void> {
-  const [{ serve }, { toolRoutes }] = await Promise.all([import('@husk-ai/server'), import('./tool-routes.js')]);
+  const [{ serve }, { runTool }] = await Promise.all([import('@husk-ai/server'), import('./tools.js')]);
   try {
-    await serve({ daemon: true, plugins: [toolRoutes] });
+    await serve({ daemon: true, deps: { runTool } });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
       process.stderr.write('husk daemon: the port is taken, so another Husk is already serving; exiting\n');

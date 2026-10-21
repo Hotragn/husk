@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { toolRoutes } from './tool-routes.js';
+import { callTool } from './tools.js';
 
 const info: ComputerInfo = {
   id: 'cmp_chat',
@@ -57,7 +57,7 @@ async function app() {
     store: new Store(),
     logger: createLogger({ level: 'silent' }),
     config: { host: '127.0.0.1', port: 0, triggers: false, consoleDir: join(root, 'no-console') },
-    plugins: [toolRoutes],
+    runTool: callTool,
   });
 }
 

@@ -61,7 +61,16 @@ export interface AuthOptions {
   token?: string | undefined;
   /** Extra prefixes served without a token, e.g. the console bundle at `/`. */
   publicPrefixes?: string[];
+  /**
+   * What a short-lived link token opens, if it is one. Such a token reaches only
+   * SCOPED_PREFIXES, and the routes there check it against the one computer or
+   * handoff it names (`req.huskScope`).
+   */
+  scopeOf?: (token: string) => string | undefined;
 }
+
+/** The only routes a link token reaches. The handoff list is not among them. */
+const SCOPED_PREFIXES = ['/v1/handoffs/', '/v1/scoped/'];
 
 /**
  * Bearer auth as an onRequest hook.
@@ -100,6 +109,13 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
 
     const supplied = bearerToken(req) ?? queryToken(req);
     if (supplied && constantTimeEquals(supplied, token)) return;
+    if (supplied && opts.scopeOf && SCOPED_PREFIXES.some((p) => path.startsWith(p))) {
+      const scope = opts.scopeOf(supplied);
+      if (scope) {
+        req.huskScope = scope;
+        return;
+      }
+    }
 
     await reply.code(401).send({
       error: {
@@ -128,5 +144,9 @@ function queryToken(req: FastifyRequest): string | undefined {
 declare module 'fastify' {
   interface FastifyInstance {
     huskAuthEnabled: boolean;
+  }
+  interface FastifyRequest {
+    /** Set when a link token, not the server token, let this request in. */
+    huskScope?: string;
   }
 }

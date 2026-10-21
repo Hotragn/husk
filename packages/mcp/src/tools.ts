@@ -1,6 +1,7 @@
 import type { Computer } from '@husk-ai/core';
 import { HuskError, PROBE_COMPUTER_INFO, clampText, explainShellFailure, formatBytes, redact } from '@husk-ai/core';
 import { browseInComputer } from '@husk-ai/core';
+import { ensureRunning } from '@husk-ai/runtime';
 import { BROWSER_TOOLS, BROWSER_TOOL_NAMES, callBrowserTool } from './browser-tools.js';
 import { workspaceNote } from './workspace.js';
 
@@ -157,6 +158,14 @@ function fail(text: string): ToolResult {
 }
 
 const MAX_TOOL_OUTPUT = 96 * 1024;
+
+/**
+ * A chat tool as the shared Husk runs it (`deps.runTool` in `husk serve`): the
+ * same `callTool`, on a computer woken first if a chat's idle timer stopped it.
+ */
+export async function runTool(computer: Computer, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  return callTool(await ensureRunning(computer), name, args);
+}
 
 /** Run one tool call against a live computer. Never throws; errors come back as results. */
 export async function callTool(

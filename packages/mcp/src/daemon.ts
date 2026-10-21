@@ -12,6 +12,16 @@ export class DaemonUnreachable extends Error {}
 export interface DaemonClient {
   url: string;
   callTool(computerId: string, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult>;
+  /** Give a computer to the person in the shared console. The token opens that computer only. */
+  openHandoff(computerId: string, reason: string, label?: string): Promise<{ handoffId: string; token: string }>;
+  /** Whether a handoff is still waiting for the person. */
+  isOpen(handoffId: string): Promise<boolean>;
+  /** The person said done, in the chat. */
+  complete(handoffId: string): Promise<void>;
+  /** The chat went away before the person finished. */
+  cancel(handoffId: string): Promise<void>;
+  /** A short-lived token that opens one computer's page in the console. */
+  linkToken(computerId: string): Promise<string>;
 }
 
 export interface ConnectOptions {
@@ -74,8 +84,41 @@ export async function connectDaemon(opts: ConnectOptions): Promise<DaemonClient 
 }
 
 function client(rec: DaemonRecord, doFetch: typeof fetch): DaemonClient {
+  const auth: Record<string, string> = rec.token ? { authorization: `Bearer ${rec.token}` } : {};
+  const call = async (method: string, path: string, body?: unknown): Promise<{ status: number; json: Record<string, unknown> }> => {
+    const res = await doFetch(`${rec.url}${path}`, {
+      method,
+      headers: body !== undefined ? { ...auth, 'content-type': 'application/json' } : auth,
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (res.status >= 400 && res.status !== 404) {
+      const err = json.error as { message?: string } | undefined;
+      throw new Error(err?.message ?? `the shared husk answered ${res.status}`);
+    }
+    return { status: res.status, json };
+  };
+  const id = encodeURIComponent;
   return {
     url: rec.url,
+    async openHandoff(computerId, reason, label) {
+      const { status, json } = await call('POST', `/v1/computers/${id(computerId)}/handoffs`, { reason, ...(label ? { label } : {}) });
+      if (status === 404) throw new Error(`the shared husk has no computer ${computerId}`);
+      return { handoffId: String(json.handoffId), token: String(json.token) };
+    },
+    async isOpen(handoffId) {
+      return (await call('GET', `/v1/handoffs/${id(handoffId)}`)).status === 200;
+    },
+    async complete(handoffId) {
+      await call('POST', `/v1/handoffs/${id(handoffId)}/done`);
+    },
+    async cancel(handoffId) {
+      await call('DELETE', `/v1/handoffs/${id(handoffId)}`);
+    },
+    async linkToken(computerId) {
+      return String((await call('POST', `/v1/computers/${id(computerId)}/link`)).json.token);
+    },
     async callTool(computerId, name, args, signal) {
       let res: Response;
       try {

@@ -14,8 +14,6 @@ export interface ServeOptions extends Partial<ServerConfig> {
   deps?: Partial<ServerDeps>;
   /** Interval for the computer reaper. 0 disables it. */
   reaperIntervalMs?: number;
-  /** Extra routes; see `CreateAppOptions.plugins`. */
-  plugins?: CreateAppOptions['plugins'];
   /**
    * Be the machine's one Husk: write ~/.husk/daemon.json so chats' MCP processes
    * find this server, and mint a token when none was given, because a process
@@ -131,7 +129,7 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
   const log = opts.logger ?? createLogger({ scope: 'husk' });
   ensurePaths();
 
-  const { logger: _logger, deps: injected, reaperIntervalMs, plugins, daemon, ...configish } = opts;
+  const { logger: _logger, deps: injected, reaperIntervalMs, daemon, ...configish } = opts;
   const config = resolveConfig(configish);
   if (daemon && !config.token) config.token = randomBytes(32).toString('hex');
   const built = await createDefaultDeps(config, log);
@@ -143,9 +141,9 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
     modelProviders: injected?.modelProviders ?? built.modelProviders,
     logger: log,
     config,
-    ...(plugins ? { plugins } : {}),
   };
   if (injected?.agentFactory) appOptions.agentFactory = injected.agentFactory;
+  if (injected?.runTool) appOptions.runTool = injected.runTool;
 
   const app = await createApp(appOptions);
   const ctx = app.husk;

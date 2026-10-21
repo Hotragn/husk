@@ -84,6 +84,9 @@ function requirePath(query: unknown): string {
   return p;
 }
 
+/** How often the live screen asks for a frame, at most. */
+const SCREEN_FPS = 4;
+
 export async function computerRoutes(app: FastifyInstance): Promise<void> {
   const ctx = ctxOf(app);
   const { manager, log } = ctx.deps;
@@ -314,6 +317,57 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
     const page = await browseInComputer(computer, body);
     ctx.bus.emit('computers', 'browsed', { id, url: page.url, status: page.status });
     return page;
+  });
+
+  // -- live screen ---------------------------------------------------------
+
+  /**
+   * The computer's browser, live, for as long as somebody watches.
+   *
+   * The driver answers one request at a time from inside the computer, so this
+   * cannot subscribe to Chrome's own screencast. It asks for the next frame as
+   * soon as the last one is sent, capped at SCREEN_FPS -- a few frames a second,
+   * which is enough to watch a page being driven. It never launches a browser:
+   * with none open it says so once a second until one appears. It stops the
+   * moment the socket closes, so nothing is spent on a screen nobody is looking at.
+   */
+  app.get('/v1/computers/:id/screen', { websocket: true }, (socket, req) => {
+    const { id } = req.params as { id: string };
+    let open = true;
+    socket.on('close', () => {
+      open = false;
+    });
+    const send = (obj: unknown) => {
+      if (open && socket.readyState === socket.OPEN) socket.send(JSON.stringify(obj));
+    };
+    const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    void (async () => {
+      if (!(await manager.get(id))) {
+        send({ type: 'error', code: 'E_COMPUTER_NOT_FOUND', message: `no computer ${id}` });
+        socket.close();
+        return;
+      }
+      let idle = false;
+      while (open) {
+        const started = Date.now();
+        const page = livePageFor(id);
+        if (!page) {
+          if (!idle) send({ type: 'idle', message: 'no browser is open on this computer yet' });
+          idle = true;
+          await pause(1000);
+          continue;
+        }
+        idle = false;
+        try {
+          const frame = await page.frame(60);
+          send({ type: 'frame', ...frame });
+        } catch {
+          // Mid-navigation frames fail; the next one usually lands.
+        }
+        await pause(Math.max(0, 1000 / SCREEN_FPS - (Date.now() - started)));
+      }
+    })();
   });
 
   // -- terminal ------------------------------------------------------------

@@ -19,7 +19,7 @@ interface RunningServer {
 }
 
 interface ServerModule {
-  serve(opts: { host: string; port: number; daemon?: boolean; plugins?: unknown[] }): Promise<RunningServer>;
+  serve(opts: { host: string; port: number; daemon?: boolean; deps?: { runTool?: unknown } }): Promise<RunningServer>;
 }
 
 export async function run(argv: string[]): Promise<number> {
@@ -47,8 +47,8 @@ export async function run(argv: string[]): Promise<number> {
     // The machine's one Husk: chats' MCP processes find it through
     // ~/.husk/daemon.json and run their computer tools here, so the console
     // sees every chat as well as every husk run.
-    const { toolRoutes } = await import('@husk-ai/mcp/tool-routes');
-    server = await mod.serve({ host, port, daemon: true, plugins: [toolRoutes] });
+    const { runTool } = await import('@husk-ai/mcp/tools');
+    server = await mod.serve({ host, port, daemon: true, deps: { runTool } });
   } catch (err) {
     spin.stop();
     if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {

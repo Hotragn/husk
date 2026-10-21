@@ -26,6 +26,8 @@ export type {
   ServerConfig,
   ServerDeps,
   ServerRunOptions,
+  ToolRunner,
+  ToolRunResult,
 } from './deps.js';
 
 export { createContext, ctxOf } from './context.js';
