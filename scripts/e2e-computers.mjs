@@ -10,7 +10,7 @@
 //   node scripts/e2e-computers.mjs
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -92,6 +92,69 @@ function mcpSession(args) {
     });
   const notify = (method, params) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method, ...(params ? { params } : {}) })}\n`);
   return { child, request, notify };
+}
+
+async function walkConsole(id, name) {
+  const { chromium } = await import('playwright-core');
+  const shots = process.env.E2E_SHOTS ?? join(root, 'e2e-shots');
+  mkdirSync(shots, { recursive: true });
+  const browser = await chromium.launch({ channel: 'chrome' });
+  const errors = [];
+  try {
+    const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+    page.on('pageerror', (err) => errors.push(err.message));
+    const shot = (file) => page.screenshot({ path: join(shots, file), fullPage: true });
+
+    // In use a moment ago, with its browser open: Home shows it live.
+    await tool(id, 'browser_goto', { url: 'https://example.com' });
+    await page.goto(`${rec.url}/#token=${rec.token}&panel=home`);
+    const card = page.getByRole('article', { name });
+    const live = card.locator(`img[alt="The browser on ${id}, live"]`);
+    await live.waitFor({ timeout: 60_000 });
+    check('Home shows the browser live on a computer in use', (await live.evaluate((img) => img.naturalWidth)) > 0);
+    await shot('01-home-live.png');
+
+    // Take over without being asked, and the chat's next call waits.
+    await card.getByRole('button', { name: 'Take over' }).click();
+    await page.getByRole('heading', { name: 'You have this computer' }).waitFor({ timeout: 30_000 });
+    await page.locator('.handoff-screen img').waitFor({ timeout: 30_000 });
+    check('Take over opens the computer for the person', true);
+    await shot('02-taken-over.png');
+    let settled = false;
+    const started = Date.now();
+    const call = tool(id, 'shell', { command: 'echo after-give-back' }).finally(() => {
+      settled = true;
+    });
+    await sleep(3000);
+    check('the chat’s call waits while the person holds the computer', !settled);
+
+    // Give back, and the waiting call runs.
+    await page.getByRole('button', { name: 'Give back' }).click();
+    await page.getByRole('button', { name: 'Yes, hand back to the agent' }).click();
+    const result = await call;
+    check('Give back lets the waiting call run', !result.isError && /after-give-back/.test(textOf(result)), `${Date.now() - started} ms`);
+
+    // The chat's page: live screen and what the chat did.
+    const nav = page.getByRole('navigation', { name: 'Console sections' });
+    await nav.getByRole('button', { name: 'Home', exact: true }).click();
+    await card.getByRole('button', { name: `Open ${name}` }).click();
+    await page.locator(`.chat-screen img[alt="The browser on ${id}, live"]`).waitFor({ timeout: 60_000 });
+    await page.locator('.activity-list').getByText('browser_goto').first().waitFor({ timeout: 30_000 });
+    check('the Chat page shows the live screen and the activity', true);
+    await shot('03-chat.png');
+
+    await nav.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByRole('heading', { name: 'Connect', exact: true }).waitFor({ timeout: 30_000 });
+    await sleep(3000);
+    await shot('04-connect.png');
+    check('the Connect page loads', true);
+    check('the console threw no errors', errors.length === 0, errors.join(' | '));
+  } catch (err) {
+    await browser.contexts()[0]?.pages()[0]?.screenshot({ path: join(shots, 'failed.png'), fullPage: true }).catch(() => undefined);
+    throw err;
+  } finally {
+    await browser.close();
+  }
 }
 
 try {
@@ -179,6 +242,13 @@ try {
   check('the shared Husk saw the chat call', overview.activity?.[chatComputer?.id]?.via === 'mcp', JSON.stringify(overview.activity?.[chatComputer?.id]));
   mcp.child.stdin.end();
   await sleep(1000);
+
+  // 8. The console in a real browser: Home's live screen, take over at any
+  // moment, the chat's call waiting for Give back, the Chat and Connect pages.
+  // CI sets E2E_CONSOLE=1 and installs playwright-core (not a dependency) to
+  // drive the runner's own Chrome. Screenshots land in E2E_SHOTS.
+  if (process.env.E2E_CONSOLE === '1') await walkConsole(id, made.body.name);
+  else console.log('skip the console walkthrough (set E2E_CONSOLE=1 with playwright-core installed)');
 
   console.log(`\n${steps.length} checks passed`);
 } catch (err) {
