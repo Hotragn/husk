@@ -1,5 +1,6 @@
 import { readFile, mkdir, rename, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { HuskError, chatIdentityOf, createLogger, notifyComputerDestroyed, paths } from '@husk-ai/core';
 import type {
   Availability,
@@ -216,6 +217,13 @@ export class ComputerManager {
         return ensureRunning(adopted);
       }
 
+      // A husk's computer is named after the husk, and two paths reach it under
+      // different keys (`husk run` uses husk:<name>, the server the bare name).
+      // The name a person typed stays unique; a keyed computer whose preferred
+      // name is taken gets one derived from its key instead of failing.
+      const all = await this.list();
+      const taken = spec.name ? all.some((c) => c.name === spec.name && c.state !== 'destroyed') : false;
+      const name = taken ? `${spec.name}-${createHash('sha256').update(key).digest('hex').slice(0, 6)}` : spec.name;
       const computer = await this.create({
         // A computer reached by a stable key is somebody's bot -- one chat, one
         // session, one machine -- and it is expected to still be there
@@ -228,6 +236,7 @@ export class ComputerManager {
         // container. Persisting by key makes the sentence true.
         persist: true,
         ...spec,
+        ...(name ? { name } : {}),
         labels: { ...(spec.labels ?? {}), 'husk.key': key },
       });
       await writeBinding(key, computer.id);

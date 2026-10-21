@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { huskError } from './errors.js';
 
 /** Paths that answer without a token, whatever else is configured. */
@@ -67,6 +67,8 @@ export interface AuthOptions {
    * handoff it names (`req.huskScope`).
    */
   scopeOf?: (token: string) => string | undefined;
+  /** The server is bound to a loopback address: answer only loopback Host names, even with a token. */
+  loopbackOnly?: boolean;
 }
 
 /** The only routes a link token reaches. The handoff list is not among them. */
@@ -84,37 +86,65 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
 
   app.decorate('huskAuthEnabled', Boolean(token));
 
+  const refuse = (reply: FastifyReply, status: number, message: string, hint: string) =>
+    reply.code(status).send({ error: { code: 'E_NO_CREDENTIALS', message, hint } });
+
   app.addHook('onRequest', async (req, reply) => {
-    if (!token) {
-      // No token is only allowed on a loopback bind, but a loopback bind is still
-      // reachable from any web page through DNS rebinding: evil.example resolves
-      // to 127.0.0.1 and the browser sends `Host: evil.example`. Answering only
-      // loopback names closes that, and costs nothing a local client sends.
-      // A missing Host is not a loopback name: only a request that names one passes.
-      const host = hostnameOf(req.headers.host);
-      if (host && isLoopbackHost(host)) return;
-      await reply.code(401).send({
-        error: {
-          code: 'E_NO_CREDENTIALS',
-          message: 'this server has no token, so it answers only to localhost, 127.0.0.1 and [::1]',
-          hint: 'reach it by a loopback address, or set HUSK_TOKEN to serve it under another name',
-        },
-      });
-      return;
+    // A web page may not drive this server, token or not. A browser sends
+    // Origin on every cross-site request and on every WebSocket, and nothing
+    // stops a page from opening a WebSocket to 127.0.0.1. A loopback origin is
+    // this console, or its dev server.
+    const origin = req.headers.origin;
+    if (origin && origin !== 'null') {
+      let originHost = '';
+      try {
+        originHost = new URL(origin).hostname;
+      } catch {
+        // not a URL: refused below
+      }
+      if (!isLoopbackHost(originHost)) {
+        return refuse(reply, 403, `requests from ${origin} are refused`, 'open the console from this machine');
+      }
+    } else if (origin === 'null') {
+      return refuse(reply, 403, 'requests from an opaque origin are refused', 'open the console from this machine');
     }
-    const path = req.url.split('?')[0] ?? '/';
-    if (PUBLIC_PATHS.has(path)) return;
-    if (req.method === 'OPTIONS') return;
-    // The console's own page and assets. They hold no data: every API call the
-    // page makes carries the token, and the API is all under /v1. Without this
-    // the console could never load from a link, because the token rides in the
-    // #fragment, which a browser does not send.
-    if ((req.method === 'GET' || req.method === 'HEAD') && !path.startsWith('/v1')) return;
-    if (publicPrefixes.some((p) => path === p || path.startsWith(p))) return;
+
+    // DNS rebinding: evil.example resolves to 127.0.0.1 and the browser sends
+    // `Host: evil.example`. On a loopback bind only loopback names are answered,
+    // whether or not a token is set. A missing Host is not a loopback name.
+    if (!token || opts.loopbackOnly) {
+      const host = hostnameOf(req.headers.host);
+      if (!host || !isLoopbackHost(host)) {
+        return refuse(
+          reply,
+          token ? 403 : 401,
+          'this server answers only to localhost, 127.0.0.1 and [::1]',
+          'reach it by a loopback address, or set HUSK_TOKEN and bind another address to serve it under another name',
+        );
+      }
+    }
+    if (!token) return;
+
+    // Decide on the route the router matched, never on the raw URL: the router
+    // decodes the path first, so `/%761/computers` is `/v1/computers` to it.
+    const route = req.routeOptions?.url;
+    if (route === undefined) {
+      // Nothing matched: a 404 follows, and answering it without a token says nothing.
+      if (req.method === 'GET' || req.method === 'HEAD') return;
+    } else {
+      if (PUBLIC_PATHS.has(route)) return;
+      if (req.method === 'OPTIONS') return;
+      // The console's own page and assets. They hold no data: every API call the
+      // page makes carries the token, and the whole API is under /v1. Without this
+      // the console could never load from a link, because the token rides in the
+      // #fragment, which a browser does not send.
+      if ((req.method === 'GET' || req.method === 'HEAD') && !route.startsWith('/v1')) return;
+      if (publicPrefixes.some((p) => route.startsWith(p))) return;
+    }
 
     const supplied = bearerToken(req) ?? queryToken(req);
     if (supplied && constantTimeEquals(supplied, token)) return;
-    if (supplied && opts.scopeOf && SCOPED_PREFIXES.some((p) => path.startsWith(p))) {
+    if (supplied && opts.scopeOf && route && SCOPED_PREFIXES.some((p) => route.startsWith(p))) {
       const scope = opts.scopeOf(supplied);
       if (scope) {
         req.huskScope = scope;
@@ -122,13 +152,12 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
       }
     }
 
-    await reply.code(401).send({
-      error: {
-        code: 'E_NO_CREDENTIALS',
-        message: supplied ? 'bearer token is not valid' : 'missing Authorization: Bearer <token>',
-        hint: 'HUSK_TOKEN is set on this server -- send the same value as a bearer token',
-      },
-    });
+    return refuse(
+      reply,
+      401,
+      supplied ? 'bearer token is not valid' : 'missing Authorization: Bearer <token>',
+      'HUSK_TOKEN is set on this server -- send the same value as a bearer token',
+    );
   });
 }
 
