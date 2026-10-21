@@ -346,9 +346,9 @@ function HandoffView({ handoff, onDone }: { handoff: PendingHandoff; onDone: () 
       <div className="chat-side">
         <div className={`card control-card ${mine ? 'overview-held' : 'overview-card-waiting'}`} role="status" aria-live="polite">
           <h2 className="h-sub">{mine ? 'You have this computer' : 'Paused, waiting for you'}</h2>
-          <p className="handoff-reason">{handoff.reason}</p>
+          {mine ? null : <p className="handoff-reason">{handoff.reason}</p>}
           <p className="field-note">
-            {handoff.husk} · since {formatWhen(handoff.createdAt)}
+            {mine ? 'Since' : `${handoff.husk} · since`} {formatWhen(handoff.createdAt)}
           </p>
           {confirming ? (
             <>
@@ -371,7 +371,7 @@ function HandoffView({ handoff, onDone }: { handoff: PendingHandoff; onDone: () 
               </Button>
             ))}
           </div>
-          <p className="field-note">Closing this tab does not resume the run.</p>
+          <p className="field-note">{mine ? 'The chat waits until you give it back.' : 'Closing this tab does not resume the run.'}</p>
           {actionError ? <ErrorBlock error={actionError} /> : null}
         </div>
       </div>
