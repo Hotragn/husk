@@ -359,13 +359,16 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
           continue;
         }
         idle = false;
+        let wait = 1000 / SCREEN_FPS;
         try {
           const frame = await page.frame(60);
           send({ type: 'frame', ...frame });
         } catch {
-          // Mid-navigation frames fail; the next one usually lands.
+          // Mid-navigation frames fail and the next one usually lands. A stopped
+          // computer fails every time, so slow down rather than spin on it.
+          wait = 1000;
         }
-        await pause(Math.max(0, 1000 / SCREEN_FPS - (Date.now() - started)));
+        await pause(Math.max(0, wait - (Date.now() - started)));
       }
     })();
   });
