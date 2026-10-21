@@ -211,7 +211,7 @@ export class ComputerManager {
       // carries its key, so adopt it rather than make a second one by that name.
       const keyed = (await this.list()).find((c) => c.spec?.labels?.['husk.key'] === key && c.state !== 'destroyed');
       const adopted = keyed ? await this.get(keyed.id) : null;
-      if (adopted) {
+      if (adopted && adopted.info.state !== 'destroyed') {
         await writeBinding(key, adopted.id);
         return ensureRunning(adopted);
       }

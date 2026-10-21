@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { LocalProvider, setShellPlan, windowsHint, windowsReason } from './local.js';
+import { LocalProvider, setShellPlan, windowsHint, windowsReason, wslWorks } from './local.js';
 import type { ShellPlan } from './local.js';
 import type { Computer } from '@husk-ai/core';
 import { ComputerManager } from '../manager.js';
@@ -240,5 +240,32 @@ describe('the local provider', () => {
       expect(windowsReason(plan())).toBeNull();
       expect(windowsHint(plan())).toBeNull();
     });
+  });
+});
+
+// #110: the first WSL use after boot can outlast the probe that starts it.
+describe('wslWorks', () => {
+  const answer = (stdout: string, error?: string) =>
+    (() => ({ stdout: Buffer.from(stdout), stderr: Buffer.alloc(0), status: 0, signal: null, pid: 1, output: [], ...(error ? { error: Object.assign(new Error(error), { code: error }) } : {}) })) as never;
+
+  it('tries a cold distro once more when the first probe times out', () => {
+    const calls: number[] = [];
+    let n = 0;
+    const run = ((_cmd: string, _args: string[], opts: { timeout: number }) => {
+      calls.push(opts.timeout);
+      return n++ === 0 ? (answer('', 'ETIMEDOUT') as () => unknown)() : (answer('husk-wsl-ok\n') as () => unknown)();
+    }) as never;
+    expect(wslWorks('Ubuntu', run)).toBe(true);
+    expect(calls).toEqual([15_000, 30_000]);
+  });
+
+  it('does not retry a distro that answered with an error', () => {
+    let n = 0;
+    const run = (() => {
+      n++;
+      return (answer('Catastrophic failure') as () => unknown)();
+    }) as never;
+    expect(wslWorks('Ubuntu', run)).toBe(false);
+    expect(n).toBe(1);
   });
 });

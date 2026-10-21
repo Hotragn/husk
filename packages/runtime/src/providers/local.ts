@@ -162,16 +162,23 @@ export function setShellPlan(plan: ShellPlan | undefined): void {
 
 const WSL_MARKER = 'husk-wsl-ok';
 
-function wslWorks(distro: string): boolean {
-  try {
-    const probe = spawnSync('wsl.exe', ['-d', distro, '-e', 'echo', WSL_MARKER], {
-      timeout: 15_000,
-      windowsHide: true,
-    });
-    return (probe.stdout?.toString('utf8') ?? '').replace(/\0/g, '').includes(WSL_MARKER);
-  } catch {
-    return false;
+/**
+ * Whether a distro answers. A probe that times out is tried once more: the
+ * first WSL use after boot starts the service and the VM as well, and that can
+ * outlast 15s while the probe itself is what started it (#110). A distro that
+ * answers with an error is broken now, and is not retried.
+ */
+export function wslWorks(distro: string, run: typeof spawnSync = spawnSync): boolean {
+  for (const timeout of [15_000, 30_000]) {
+    try {
+      const probe = run('wsl.exe', ['-d', distro, '-e', 'echo', WSL_MARKER], { timeout, windowsHide: true });
+      if ((probe.stdout?.toString('utf8') ?? '').replace(/\0/g, '').includes(WSL_MARKER)) return true;
+      if ((probe.error as NodeJS.ErrnoException | undefined)?.code !== 'ETIMEDOUT') return false;
+    } catch {
+      return false;
+    }
   }
+  return false;
 }
 
 /**
