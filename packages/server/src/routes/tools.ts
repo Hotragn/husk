@@ -3,7 +3,10 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { summarise } from '../activity.js';
 import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
-import { heldText } from '../handoffs.js';
+import { PERSON_RUN, heldText, takenText } from '../handoffs.js';
+
+/** How long a chat's call waits for a person to give back a computer they took. Tests shorten it. */
+export const takeover = { waitMs: 45_000 };
 
 function parseBody(body: unknown): { args: Record<string, unknown>; via: string } {
   const b = (body ?? {}) as { args?: unknown; via?: unknown };
@@ -41,8 +44,19 @@ export async function toolRoutes(app: FastifyInstance): Promise<void> {
 
     // A person holds this computer until they say done; the model must not type
     // into the page they are signing in on, or run commands under them.
-    const held = ctx.runner.handoffs.list().find((h) => h.computerId === id);
-    if (held && name !== 'computer_info') return { isError: true, content: [{ type: 'text', text: heldText(held.handoffId, held.reason) }] };
+    const heldNow = () => (name === 'computer_info' ? undefined : ctx.runner.handoffs.list().find((h) => h.computerId === id));
+    let held = heldNow();
+    // Taken from the console: the call waits a while for the person to give it
+    // back, so a short look-in pauses the chat instead of ending its turn.
+    const until = Date.now() + takeover.waitMs;
+    while (held?.runId === PERSON_RUN && Date.now() < until && !req.socket.destroyed) {
+      await new Promise((r) => setTimeout(r, 250));
+      held = heldNow();
+    }
+    if (held) {
+      const text = held.runId === PERSON_RUN ? takenText(held.handoffId) : heldText(held.handoffId, held.reason);
+      return { isError: true, content: [{ type: 'text', text }] };
+    }
 
     const started = Date.now();
     const result = await audited(

@@ -525,6 +525,11 @@ export class HuskApi {
     return this.client.http.request<void>('POST', `/v1/handoffs/${enc(handoffId)}/input`, { body: input });
   }
 
+  /** `POST /v1/computers/:id/takeover`: take the computer from its chat now. The chat waits until it is given back. */
+  takeOver(computerId: string): Promise<PendingHandoff> {
+    return this.client.http.request<PendingHandoff>('POST', `/v1/computers/${enc(computerId)}/takeover`);
+  }
+
   /** `POST /v1/handoffs/:id/done`. The only call that hands the run back to the agent. */
   handoffDone(handoffId: string): Promise<{ handoffId: string; outcome: 'done' }> {
     return this.client.http.request('POST', `/v1/handoffs/${enc(handoffId)}/done`);

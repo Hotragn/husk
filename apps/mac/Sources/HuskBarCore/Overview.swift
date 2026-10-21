@@ -46,11 +46,14 @@ public struct Handoff: Decodable, Equatable {
     public var handoffId: String
     public var reason: String
     public var computerId: String?
+    /// "person" when the person took the computer from the console, rather than a chat asking.
+    public var runId: String?
 
-    public init(handoffId: String, reason: String, computerId: String? = nil) {
+    public init(handoffId: String, reason: String, computerId: String? = nil, runId: String? = nil) {
         self.handoffId = handoffId
         self.reason = reason
         self.computerId = computerId
+        self.runId = runId
     }
 }
 
@@ -68,8 +71,10 @@ public enum Summary: Equatable {
             self = .disconnected
             return
         }
-        if !overview.handoffs.isEmpty {
-            self = .waiting(overview.handoffs.count)
+        // A computer the person took themselves is not waiting on them.
+        let waiting = overview.handoffs.filter { $0.runId != "person" }
+        if !waiting.isEmpty {
+            self = .waiting(waiting.count)
             return
         }
         let running = overview.computers.filter { $0.state == "running" }.count

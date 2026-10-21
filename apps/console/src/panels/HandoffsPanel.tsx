@@ -335,10 +335,12 @@ function HandoffView({ handoff, onDone }: { handoff: PendingHandoff; onDone: () 
     }
   };
 
+  // Taken from Home or Chat by the person, not asked for by the chat.
+  const mine = handoff.runId === 'person';
   return (
     <div className="row-gap-4">
       <div className="card" role="status" aria-live="polite">
-        <h3>Paused, waiting for you</h3>
+        <h3>{mine ? 'You have this computer' : 'Paused, waiting for you'}</h3>
         <p className="handoff-reason">{handoff.reason}</p>
         <p className="field-note">
           {handoff.husk} · since {formatWhen(handoff.createdAt)} · closing this tab or losing the connection does not
@@ -427,7 +429,7 @@ function HandoffView({ handoff, onDone }: { handoff: PendingHandoff; onDone: () 
           </>
         ) : (
           <Button variant="primary" onClick={() => setConfirming(true)}>
-            Done
+            {mine ? 'Give back' : 'Done'}
           </Button>
         )}
       </div>

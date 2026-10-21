@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { ctxOf } from '../context.js';
 import { redact } from '@husk-ai/core';
 import { huskError, invalidSpec, notFound } from '../errors.js';
+import { PERSON_RUN } from '../handoffs.js';
 import type { HandoffRegistry, PendingHandoff } from '../handoffs.js';
 
 /** Viewport coordinates in CSS pixels. Bounded so nothing absurd reaches Chromium. */
@@ -143,6 +144,24 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
     if (opened) lastSeen.set(opened.handoffId, Date.now());
     ctx.bus.emit('runs', 'handoff_requested', opened);
     return reply.code(201).send({ ...opened!, token: ctx.scoped.mint(`computer:${id}`) });
+  });
+
+  // The person takes a computer whenever they choose, from the console. No
+  // lease: only their Give back (done) ends it, or the server closing.
+  app.post('/v1/computers/:id/takeover', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    if (!(await ctx.deps.manager.get(id))) throw notFound('computer', id);
+    // Already waiting for a person: that one is theirs to finish.
+    const held = ctx.runner.handoffs.list().find((h) => h.computerId === id);
+    if (held) return held;
+    let opened: PendingHandoff | undefined;
+    void ctx.runner.handoffs
+      .request({ runId: PERSON_RUN, husk: 'you', reason: 'You took over this computer', computerId: id, signal: chatHandoffs.signal }, (p) => {
+        opened = p;
+      })
+      .then((outcome) => ctx.bus.emit('runs', outcome === 'done' ? 'handoff_completed' : 'handoff_cancelled', { computerId: id }));
+    ctx.bus.emit('runs', 'handoff_requested', opened);
+    return reply.code(201).send(opened);
   });
 
   app.delete('/v1/handoffs/:handoffId', async (req: FastifyRequest) => {

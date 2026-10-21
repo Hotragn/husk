@@ -31,13 +31,28 @@ describe('sortRows', () => {
 
 describe('Overview panel', () => {
   let requests: string[];
+  let sockets: string[];
   beforeEach(() => {
     requests = [];
+    sockets = [];
+    vi.stubGlobal(
+      'WebSocket',
+      class {
+        onmessage = null;
+        onclose = null;
+        constructor(url: string) {
+          sockets.push(new URL(url).pathname + new URL(url).search.replace(/[?&]token=[^&]*/, ''));
+        }
+        close() {}
+      },
+    );
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (input: string) => {
+      vi.fn(async (input: string, init?: RequestInit) => {
         const path = new URL(input).pathname;
-        requests.push(path);
+        requests.push(init?.method && init.method !== 'GET' ? `${init.method} ${path}` : path);
+        if (path.endsWith('/takeover')) return Response.json({ handoffId: 'hnd_me', runId: 'person', husk: 'you', reason: 'x', computerId: 'cmp_idle', createdAt: '' }, { status: 201 });
+        if (path.endsWith('/done')) return Response.json({ handoffId: 'hnd_me', outcome: 'done' });
         if (path === '/v1/overview') return Response.json(overview);
         if (path === '/v1/doctor') return Response.json({ providers: [{ name: 'docker', available: true, isolated: true, isolationKind: 'container' }] });
         if (path.endsWith('/stats')) return Response.json({ cpuPercent: null, memoryBytes: null, memoryLimitBytes: null, diskBytes: null, notes: ['x'] });
@@ -83,15 +98,42 @@ describe('Overview panel', () => {
     expect((await screen.findAllByText('CPU not available · memory not available · disk not available')).length).toBeGreaterThan(0);
   });
 
-  it('looks at a browser only when asked, since a frame counts as using the computer', async () => {
+  it('looks at an idle computer’s browser only when asked, since a frame counts as using the computer', async () => {
     const { container } = render(<OverviewPanel onOpen={() => {}} />);
     await screen.findByText('Running triage · step 2 · shell');
     expect(requests.some((p) => p.endsWith('/thumbnail'))).toBe(false);
-    const busy = screen.getByRole('article', { name: 'cmp_busy' });
-    fireEvent.click(within(busy).getByRole('button', { name: 'Look at browser' }));
-    expect(await within(busy).findByText('No browser is open on this computer.')).toBeTruthy();
-    expect(requests.filter((p) => p.endsWith('/thumbnail'))).toEqual(['/v1/computers/cmp_busy/thumbnail']);
+    const idle = screen.getByRole('article', { name: 'Cursor · chat started 09:00' });
+    fireEvent.click(within(idle).getByRole('button', { name: 'Look at browser' }));
+    expect(await within(idle).findByText('No browser is open on this computer.')).toBeTruthy();
+    expect(requests.filter((p) => p.endsWith('/thumbnail'))).toEqual(['/v1/computers/cmp_idle/thumbnail']);
     expect(container.querySelector('.overview-thumb')).toBeNull();
+  });
+
+  it('shows the screen live, slowly, only on computers in use', async () => {
+    render(<OverviewPanel onOpen={() => {}} />);
+    await screen.findByText('Running triage · step 2 · shell');
+    expect(sockets.sort()).toEqual(['/v1/computers/cmp_busy/screen?fps=1', '/v1/computers/cmp_wait/screen?fps=1']);
+  });
+
+  it('takes an idle computer at any moment, and gives it back', async () => {
+    const onOpen = vi.fn();
+    render(<OverviewPanel onOpen={onOpen} />);
+    const idle = await screen.findByRole('article', { name: 'Cursor · chat started 09:00' });
+    fireEvent.click(within(idle).getByRole('button', { name: 'Take over' }));
+    await vi.waitFor(() => expect(onOpen).toHaveBeenCalledWith('handoffs', 'cmp_idle'));
+    expect(requests).toContain('POST /v1/computers/cmp_idle/takeover');
+
+    overview.handoffs.push({ handoffId: 'hnd_me', runId: 'person', husk: 'you', reason: 'x', computerId: 'cmp_idle', createdAt: '' });
+    try {
+      cleanup();
+      render(<OverviewPanel onOpen={onOpen} />);
+      const held = await screen.findByRole('article', { name: 'Cursor · chat started 09:00' });
+      expect(within(held).getByText('You have this computer')).toBeTruthy();
+      fireEvent.click(within(held).getByRole('button', { name: 'Give back' }));
+      await vi.waitFor(() => expect(requests).toContain('POST /v1/handoffs/hnd_me/done'));
+    } finally {
+      overview.handoffs.pop();
+    }
   });
 
   it('shows a handoff that has no computer card, with Take over', async () => {

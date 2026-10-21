@@ -265,11 +265,11 @@ The terminal socket carries raw bytes as stdin/stdout, with one JSON control fra
 resize: `{"type":"resize","cols":n,"rows":n}`.
 
 ```
-WS   /v1/computers/:id/screen
+WS   /v1/computers/:id/screen?fps=1..4
 ```
 
 The computer's browser, live, while the socket is open: `{"type":"frame","data":<base64 jpeg>,"width":n,"height":n}`
-up to four times a second, or `{"type":"idle"}` once while no browser is open. It never
+up to four times a second (or `fps`, for a small screen among many), or `{"type":"idle"}` once while no browser is open. It never
 launches one. The driver answers one request at a time from inside the computer, so this
 asks for each frame rather than subscribing to Chrome's own screencast.
 
@@ -389,6 +389,18 @@ Only `POST .../done` resumes the run. There is no timeout and a dropped connecti
 does not count, so a tunnel that falls over mid-login leaves the run waiting. The run's
 `timeoutSec` stops counting while the person holds it. Cancelling the run ends the wait.
 A run with nobody to take the handoff refuses it at once rather than waiting.
+
+#### Taking a computer at any moment
+
+```
+POST   /v1/computers/:id/takeover  -> 201 PendingHandoff (runId "person"), or the handoff already open
+```
+
+The person takes the computer from its chat without being asked. While it is held, a
+chat's call to `POST /v1/computers/:id/tools/:name` waits up to 45 seconds for it to
+come back, then runs; still held, it answers with an error telling the model it is
+paused. Only `POST /v1/handoffs/:handoffId/done` (Give back) ends it: there is no lease,
+and a chat's `hand_off_done` cannot, since the chat never opened it.
 
 #### A chat's handoffs
 
