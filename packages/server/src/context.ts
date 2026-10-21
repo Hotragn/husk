@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { ActivityLog } from './activity.js';
 import type { ResolvedDeps } from './deps.js';
 import { EventBus } from './events.js';
 import { Runner } from './runner.js';
@@ -11,6 +12,8 @@ export interface ServerContext {
   runner: Runner;
   scheduler: CronScheduler;
   triggers?: TriggerHost;
+  /** Every tool call on every computer, chats included, for the console's timeline. */
+  activity: ActivityLog;
 }
 
 export function createContext(deps: ResolvedDeps, opts: { approvalTimeoutMs?: number } = {}): ServerContext {
@@ -19,7 +22,7 @@ export function createContext(deps: ResolvedDeps, opts: { approvalTimeoutMs?: nu
   const scheduler = new CronScheduler({
     onError: (err, job) => deps.log.error(`cron job ${job.id} failed`, err),
   });
-  return { deps, bus, runner, scheduler };
+  return { deps, bus, runner, scheduler, activity: new ActivityLog() };
 }
 
 export function ctxOf(app: FastifyInstance): ServerContext {

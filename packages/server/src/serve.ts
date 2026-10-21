@@ -1,4 +1,5 @@
-import { createLogger, ensurePaths } from '@husk-ai/core';
+import { randomBytes } from 'node:crypto';
+import { HUSK_VERSION, clearDaemonRecord, createLogger, ensurePaths, writeDaemonRecord } from '@husk-ai/core';
 import type { Logger, ModelProvider } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
@@ -13,6 +14,14 @@ export interface ServeOptions extends Partial<ServerConfig> {
   deps?: Partial<ServerDeps>;
   /** Interval for the computer reaper. 0 disables it. */
   reaperIntervalMs?: number;
+  /** Extra routes; see `CreateAppOptions.plugins`. */
+  plugins?: CreateAppOptions['plugins'];
+  /**
+   * Be the machine's one Husk: write ~/.husk/daemon.json so chats' MCP processes
+   * find this server, and mint a token when none was given, because a process
+   * started on a chat's behalf has nobody to configure one.
+   */
+  daemon?: boolean;
 }
 
 export interface RunningServer {
@@ -122,8 +131,9 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
   const log = opts.logger ?? createLogger({ scope: 'husk' });
   ensurePaths();
 
-  const { logger: _logger, deps: injected, reaperIntervalMs, ...configish } = opts;
+  const { logger: _logger, deps: injected, reaperIntervalMs, plugins, daemon, ...configish } = opts;
   const config = resolveConfig(configish);
+  if (daemon && !config.token) config.token = randomBytes(32).toString('hex');
   const built = await createDefaultDeps(config, log);
 
   const appOptions: CreateAppOptions = {
@@ -133,6 +143,7 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
     modelProviders: injected?.modelProviders ?? built.modelProviders,
     logger: log,
     config,
+    ...(plugins ? { plugins } : {}),
   };
   if (injected?.agentFactory) appOptions.agentFactory = injected.agentFactory;
 
@@ -148,12 +159,16 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
   const url = `http://${config.host.includes(':') ? `[${config.host}]` : config.host}:${port}`;
 
   log.info(`husk serve listening on ${url}`);
+  if (daemon) {
+    writeDaemonRecord({ url, token: config.token ?? null, pid: process.pid, version: HUSK_VERSION, startedAt: new Date().toISOString() });
+  }
   if (!config.token) log.info('no HUSK_TOKEN set -- loopback connections only');
 
   let closing: Promise<void> | undefined;
   const close = async (): Promise<void> => {
     closing ??= (async () => {
       log.info('shutting down');
+      if (daemon) clearDaemonRecord();
       ctx.triggers?.stop();
       ctx.scheduler.stop();
       ctx.deps.manager.stopReaper?.();

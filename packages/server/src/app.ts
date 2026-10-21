@@ -28,6 +28,11 @@ export interface CreateAppOptions extends ServerDeps {
   unsafeAllowAnyBind?: boolean;
   approvalTimeoutMs?: number;
   workspaceStore?: WorkspaceStore;
+  /**
+   * Extra routes, registered after the API and before the console's catch-all.
+   * This is how `@husk-ai/mcp` adds the tool route without the server importing it.
+   */
+  plugins?: Array<(app: FastifyInstance) => Promise<void> | void>;
 }
 
 /**
@@ -111,6 +116,8 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     host.start();
     log.debug(`mounted ${host.list().length} trigger(s)`);
   }
+
+  for (const plugin of options.plugins ?? []) await plugin(app);
 
   // Last: it installs the SPA fallback not-found handler, which must not shadow
   // any API route registered above.

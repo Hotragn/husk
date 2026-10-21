@@ -29,6 +29,8 @@ export type {
 } from './deps.js';
 
 export { createContext, ctxOf } from './context.js';
+export { ActivityLog, summarise } from './activity.js';
+export type { ActivityEntry } from './activity.js';
 export type { ServerContext } from './context.js';
 
 export { Runner } from './runner.js';

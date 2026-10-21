@@ -16,7 +16,9 @@ import type { Computer, ComputerInfo, ComputerSpec, Logger } from '@husk-ai/core
 import { ComputerManager, ensureRunning } from '@husk-ai/runtime';
 import { audited } from '@husk-ai/core';
 import { callTool, toolsFor } from './tools.js';
-import type { ToolDef } from './tools.js';
+import type { ToolDef, ToolResult } from './tools.js';
+import { DaemonUnreachable, connectDaemon } from './daemon.js';
+import type { DaemonClient } from './daemon.js';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { HandoffRegistry, ScopedTokens, computerLink, handoffLink, startWorkspaceViewer } from '@husk-ai/server/workspace-viewer';
 import { CARD_APP_TOOLS, CARD_APP_TOOL_NAMES, CARD_HTML, CARD_MIME, CARD_URI, OPEN_UI_TOOL, UI_EXTENSION } from './card.js';
@@ -39,6 +41,8 @@ export interface HuskMcpOptions {
    * computer is never destroyed by Husk: only the user deletes it.
    */
   ephemeral?: boolean;
+  /** Forward computer tools to the shared Husk, starting it if needed. Default true; HUSK_DAEMON=off also disables it. */
+  daemon?: boolean;
   /** Stop a computer after this long with no tool call. Default 10 minutes. */
   idleStopMs?: number;
   logger?: Logger;
@@ -122,6 +126,9 @@ export class HuskMcpServer {
   private readonly workspaceStore: WorkspaceStore;
   private readonly workspaceTools: WorkspaceTools;
   private viewer?: Promise<{ url: string; origin: string; close: () => Promise<void> }>;
+  /** The shared Husk, found on the first computer tool call. */
+  private daemon?: Promise<DaemonClient | undefined>;
+  private readonly useDaemon: boolean;
   /** Handoffs open in this session. A person ends one; closing the session ends them all. */
   private readonly handoffs = new HandoffRegistry();
   private readonly closing = new AbortController();
@@ -142,6 +149,7 @@ export class HuskMcpServer {
     this.identity = this.namedSession ? 'named' : this.hostSessionId ? 'session' : 'first-call';
     this.spec = opts.spec ?? {};
     this.ephemeral = opts.ephemeral ?? true;
+    this.useDaemon = opts.daemon ?? true;
     this.idleStopMs = opts.idleStopMs ?? 10 * 60 * 1000;
     this.profile = opts.profile ?? 'computer';
     this.workspaceStore = opts.workspaceStore ?? new WorkspaceStore();
@@ -228,13 +236,7 @@ export class HuskMcpServer {
       this.busy(computer.id, +1);
       let result: Awaited<ReturnType<typeof callTool>>;
       try {
-        result = await audited(
-          { computerId: computer.id, via: 'mcp', tool: name, args: toolArgs },
-          () => callTool(computer, name, toolArgs),
-          // MCP tools report failure in the result rather than by throwing, so
-          // the wrapper is told how to recognise one.
-          (r) => (r.isError ? firstText(r.content) : undefined),
-        );
+        result = await this.runTool(computer, name, toolArgs, extra.signal);
       } finally {
         this.busy(computer.id, -1);
       }
@@ -252,6 +254,33 @@ export class HuskMcpServer {
       const card = name === 'computer_info' && this.rendersCards() ? { structuredContent: { ...(await this.cardState(computer.id)) } } : {};
       return { content, ...card, ...(result.isError ? { isError: true } : {}) };
     });
+  }
+
+  /**
+   * Run a computer tool in the shared Husk when there is one, so it owns this
+   * chat's browser and the console sees the call; otherwise here, as before.
+   * The shared Husk audits the calls it runs, so they are audited once either way.
+   */
+  private async runTool(computer: Computer, name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<ToolResult> {
+    const daemon = await (this.daemon ??= this.useDaemon ? connectDaemon({ log: this.log }) : Promise.resolve(undefined));
+    if (daemon) {
+      try {
+        return await daemon.callTool(computer.id, name, args, signal);
+      } catch (err) {
+        if (!(err instanceof DaemonUnreachable)) {
+          return { isError: true, content: [{ type: 'text', text: redact(`the shared husk did not answer: ${(err as Error).message}`) }] };
+        }
+        this.log.warn(`${(err as Error).message}; running tools in this process from now on`);
+        this.daemon = Promise.resolve(undefined);
+      }
+    }
+    return audited(
+      { computerId: computer.id, via: 'mcp', tool: name, args },
+      () => callTool(computer, name, args),
+      // MCP tools report failure in the result rather than by throwing, so
+      // the wrapper is told how to recognise one.
+      (r) => (r.isError ? firstText(r.content) : undefined),
+    );
   }
 
   /** One honest line about what this machine actually is. */

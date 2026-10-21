@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG, HuskError } from '@husk-ai/core';
+import { DEFAULT_CONFIG, HuskError, readDaemonRecord } from '@husk-ai/core';
 import { parse, parseCount } from '../args.js';
 import { orientBriefly } from '../lib/first-run.js';
 import { interruptSignal } from '../signal.js';
@@ -19,7 +19,7 @@ interface RunningServer {
 }
 
 interface ServerModule {
-  serve(opts: { host: string; port: number }): Promise<RunningServer>;
+  serve(opts: { host: string; port: number; daemon?: boolean; plugins?: unknown[] }): Promise<RunningServer>;
 }
 
 export async function run(argv: string[]): Promise<number> {
@@ -44,7 +44,11 @@ export async function run(argv: string[]): Promise<number> {
 
   let server: RunningServer;
   try {
-    server = await mod.serve({ host, port });
+    // The machine's one Husk: chats' MCP processes find it through
+    // ~/.husk/daemon.json and run their computer tools here, so the console
+    // sees every chat as well as every husk run.
+    const { toolRoutes } = await import('@husk-ai/mcp/tool-routes');
+    server = await mod.serve({ host, port, daemon: true, plugins: [toolRoutes] });
   } catch (err) {
     spin.stop();
     if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
@@ -60,6 +64,8 @@ export async function run(argv: string[]): Promise<number> {
   }
 
   ui.print(`${ui.green('✓')} control plane on ${ui.bold(server.url)}`);
+  const token = readDaemonRecord()?.token;
+  if (token) ui.print(`  console  ${server.url}/#token=${token}   ${ui.dim('(the token is in ~/.husk/daemon.json)')}`);
   ui.print(ui.dim(`  health   ${server.url}/health`));
   ui.print(ui.dim(`  doctor   ${server.url}/v1/doctor`));
   ui.print(ui.dim(`  clients  new HuskClient({ baseUrl: "${server.url}" })  // @husk-ai/sdk`));

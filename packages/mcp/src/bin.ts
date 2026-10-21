@@ -25,6 +25,9 @@ options
   --memory <mb>       memory ceiling
   --cpus <n>          cpu ceiling
   --keep              leave the machine running after the client disconnects
+  --daemon            run the shared Husk that every chat's tools go through
+                      (started for you on the first tool call; HUSK_DAEMON=off
+                      keeps tools in each chat's own process)
   -h, --help
 
 install into claude code
@@ -46,6 +49,7 @@ async function main(): Promise<void> {
         memory: { type: 'string' },
         cpus: { type: 'string' },
         keep: { type: 'boolean', default: false },
+        daemon: { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
       },
       strict: true,
@@ -59,6 +63,11 @@ async function main(): Promise<void> {
   if (values.help) {
     process.stderr.write(HELP);
     process.exit(0);
+  }
+
+  if (values.daemon) {
+    await runDaemon();
+    return;
   }
 
   const spec: ComputerSpec = {};
@@ -91,6 +100,24 @@ async function main(): Promise<void> {
   process.stdin.on('close', () => void shutdown('stdin closed'));
 
   await server.connectStdio();
+}
+
+/**
+ * The shared control plane, started detached by the first chat that needs it.
+ * A second one losing the race for the port is the expected outcome, not an
+ * error: the first is already serving.
+ */
+async function runDaemon(): Promise<void> {
+  const [{ serve }, { toolRoutes }] = await Promise.all([import('@husk-ai/server'), import('./tool-routes.js')]);
+  try {
+    await serve({ daemon: true, plugins: [toolRoutes] });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+      process.stderr.write('husk daemon: the port is taken, so another Husk is already serving; exiting\n');
+      process.exit(0);
+    }
+    throw err;
+  }
 }
 
 main().catch((err) => {

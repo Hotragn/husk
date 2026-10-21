@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { HuskError, clampText } from '@husk-ai/core';
 import type { Computer, ComputerInfo, ComputerSpec, ExecRequest, ExecResult } from '@husk-ai/core';
+import type { ActivityEntry } from '../activity.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ctxOf } from '../context.js';
@@ -91,11 +92,23 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
 
   // Everything the console's overview needs, in one call: every computer, what
   // each run is doing and which computer it is on, and who is waiting on a person.
-  app.get('/v1/overview', async () => ({
-    computers: await manager.list(),
-    activeRuns: ctx.runner.listActive(),
-    handoffs: ctx.runner.handoffs.list(),
-  }));
+  app.get('/v1/overview', async () => {
+    const computers = await manager.list();
+    // The last tool call on each computer, so a chat's computer shows what it is
+    // doing even though no husk run is driving it.
+    const activity: Record<string, ActivityEntry> = {};
+    for (const c of computers) {
+      const last = ctx.activity.latest(c.id);
+      if (last) activity[c.id] = last;
+    }
+    return { computers, activeRuns: ctx.runner.listActive(), handoffs: ctx.runner.handoffs.list(), activity };
+  });
+
+  app.get('/v1/computers/:id/activity', async (req) => {
+    const { id } = req.params as { id: string };
+    await mustGet(app, id);
+    return { entries: ctx.activity.list(id) };
+  });
 
   app.post('/v1/computers', async (req: FastifyRequest, reply: FastifyReply) => {
     const spec = parseOr422(ComputerSpecSchema, req.body) as ComputerSpec;
