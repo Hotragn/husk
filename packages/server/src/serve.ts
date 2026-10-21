@@ -154,7 +154,7 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
   const close = async (): Promise<void> => {
     closing ??= (async () => {
       log.info('shutting down');
-      ctx.triggers?.stop();
+      await ctx.triggers?.stop();
       ctx.scheduler.stop();
       ctx.deps.manager.stopReaper?.();
       const cancelled = ctx.runner.cancelAll('server shutting down');

@@ -382,7 +382,7 @@ describe('chat triggers', { timeout: 30_000 }, () => {
   it('keeps a running adapter across an unrelated sync, and stops it when the husk goes', async () => {
     const fake = fakeAdapters();
     harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
-    await addHusk([{ type: 'slack' }]);
+    await addHusk([{ type: 'slack', channels: ['C1'] }]);
     await addHusk([{ type: 'http', path: '/' }], 'other');
     expect(fake.started).toHaveLength(1);
     expect(fake.stopped()).toBe(0);
@@ -398,7 +398,7 @@ describe('chat triggers', { timeout: 30_000 }, () => {
       method: 'POST',
       url: '/v1/husks',
       headers: { authorization: 'Bearer secret' },
-      payload: { spec: { ...sampleSpec(), triggers: [{ type: 'slack' }] } },
+      payload: { spec: { ...sampleSpec(), triggers: [{ type: 'slack', channels: ['C1'] }] } },
     });
     fake.started[0]!.ctx.mountHttp!('/slack/events', async (req) => ({
       status: 200,
@@ -411,5 +411,30 @@ describe('chat triggers', { timeout: 30_000 }, () => {
 
     const miss = await harness.app.inject({ method: 'POST', url: '/v1/a/triage/nothing', payload: 'ping' });
     expect(miss.statusCode).toBe(404);
+  });
+
+  it('refuses a bot that would answer anyone', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await addHusk([{ type: 'discord' }, { type: 'telegram' }]);
+    expect(fake.started).toHaveLength(0);
+    const listed = (await harness.app.inject({ method: 'GET', url: '/v1/triggers' })).json().triggers;
+    expect(listed).toContainEqual(expect.objectContaining({ type: 'discord', detail: expect.stringContaining('not started') }));
+  });
+
+  it('gives each platform to one husk, because one token cannot serve two', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await addHusk([{ type: 'discord', channels: ['1'] }], 'first');
+    await addHusk([{ type: 'discord', channels: ['2'] }], 'second');
+    expect(fake.started.map((s) => s.ctx.husk)).toEqual(['first']);
+  });
+
+  it('starts one adapter even when two syncs race', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await harness.app.inject({ method: 'POST', url: '/v1/husks', payload: { spec: { ...sampleSpec('bot'), triggers: [{ type: 'telegram', allowlist: ['a'] }] } } });
+    await Promise.all([harness.app.inject({ method: 'POST', url: '/v1/husks', payload: { spec: sampleSpec('x') } }), harness.app.inject({ method: 'POST', url: '/v1/husks', payload: { spec: sampleSpec('y') } })]);
+    expect(fake.started).toHaveLength(1);
   });
 });

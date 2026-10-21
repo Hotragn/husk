@@ -123,7 +123,7 @@ export function detectShell(force = false): ShellPlan {
       // still fail with "Catastrophic failure / Wsl/Service/E_UNEXPECTED", and
       // wsl.exe exits 0 while printing it -- so trust the marker, not the code.
       for (const distro of distros) {
-        if (wslWorks(distro)) {
+        if (wslWorks(distro, spawnSync, !force && !stale)) {
           downgradedAt = undefined;
           cachedShell = { kind: 'wsl', distro, label: `WSL2 (${distro})` };
           return cachedShell;
@@ -150,7 +150,7 @@ export function detectShell(force = false): ShellPlan {
 /**
  * Use this plan instead of probing, or `undefined` to probe again.
  *
- * Probing runs `wsl.exe` synchronously with 8s and 15s timeouts, so on a
+ * Probing runs `wsl.exe` synchronously with 8s and 15s timeouts (15s and 30s on the first run), so on a
  * Windows host with a slow or broken WSL anything that creates a local computer
  * takes as long as WSL takes to fail. Tests about something other than shell
  * detection pin a plan here rather than inheriting that.
@@ -168,8 +168,10 @@ const WSL_MARKER = 'husk-wsl-ok';
  * outlast 15s while the probe itself is what started it (#110). A distro that
  * answers with an error is broken now, and is not retried.
  */
-export function wslWorks(distro: string, run: typeof spawnSync = spawnSync): boolean {
-  for (const timeout of [15_000, 30_000]) {
+export function wslWorks(distro: string, run: typeof spawnSync = spawnSync, retry = true): boolean {
+  // Only the first detection retries. A re-check inside a running server is
+  // synchronous, and a hung distro must not freeze it for 45 seconds.
+  for (const timeout of retry ? [15_000, 30_000] : [15_000]) {
     try {
       const probe = run('wsl.exe', ['-d', distro, '-e', 'echo', WSL_MARKER], { timeout, windowsHide: true });
       if ((probe.stdout?.toString('utf8') ?? '').replace(/\0/g, '').includes(WSL_MARKER)) return true;
@@ -751,10 +753,13 @@ class LocalComputer implements Computer {
   async stat(path: string): Promise<DirEntry | null> {
     this.assertLive();
     try {
-      const [h, st] = await this.viaGuestLinks(path, async (p) => [p, await stat(p)] as const);
+      const st = await this.viaGuestLinks(path, (p) => stat(p));
+      // The path that was asked for, even when it is a link: a caller asking
+      // about /work/link.txt is told about /work/link.txt.
+      const guest = normaliseGuestPath(path, this.info.workdir);
       return {
-        name: h.split(/[\\/]/).pop() ?? '',
-        path: toGuestPath(h, this.jail),
+        name: guest.split('/').pop() ?? '',
+        path: guest,
         type: st.isDirectory() ? 'dir' : st.isFile() ? 'file' : 'other',
         size: st.size,
         modifiedAt: st.mtime.toISOString(),

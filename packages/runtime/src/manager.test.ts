@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createLogger } from '@husk-ai/core';
 import type { Availability, Computer, ComputerInfo, ComputerProvider, ComputerSpec } from '@husk-ai/core';
@@ -243,6 +246,25 @@ describe('one computer per name (#112)', () => {
       code: 'E_SPEC_INVALID',
       message: expect.stringContaining('cmp_1'),
     });
+  });
+
+  it('gives a keyed computer its own name when a husk run and the server both want "triage"', async () => {
+    const home = process.env.HUSK_HOME;
+    process.env.HUSK_HOME = mkdtempSync(join(tmpdir(), 'husk-ensure-'));
+    try {
+      const p = new FakeProvider('docker', 1, up(true));
+      p.list = async () => [info({ name: 'triage', spec: { labels: { 'husk.key': 'husk:triage' } } } as Partial<ComputerInfo>)];
+      let made: ComputerSpec | undefined;
+      p.create = async (spec) => {
+        made = spec;
+        return { id: 'cmp_2', info: info({ id: 'cmp_2', name: spec.name }) } as Computer;
+      };
+      await manager([p]).ensure('triage', { name: 'triage' });
+      expect(made?.name).toMatch(/^triage-[0-9a-f]{6}$/);
+    } finally {
+      if (home === undefined) delete process.env.HUSK_HOME;
+      else process.env.HUSK_HOME = home;
+    }
   });
 
   it('lets a destroyed computer give its name back', async () => {

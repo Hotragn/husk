@@ -51,7 +51,16 @@ triggers:
 
 Each one starts a chat adapter from `@husk-ai/adapters` inside `husk serve`. A message
 the adapter accepts becomes a run of that husk, and the run's final text is the reply.
-One of each type per husk; a second is ignored with an error in the log.
+
+Three rules, each logged and shown in `GET /v1/triggers` when it stops a trigger:
+
+- **Say who it answers.** A `discord` or `slack` trigger needs `channels`, and a
+  `telegram` one needs an `allowlist`. With neither it would answer anyone who can
+  reach the bot, and the bot runs commands on a computer, so it is not started.
+- **One husk per platform.** A bot token is one bot, so a second husk with a `discord`
+  trigger is not started while another has it.
+- **One computer per husk.** Everyone the bot answers shares that husk's computer and
+  its files.
 
 The token is read from the server's environment when the adapter starts, so set it
 before `husk serve`. With no token the adapter stays idle, and `GET /v1/triggers` says
@@ -66,7 +75,9 @@ an unrelated change does not drop the Discord connection. Deleting the husk stop
 `husk serve` with `adapters: false` in its config starts none of them.
 
 The Slack Events API route is the one route under `/v1/` that does not take the server
-token, because Slack cannot send it. The adapter checks Slack's signature on the raw
+token, because Slack cannot send it. It is only reachable through a tunnel when
+`husk serve` has a `HUSK_TOKEN`: without one, the server answers loopback addresses
+only. Socket Mode needs neither. The adapter checks Slack's signature on the raw
 body before anything runs, and answers only on the path it mounted.
 
 ## http
