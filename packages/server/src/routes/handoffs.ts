@@ -146,22 +146,19 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(201).send({ ...opened!, token: ctx.scoped.mint(`computer:${id}`) });
   });
 
-  // The person takes a computer whenever they choose, from the console. No
-  // lease: only their Give back (done) ends it, or the server closing.
+  // The person takes a computer whenever they choose, from the console or from
+  // a chat's link. No lease: only their Give back (done) ends it, or the server
+  // closing. Unlike a chat's handoff, ending it revokes no link.
+  const take = (id: string) =>
+    takeOver(ctx.runner.handoffs, id, chatHandoffs.signal, {
+      opened: (h) => ctx.bus.emit('runs', 'handoff_requested', h),
+      ended: (outcome) => ctx.bus.emit('runs', outcome === 'done' ? 'handoff_completed' : 'handoff_cancelled', { computerId: id }),
+    });
   app.post('/v1/computers/:id/takeover', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
     if (!(await ctx.deps.manager.get(id))) throw notFound('computer', id);
-    // Already waiting for a person: that one is theirs to finish.
-    const held = ctx.runner.handoffs.list().find((h) => h.computerId === id);
-    if (held) return held;
-    let opened: PendingHandoff | undefined;
-    void ctx.runner.handoffs
-      .request({ runId: PERSON_RUN, husk: 'you', reason: 'You took over this computer', computerId: id, signal: chatHandoffs.signal }, (p) => {
-        opened = p;
-      })
-      .then((outcome) => ctx.bus.emit('runs', outcome === 'done' ? 'handoff_completed' : 'handoff_cancelled', { computerId: id }));
-    ctx.bus.emit('runs', 'handoff_requested', opened);
-    return reply.code(201).send(opened);
+    const { handoff, created } = take(id);
+    return reply.code(created ? 201 : 200).send(handoff);
   });
 
   app.delete('/v1/handoffs/:handoffId', async (req: FastifyRequest) => {
@@ -186,8 +183,31 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
       return { computerId: id, ...(label ? { label } : {}), state: c.info.state };
     },
     registry: ctx.runner.handoffs,
+    takeOver: take,
   });
   app.addHook('onClose', async () => chatHandoffs.abort());
+}
+
+/**
+ * The person takes a computer: the handoff already waiting on it, which is
+ * theirs to finish, or a new one that only their done (or `signal`) ends.
+ */
+export function takeOver(
+  registry: HandoffRegistry,
+  computerId: string,
+  signal: AbortSignal,
+  on: { opened?: (handoff: PendingHandoff) => void; ended?: (outcome: string) => void } = {},
+): { handoff: PendingHandoff; created: boolean } {
+  const held = registry.list().find((h) => h.computerId === computerId);
+  if (held) return { handoff: held, created: false };
+  let opened: PendingHandoff | undefined;
+  void registry
+    .request({ runId: PERSON_RUN, husk: 'you', reason: 'You took over this computer', computerId, signal }, (p) => {
+      opened = p;
+    })
+    .then((outcome) => on.ended?.(outcome));
+  on.opened?.(opened!);
+  return { handoff: opened!, created: true };
 }
 
 /** A chat's computer, as its card and its link see it. */
@@ -199,12 +219,18 @@ export interface ScopedComputer {
 
 /**
  * What a computer link opens: the computer's state and the handoff waiting on
- * it, and a read-only look at its browser. Taking over goes through a handoff.
- * Shared by the control plane and the per-chat viewer.
+ * it, a look at its browser, and Take over, which opens a handoff on that one
+ * computer. The handoff's own routes (screen, input, done) then work with the
+ * same link. Shared by the control plane and the per-chat viewer.
  */
 export function registerScopedComputerRoutes(
   app: FastifyInstance,
-  opts: { scopeOf: (req: FastifyRequest) => string | undefined; describe: (id: string) => Promise<ScopedComputer | undefined>; registry: HandoffRegistry },
+  opts: {
+    scopeOf: (req: FastifyRequest) => string | undefined;
+    describe: (id: string) => Promise<ScopedComputer | undefined>;
+    registry: HandoffRegistry;
+    takeOver: (computerId: string) => { handoff: PendingHandoff; created: boolean };
+  },
 ): void {
   const notYours = () =>
     huskError('E_COMPUTER_NOT_FOUND', 'no computer with that link', {
@@ -220,6 +246,13 @@ export function registerScopedComputerRoutes(
     const computer = await opts.describe(id);
     if (!computer) throw notYours();
     return { ...computer, handoff: opts.registry.list().find((h) => h.computerId === id) ?? null };
+  });
+  // The link's own computer, and no other: the id comes from the token, never the request.
+  app.post('/v1/scoped/computer/takeover', async (req, reply) => {
+    const id = computerOf(req);
+    if (!(await opts.describe(id))) throw notYours();
+    const { handoff, created } = opts.takeOver(id);
+    return reply.code(created ? 201 : 200).send(handoff);
   });
   app.get('/v1/scoped/computer/screen', async (req, reply) => {
     const page = livePageFor(computerOf(req));

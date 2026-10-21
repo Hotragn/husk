@@ -487,6 +487,11 @@ export class HuskApi {
     return this.frame('/v1/scoped/computer/screen', signal);
   }
 
+  /** `POST /v1/scoped/computer/takeover`: take the link's computer from its chat, as Take over on the console does. */
+  scopedTakeOver(): Promise<PendingHandoff> {
+    return this.client.http.request<PendingHandoff>('POST', '/v1/scoped/computer/takeover');
+  }
+
   /** `GET /v1/handoffs/:id`: one open handoff, e.g. the one a handoff link opens. */
   getHandoff(handoffId: string, signal?: AbortSignal): Promise<PendingHandoff> {
     return this.client.http.request<PendingHandoff>('GET', `/v1/handoffs/${enc(handoffId)}`, {

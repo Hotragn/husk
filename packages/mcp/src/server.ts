@@ -20,7 +20,7 @@ import type { ToolDef, ToolResult } from './tools.js';
 import { DaemonUnreachable, RunLocally, connectDaemon } from './daemon.js';
 import type { DaemonClient } from './daemon.js';
 import { WorkspaceStore } from '@husk-ai/workspaces';
-import { HandoffRegistry, ScopedTokens, computerLink, handoffLink, startWorkspaceViewer } from '@husk-ai/server/workspace-viewer';
+import { HandoffRegistry, PERSON_RUN, ScopedTokens, computerLink, handoffLink, startWorkspaceViewer, takenText } from '@husk-ai/server/workspace-viewer';
 import { CARD_APP_TOOLS, CARD_APP_TOOL_NAMES, CARD_HTML, CARD_MIME, CARD_URI, OPEN_UI_TOOL, UI_EXTENSION } from './card.js';
 import type { CardState } from './card.js';
 import type { WorkspaceProfile } from '@husk-ai/server/workspace-viewer';
@@ -240,7 +240,9 @@ export class HuskMcpServer {
       // type into the page they are signing in on, or run commands under them.
       const held = this.handoffs.list().find((h) => !h.computerId || h.computerId === computer.id);
       if (held && name !== 'computer_info') {
-        return { isError: true, content: [{ type: 'text', text: heldText(held.handoffId, held.reason) }] };
+        // Taken from a link, not handed off by the model: only the person's Give back ends it.
+        const text = held.runId === PERSON_RUN ? takenText(held.handoffId) : heldText(held.handoffId, held.reason);
+        return { isError: true, content: [{ type: 'text', text }] };
       }
 
       // Every call, at the one place they all pass through. An audit log that
@@ -262,7 +264,10 @@ export class HuskMcpServer {
           this.identity === 'first-call'
             ? ` Your computer id is ${computer.id}: pass computer: "${computer.id}" on every later Husk call in this conversation.`
             : '';
-        content.unshift({ type: 'text', text: `${this.isolationNote(computer)}${carry}\n` });
+        // A client that renders no card (Claude Code, most terminals) shows nothing
+        // of the computer unless the model passes a link on.
+        const link = this.rendersCards() ? '' : await this.announceLink(computer.id);
+        content.unshift({ type: 'text', text: `${this.isolationNote(computer)}${carry}${link}\n` });
       }
       // computer_info is where a chat's card first appears; it needs the state, never a token.
       const card = name === 'computer_info' && this.rendersCards() ? { structuredContent: { ...(await this.cardState(computer.id)) } } : {};
@@ -689,6 +694,17 @@ export class HuskMcpServer {
     return { content: [{ type: 'text', text: url }], structuredContent: { url } };
   }
 
+  /** The link for a chat's first computer call, or nothing if one cannot be made: the call itself already ran. */
+  private async announceLink(computerId: string): Promise<string> {
+    try {
+      const url = await this.linkFor(computerId);
+      return ` Tell the user they can watch this computer live and take it over at ${url} (it expires after 10 minutes unused).`;
+    } catch (err) {
+      this.log.warn(`no link for ${computerId}: ${(err as Error).message}`);
+      return '';
+    }
+  }
+
   /** The plain-link fallback: what a card would open, as text the model can pass on. */
   private async openUi(args: Record<string, unknown>): Promise<CallToolResult> {
     // Opens a computer this chat already has; it never creates one just to show it.
@@ -726,6 +742,8 @@ export class HuskMcpServer {
     const handoffId = [...this.remoteHandoffs].find(([, remote]) => remote === given)?.[0] ?? given;
     if (this.handedBack.has(handoffId)) return { content: [{ type: 'text', text: HANDED_BACK }] };
     if (!this.handoffs.isOpen(handoffId)) throw new Error(`There is no open handoff "${handoffId}".`);
+    // The person took it; the model cannot take it back for them.
+    if (this.handoffs.list().find((h) => h.handoffId === handoffId)?.runId === PERSON_RUN) throw new Error(takenText(handoffId));
     await this.completeHandoff(handoffId);
     return { content: [{ type: 'text', text: HANDED_BACK }] };
   }

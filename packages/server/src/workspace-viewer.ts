@@ -9,7 +9,7 @@ import { bearerToken, hostnameOf, isLoopbackHost } from './auth.js';
 import { sendError } from './errors.js';
 import type { HandoffRegistry } from './handoffs.js';
 import type { ScopedTokens } from './scoped-tokens.js';
-import { registerHandoffRoutes, registerScopedComputerRoutes, scopeCovers } from './routes/handoffs.js';
+import { registerHandoffRoutes, registerScopedComputerRoutes, scopeCovers, takeOver } from './routes/handoffs.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 
 export type WorkspaceProfile = 'starter' | 'computer';
@@ -55,7 +55,7 @@ export async function createWorkspaceViewer(options: WorkspaceViewerOptions = {}
     reply.header('Cache-Control', 'no-store');
     reply.header('Referrer-Policy', 'no-referrer');
     reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     return payload;
   });
   app.get('/health', async () => ({ ok: true, version: HUSK_VERSION, mode: 'starter', profile: options.getProfile?.() ?? 'starter', uptimeSec: Math.floor(process.uptime()) }));
@@ -75,13 +75,16 @@ export async function createWorkspaceViewer(options: WorkspaceViewerOptions = {}
   if (options.handoffs) {
     const { registry, tokens, describe } = options.handoffs;
     const scopeOf = (req: FastifyRequest): string | undefined => tokens.verify(bearerToken(req) ?? '');
+    // A person's take-over ends with their Give back, or with this viewer.
+    const closing = new AbortController();
+    app.addHook('onClose', async () => closing.abort());
     await app.register(async (scoped) => {
       scoped.setErrorHandler((error, _req, reply) => sendError(reply, error));
       registerHandoffRoutes(scoped, {
         registry,
         authorize: (req, h) => scopeCovers(scopeOf(req), h),
       });
-      registerScopedComputerRoutes(scoped, { scopeOf, describe, registry });
+      registerScopedComputerRoutes(scoped, { scopeOf, describe, registry, takeOver: (id) => takeOver(registry, id, closing.signal) });
     });
   }
   await app.register((await import('@fastify/static')).default, { root: options.consoleDir ?? consoleAssetsPath, prefix: '/', index: ['index.html'] });
@@ -109,6 +112,6 @@ export function computerLink(origin: string, computerId: string, token: string):
   return `${origin}/#computer=${encodeURIComponent(computerId)}&token=${encodeURIComponent(token)}`;
 }
 
-export { HandoffRegistry, heldText } from './handoffs.js';
+export { HandoffRegistry, PERSON_RUN, heldText, takenText } from './handoffs.js';
 export { ScopedTokens } from './scoped-tokens.js';
 export type { PendingHandoff } from './handoffs.js';
