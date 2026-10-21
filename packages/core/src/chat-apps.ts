@@ -32,14 +32,34 @@ export interface ChatApp {
 export interface HuskLaunch {
   command: string;
   args: string[];
+  env?: Record<string, string>;
 }
 
-/** `npx -y @husk-ai/mcp`, plus the computer the person chose. */
-export function huskLaunch(choice: { provider?: string; flavor?: string } = {}): HuskLaunch {
-  const args = ['-y', '@husk-ai/mcp'];
+/**
+ * How this install of Husk is started. `npx -y @husk-ai/mcp` by default. The
+ * Husk desktop app sets HUSK_LAUNCH on the Husk it runs, naming its own
+ * bundled copy, so the apps it connects need no Node install of their own.
+ */
+export function baseLaunch(env: NodeJS.ProcessEnv = process.env): HuskLaunch {
+  const npx: HuskLaunch = { command: 'npx', args: ['-y', '@husk-ai/mcp'] };
+  if (!env.HUSK_LAUNCH) return npx;
+  try {
+    const l = JSON.parse(env.HUSK_LAUNCH) as Partial<HuskLaunch>;
+    const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
+    if (typeof l.command !== 'string' || !strings(l.args)) return npx;
+    const vars = l.env && typeof l.env === 'object' ? Object.fromEntries(Object.entries(l.env).filter(([, v]) => typeof v === 'string')) : undefined;
+    return { command: l.command, args: l.args, ...(vars && Object.keys(vars).length ? { env: vars as Record<string, string> } : {}) };
+  } catch {
+    return npx;
+  }
+}
+
+/** This install's launch line, plus the computer the person chose. */
+export function huskLaunch(choice: { provider?: string; flavor?: string } = {}, base: HuskLaunch = baseLaunch()): HuskLaunch {
+  const args = [...base.args];
   if (choice.provider && choice.provider !== 'auto') args.push('--provider', choice.provider);
   if (choice.flavor) args.push('--flavor', choice.flavor);
-  return { command: 'npx', args };
+  return { ...base, args };
 }
 
 interface FileApp {
@@ -93,6 +113,10 @@ export function onPath(bin: string): boolean {
   return (process.env.PATH ?? '').split(delimiter).some((dir) => dir && exts.some((ext) => existsSync(join(dir, bin + ext))));
 }
 
+function envFlags(flag: string, l: HuskLaunch): string[] {
+  return Object.entries(l.env ?? {}).flatMap(([k, v]) => [flag, `${k}=${v}`]);
+}
+
 export function chatAppDefs(home = homedir()): AppDef[] {
   const data = appData(home);
   return [
@@ -103,7 +127,7 @@ export function chatAppDefs(home = homedir()): AppDef[] {
     },
     {
       kind: 'cli', id: 'claude-code', name: 'Claude Code', bin: 'claude', dir: join(home, '.claude'),
-      add: (l) => ['mcp', 'add', '--scope', 'user', 'husk', '--', l.command, ...l.args],
+      add: (l) => ['mcp', 'add', '--scope', 'user', ...envFlags('-e', l), 'husk', '--', l.command, ...l.args],
       remove: ['mcp', 'remove', '--scope', 'user', 'husk'],
       isConnected: () => {
         try {
@@ -131,7 +155,7 @@ export function chatAppDefs(home = homedir()): AppDef[] {
     },
     {
       kind: 'cli', id: 'codex', name: 'Codex CLI', bin: 'codex', dir: join(home, '.codex'),
-      add: (l) => ['mcp', 'add', 'husk', '--', l.command, ...l.args],
+      add: (l) => ['mcp', 'add', 'husk', ...envFlags('--env', l), '--', l.command, ...l.args],
       remove: ['mcp', 'remove', 'husk'],
       isConnected: () => /^\[mcp_servers\.husk\]/m.test(readText(join(home, '.codex', 'config.toml')) ?? ''),
       after: 'Start a new Codex session.',
@@ -193,14 +217,17 @@ function backupOf(file: string, now: Date): string | undefined {
 /**
  * Run an app's own CLI. On Windows these are `.cmd` shims, which only start
  * through a shell; every argument is a fixed token from this file or the
- * launch line, never text from a page or a chat, so the shell sees no input.
+ * launch line, never text from a page or a chat, and SAFE_TOKEN keeps out
+ * every character cmd.exe treats specially. A path with spaces is quoted.
  */
 function runCli(bin: string, args: string[]): { ok: boolean; output: string } {
-  const r = spawnSync(bin, args, { encoding: 'utf8', timeout: 60_000, windowsHide: true, shell: process.platform === 'win32' });
+  const win = process.platform === 'win32';
+  const argv = win ? args.map((a) => (a.includes(' ') ? `"${a}"` : a)) : args;
+  const r = spawnSync(bin, argv, { encoding: 'utf8', timeout: 60_000, windowsHide: true, shell: win });
   return { ok: r.status === 0, output: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() || (r.error?.message ?? '') };
 }
 
-const SAFE_TOKEN = /^[A-Za-z0-9@/._=-]+$/;
+const SAFE_TOKEN = /^[A-Za-z0-9@/\\._=:() -]+$/;
 
 /** Add Husk to one app, or update its entry. */
 export function connectChatApp(id: ChatAppId, launch: HuskLaunch, opts: { home?: string; now?: Date } = {}): ConnectResult {
@@ -217,7 +244,7 @@ export function connectChatApp(id: ChatAppId, launch: HuskLaunch, opts: { home?:
   try {
     const config = parseConfig(def);
     const servers = { ...((config[def.key] as Record<string, unknown> | undefined) ?? {}) };
-    servers.husk = { ...(def.extra ?? {}), command: launch.command, args: launch.args };
+    servers.husk = { ...(def.extra ?? {}), command: launch.command, args: launch.args, ...(launch.env ? { env: launch.env } : {}) };
     const backup = backupOf(def.file, opts.now ?? new Date());
     mkdirSync(dirname(def.file), { recursive: true });
     writeFileSync(def.file, `${JSON.stringify({ ...config, [def.key]: servers }, null, 2)}\n`, 'utf8');

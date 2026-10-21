@@ -1,0 +1,56 @@
+{
+  "name": "husk-desktop",
+  "productName": "Husk",
+  "private": true,
+  "version": "0.2.0",
+  "description": "Husk for the desktop: the shared Husk, its console, and a tray icon that says when a chat is waiting for you.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "stage": "node scripts/stage-runtime.mjs",
+    "dist": "npm run stage && electron-builder --publish never",
+    "test": "node --test src/lib.test.mjs",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "electron": "44.6.0",
+    "electron-builder": "26.17.0"
+  },
+  "build": {
+    "appId": "dev.husk.desktop",
+    "productName": "Husk",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**",
+      "assets/icon.png",
+      "package.json"
+    ],
+    "icon": "assets/icon.png",
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Development"
+    },
+    "publish": null,
+    "afterPack": "scripts/after-pack.cjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hotragn/husk.git",
+    "directory": "apps/desktop"
+  }
+}

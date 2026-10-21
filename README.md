@@ -80,6 +80,11 @@ each app's config file before changing it and touches only its own `husk` entry.
 > published: npm has 0.1.4. Until the next release, run it from a checkout with
 > `npm ci && npm run build && node packages/cli/dist/bin.js setup`.
 
+A desktop app (`apps/desktop`) carries the same Husk with its own Node, opens the console
+on Connect, and sits in the tray to tell you when a chat is waiting for you. Its
+installers build and pass a smoke test in CI but are not released or signed yet; see
+[apps/desktop](apps/desktop/README.md).
+
 To add Husk to one app by hand instead:
 
 ```bash

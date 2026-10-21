@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { chatAppDefs, connectChatApp, detectChatApps, disconnectChatApp, huskLaunch } from './chat-apps.js';
+import { baseLaunch, chatAppDefs, connectChatApp, detectChatApps, disconnectChatApp, huskLaunch } from './chat-apps.js';
 
 let home = '';
 afterEach(() => {
@@ -75,5 +75,30 @@ describe('chat apps', () => {
     connectChatApp('gemini', huskLaunch(), { home });
     expect(disconnectChatApp('gemini', { home }).ok).toBe(true);
     expect(JSON.parse(readFileSync(fileOf('gemini'), 'utf8'))).toEqual({ mcpServers: { other: { command: 'x' } } });
+  });
+});
+
+describe('the launch line', () => {
+  it('uses the desktop app’s own Husk when HUSK_LAUNCH names it, env included', () => {
+    const env = { HUSK_LAUNCH: JSON.stringify({ command: 'C:/Program Files/Husk/Husk.exe', args: ['C:/Program Files/Husk/resources/runtime/bin.js'], env: { ELECTRON_RUN_AS_NODE: '1' } }) };
+    const l = huskLaunch({ provider: 'docker' }, baseLaunch(env as NodeJS.ProcessEnv));
+    expect(l).toEqual({
+      command: 'C:/Program Files/Husk/Husk.exe',
+      args: ['C:/Program Files/Husk/resources/runtime/bin.js', '--provider', 'docker'],
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+    });
+  });
+
+  it('falls back to npx when HUSK_LAUNCH is missing or malformed', () => {
+    expect(baseLaunch({} as NodeJS.ProcessEnv).command).toBe('npx');
+    expect(baseLaunch({ HUSK_LAUNCH: '{nope' } as NodeJS.ProcessEnv).command).toBe('npx');
+    expect(baseLaunch({ HUSK_LAUNCH: JSON.stringify({ command: 1 }) } as NodeJS.ProcessEnv).command).toBe('npx');
+  });
+
+  it('writes the env into a JSON config', () => {
+    fresh();
+    mkdirSync(dirOf('cursor'), { recursive: true });
+    connectChatApp('cursor', { command: 'Husk.exe', args: ['bin.js'], env: { ELECTRON_RUN_AS_NODE: '1' } }, { home });
+    expect(JSON.parse(readFileSync(fileOf('cursor'), 'utf8')).mcpServers.husk).toEqual({ command: 'Husk.exe', args: ['bin.js'], env: { ELECTRON_RUN_AS_NODE: '1' } });
   });
 });
