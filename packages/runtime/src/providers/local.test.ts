@@ -78,9 +78,10 @@ describe.skipIf(process.platform === 'win32')('local provider /work contract', (
     expect((await c.stat('/work/link.txt'))?.type).toBe('file');
   });
 
+  // /etc/hosts exists on Linux and macOS; a dangling link would only prove "missing".
   it('refuses a symlink that leaves the workspace, as a path outside it', async () => {
     const c = await freshComputer();
-    const r = await c.exec({ cmd: 'ln -s /etc/hostname /work/escape' });
+    const r = await c.exec({ cmd: 'ln -s /etc/hosts /work/escape' });
     expect(r.exitCode, r.stderr).toBe(0);
     // Refused as a path outside the workspace, not reported as missing.
     await expect(c.readFile('/work/escape')).rejects.toMatchObject({ code: 'E_FS_DENIED', message: expect.not.stringMatching(/^cannot read/) });
