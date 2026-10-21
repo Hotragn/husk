@@ -362,18 +362,8 @@ export class Page {
     ]);
 
     const res = (tree ?? {}) as CdpParams;
-    let nodes = Array.isArray(res['nodes']) ? (res['nodes'] as AxNodeLike[]) : [];
-    let flat = flattenAxTree(nodes, opts);
-    // Chromium builds the accessibility tree lazily: the first read straight
-    // after Accessibility.enable can come back before it exists. One more read,
-    // a moment later, rather than telling the model the page is blank.
-    if (flat.length === 0) {
-      await new Promise((r) => setTimeout(r, 400));
-      const [again] = await this.run([{ op: 'send', method: 'Accessibility.getFullAXTree', session: true }]);
-      const res2 = (again ?? {}) as CdpParams;
-      nodes = Array.isArray(res2['nodes']) ? (res2['nodes'] as AxNodeLike[]) : [];
-      flat = flattenAxTree(nodes, opts);
-    }
+    const nodes = Array.isArray(res['nodes']) ? (res['nodes'] as AxNodeLike[]) : [];
+    const flat = flattenAxTree(nodes, opts);
 
     const unreachable = ((frames ?? {}) as { result?: { value?: unknown } }).result?.value;
     if (Array.isArray(unreachable) && unreachable.length > 0) {

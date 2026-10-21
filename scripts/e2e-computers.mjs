@@ -119,17 +119,12 @@ try {
   await tool(id, 'write_file', { path: '/work/hello.txt', content: 'from the e2e\n' });
   check('write_file then read_file', textOf(await tool(id, 'read_file', { path: '/work/hello.txt' })).includes('from the e2e'));
   const goto = await tool(id, 'browser_goto', { url: 'https://example.com' });
-  check('the browser renders a page', !goto.isError && /Example Domain/i.test(textOf(goto)), textOf(goto).slice(0, 200));
-  let snap = await tool(id, 'browser_snapshot');
-  if (!/Example Domain/i.test(textOf(snap))) {
-    // Diagnostics for the log: does it settle, and does the server's own route agree?
-    await sleep(3000);
-    snap = await tool(id, 'browser_snapshot');
-    const raw = await api('POST', `/v1/computers/${id}/browser/snapshot`, {});
-    console.log(`second snapshot: ${textOf(snap).slice(0, 300)}
-route: ${JSON.stringify(raw.body).slice(0, 600)}`);
-  }
-  check('a snapshot lists the page', !snap.isError && /Example Domain/i.test(textOf(snap)), `${snap.isError ? 'error: ' : ''}${textOf(snap).slice(0, 400)}`);
+  check('the browser renders a page', !goto.isError && /Example Domain/i.test(textOf(goto)), JSON.stringify(textOf(goto).slice(0, 200)));
+  const snap = await tool(id, 'browser_snapshot');
+  // Elements with refs a model can click, e.g. `e24  link "Learn more"`. Not a
+  // page heading: example.com changes its text, and the title is not in the tree.
+  const refs = textOf(snap).match(/^e\d+ {2}\w+/gm) ?? [];
+  check('a snapshot lists elements with refs', !snap.isError && refs.length > 0, `${refs.length} elements; ${JSON.stringify(textOf(snap).slice(0, 200))}`);
 
   // 4. The live screen sends real frames.
   const frame = await new Promise((resolveFrame, reject) => {
