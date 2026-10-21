@@ -157,6 +157,72 @@ async function walkConsole(id, name) {
   }
 }
 
+/**
+ * How fast the browser is, for a PR to quote: the median milliseconds of each
+ * browser tool through the shared route, and the frames a second the live
+ * screen actually delivers at ?fps=4. The page it watches animates, so a
+ * pushed screencast has something to push.
+ */
+async function measureBrowser(id) {
+  const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+  const timed = async (name, args, n) => {
+    const ms = [];
+    for (let i = 0; i < n; i++) {
+      const started = performance.now();
+      const r = await tool(id, name, args);
+      ms.push(performance.now() - started);
+      if (r.isError) throw new Error(`${name} failed while measuring: ${textOf(r).slice(0, 300)}`);
+    }
+    return Math.round(median(ms));
+  };
+
+  await tool(id, 'write_file', {
+    path: '/work/anim/index.html',
+    content:
+      '<!doctype html><title>anim</title><h1 id="n">0</h1><button>Go</button>' +
+      '<script>let i=0;(function f(){document.getElementById("n").textContent=i++;requestAnimationFrame(f)})()</script>\n',
+  });
+  await tool(id, 'shell', { command: 'cd /work/anim && (setsid python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null 2>&1 &) ; sleep 1' });
+  const url = 'http://127.0.0.1:8765/';
+
+  const rows = [
+    ['browser_goto', await timed('browser_goto', { url }, 3)],
+    ['browser_snapshot', await timed('browser_snapshot', {}, 5)],
+    ['browser_wait_for', await timed('browser_wait_for', { text: 'Go' }, 5)],
+    ['browser_screenshot', await timed('browser_screenshot', {}, 3)],
+  ];
+
+  const seconds = 10;
+  const frames = await new Promise((resolveCount, reject) => {
+    let count = 0;
+    let first;
+    const give = setTimeout(() => reject(new Error('no frame in 60s')), 60_000 + seconds * 1000);
+    const ws = new WebSocket(`${rec.url.replace('http', 'ws')}/v1/computers/${id}/screen?fps=4&token=${rec.token}`);
+    ws.onmessage = (ev) => {
+      if (JSON.parse(String(ev.data)).type !== 'frame') return;
+      // Counted from the first frame, so start-up is not mistaken for frame rate.
+      if (first === undefined) {
+        first = performance.now();
+        setTimeout(() => {
+          ws.close();
+          clearTimeout(give);
+          resolveCount(count);
+        }, seconds * 1000);
+      } else count++;
+    };
+    ws.onerror = () => reject(new Error('screen socket failed'));
+  });
+  const fps = (frames / seconds).toFixed(1);
+
+  const lines = [...rows.map(([name, ms]) => `${name.padEnd(20)} ${String(ms).padStart(6)} ms (median)`), `${'screen at ?fps=4'.padEnd(20)} ${fps.padStart(6)} frames/s`];
+  console.log(`\n== browser speed ==\n${lines.join('\n')}\n`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const { appendFileSync } = await import('node:fs');
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Browser speed\n\n\`\`\`\n${lines.join('\n')}\n\`\`\`\n`);
+  }
+  check('the browser speed was measured', rows.every(([, ms]) => ms > 0) && frames > 0, `${fps} frames/s`);
+}
+
 try {
   // 1. The shared Husk, as a chat's first call starts it.
   daemon = spawn(process.execPath, [bin, '--daemon'], { env, stdio: 'inherit' });
@@ -243,7 +309,10 @@ try {
   mcp.child.stdin.end();
   await sleep(1000);
 
-  // 8. The console in a real browser: Home's live screen, take over at any
+  // 8. How fast the browser is, for before-and-after numbers.
+  await measureBrowser(id);
+
+  // 9. The console in a real browser: Home's live screen, take over at any
   // moment, the chat's call waiting for Give back, the Chat and Connect pages.
   // CI sets E2E_CONSOLE=1 and installs playwright-core (not a dependency) to
   // drive the runner's own Chrome. Screenshots land in E2E_SHOTS.
