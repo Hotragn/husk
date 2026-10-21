@@ -31,9 +31,12 @@ invents endpoints the other does not know about.
   sensible `HuskError`.
 - Auth: when `HUSK_TOKEN` is set, every request needs `Authorization: Bearer <token>`.
   When it is not set the server binds loopback only, and **refuses to start on a
-  non-loopback host without a token**. Without a token it also answers only requests
-  whose `Host` is `localhost`, `127.x` or `[::1]`, so a web page cannot reach it through
-  DNS rebinding. `/health` is always unauthenticated.
+  non-loopback host without a token**. On a loopback bind, token or not, it answers
+  only requests whose `Host` is `localhost`, `127.x` or `[::1]`, so a web page cannot
+  reach it through DNS rebinding. A request carrying an `Origin` that is not one of
+  those names is refused (403), WebSockets included: a web page cannot drive it. The
+  console's own page and assets (`GET` outside `/v1`) load without the token; every
+  API route is under `/v1`. `/health` is always unauthenticated.
 - Streaming endpoints are Server-Sent Events: `Content-Type: text/event-stream`, one
   `data:` line per event carrying a JSON object, a heartbeat comment every 15 s, and a
   terminating `event: done`.
@@ -152,7 +155,16 @@ Runs one of the MCP server's computer tools (`shell`, `read_file`, `browser_clic
 in this process, with the same code a chat's MCP process would run. `husk serve` is
 the machine's one Husk: it writes `~/.husk/daemon.json` (`url`, a minted `token`,
 `pid`, `version`; owner-only), and a chat's MCP process forwards its computer tools
-here, starting `husk-mcp --daemon` if nothing answers. That is what lets the console
+here, starting `husk-mcp --daemon` if nothing answers. The Husk a chat starts mints a
+token, since nobody is there to configure one; `husk serve` uses `HUSK_TOKEN` if set,
+and is otherwise tokenless on loopback, as before.
+
+```
+POST /v1/shutdown   -> 202 { stopping: true }
+```
+
+Stops the process cleanly. It refuses (403) while a run or a handoff is in progress. A
+newer Husk uses it to replace an older one after an upgrade. That is what lets the console
 show a chat's browser and what it is doing. The result has the MCP shape,
 `{ content: [...], isError? }`; a tool failure is a 200 with `isError: true`. While a
 person holds the computer in a handoff, every tool but `computer_info` is refused.
@@ -357,12 +369,16 @@ the person takes over in the console that holds the chat's browser:
 ```
 POST   /v1/computers/:id/handoffs  body: { "reason": "...", "label"?: "..." } -> 201 PendingHandoff & { token }
 DELETE /v1/handoffs/:handoffId     -> PendingHandoff   (the chat went away; the computer is freed)
+GET    /v1/handoffs/:handoffId/state -> { handoffId, state: "open"|"done"|"aborted"|"unknown" }
 POST   /v1/computers/:id/link      -> { token }        (for a chat's card or plain link)
 GET    /v1/scoped/computer         -> { computerId, label?, state, handoff: PendingHandoff | null }
 GET    /v1/scoped/computer/screen  -> image/jpeg, read-only
 ```
 
-One handoff per computer at a time. `token` is short-lived and scoped to that computer
+One handoff per computer at a time. The chat polls `state`, which also keeps the
+handoff alive: a chat that stops polling for a minute has gone, and its handoff is
+cancelled (never marked done), so the computer is free again. `state` says how a
+handoff ended, so a chat is never told "done" for one that was cancelled. `token` is short-lived and scoped to that computer
 (`computer:<id>`): it opens the two `/v1/scoped/` routes and that computer's
 `/v1/handoffs/:handoffId` routes, and nothing else. Not the handoff list, not the
 computers, not the routes that mint tokens. It rides in the link's `#fragment` and is

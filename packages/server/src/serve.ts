@@ -14,12 +14,14 @@ export interface ServeOptions extends Partial<ServerConfig> {
   deps?: Partial<ServerDeps>;
   /** Interval for the computer reaper. 0 disables it. */
   reaperIntervalMs?: number;
-  /**
-   * Be the machine's one Husk: write ~/.husk/daemon.json so chats' MCP processes
-   * find this server, and mint a token when none was given, because a process
-   * started on a chat's behalf has nobody to configure one.
-   */
+  /** Be the machine's one Husk: write ~/.husk/daemon.json so chats' MCP processes find this server. */
   daemon?: boolean;
+  /**
+   * Mint a token when none was given. For the Husk a chat starts in the
+   * background, which has nobody to configure one. `husk serve` keeps its
+   * old contract: tokenless on loopback, and a refusal to bind further without one.
+   */
+  mintToken?: boolean;
 }
 
 export interface RunningServer {
@@ -129,9 +131,9 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
   const log = opts.logger ?? createLogger({ scope: 'husk' });
   ensurePaths();
 
-  const { logger: _logger, deps: injected, reaperIntervalMs, daemon, ...configish } = opts;
+  const { logger: _logger, deps: injected, reaperIntervalMs, daemon, mintToken, ...configish } = opts;
   const config = resolveConfig(configish);
-  if (daemon && !config.token) config.token = randomBytes(32).toString('hex');
+  if (mintToken && !config.token) config.token = randomBytes(32).toString('hex');
   const built = await createDefaultDeps(config, log);
 
   const appOptions: CreateAppOptions = {
@@ -188,6 +190,10 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
         process.exit(1);
       },
     );
+  };
+  ctx.shutdown = async () => {
+    await close();
+    process.exit(0);
   };
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);

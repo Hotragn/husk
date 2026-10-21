@@ -17,6 +17,8 @@ export interface ServerContext {
   activity: ActivityLog;
   /** Short-lived links to one computer or one handoff, so a chat never carries the server token. */
   scoped: ScopedTokens;
+  /** Set by `serve()`: close cleanly and exit. Absent for an embedded app. */
+  shutdown?: () => Promise<void>;
 }
 
 export function createContext(deps: ResolvedDeps, opts: { approvalTimeoutMs?: number } = {}): ServerContext {

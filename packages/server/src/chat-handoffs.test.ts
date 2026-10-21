@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildTestApp } from './testing.js';
 import type { TestApp } from './testing.js';
 
@@ -94,5 +94,48 @@ describe('the chat tool route', { timeout: 30_000 }, () => {
     const info = (await harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/tools/computer_info`, payload: {} })).json();
     expect(info.isError).toBeUndefined();
     expect(ran).toEqual(['computer_info']);
+  });
+});
+
+describe('a chat handoff that ends', { timeout: 30_000 }, () => {
+  it('reports how it ended, and its link stops working', async () => {
+    const { handoffId, link } = await setup();
+    expect((await harness.app.inject({ method: 'GET', url: `/v1/handoffs/${handoffId}/state`, headers: master })).json().state).toBe('open');
+    await harness.app.inject({ method: 'DELETE', url: `/v1/handoffs/${handoffId}`, headers: master });
+    expect((await harness.app.inject({ method: 'GET', url: `/v1/handoffs/${handoffId}/state`, headers: master })).json().state).toBe('aborted');
+    expect((await harness.app.inject({ method: 'GET', url: '/v1/scoped/computer', headers: link })).statusCode).toBe(401);
+  });
+
+  it('keeps the state route for the server token only', async () => {
+    const { handoffId, link } = await setup();
+    expect((await harness.app.inject({ method: 'GET', url: `/v1/handoffs/${handoffId}/state`, headers: link })).statusCode).toBe(404);
+  });
+});
+
+describe('a chat that stops polling its handoff', () => {
+  it('has the handoff cancelled after a minute, never marked done', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'Date'] });
+    try {
+      const { handoffId } = await setup();
+      vi.advanceTimersByTime(30_000);
+      expect((await harness.app.inject({ method: 'GET', url: `/v1/handoffs/${handoffId}/state`, headers: master })).json().state).toBe('open');
+      vi.advanceTimersByTime(90_000);
+      expect((await harness.app.inject({ method: 'GET', url: `/v1/handoffs/${handoffId}/state`, headers: master })).json().state).toBe('aborted');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('POST /v1/shutdown', { timeout: 30_000 }, () => {
+  it('needs the server token, and refuses while a person holds a computer', async () => {
+    const { handoffId } = await setup();
+    expect((await harness.app.inject({ method: 'POST', url: '/v1/shutdown' })).statusCode).toBe(401);
+    // An embedded app has no way to stop its process.
+    expect((await harness.app.inject({ method: 'POST', url: '/v1/shutdown', headers: master })).statusCode).toBe(501);
+    harness.app.husk.shutdown = async () => {};
+    expect((await harness.app.inject({ method: 'POST', url: '/v1/shutdown', headers: master })).statusCode).toBe(403);
+    await harness.app.inject({ method: 'DELETE', url: `/v1/handoffs/${handoffId}`, headers: master });
+    expect((await harness.app.inject({ method: 'POST', url: '/v1/shutdown', headers: master })).statusCode).toBe(202);
   });
 });
