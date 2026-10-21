@@ -220,3 +220,36 @@ describe('list() carries chat identity', () => {
     expect(listed).toMatchObject({ platform: 'Cursor', chatLabel: 'Cursor · chat started 10:42', identitySource: 'first-call' });
   });
 });
+
+describe('one computer per name (#112)', () => {
+  const info = (over: Partial<ComputerInfo>): ComputerInfo =>
+    ({
+      id: 'cmp_1',
+      name: 'dev',
+      provider: 'docker',
+      state: 'running',
+      image: 'x',
+      workdir: '/work',
+      createdAt: '2026-10-18T10:42:00Z',
+      lastUsedAt: '2026-10-18T10:42:00Z',
+      spec: {},
+      ...over,
+    }) as ComputerInfo;
+
+  it('refuses to create a second computer under a name in use, and says which one has it', async () => {
+    const p = new FakeProvider('docker', 1, up(true));
+    p.list = async () => [info({ state: 'stopped' })];
+    await expect(manager([p]).create({ name: 'dev' })).rejects.toMatchObject({
+      code: 'E_SPEC_INVALID',
+      message: expect.stringContaining('cmp_1'),
+    });
+  });
+
+  it('lets a destroyed computer give its name back', async () => {
+    const p = new FakeProvider('docker', 1, up(true));
+    p.list = async () => [info({ state: 'destroyed' })];
+    const made = { info: info({ id: 'cmp_2' }) } as Computer;
+    p.create = async () => made;
+    await expect(manager([p]).create({ name: 'dev' })).resolves.toBe(made);
+  });
+});

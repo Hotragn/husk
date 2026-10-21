@@ -161,8 +161,8 @@ export class ComputerManager {
     });
   }
 
-  private async assertQuota(): Promise<void> {
-    const live = (await this.list()).filter((c) => c.state === 'running' || c.state === 'creating');
+  private async assertQuota(all: ComputerInfo[]): Promise<void> {
+    const live = all.filter((c) => c.state === 'running' || c.state === 'creating');
     if (live.length >= this.maxComputers) {
       throw new HuskError('E_QUOTA', `already running ${live.length} computers (limit ${this.maxComputers})`, {
         hint: 'destroy one with `husk rm <name>`, or raise maxComputers in ~/.husk/config.json',
@@ -171,7 +171,17 @@ export class ComputerManager {
   }
 
   async create(spec: ComputerSpec = {}): Promise<Computer> {
-    await this.assertQuota();
+    const all = await this.list();
+    // One computer per name. A second one would be unreachable by name from the
+    // moment it existed, and `husk rm <name>` would destroy one of two (#112).
+    const clash = spec.name ? all.find((c) => c.name === spec.name && c.state !== 'destroyed') : undefined;
+    if (clash) {
+      throw new HuskError('E_SPEC_INVALID', `a computer named ${clash.name} already exists (${clash.id})`, {
+        hint: `use it as it is (\`husk exec ${clash.name} -- ...\`), or remove it first with \`husk rm ${clash.name}\``,
+        details: { id: clash.id },
+      });
+    }
+    await this.assertQuota(all);
     const provider = await this.resolveProvider(spec.provider ?? 'auto');
     const computer = await provider.create({ ...spec, provider: provider.name });
     this.log.debug(`created ${computer.id} on ${provider.name}`);
@@ -195,6 +205,15 @@ export class ComputerManager {
         const found = await this.get(existingId);
         if (found && found.info.state !== 'destroyed') return ensureRunning(found);
         await clearBinding(key);
+      }
+
+      // A lost bindings file must not cost a chat its computer: the machine still
+      // carries its key, so adopt it rather than make a second one by that name.
+      const keyed = (await this.list()).find((c) => c.spec?.labels?.['husk.key'] === key && c.state !== 'destroyed');
+      const adopted = keyed ? await this.get(keyed.id) : null;
+      if (adopted) {
+        await writeBinding(key, adopted.id);
+        return ensureRunning(adopted);
       }
 
       const computer = await this.create({
