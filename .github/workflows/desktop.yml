@@ -7,9 +7,9 @@ name: desktop
 on:
   push:
     branches: [main]
-    paths: ['apps/desktop/**', 'packages/**', 'apps/console/**', '.github/workflows/desktop.yml']
+    paths: ['apps/desktop/**', 'packages/**', 'apps/console/**', 'package-lock.json', '.github/workflows/desktop.yml']
   pull_request:
-    paths: ['apps/desktop/**', 'packages/**', 'apps/console/**', '.github/workflows/desktop.yml']
+    paths: ['apps/desktop/**', 'packages/**', 'apps/console/**', 'package-lock.json', '.github/workflows/desktop.yml']
 
 permissions:
   contents: read

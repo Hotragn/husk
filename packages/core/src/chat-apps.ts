@@ -40,9 +40,20 @@ export interface HuskLaunch {
  * Husk desktop app sets HUSK_LAUNCH on the Husk it runs, naming its own
  * bundled copy, so the apps it connects need no Node install of their own.
  */
-export function baseLaunch(env: NodeJS.ProcessEnv = process.env): HuskLaunch {
+export function baseLaunch(
+  env: NodeJS.ProcessEnv = process.env,
+  self: { electron?: string; execPath: string; script?: string } = { electron: process.versions.electron, execPath: process.execPath, script: process.argv[1] },
+): HuskLaunch {
   const npx: HuskLaunch = { command: 'npx', args: ['-y', '@husk-ai/mcp'] };
-  if (!env.HUSK_LAUNCH) return npx;
+  if (!env.HUSK_LAUNCH) {
+    // A Husk the desktop app's own launch line started (a chat started it,
+    // not the app) is still the app's copy: keep chat apps on it, not npx.
+    if (self.electron && env.APPIMAGE) return { command: env.APPIMAGE, args: ['--husk-mcp'] };
+    if (self.electron && env.ELECTRON_RUN_AS_NODE && self.script) {
+      return { command: self.execPath, args: [self.script], env: { ELECTRON_RUN_AS_NODE: '1' } };
+    }
+    return npx;
+  }
   try {
     const l = JSON.parse(env.HUSK_LAUNCH) as Partial<HuskLaunch>;
     const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');

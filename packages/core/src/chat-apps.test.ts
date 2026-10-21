@@ -89,6 +89,15 @@ describe('the launch line', () => {
     });
   });
 
+  it('keeps chat apps on the desktop app when a chat, not the app, started this Husk', () => {
+    const self = { electron: '44.6.0', execPath: 'C:/Program Files/Husk/Husk.exe', script: 'C:/Program Files/Husk/resources/runtime/bin.js' };
+    expect(baseLaunch({ ELECTRON_RUN_AS_NODE: '1' } as NodeJS.ProcessEnv, self)).toEqual({
+      command: self.execPath, args: [self.script], env: { ELECTRON_RUN_AS_NODE: '1' },
+    });
+    expect(baseLaunch({ APPIMAGE: '/home/me/Husk.AppImage' } as NodeJS.ProcessEnv, self)).toEqual({ command: '/home/me/Husk.AppImage', args: ['--husk-mcp'] });
+    expect(baseLaunch({} as NodeJS.ProcessEnv, { execPath: 'node' }).command).toBe('npx');
+  });
+
   it('falls back to npx when HUSK_LAUNCH is missing or malformed', () => {
     expect(baseLaunch({} as NodeJS.ProcessEnv).command).toBe('npx');
     expect(baseLaunch({ HUSK_LAUNCH: '{nope' } as NodeJS.ProcessEnv).command).toBe('npx');
