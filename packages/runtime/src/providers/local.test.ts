@@ -65,6 +65,27 @@ async function freshComputer(): Promise<Computer> {
 // The /work contract is a posix-and-WSL promise; the cmd.exe fallback reports
 // its own truthful workdir instead and is covered by the degradation tests.
 describe.skipIf(process.platform === 'win32')('local provider /work contract', () => {
+  // #113: a link made in the shell holds a guest target the host cannot follow.
+  it('follows a symlink that stays inside /work, for a file and a directory', async () => {
+    const c = await freshComputer();
+    const r = await c.exec({
+      cmd: 'echo INSIDE > /work/real.txt && ln -s /work/real.txt /work/link.txt && mkdir /work/sub && echo X > /work/sub/x && ln -s /work/sub /work/link-dir',
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+
+    expect(Buffer.from(await c.readFile('/work/link.txt')).toString().trim()).toBe('INSIDE');
+    expect((await c.listDir('/work/link-dir')).map((e) => e.name)).toEqual(['x']);
+    expect((await c.stat('/work/link.txt'))?.type).toBe('file');
+  });
+
+  it('refuses a symlink that leaves the workspace, as a path outside it', async () => {
+    const c = await freshComputer();
+    const r = await c.exec({ cmd: 'ln -s /etc/hostname /work/escape' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    await expect(c.readFile('/work/escape')).rejects.toMatchObject({ code: 'E_FS_DENIED' });
+    await expect(c.readFile('/work/escape')).rejects.not.toThrow(/check the path exists/);
+  });
+
   it('runs a script written through the file tools via its /work path', async () => {
     const c = await freshComputer();
     await c.writeFile('/work/hello.sh', 'echo marker-from-work\n');

@@ -648,6 +648,31 @@ class LocalComputer implements Computer {
     return h;
   }
 
+  /**
+   * Run a host file operation, and when it fails, retry it once through any
+   * symlink the path crosses, resolved the way the computer sees it.
+   *
+   * A link made in the shell holds a guest target (`/work/real.txt`) that
+   * only exists inside the computer's own mount namespace, so the host cannot
+   * follow it -- and on Windows, a WSL link over `\wsl.localhost` cannot be
+   * followed at all (#113). Asking the computer for `realpath` gives the guest
+   * target, and mapping that back through `mapPath` and the jail refuses an
+   * escape with the same message as a plain path outside the workspace.
+   * Only the failure path pays for the extra exec.
+   */
+  private async viaGuestLinks<T>(path: string, op: (hostPath: string) => Promise<T>): Promise<T> {
+    const h = await this.host(path);
+    try {
+      return await op(h);
+    } catch (first) {
+      const guest = normaliseGuestPath(path, this.info.workdir);
+      const r = await this.execOnce({ cmd: ['realpath', '-e', '--', guest], timeoutSec: 10 }).catch(() => undefined);
+      const target = r?.exitCode === 0 ? r.stdout.trim() : '';
+      if (!target || target === guest) throw first;
+      return op(await this.host(target));
+    }
+  }
+
   async writeFile(path: string, content: string | Uint8Array, opts: WriteFileOptions = {}): Promise<void> {
     this.assertLive();
     const h = await this.host(path);
@@ -662,10 +687,10 @@ class LocalComputer implements Computer {
 
   async readFile(path: string): Promise<Uint8Array> {
     this.assertLive();
-    const h = await this.host(path);
     try {
-      return await readFile(h);
+      return await this.viaGuestLinks(path, (h) => readFile(h));
     } catch (e) {
+      if (e instanceof HuskError) throw e;
       throw new HuskError('E_FS_DENIED', `cannot read ${normaliseGuestPath(path, this.info.workdir)}`, {
         hint: 'check the path exists',
         cause: e,
@@ -680,11 +705,12 @@ class LocalComputer implements Computer {
 
   async listDir(path: string): Promise<DirEntry[]> {
     this.assertLive();
-    const h = await this.host(path);
+    let h = await this.host(path);
     let entries;
     try {
-      entries = await readdir(h, { withFileTypes: true });
+      [h, entries] = await this.viaGuestLinks(path, async (dir) => [dir, await readdir(dir, { withFileTypes: true })] as const);
     } catch (e) {
+      if (e instanceof HuskError) throw e;
       throw new HuskError('E_FS_DENIED', `cannot list ${normaliseGuestPath(path, this.info.workdir)}`, {
         hint: 'check the directory exists',
         cause: e,
@@ -717,9 +743,8 @@ class LocalComputer implements Computer {
 
   async stat(path: string): Promise<DirEntry | null> {
     this.assertLive();
-    const h = await this.host(path);
     try {
-      const st = await stat(h);
+      const [h, st] = await this.viaGuestLinks(path, async (p) => [p, await stat(p)] as const);
       return {
         name: h.split(/[\\/]/).pop() ?? '',
         path: toGuestPath(h, this.jail),
@@ -728,7 +753,9 @@ class LocalComputer implements Computer {
         modifiedAt: st.mtime.toISOString(),
         mode: (st.mode & 0o777).toString(8).padStart(3, '0'),
       };
-    } catch {
+    } catch (e) {
+      // A path outside the jail is an answer the caller needs; a missing file is not.
+      if (e instanceof HuskError) throw e;
       return null;
     }
   }
