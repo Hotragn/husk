@@ -7,9 +7,9 @@ name: e2e
 on:
   push:
     branches: [main]
-    paths: ['packages/**', 'scripts/e2e-computers.mjs', '.github/workflows/e2e.yml']
+    paths: ['packages/**', 'apps/console/**', 'package.json', 'package-lock.json', 'scripts/e2e-computers.mjs', '.github/workflows/e2e.yml']
   pull_request:
-    paths: ['packages/**', 'scripts/e2e-computers.mjs', '.github/workflows/e2e.yml']
+    paths: ['packages/**', 'apps/console/**', 'package.json', 'package-lock.json', 'scripts/e2e-computers.mjs', '.github/workflows/e2e.yml']
 
 permissions:
   contents: read

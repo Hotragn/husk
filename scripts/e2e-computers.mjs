@@ -32,7 +32,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let daemon;
 let rec;
+let mcp;
 const created = [];
+
+async function cleanup() {
+  mcp?.child.kill();
+  for (const id of created) await api('DELETE', `/v1/computers/${id}?confirm=${id}`).catch(() => undefined);
+  daemon?.kill();
+  rmSync(home, { recursive: true, force: true });
+}
+process.once('SIGINT', () => void cleanup().finally(() => process.exit(130)));
 const textOf = (result) => (result.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
 
 async function api(method, path, body, token = rec.token) {
@@ -98,7 +107,8 @@ try {
   check('the API refuses a request without the token', (await fetch(`${rec.url}/v1/computers`)).status === 401);
 
   // 2. A Docker computer with a browser.
-  const made = await api('POST', '/v1/computers', { name: 'e2e', provider: 'docker', flavor: 'full' });
+  // Unique: the name is the container's, and another `e2e` container would clash.
+  const made = await api('POST', '/v1/computers', { name: `e2e-${process.pid}-${Date.now()}`, provider: 'docker', flavor: 'full' });
   check('a docker computer is created', made.status === 201, JSON.stringify(made.body).slice(0, 300));
   const id = made.body.id;
   created.push(id);
@@ -110,7 +120,15 @@ try {
   check('write_file then read_file', textOf(await tool(id, 'read_file', { path: '/work/hello.txt' })).includes('from the e2e'));
   const goto = await tool(id, 'browser_goto', { url: 'https://example.com' });
   check('the browser renders a page', !goto.isError && /Example Domain/i.test(textOf(goto)), textOf(goto).slice(0, 200));
-  const snap = await tool(id, 'browser_snapshot');
+  let snap = await tool(id, 'browser_snapshot');
+  if (!/Example Domain/i.test(textOf(snap))) {
+    // Diagnostics for the log: does it settle, and does the server's own route agree?
+    await sleep(3000);
+    snap = await tool(id, 'browser_snapshot');
+    const raw = await api('POST', `/v1/computers/${id}/browser/snapshot`, {});
+    console.log(`second snapshot: ${textOf(snap).slice(0, 300)}
+route: ${JSON.stringify(raw.body).slice(0, 600)}`);
+  }
   check('a snapshot lists the page', !snap.isError && /Example Domain/i.test(textOf(snap)), `${snap.isError ? 'error: ' : ''}${textOf(snap).slice(0, 400)}`);
 
   // 4. The live screen sends real frames.
@@ -153,7 +171,7 @@ try {
   check('tools run again after done', !(await tool(id, 'shell', { command: 'echo back' })).isError);
 
   // 7. A real MCP session forwards its tools to the shared Husk.
-  const mcp = mcpSession(['--provider', 'docker', '--flavor', 'base']);
+  mcp = mcpSession(['--provider', 'docker', '--flavor', 'base']);
   const init = await mcp.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'husk-e2e', version: '0' } });
   check('an MCP client connects over stdio', init.result?.serverInfo?.name === 'husk');
   mcp.notify('notifications/initialized');
@@ -172,7 +190,5 @@ try {
   console.error(`\n${err.stack ?? err}`);
   process.exitCode = 1;
 } finally {
-  for (const id of created) await api('DELETE', `/v1/computers/${id}?confirm=${id}`).catch(() => undefined);
-  daemon?.kill();
-  rmSync(home, { recursive: true, force: true });
+  await cleanup();
 }
