@@ -1,7 +1,7 @@
 import { HUSK_VERSION, createLogger } from '@husk-ai/core';
 import type { DaemonRecord } from '@husk-ai/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DaemonUnreachable, connectDaemon } from './daemon.js';
+import { DaemonUnreachable, connectDaemon, newer } from './daemon.js';
 
 const log = createLogger({ level: 'silent' });
 const record = (version = HUSK_VERSION): DaemonRecord => ({
@@ -85,5 +85,58 @@ describe('connectDaemon', () => {
     await expect(d.callTool('cmp_1', 'shell', {})).rejects.toBeInstanceOf(DaemonUnreachable);
     mode = 'error';
     expect(await d.callTool('cmp_1', 'shell', {})).toEqual({ isError: true, content: [{ type: 'text', text: 'no computer\nstart it' }] });
+  });
+
+  it('picks up a restarted daemon (new token) and retries once, since a 401 means nothing ran', async () => {
+    let current = record();
+    const calls: string[] = [];
+    const f = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/health')) return new Response(JSON.stringify({ version: HUSK_VERSION }), { status: 200 });
+      const auth = (init?.headers as Record<string, string>).authorization;
+      calls.push(auth ?? "");
+      if (auth !== `Bearer ${current.token}`) return new Response('{}', { status: 401 });
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: 'ran' }] }), { status: 200 });
+    }) as typeof fetch;
+    const d = (await connectDaemon({ log, read: () => current, fetchImpl: f }))!;
+    current = { ...record(), token: 'new-token', pid: 2 };
+    const r = await d.callTool('cmp_1', 'shell', {});
+    expect(r.content[0]).toEqual({ type: 'text', text: 'ran' });
+    expect(calls).toEqual(['Bearer tok', 'Bearer new-token']);
+  });
+
+  it('asks an older daemon to step aside, then starts this version', async () => {
+    let old = true;
+    let launched = false;
+    const f = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/v1/shutdown')) {
+        old = false;
+        return new Response('{}', { status: 202 });
+      }
+      if (url.endsWith('/health')) {
+        if (old) return new Response(JSON.stringify({ version: '0.0.1' }), { status: 200 });
+        if (!launched) throw Object.assign(new TypeError('down'), { cause: { code: 'ECONNREFUSED' } });
+        return new Response(JSON.stringify({ version: HUSK_VERSION }), { status: 200 });
+      }
+      return new Response('{}', { status: 500 });
+    }) as typeof fetch;
+    const d = await connectDaemon({
+      log,
+      read: () => (old ? record('0.0.1') : launched ? record() : undefined),
+      fetchImpl: f,
+      launch: () => {
+        launched = true;
+      },
+      waitMs: 3_000,
+    });
+    expect(launched).toBe(true);
+    expect(d).toBeDefined();
+  });
+
+  it('compares versions numerically', () => {
+    expect(newer('0.10.0', '0.9.9')).toBe(true);
+    expect(newer('0.2.0', '0.2.0')).toBe(false);
+    expect(newer('0.1.4', '0.2.0')).toBe(false);
   });
 });

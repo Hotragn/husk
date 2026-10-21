@@ -82,8 +82,8 @@ describe.skipIf(process.platform === 'win32')('local provider /work contract', (
     const c = await freshComputer();
     const r = await c.exec({ cmd: 'ln -s /etc/hostname /work/escape' });
     expect(r.exitCode, r.stderr).toBe(0);
-    await expect(c.readFile('/work/escape')).rejects.toMatchObject({ code: 'E_FS_DENIED' });
-    await expect(c.readFile('/work/escape')).rejects.not.toThrow(/check the path exists/);
+    // Refused as a path outside the workspace, not reported as missing.
+    await expect(c.readFile('/work/escape')).rejects.toMatchObject({ code: 'E_FS_DENIED', message: expect.not.stringMatching(/^cannot read/) });
   });
 
   it('runs a script written through the file tools via its /work path', async () => {
@@ -257,6 +257,16 @@ describe('wslWorks', () => {
     }) as never;
     expect(wslWorks('Ubuntu', run)).toBe(true);
     expect(calls).toEqual([15_000, 30_000]);
+  });
+
+  it('does not retry on a re-check, which runs inside a live server', () => {
+    const calls: number[] = [];
+    const run = ((_c: string, _a: string[], opts: { timeout: number }) => {
+      calls.push(opts.timeout);
+      return (answer('', 'ETIMEDOUT') as () => unknown)();
+    }) as never;
+    expect(wslWorks('Ubuntu', run, false)).toBe(false);
+    expect(calls).toEqual([15_000]);
   });
 
   it('does not retry a distro that answered with an error', () => {

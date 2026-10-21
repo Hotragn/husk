@@ -34,6 +34,13 @@ export function heldText(handoffId: string, reason: string): string {
 
 export class HandoffRegistry {
   private readonly pending = new Map<string, Waiter>();
+  /** How recent handoffs ended, so a chat polling for one is told done or not, never left to guess. */
+  private readonly settled = new Map<string, HandoffOutcome>();
+
+  /** `open`, or how it ended (`done`, `aborted`), or undefined if this server never had it. */
+  state(handoffId: string): 'open' | HandoffOutcome | undefined {
+    return this.pending.has(handoffId) ? 'open' : this.settled.get(handoffId);
+  }
 
   list(): PendingHandoff[] {
     return [...this.pending.values()].map(({ settle: _s, ...rest }) => rest);
@@ -59,6 +66,8 @@ export class HandoffRegistry {
       const onAbort = (): void => settle('aborted');
       const settle = (outcome: HandoffOutcome): void => {
         if (!this.pending.delete(handoffId)) return;
+        this.settled.set(handoffId, outcome);
+        if (this.settled.size > 500) this.settled.delete(this.settled.keys().next().value as string);
         args.signal.removeEventListener('abort', onAbort);
         resolve(outcome);
       };
