@@ -1,19 +1,23 @@
 /**
- * One chat's computer: its browser live, what it has done, and the way out of
- * the chat into a bot.
+ * One chat's computer: its browser live and large, who has it, and what it did.
  *
  * The screen is a websocket that the server feeds only while it is open, so it
  * is closed whenever this tab is hidden: a screen nobody is looking at costs a
- * frame a quarter-second inside the computer for nothing. The activity list is
- * the shared Husk's record of tool calls, which never holds typed text. The
- * conversation itself is not here: chat apps do not send it to Husk.
+ * frame a quarter-second inside the computer for nothing. Clicking the screen
+ * offers Take over; once the person holds the computer, the screen is their
+ * mouse and keyboard on the page (components/Screen.tsx), and Give back sits
+ * beside it. The activity list is the shared Husk's record of tool calls, which
+ * never holds typed text. The conversation itself is not here: chat apps do
+ * not send it to Husk.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { toDisplayError } from '../api/client';
 import type { DisplayError } from '../api/client';
-import type { ActivityEntry, BotDraft, ComputerInfo, Overview, PendingHandoff, ScreenMessage } from '../api/wire';
-import { Badge, Button, EmptyState, ErrorBlock, PanelHeader, StatusDot, formatWhen } from '../components/primitives';
+import type { ActivityEntry, BotDraft, ComputerInfo, HandoffInput, HandoffKey, Overview, PendingHandoff, ScreenMessage } from '../api/wire';
+import { Badge, Button, ErrorBlock, Icon, StatusDot, formatWhen } from '../components/primitives';
+import { Screen, useInputQueue } from '../components/Screen';
+import type { Frame } from '../components/Screen';
 import { useConnection } from '../state/connection';
 import { useResource } from '../state/useResource';
 import { stateTone } from './ComputersPanel';
@@ -24,11 +28,13 @@ export function ChatPanel({ computerId, onOpen }: { computerId: string | null; o
   const overview = useResource<Overview>((signal) => api.overview(signal), [api, revision], true, { refreshMs: 3000 });
   const computer = overview.data?.computers.find((c) => c.id === computerId);
   const handoff = overview.data?.handoffs.find((h) => h.computerId === computerId);
+  const hold = useHold(computerId ?? '', handoff, overview.reload);
 
   if (!computerId) {
     return (
       <section className="panel">
-        <PanelHeader title="Chat" lede="Open a computer from Home to see it here." />
+        <h1>Chat</h1>
+        <p className="lede">Open a computer from Home.</p>
       </section>
     );
   }
@@ -38,30 +44,39 @@ export function ChatPanel({ computerId, onOpen }: { computerId: string | null; o
   const name = computer.chatLabel ?? computer.name ?? computer.id;
   return (
     <section className="panel" aria-label={name}>
-      <PanelHeader title={name} lede={describe(computer)} />
-      <div className="btn-row">
-        <StatusDot tone={stateTone(computer.state)} label={computer.state} />
-        {computer.platform ? <Badge>{computer.platform}</Badge> : null}
-        <span className="field-note mono">{computer.id}</span>
-      </div>
-
-      <TakeOver computerId={computer.id} handoff={handoff} onOpen={onOpen} onChange={overview.reload} />
+      <header className="chat-head">
+        <div className="chat-title">
+          <h1>{name}</h1>
+          <div className="btn-row">
+            <StatusDot pill tone={stateTone(computer.state)} label={computer.state} />
+            {computer.platform ? <Badge>{computer.platform}</Badge> : null}
+            <span className="field-note mono">{computer.id}</span>
+          </div>
+        </div>
+        <div className="btn-row">
+          <Button size="sm" variant="ghost" onClick={() => onOpen('terminal', computer.id)}>
+            <Icon name="terminal" /> Terminal
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => onOpen('files', computer.id)}>
+            <Icon name="files" /> Files
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => onOpen('browser', computer.id)}>
+            <Icon name="browser" /> Browser
+          </Button>
+        </div>
+      </header>
 
       <div className="chat-grid">
-        <LiveScreen id={computer.id} />
-        <Activity id={computer.id} />
-      </div>
-
-      <div className="btn-row">
-        <Button size="sm" onClick={() => onOpen('terminal', computer.id)}>
-          Terminal
-        </Button>
-        <Button size="sm" onClick={() => onOpen('files', computer.id)}>
-          Files
-        </Button>
-        <Button size="sm" onClick={() => onOpen('browser', computer.id)}>
-          Browser
-        </Button>
+        <LiveScreen
+          id={computer.id}
+          control={handoff ? hold.send : undefined}
+          onTakeOver={computer.state === 'running' ? () => void hold.take() : undefined}
+          taking={hold.busy}
+        />
+        <div className="chat-side">
+          <Control key={handoff?.handoffId ?? 'free'} handoff={handoff} hold={hold} running={computer.state === 'running'} />
+          <Activity id={computer.id} />
+        </div>
       </div>
 
       <MakeBot computer={computer} />
@@ -69,15 +84,112 @@ export function ChatPanel({ computerId, onOpen }: { computerId: string | null; o
   );
 }
 
-function describe(c: ComputerInfo): string {
-  if (c.platform) return `The computer ${c.platform} uses for this chat. The conversation stays in ${c.platform}; this is what it did here.`;
-  return 'What this computer has done, and its browser, live.';
+type Hold = ReturnType<typeof useHold>;
+
+/**
+ * The person's hold on a computer: take it, use it, give it back. Taking
+ * pauses its chat at any moment; only Give back, or Done for a chat that asked,
+ * lets the chat carry on.
+ */
+function useHold(computerId: string, handoff: PendingHandoff | undefined, onChange: () => void) {
+  const { api } = useConnection();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<DisplayError | null>(null);
+  const act = async (fn: () => Promise<unknown>): Promise<boolean> => {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+      onChange();
+      return true;
+    } catch (err) {
+      setError(toDisplayError(err));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const handoffId = handoff?.handoffId;
+  const input = useCallback(
+    async (next: HandoffInput) => {
+      if (!handoffId) return;
+      try {
+        await api.handoffInput(handoffId, next);
+        setError(null);
+      } catch (err) {
+        setError(toDisplayError(err));
+      }
+    },
+    [api, handoffId],
+  );
+  const send = useInputQueue(input);
+  return {
+    busy,
+    error,
+    send,
+    take: () => act(() => api.takeOver(computerId)),
+    giveBack: () => (handoffId ? act(() => api.handoffDone(handoffId)) : Promise.resolve(false)),
+  };
+}
+
+const SIDE_KEYS: Array<[HandoffKey, string]> = [
+  ['Tab', 'Tab'],
+  ['Enter', 'Enter'],
+  ['Escape', 'Esc'],
+];
+
+/** Who has the computer, and the one action that changes it. */
+function Control({ handoff, hold, running }: { handoff: PendingHandoff | undefined; hold: Hold; running: boolean }) {
+  const [confirming, setConfirming] = useState(false);
+  const failed = hold.error ? <ErrorBlock error={hold.error} /> : null;
+
+  if (!handoff) {
+    return (
+      <div className="card control-card">
+        <StatusDot tone="muted" label="The chat is in control" />
+        <Button variant="accent" loading={hold.busy} disabled={!running} onClick={() => void hold.take()}>
+          Take over
+        </Button>
+        <p className="field-note">Pauses the chat until you give it back.</p>
+        {failed}
+      </div>
+    );
+  }
+  const mine = handoff.runId === 'person';
+  return (
+    <div className={`card control-card ${mine ? 'overview-held' : 'overview-card-waiting'}`} role="status">
+      <StatusDot tone={mine ? 'info' : 'warn'} label={mine ? 'You’re in control' : 'Waiting for you'} />
+      {mine ? null : <p className="handoff-reason">{handoff.reason}</p>}
+      {confirming ? (
+        <>
+          <Button variant="primary" loading={hold.busy} onClick={() => void hold.giveBack()}>
+            Yes, hand back to the agent
+          </Button>
+          <Button variant="ghost" onClick={() => setConfirming(false)} disabled={hold.busy}>
+            Not yet
+          </Button>
+        </>
+      ) : (
+        <Button variant="primary" loading={hold.busy} onClick={() => (mine ? void hold.giveBack() : setConfirming(true))}>
+          {mine ? 'Give back' : 'Done'}
+        </Button>
+      )}
+      <div className="control-keys" role="group" aria-label="Keys">
+        {SIDE_KEYS.map(([key, label]) => (
+          <Button key={key} size="sm" aria-label={`Press ${key}`} onClick={() => hold.send({ type: 'key', key })}>
+            {label}
+          </Button>
+        ))}
+      </div>
+      <p className="field-note">Click and type on the screen. Nothing you type is kept.</p>
+      {failed}
+    </div>
+  );
 }
 
 /**
- * The person's hold on a computer. With no hold, Take over pauses its chat at
- * any moment; a chat that asked for them shows why; one they took shows Give
- * back. Only Give back, or Done in Handoffs, lets the chat carry on.
+ * A computer's hold, compact, for its card on Home. Taking it, or using it,
+ * opens its chat page, where the screen is.
  */
 export function TakeOver({
   computerId,
@@ -90,53 +202,38 @@ export function TakeOver({
   onOpen: (target: OverviewTarget, id: string) => void;
   onChange: () => void;
 }) {
-  const { api } = useConnection();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<DisplayError | null>(null);
-  const act = async (fn: () => Promise<unknown>) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await fn();
-      onChange();
-    } catch (err) {
-      setError(toDisplayError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const failed = error ? <ErrorBlock error={error} /> : null;
+  const hold = useHold(computerId, handoff, onChange);
+  const failed = hold.error ? <ErrorBlock error={hold.error} /> : null;
 
   if (!handoff) {
     return (
-      <div>
+      <>
         <Button
           size="sm"
-          loading={busy}
+          loading={hold.busy}
           onClick={() =>
-            void act(async () => {
-              await api.takeOver(computerId);
-              onOpen('handoffs', computerId);
+            void hold.take().then((ok) => {
+              if (ok) onOpen('chat', computerId);
             })
           }
         >
           Take over
         </Button>
         {failed}
-      </div>
+      </>
     );
   }
   const mine = handoff.runId === 'person';
   return (
-    <div className="overview-waiting" role="status">
+    <div className={`overview-waiting${mine ? ' overview-held' : ''}`} role="status">
       <strong>{mine ? 'You have this computer' : 'Waiting for you'}</strong>
-      <p className="handoff-reason">{mine ? 'Its chat is paused until you give it back.' : handoff.reason}</p>
+      {mine ? null : <p className="handoff-reason">{handoff.reason}</p>}
       <div className="btn-row">
-        <Button variant="primary" size="sm" onClick={() => onOpen('handoffs', computerId)}>
+        <Button variant="primary" size="sm" onClick={() => onOpen('chat', computerId)}>
           {mine ? 'Use it' : 'Take over'}
         </Button>
         {mine ? (
-          <Button size="sm" loading={busy} onClick={() => void act(() => api.handoffDone(handoff.handoffId))}>
+          <Button size="sm" loading={hold.busy} onClick={() => void hold.giveBack()}>
             Give back
           </Button>
         ) : null}
@@ -146,12 +243,30 @@ export function TakeOver({
   );
 }
 
-/** The browser, live, while this tab is visible. `fps` below the server's 4 for a small screen among many. */
-export function LiveScreen({ id, fps }: { id: string; fps?: number }) {
+/**
+ * The browser, live, while this tab is visible. `fps` below the server's 4 for
+ * a small screen among many. With `control` it is the person's to use; with
+ * `onTakeOver`, clicking it offers Take over.
+ */
+export function LiveScreen({
+  id,
+  fps,
+  control,
+  onTakeOver,
+  taking,
+  className,
+}: {
+  id: string;
+  fps?: number;
+  control?: ((input: HandoffInput) => void) | undefined;
+  onTakeOver?: (() => void) | undefined;
+  taking?: boolean;
+  className?: string;
+}) {
   const { api } = useConnection();
   const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden');
-  const [frame, setFrame] = useState<{ src: string; width: number; height: number } | null>(null);
-  const [note, setNote] = useState<string>('Connecting to the screen…');
+  const [frame, setFrame] = useState<Frame | null>(null);
+  const [note, setNote] = useState<string>('Connecting…');
 
   useEffect(() => {
     const onVis = () => setVisible(document.visibilityState !== 'hidden');
@@ -177,7 +292,7 @@ export function LiveScreen({ id, fps }: { id: string; fps?: number }) {
         setNote('');
       } else if (msg.type === 'idle') {
         setFrame(null);
-        setNote('No browser is open on this computer yet. It appears here when the chat opens a page.');
+        setNote('No browser open yet. It appears here when the chat opens a page.');
       } else {
         setNote(msg.message);
       }
@@ -187,10 +302,15 @@ export function LiveScreen({ id, fps }: { id: string; fps?: number }) {
   }, [api, id, visible, fps]);
 
   return (
-    <figure className="chat-screen" aria-label="Live browser">
-      {frame ? <img src={frame.src} width={frame.width} height={frame.height} alt={`The browser on ${id}, live`} /> : null}
-      {note ? <figcaption className="field-note">{note}</figcaption> : null}
-    </figure>
+    <Screen
+      frame={frame}
+      alt={`The browser on ${id}, live`}
+      note={note}
+      control={control}
+      onTakeOver={onTakeOver}
+      taking={taking ?? false}
+      {...(className ? { className } : {})}
+    />
   );
 }
 
@@ -200,26 +320,28 @@ export function Activity({ id }: { id: string }) {
   const activity = useResource<ActivityEntry[]>((signal) => api.computerActivity(id, signal), [api, id], true, { refreshMs: 2000 });
   const entries = [...(activity.data ?? [])].reverse();
   return (
-    <div className="chat-activity">
-      <h3 className="h-sub">Activity</h3>
+    <div className="card chat-activity">
+      <h2 className="h-sub">Activity</h2>
       {activity.error ? <ErrorBlock error={activity.error} /> : null}
-      {activity.data && entries.length === 0 ? (
-        <EmptyState title="Nothing yet." body="Each tool call this chat makes on its computer appears here." />
-      ) : null}
+      {activity.data && entries.length === 0 ? <p className="field-note">No tool calls yet.</p> : null}
       <ol className="activity-list" aria-live="polite">
         {entries.map((e, i) => (
           <li key={`${e.at}-${i}`} className={e.ok ? undefined : 'activity-failed'}>
-            <span className="field-note tnum">{formatWhen(e.at)}</span> <strong>{e.tool}</strong>
-            {e.summary ? <code className="mono"> {e.summary}</code> : null}
-            <span className="field-note">
-              {' '}
-              · {e.ok ? `${e.ms} ms` : 'failed'}
+            <strong>{e.tool}</strong>
+            <span className="field-note tnum" title={formatWhen(e.at)}>
+              {e.ok ? `${e.ms} ms` : 'failed'} · {timeOf(e.at)}
             </span>
+            {e.summary ? <code className="mono">{e.summary}</code> : null}
           </li>
         ))}
       </ol>
     </div>
   );
+}
+
+function timeOf(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 /**
@@ -276,14 +398,25 @@ function MakeBot({ computer }: { computer: ComputerInfo }) {
   const confidence = draft?.distilled.confidence;
   return (
     <div className="card chat-bot">
-      <h3 className="h-sub">Turn this chat into a bot</h3>
-      <p className="field-note">
-        Husk reads the conversation, writes a husk.yaml you can review, and saves it as a bot you can run from Husks, on a
-        schedule, a webhook, or Discord, Slack and Telegram.
-      </p>
+      <div className="chat-head">
+        <div>
+          <h2 className="h-sub">Make this chat a bot</h2>
+          <p className="field-note">A husk.yaml from this chat, to run on a schedule, a webhook or in Discord, Slack and Telegram.</p>
+        </div>
+        <div className="btn-row">
+          <Button size="sm" loading={busy && !draft} onClick={() => void make()}>
+            {draft ? 'Distill again' : 'Make this a bot'}
+          </Button>
+          {draft && !saved ? (
+            <Button size="sm" variant="primary" loading={busy} onClick={() => void save(clash)}>
+              {clash ? `Replace ${draft.spec.name}` : 'Save as a bot'}
+            </Button>
+          ) : null}
+        </div>
+      </div>
       {error ? <ErrorBlock error={error} /> : null}
       {draft ? (
-        <>
+        <div className="chat-bot-body">
           <p className="field-note">
             Draft for <strong>{draft.spec.name}</strong>
             {confidence !== undefined ? ` · confidence ${Math.round(confidence * 100)}%` : ''}. Read it before saving.
@@ -296,26 +429,14 @@ function MakeBot({ computer }: { computer: ComputerInfo }) {
             </ul>
           ) : null}
           <pre className="mono chat-yaml">{draft.yaml}</pre>
-        </>
+        </div>
       ) : null}
       {saved ? <p role="status">Saved as {saved}. Run it from Husks.</p> : null}
       {clash && draft ? (
         <p role="alert">
-          A bot called <strong>{draft.spec.name}</strong> already exists. Saving replaces it. Rename this one in Husks, or
-          replace it.
+          A bot called <strong>{draft.spec.name}</strong> already exists. Saving replaces it.
         </p>
       ) : null}
-      <div className="btn-row">
-        <Button loading={busy && !draft} onClick={() => void make()}>
-          {draft ? 'Distill again' : 'Make this a bot'}
-        </Button>
-        {draft && !saved ? (
-          <Button variant="primary" loading={busy} onClick={() => void save(clash)}>
-            {clash ? `Replace ${draft.spec.name}` : 'Save as a bot'}
-          </Button>
-        ) : null}
-      </div>
     </div>
   );
 }
-

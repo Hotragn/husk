@@ -61,12 +61,13 @@ export function ConnectPanel() {
 
   return (
     <section className="panel" aria-label="Connect">
-      <PanelHeader title="Connect" lede="Choose where your chats' computers run, then add Husk to your chat apps." />
+      <PanelHeader title="Connect" />
       {state.error ? <ErrorBlock error={state.error} retry={state.reload} /> : null}
       {error ? <ErrorBlock error={error} /> : null}
 
+      <div className="connect-grid">
       <fieldset className="card connect-computers">
-        <legend className="h-sub">Where your chats&rsquo; computers run</legend>
+        <legend className="h-sub">Where computers run</legend>
         {computers.map((c) => (
           <label key={c.name} className={`connect-option${c.available ? '' : ' connect-option-off'}`}>
             <input
@@ -77,31 +78,31 @@ export function ConnectPanel() {
               checked={chosen === c.name}
               onChange={() => setProvider(c.name)}
             />
-            <span>
-              <strong>{c.name}</strong> {c === recommended ? <Badge tone="success">recommended</Badge> : null}{' '}
-              {c.available ? (
-                c.isolated ? <Badge>isolated</Badge> : <Badge tone="warn">not isolated</Badge>
-              ) : (
-                <span className="field-note">{c.reason ?? 'not available here'}</span>
-              )}
-              <span className="field-note"> {c.description}</span>
-              {!c.available && c.hint ? <span className="field-note mono"> Fix: {c.hint}</span> : null}
+            <span className="connect-option-body">
+              <span className="connect-option-title">
+                <strong>{c.name}</strong>
+                {c === recommended ? <Badge tone="success">recommended</Badge> : null}
+                {c.available ? c.isolated ? <Badge>isolated</Badge> : <Badge tone="warn">not isolated</Badge> : null}
+              </span>
+              <span className="field-note">{c.available ? c.description : (c.reason ?? 'not available here')}</span>
+              {!c.available && c.hint ? <span className="field-note mono">Fix: {c.hint}</span> : null}
             </span>
           </label>
         ))}
         {CONTAINERS.has(chosen) ? (
-          <label className="connect-option">
+          <label className="connect-option connect-option-plain">
             <input
               type="checkbox"
               checked={browser}
               onChange={(e) => setBrowser(e.target.checked)}
               aria-label="Include a browser"
             />
-            <span>Include a browser (a larger image, so pages render like in Chrome)</span>
+            <span>Include a browser</span>
           </label>
         ) : null}
         <div className="btn-row">
           <Button
+            size="sm"
             loading={busy === 'test'}
             onClick={() => void act('test', async () => setTest(await api.testComputer(choice)))}
           >
@@ -116,11 +117,8 @@ export function ConnectPanel() {
       </fieldset>
 
       <div className="card connect-apps">
-        <h3 className="h-sub">Chat apps on this machine</h3>
-        <p className="field-note">
-          Connecting adds Husk to the app with the computer chosen above. To change the computer later, choose it and connect
-          the app again.
-        </p>
+        <h2 className="h-sub">Chat apps</h2>
+        <p className="field-note">Connecting uses the computer you chose. Changed it? Connect again.</p>
         <ul className="connect-list">
           {(state.data?.apps ?? []).map((app) => {
             const r = results[app.id];
@@ -162,6 +160,7 @@ export function ConnectPanel() {
             );
           })}
         </ul>
+      </div>
       </div>
     </section>
   );
