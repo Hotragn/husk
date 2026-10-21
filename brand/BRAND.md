@@ -324,10 +324,9 @@ them, rather than lifted.*
 
 *Where the faces actually live, because the token file does not say General
 Sans: `tokens.css` still declares the previous stack on `--font-display`,
-`--font-ui` and `--font-mono`, and `drift-check` requires the three vendored
+`--font-ui` and `--font-mono`, and `drift-check` requires the two vendored
 copies to stay byte-identical to it. `apps/web` and `apps/docs` re-point those
 three tokens in their own `globals.css`, immediately after the `@import`, where
-the change is commented. `apps/console` ships no font files and never did, so
-it resolves to the fallback stacks either way and this change does not reach
-it. If the console ever gets the real faces, that is the moment to move the
-declarations into `tokens.css` and sync all three copies.*
+the change is commented. `apps/console` is not a copy: it carries its own
+tuning under the same token names (neutral surfaces, one teal accent, Inter
+bundled with the app), checked for WCAG AA by its own `contrast.test.ts`.*
