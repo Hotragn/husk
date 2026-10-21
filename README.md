@@ -138,7 +138,7 @@ leaf. Secrets are stripped before the file is written, not after.
 
 The distiller runs with no API key at all, and the model-backed mode falls back to that
 free path rather than failing. Here is the free path on a five-message CI-triage chat,
-unedited apart from the paths:
+trimmed to fit, with nothing reworded:
 
 ```text
 $ husk distill ./triage-chat.md --no-model --out triage.yaml
