@@ -77,7 +77,7 @@ export function HandoffsPanel() {
     <section className="panel" aria-labelledby="handoffs-title">
       <PanelHeader
         title="Handoffs"
-        lede="Runs paused until a person finishes something only they can do. Only Done hands a run back."
+        lede="Computers a chat handed to you, or you took. Only Done or Give back hands one back."
       />
       <span id="handoffs-title" className="visually-hidden">
         Handoffs
