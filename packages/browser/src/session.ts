@@ -51,6 +51,8 @@ export interface SessionOptions {
 }
 
 const DEFAULT_IDLE_MS = 5 * 60_000;
+/** How long a new screencast may show nothing before husk takes the first picture itself. */
+const FIRST_FRAME_MS = 1000;
 const PROFILE_DIR = `${CACHE_ROOT}/profile`;
 const LOG_PATH = `${CACHE_ROOT}/chromium.log`;
 
@@ -109,8 +111,13 @@ export class BrowserSession {
   private cast: { targetId: string; fps: number } | undefined;
   /** False once the transport has said it cannot push frames: watchers poll instead. */
   private pushes: boolean | undefined;
-  /** The newest pushed frame, so a viewer who joins a still page sees it now rather than at the next repaint. */
-  private lastFrame: { targetId: string; frame: ScreenFrame } | undefined;
+  /**
+   * The newest frame of the cast running now, so a viewer who joins a still
+   * page sees it at once rather than at the next repaint. Valid only for the
+   * cast that produced it: once that stops, the page may move with nobody
+   * watching, and showing the old picture would be showing a page that is gone.
+   */
+  private lastFrame: { cast: { targetId: string; fps: number }; frame: ScreenFrame } | undefined;
   private castSync: Promise<void> = Promise.resolve();
   private castUnlisten: (() => void) | undefined;
 
@@ -218,8 +225,10 @@ export class BrowserSession {
       this.viewers.delete(viewer);
       return undefined;
     }
+    // Only a frame from the cast running now: one kept from an earlier cast is
+    // of a page that may have moved on since nobody was watching.
     const last = this.lastFrame;
-    if (last && last.targetId === this.cast?.targetId) this.deliver(viewer, last.frame);
+    if (last && this.cast && last.cast === this.cast) this.deliver(viewer, last.frame);
     return () => {
       this.viewers.delete(viewer);
       if (viewer.timer) clearTimeout(viewer.timer);
@@ -255,8 +264,10 @@ export class BrowserSession {
     const have = this.cast;
     if (have && (!want || have.targetId !== want.targetId)) {
       this.cast = undefined;
+      this.lastFrame = undefined;
       await t?.stopScreencast?.(have.targetId).catch(() => undefined);
     }
+    const starting = this.cast?.targetId !== want?.targetId;
     if (!want || !t || (this.cast?.targetId === want.targetId && this.cast.fps === want.fps)) return;
     if (!t.screencast) {
       this.pushes = false;
@@ -269,19 +280,43 @@ export class BrowserSession {
       // A tab that will not cast is still a tab that will take a screenshot.
       this.pushes = false;
     }
-    if (this.pushes) this.cast = want;
+    if (!this.pushes) return;
+    if (!starting && this.cast) {
+      // Same tab, new rate: the cast, and the frames it already sent, carry on.
+      this.cast.fps = want.fps;
+      return;
+    }
+    const cast = { ...want };
+    this.cast = cast;
+    // Chromium pushes a frame when the page paints, and a still page may not
+    // paint for a new screencast at all. So a cast that has shown nothing
+    // after a second takes one picture itself, the way a frame request does:
+    // not a tool call, so not use.
+    setTimeout(() => void this.firstFrame(cast), FIRST_FRAME_MS).unref?.();
+  }
+
+  private async firstFrame(cast: { targetId: string; fps: number }): Promise<void> {
+    if (this.cast !== cast || this.lastFrame?.cast === cast) return;
+    const page = this.page;
+    if (!page || page.id !== cast.targetId) return;
+    const frame = await page.frame(60).catch(() => undefined);
+    if (!frame || this.cast !== cast || this.lastFrame?.cast === cast) return;
+    this.lastFrame = { cast, frame };
+    for (const viewer of this.viewers) this.deliver(viewer, frame);
   }
 
   private onCast(e: ScreencastEvent): void {
     if (e.type === 'ended') {
       if (e.targetId !== undefined && e.targetId !== this.cast?.targetId) return;
       this.cast = undefined;
+      this.lastFrame = undefined;
       // The driver died or the tab closed. Try again, but not in a tight loop.
       setTimeout(() => void this.syncCast(), 1000).unref?.();
       return;
     }
-    if (e.targetId !== this.cast?.targetId) return;
-    this.lastFrame = { targetId: e.targetId, frame: e.frame };
+    const cast = this.cast;
+    if (!cast || e.targetId !== cast.targetId) return;
+    this.lastFrame = { cast, frame: e.frame };
     for (const viewer of this.viewers) this.deliver(viewer, e.frame);
   }
 
