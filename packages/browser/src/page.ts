@@ -482,6 +482,29 @@ export class Page {
    * JSON-quoted arguments. Gotos must already be policy-checked -- `session.ts`
    * does it, as it does for `goto`.
    */
+  /**
+   * Run a Python script against this page, in its own process inside the
+   * computer, killed at `limitSec`. It reaches the page only through `page.*`,
+   * which the driver answers with the same actions `browser_run` uses, and
+   * whose gotos the session checks against the network policy (see
+   * `BrowserSession.script`). Needs the long-lived driver.
+   */
+  async script(source: string, limitSec: number): Promise<ScriptOutcome> {
+    const limitMs = limitSec * 1000;
+    const [raw] = await this.run(
+      [{ op: 'action', session: true, do: 'script', source, limitSec, timeoutMs: limitMs }],
+      limitMs + 45_000,
+    );
+    const r = (raw ?? {}) as Record<string, unknown>;
+    return {
+      output: typeof r['output'] === 'string' ? r['output'] : '',
+      truncated: r['truncated'] === true,
+      result: r['result'] ?? null,
+      ms: typeof r['ms'] === 'number' ? r['ms'] : 0,
+      ...(typeof r['error'] === 'string' ? { error: r['error'] } : {}),
+    };
+  }
+
   async actions(list: PageAction[]): Promise<ActionOutcome[]> {
     let budget = 10_000;
     const steps: DriverStep[] = list.map((a) => {
@@ -891,6 +914,16 @@ export type PageAction =
   | { do: 'wait'; text?: string; url?: string; selector?: string; gone?: boolean; timeoutMs?: number }
   | { do: 'snapshot'; limit?: number }
   | { do: 'screenshot'; fullPage?: boolean };
+
+/** What a script printed and left in `result`, or the traceback it died with. */
+export interface ScriptOutcome {
+  output: string;
+  /** Output past 64 KB was dropped. */
+  truncated: boolean;
+  result: unknown;
+  ms: number;
+  error?: string;
+}
 
 /** What one action did. `skipped` follows an earlier failure; `error` is that failure. */
 export interface ActionOutcome {

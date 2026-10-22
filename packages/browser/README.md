@@ -80,7 +80,11 @@ await browser.close();
   fixes: the browser is not listening, it died holding your command, the page
   never answered, Chromium refused the command, the driver could not run at all.
 - **`page.ts`** — `goto`, `snapshot`, `click`, `type`, `press`, `screenshot`,
-  `evaluate`, `content`, `text`, `waitForLoad`, and `actions` for several at once.
+  `evaluate`, `content`, `text`, `waitForLoad`, `actions` for several at once,
+  and `script` for a model's Python that decides as it goes. The script runs in
+  its own process inside the computer, killed at its limit (at most 600 s),
+  with its output capped at 64 KB. Every `page.goto` it makes is checked by the
+  host's network policy before Chromium moves.
 - **`session.ts`** — one browser per computer, launched lazily and closed after
   five idle minutes, because a resident Chromium is a few hundred megabytes of
   RSS and a machine with four of them gets OOM-killed. The user-data-dir is

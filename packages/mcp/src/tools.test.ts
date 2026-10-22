@@ -37,6 +37,13 @@ describe('the MCP tool list', () => {
     expect(await say({ actions: [{ do: 'wait' }] })).toMatch(/wait needs text, url or selector/);
   });
 
+  it('turns an empty or oversized browser_script into a message before any browser is touched', async () => {
+    const say = async (args: Record<string, unknown>) =>
+      (await callTool(noComputer, 'browser_script', args)).content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
+    expect(await say({})).toMatch(/script is empty/);
+    expect(await say({ script: 'x'.repeat(100_001) })).toMatch(/over 100 KB/);
+  });
+
   it('advertises the whole browser module, not a subset someone remembered', () => {
     const names = new Set(TOOLS.map((t) => t.name));
     for (const tool of BROWSER_TOOLS) expect(names).toContain(tool.name);

@@ -2,8 +2,8 @@ import { HuskError, assertUrlAllowed, onComputerDestroyed, ownsLoopback } from '
 import type { Computer, NetworkPolicy } from '@husk-ai/core';
 import { CdpConnection, ComputerDriverTransport, createTarget } from './cdp.js';
 import type { CdpTransport, ScreencastEvent, ScreenFrame } from './cdp.js';
-import { Page } from './page.js';
-import type { ActionOutcome, PageAction } from './page.js';
+import { Page, compactAxTree } from './page.js';
+import type { ActionOutcome, AxNodeLike, PageAction, ScriptOutcome } from './page.js';
 import { CACHE_ROOT, provisionChromium } from './provision.js';
 import type { ProvisionResult } from './provision.js';
 
@@ -176,6 +176,27 @@ export class BrowserSession {
     const checked = this.allowed(url);
     const page = await this.activePage();
     return await page.goto(checked, opts);
+  }
+
+  /**
+   * A Python script with real control flow against the active page, run in
+   * its own process inside the computer. Every `page.goto` it makes comes back
+   * here and is checked like `goto` before Chromium is told to go.
+   */
+  async script(source: string, limitSec: number): Promise<ScriptOutcome> {
+    const page = await this.activePage();
+    return await page.script(source, limitSec);
+  }
+
+  /** The driver's questions mid-request: may a script go here, and what does this tree compact to. */
+  private answerHost(op: string, args: Record<string, unknown>): unknown {
+    if (op === 'checkUrl') return this.allowed(String(args['url'] ?? ''));
+    if (op === 'compact') {
+      const nodes = Array.isArray(args['nodes']) ? (args['nodes'] as AxNodeLike[]) : [];
+      const limit = typeof args['limit'] === 'number' ? args['limit'] : 400;
+      return compactAxTree(nodes, { limit });
+    }
+    throw new HuskError('E_INTERNAL', `the driver asked something husk does not answer: ${op}`, { hint: 'this is a husk bug' });
   }
 
   /** Several page actions in one driver round, each goto checked like `goto`. */
@@ -413,6 +434,7 @@ export class BrowserSession {
     const conn = new CdpConnection(transport);
     this.conn = conn;
     this.transport = transport;
+    transport.onHostCall?.((op, args) => this.answerHost(op, args));
 
     const targetId = await createTarget(conn, 'about:blank');
     const page = new Page(conn, targetId);

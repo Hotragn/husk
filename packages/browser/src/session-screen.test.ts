@@ -160,3 +160,27 @@ describe('what counts as using the computer', () => {
     await closeBrowserFor(computer.id);
   });
 });
+
+describe('what a script may visit', () => {
+  it('is what goto may: the session answers the driver’s checkUrl with the network policy', async () => {
+    let ask: ((op: string, args: Record<string, unknown>) => unknown) | undefined;
+    const transport = {
+      ...fakeTransport(),
+      onHostCall(fn: (op: string, args: Record<string, unknown>) => unknown) {
+        ask = fn;
+      },
+    };
+    const session = new BrowserSession(fakeComputer(), {
+      idleTimeoutMs: 0,
+      network: { mode: 'egress', allow: ['example.com'] },
+      transport: () => transport as CdpTransport,
+    });
+    await session.activePage();
+    expect(ask!('checkUrl', { url: 'https://example.com/a' })).toBe('https://example.com/a');
+    for (const url of ['https://evil.test/', 'file:///etc/passwd', 'http://169.254.169.254/latest/meta-data/']) {
+      expect(() => ask!('checkUrl', { url }), url).toThrow(/refus/);
+    }
+    const nodes = [{ nodeId: '1', role: { value: 'button' }, name: { value: 'Go' }, backendDOMNodeId: 7 }];
+    expect(ask!('compact', { nodes })).toEqual([{ ref: 'e7', role: 'button', name: 'Go', depth: 0 }]);
+  });
+});

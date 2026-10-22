@@ -12,6 +12,11 @@ licensed agent-side code and docs:
 
 - *Code over calls*: one call runs several page actions in a single round,
   which is `browser_run` and the `action` steps in `packages/browser/src/driver.py`.
+- *Scripts with control flow*: `browser_script` runs a model's script against
+  the page in one call, with a `page` object whose names follow ego-lite's
+  Playwright-style API where they fit (`goto`, `click`, `fill`,
+  `wait_for_url`, `wait_for_selector`, `title`). Husk's runs as Python in its
+  own process inside the computer: `SCRIPT_RUNNER` in `driver.py`.
 - *Compact snapshots*: the rules in its `docs/native-snapshot-ref-requirement.md`
   for dropping blank text and empty containers and collapsing single-child
   ones, which is `compactAxTree` in `packages/browser/src/page.ts`.

@@ -530,3 +530,29 @@ describe('ComputerDriverTransport keeps one driver running where it can', () => 
     expect(await new ComputerDriverTransport(okComputer([{}]), 9222).screencast('T1', 4)).toBe(false);
   });
 });
+
+describe('the driver’s questions to the host', () => {
+  it('are answered straight back, mid-request, with the session’s answer or its refusal', async () => {
+    const c = spawningComputer((req, out) => {
+      if (req['op'] === 'hostReply') {
+        if (req['call'] === 2) out({ id: 1, ok: true, results: [{ asked: true }] });
+        return;
+      }
+      out({ event: 'host', call: 1, op: 'checkUrl', url: 'https://ok.test/' });
+      out({ event: 'host', call: 2, op: 'checkUrl', url: 'file:///etc/passwd' });
+    });
+    const t = new ComputerDriverTransport(c, 9222);
+    t.onHostCall((op, args) => {
+      if (String(args['url']).startsWith('file:')) throw new HuskError('E_EXEC_DENIED', 'refusing the file: scheme');
+      return `${op}:${String(args['url'])}`;
+    });
+    expect((await t.run({ steps: [{ op: 'action', do: 'script' }] })).results).toEqual([{ asked: true }]);
+    const replies = c.lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((m) => m['op'] === 'hostReply')
+      // Matched by call id, so the order they go back in does not matter.
+      .sort((a, b) => Number(a['call']) - Number(b['call']));
+    expect(replies).toEqual([
+      { op: 'hostReply', call: 1, value: 'checkUrl:https://ok.test/' },
+      { op: 'hostReply', call: 2, error: 'refusing the file: scheme' },
+    ]);
+  });
+});

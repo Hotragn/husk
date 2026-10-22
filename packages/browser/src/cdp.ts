@@ -135,7 +135,15 @@ export interface CdpTransport {
   screencast?(targetId: string, fps: number): Promise<boolean>;
   stopScreencast?(targetId: string): Promise<void>;
   onScreencast?(fn: (e: ScreencastEvent) => void): () => void;
+  /**
+   * Answer the driver's questions mid-request -- may a script visit this URL,
+   * what does this tree compact to. A throw becomes the script's PageError.
+   */
+  onHostCall?(fn: HostCall): void;
 }
+
+/** One question from the driver, answered on the host. */
+export type HostCall = (op: string, args: Record<string, unknown>) => unknown;
 
 export interface CdpOptions {
   /** Default ceiling for one driver invocation. Defaults to 60s. */
@@ -298,6 +306,7 @@ export class ComputerDriverTransport implements CdpTransport {
   /** The driver answers one request at a time, so they go out one at a time and each timeout is its own. */
   private queue: Promise<unknown> = Promise.resolve();
   private readonly castListeners = new Set<(e: ScreencastEvent) => void>();
+  private hostCall: HostCall | undefined;
 
   constructor(
     private readonly computer: Computer,
@@ -326,6 +335,10 @@ export class ComputerDriverTransport implements CdpTransport {
     await this.serve({ op: 'screencastStop', targetId }, 15_000).catch(() => undefined);
   }
 
+  onHostCall(fn: HostCall): void {
+    this.hostCall = fn;
+  }
+
   onScreencast(fn: (e: ScreencastEvent) => void): () => void {
     this.castListeners.add(fn);
     return () => this.castListeners.delete(fn);
@@ -342,7 +355,10 @@ export class ComputerDriverTransport implements CdpTransport {
       if (!server || server.exited) {
         const path = await this.install();
         try {
-          server = new DriverServer(this.computer, path, this.port, (e) => this.emit(e));
+          server = new DriverServer(this.computer, path, this.port, (e) => this.emit(e), (op, args) => {
+            if (!this.hostCall) throw new Error('this browser answers no questions from scripts');
+            return this.hostCall(op, args);
+          });
         } catch {
           // The provider refused to start it at all; an exec says why, if it is real.
           this.oneShot = true;
@@ -564,6 +580,9 @@ class DriverServer {
     path: string,
     port: number,
     private readonly onEvent: (e: ScreencastEvent) => void,
+    private readonly onHost: HostCall = () => {
+      throw new Error('no host calls here');
+    },
   ) {
     this.proc = computer.spawn!({
       cmd: ['python3', path, '--serve', String(port)],
@@ -650,9 +669,28 @@ class DriverServer {
         targetId,
         frame: { data: msg['data'], width: Number(msg['width']) || 0, height: Number(msg['height']) || 0 },
       });
+    } else if (msg['event'] === 'host') {
+      void this.answer(msg);
     } else if (msg['event'] === 'castEnded') {
       this.onEvent({ type: 'ended', ...(targetId ? { targetId } : {}), reason: String(msg['reason'] ?? 'it stopped') });
     }
+  }
+
+  /**
+   * Answer a question the driver asked mid-request. Written straight to the
+   * process, not queued: the request it belongs to is the one in flight.
+   */
+  private async answer(msg: Record<string, unknown>): Promise<void> {
+    const { event: _event, call, op, ...args } = msg;
+    let reply: Record<string, unknown>;
+    try {
+      reply = { op: 'hostReply', call, value: (await this.onHost(String(op), args)) ?? null };
+    } catch (err) {
+      const e = err as HuskError;
+      reply = { op: 'hostReply', call, error: `${e.message}${e.hint ? ` (${e.hint})` : ''}` };
+    }
+    if (!this.exited) this.proc.write(`${JSON.stringify(reply)}
+`);
   }
 
   private gone(code: number): HuskError {
