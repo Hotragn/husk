@@ -385,7 +385,7 @@ async function smokeComputers() {
     activeRuns: [],
     handoffs: [{ handoffId: 'hnd_smoke', runId: 'chat', husk: 'chat', reason: 'Sign in to GitHub', computerId: 'cmp_smokeb2', createdAt: at }],
     activity: {
-      cmp_smokea1: { at, tool: 'browser_goto', ok: true, ms: 61, via: 'mcp', summary: 'https://example.com' },
+      cmp_smokea1: { at, tool: 'browser_goto', ok: true, ms: 61, via: 'mcp', summary: 'https://github.com/Hotragn/husk' },
       cmp_smokeb2: { at, tool: 'hand_off', ok: true, ms: 12, via: 'mcp' },
     },
   });
