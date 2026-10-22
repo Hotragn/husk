@@ -272,13 +272,18 @@ print(n)"`;
  * which the host's policy must refuse and the script must survive.
  */
 async function measureScript(id) {
+  // Both ways through the same `if`: once for words the page has (its title;
+  // example.com rewrites its body text now and then), once for words it lacks.
   const source = [
     'page.goto("https://example.com")',
-    'if page.has_text("Example Domain"):',
-    '    links = [n["name"] for n in page.snapshot() if n["role"] == "link"]',
-    '    result = {"branch": "found", "title": page.title(), "links": links}',
-    'else:',
-    '    result = {"branch": "missing"}',
+    'seen = []',
+    'for want in ["Example Domain", "No such words on this page"]:',
+    '    if want in page.title() or page.has_text(want):',
+    '        seen.append("has " + want)',
+    '    else:',
+    '        seen.append("lacks " + want)',
+    'links = [n["name"] for n in page.snapshot() if n["role"] == "link"]',
+    'result = {"seen": seen, "links": links}',
     'try:',
     '    page.goto("file:///etc/passwd")',
     '    print("policy let file:// through")',
@@ -300,7 +305,19 @@ async function measureScript(id) {
     const { appendFileSync } = await import('node:fs');
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\`\`\`\n${line}\n\`\`\`\n`);
   }
-  check('a browser_script branches on what example.com shows', !last.isError && /"branch": "found"/.test(body) && /"links": \[\s*"/.test(body), body.slice(0, 300));
+  let result;
+  try {
+    result = JSON.parse(body.slice(body.indexOf('result: ') + 'result: '.length));
+  } catch {
+    result = undefined;
+  }
+  check(
+    'a browser_script branches on what example.com shows',
+    !last.isError &&
+      JSON.stringify(result?.seen) === JSON.stringify(['has Example Domain', 'lacks No such words on this page']) &&
+      result?.links?.length > 0,
+    body.slice(0, 400),
+  );
   check('a browser_script goto obeys the network policy', /refused file:\/\//.test(body) && !/let file:\/\/ through/.test(body), body.slice(0, 300));
 }
 
