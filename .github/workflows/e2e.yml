@@ -32,7 +32,11 @@ jobs:
       - run: npm i --no-save playwright-core@1.48.2
       # The desktop app, run from the checkout on a virtual screen with a
       # compositor, and ffmpeg to film that screen and the console as GIFs.
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb xcompmgr x11-xserver-utils ffmpeg
+      # With ffmpeg's recommended packages this once sat silent until the job
+      # timed out, waiting on a question nobody can answer: never ask, take
+      # only what is needed, and give up early.
+      - run: sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends xvfb xauth xcompmgr x11-xserver-utils ffmpeg
+        timeout-minutes: 8
       - run: npm ci
         working-directory: apps/desktop
       - run: npm run e2e:computers
