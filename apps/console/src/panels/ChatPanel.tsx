@@ -15,9 +15,10 @@ import { useCallback, useState } from 'react';
 import { toDisplayError } from '../api/client';
 import type { DisplayError } from '../api/client';
 import type { ActivityEntry, BotDraft, ComputerInfo, HandoffInput, HandoffKey, Overview, PendingHandoff } from '../api/wire';
-import { Badge, Button, ErrorBlock, Icon, StatusDot, formatWhen } from '../components/primitives';
+import { Button, ErrorBlock, Icon, StatusDot, formatWhen } from '../components/primitives';
 import { Screen, useInputQueue } from '../components/Screen';
 import { useScreenFeed } from '../components/useScreenFeed';
+import { AppBadge } from '../desktop/AppGlyph';
 import { useConnection } from '../state/connection';
 import { useResource } from '../state/useResource';
 import { stateTone } from './ComputersPanel';
@@ -49,7 +50,7 @@ export function ChatPanel({ computerId, onOpen }: { computerId: string | null; o
           <h1>{name}</h1>
           <div className="btn-row">
             <StatusDot pill tone={stateTone(computer.state)} label={computer.state} />
-            {computer.platform ? <Badge>{computer.platform}</Badge> : null}
+            {computer.platform ? <AppBadge platform={computer.platform} /> : null}
             <span className="field-note mono">{computer.id}</span>
           </div>
         </div>

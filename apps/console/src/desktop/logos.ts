@@ -1,5 +1,5 @@
 /**
- * The chat apps' marks, for the tabs, the corner and the notch. Each path is
+ * The chat apps' marks, for the tabs, the notch and the console. Each path is
  * from simple-icons 16.34.0 (CC0 1.0, https://simpleicons.org), drawn on a
  * 24 x 24 grid. The marks are their owners' trademarks, shown only to say
  * which app a computer belongs to. VS Code and OpenAI are not in simple-icons

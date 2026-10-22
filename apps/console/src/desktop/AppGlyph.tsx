@@ -1,3 +1,4 @@
+import { Badge } from '../components/primitives';
 import type { DesktopComputer } from './bridge';
 import { logoOf } from './logos';
 
@@ -77,6 +78,19 @@ export function AppGlyph({
     >
       {m.text}
     </span>
+  );
+}
+
+/**
+ * The chat app a computer belongs to, wherever the console names it: the same
+ * mark in the same husk as the window's tabs and the notch, then the app's name.
+ */
+export function AppBadge({ platform }: { platform: string }) {
+  return (
+    <Badge>
+      <AppGlyph computer={{ platform }} size={16} husk />
+      {platform}
+    </Badge>
   );
 }
 

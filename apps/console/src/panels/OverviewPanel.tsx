@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 import { toDisplayError } from '../api/client';
 import type { ActiveRunInfo, ActivityEntry, ComputerInfo, ComputerStats, DoctorReport, Overview, PendingHandoff } from '../api/wire';
 import { Badge, Button, EmptyState, ErrorBlock, Icon, StatusDot, formatBytes, formatWhen } from '../components/primitives';
+import { AppBadge } from '../desktop/AppGlyph';
 import { useConnection } from '../state/connection';
 import { useResource } from '../state/useResource';
 import { stateTone } from './ComputersPanel';
@@ -171,7 +172,7 @@ function ComputerCard({
         <div>
           <h2 className="overview-card-name">{name}</h2>
           <div className="overview-card-meta">
-            {computer.platform ? <Badge>{computer.platform}</Badge> : null}
+            {computer.platform ? <AppBadge platform={computer.platform} /> : null}
             {isolation ? <IsolationBadge isolated={isolation.isolated} kind={isolation.isolationKind} /> : <Badge>{computer.provider}</Badge>}
           </div>
         </div>
