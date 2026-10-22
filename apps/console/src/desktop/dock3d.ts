@@ -1,6 +1,8 @@
 /**
- * The row of 3D computers in the corner of the screen: one small iMac per
- * computer, facing you, its screen showing that computer's browser.
+ * The corner of the screen: one very small iMac per computer a chat is using,
+ * facing you, its screen plain white. Small and still on purpose: it says a
+ * computer is there, and glows only when it needs the person (waiting) or is
+ * theirs (held). Clicking one opens the Computers window, where the screen is.
  *
  * Loaded on its own (Dock.tsx imports it dynamically), so three.js never
  * weighs on the console. One WebGL canvas holds every model, drawn with an
@@ -32,7 +34,6 @@ import {
   Scene,
   Shape,
   ShapeGeometry,
-  Texture,
   WebGLRenderer,
 } from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
@@ -42,8 +43,8 @@ import { TINTS } from './tints';
 import type { TintName } from './tints';
 
 /** One computer's slot, in CSS pixels. Dock.tsx lays its buttons out on the same grid. */
-export const SLOT_W = 88;
-export const SLOT_H = 84;
+export const SLOT_W = 44;
+export const SLOT_H = 46;
 
 export interface DockItem {
   id: string;
@@ -53,7 +54,6 @@ export interface DockItem {
 
 export interface DockStage {
   setItems(items: DockItem[]): void;
-  setFrame(id: string, src: string): void;
   hover(id: string | null): void;
   dispose(): void;
 }
@@ -75,7 +75,9 @@ const CHIN = 6;
 const TOP_R = 4.5;
 const BOTTOM_R = 3;
 const LIFT = 5; // the display's centre, above the model's
-const BASE_Y = 40; // the model's centre in its slot, from the bottom
+/** The model is drawn at about half size: a small mark in the corner, not a picture. */
+const SIZE = 0.52;
+const BASE_Y = 22; // the model's centre in its slot, from the bottom
 const SCREEN_W = 45;
 const SCREEN_H = 28.125;
 /** The screen's centre: its top edge 2px below the display's, inside the curved corners. */
@@ -89,7 +91,6 @@ const LEAVE_MS = 260;
 interface Look {
   body: MeshPhysicalMaterial;
   chin: MeshStandardMaterial;
-  wallpaper: CanvasTexture;
 }
 
 interface Model {
@@ -100,7 +101,6 @@ interface Model {
   foot: Mesh;
   screen: Mesh<PlaneGeometry, MeshBasicMaterial>;
   glow: Mesh<PlaneGeometry, MeshBasicMaterial>;
-  frame?: Texture;
   born: number;
   leaving?: number;
   index: number;
@@ -134,6 +134,8 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
   const bezel = new MeshStandardMaterial({ color: 0xf5f5f7, roughness: 0.32, metalness: 0 });
   const shadow = new MeshBasicMaterial({ map: radial('0,0,0', 0.5), transparent: true, depthWrite: false });
   const glowMap = radial('255,255,255', 1);
+  // Every screen is white glass: no picture moves in the corner.
+  const white = whiteScreen();
   const geo = {
     body: shell(),
     bezel: panel(W - 1, H - CHIN - 0.5, TOP_R - 0.5, 0),
@@ -155,7 +157,6 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
         // Anodised aluminium: the back, the edges, the blade and the foot.
         body: new MeshPhysicalMaterial({ color: new Color(t.back), metalness: 0.3, roughness: 0.48, clearcoat: 0.25, clearcoatRoughness: 0.4 }),
         chin: new MeshStandardMaterial({ color: new Color(t.chin), metalness: 0.05, roughness: 0.5 }),
-        wallpaper: wallpaperOf(t.chin, t.back),
       };
       looks.set(tint, look);
     }
@@ -180,7 +181,7 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
     face.position.set(0, (CHIN - 0.5) / 2, 1.12);
     const chin = new Mesh(geo.chin, look.chin);
     chin.position.set(0, -H / 2 + 0.5 + (CHIN - 0.5) / 2, 1.12);
-    const screen = new Mesh(geo.screen, new MeshBasicMaterial({ map: look.wallpaper, transparent: true, opacity: 0, toneMapped: false }));
+    const screen = new Mesh(geo.screen, new MeshBasicMaterial({ map: white, transparent: true, opacity: 0, toneMapped: false }));
     screen.position.set(0, SCREEN_Y, 1.16);
     display.add(body, face, chin, screen);
 
@@ -233,12 +234,12 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
     } else {
       scale *= Math.min(1, 0.001 + ease(clamp01(age / 360)));
     }
-    m.group.scale.setScalar(Math.max(0.001, scale));
+    m.group.scale.setScalar(Math.max(0.001, scale * SIZE));
     m.group.rotation.x = TILT + (TILT_HOVER - TILT) * m.hover;
     m.x += (slotX(m.index) - m.x) * 0.25;
     if (Math.abs(slotX(m.index) - m.x) > 0.3) moving = true;
     else m.x = slotX(m.index);
-    m.group.position.set(m.x, BASE_Y + 4 * m.hover, 0);
+    m.group.position.set(m.x, BASE_Y + 2 * m.hover, 0);
 
     const g = GLOW[m.status];
     const pulse = g.pulse ? 0.65 + 0.35 * Math.sin(now / 260) : 1;
@@ -257,7 +258,6 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
         scene.remove(m.group);
         m.screen.material.dispose();
         m.glow.material.dispose();
-        m.frame?.dispose();
         models.delete(m.id);
         continue;
       }
@@ -304,24 +304,6 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
       });
       kick();
     },
-    setFrame(id, src) {
-      const img = new Image();
-      img.onload = () => {
-        const m = models.get(id);
-        if (!m) return;
-        if (!m.frame) {
-          m.frame = new Texture(img);
-          m.frame.colorSpace = SRGBColorSpace;
-          m.screen.material.map = m.frame;
-          m.screen.material.needsUpdate = true;
-        } else {
-          m.frame.image = img;
-        }
-        m.frame.needsUpdate = true;
-        kick();
-      };
-      img.src = src;
-    },
     hover(id) {
       hovered = id;
       for (const m of models.values()) m.hoverTo = m.id === id ? 1 : 0;
@@ -333,14 +315,13 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
       for (const m of models.values()) {
         m.screen.material.dispose();
         m.glow.material.dispose();
-        m.frame?.dispose();
       }
       models.clear();
       for (const look of looks.values()) {
         look.body.dispose();
         look.chin.dispose();
-        look.wallpaper.dispose();
       }
+      white.dispose();
       looks.clear();
       for (const g of Object.values(geo)) g.dispose();
       bezel.dispose();
@@ -427,21 +408,20 @@ function radial(rgb: string, alpha: number): CanvasTexture {
   return t;
 }
 
-/** What a screen shows before its first frame: a soft wallpaper in the computer's own colour, as an iMac's is. */
-function wallpaperOf(light: string, deep: string): CanvasTexture {
+/** A screen that is on and empty: white glass, a touch cooler at the bottom, with a soft sheen. */
+function whiteScreen(): CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 160;
   c.height = 100;
   const g = c.getContext('2d');
   if (g) {
-    const grad = g.createLinearGradient(0, 0, 160, 100);
-    grad.addColorStop(0, light);
-    grad.addColorStop(1, deep);
+    const grad = g.createLinearGradient(0, 0, 0, 100);
+    grad.addColorStop(0, '#ffffff');
+    grad.addColorStop(1, '#eef1f5');
     g.fillStyle = grad;
     g.fillRect(0, 0, 160, 100);
-    // A wash of light from the top left, so the screen reads as glass, not paint.
-    const sheen = g.createRadialGradient(40, 22, 0, 40, 22, 110);
-    sheen.addColorStop(0, 'rgba(255,255,255,0.45)');
+    const sheen = g.createRadialGradient(38, 18, 0, 38, 18, 120);
+    sheen.addColorStop(0, 'rgba(255,255,255,0.9)');
     sheen.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = sheen;
     g.fillRect(0, 0, 160, 100);

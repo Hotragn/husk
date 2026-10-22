@@ -14,19 +14,23 @@ that tells you when a chat is waiting for you.
 - **Sits in the tray.** It shows how many computers are running and how many chats are
   waiting for you, and raises a notification when a chat hands you the computer. Closing
   the window leaves Husk running; your chats keep their computers.
-- **Puts each chat's computer on your screen.** When a chat starts using a computer, a
-  small window opens in the bottom-right corner without taking the keyboard: the
-  computer's browser live and edge to edge, its tabs by name, and **Take over** or **Give
-  back** in the title bar. Resize it, maximize it, or keep it on top (the pin). Closing it
-  only hides it; the computer keeps running.
-- **Stands a small 3D computer for each one** in the corner. Its screen shows that
-  computer's browser, it glows amber when the chat is waiting for you and teal while you
-  hold it, and hovering it names the chat. Click it to show or hide the window. Without
-  WebGL it draws flat computers instead.
-- **Minimizes to the notch.** A minimized window becomes its chat app's logo in a black
+- **Keeps each chat's computer one click away.** A very small 3D iMac for each computer
+  a chat is using stands on a small frosted tray in the bottom-right corner, facing you,
+  its screen white. It never moves or shows a picture, so it never distracts: it glows
+  amber only when the chat is waiting for you and teal while you hold it. Hover it for a
+  tiny label with the chat app's name. Without WebGL it draws the same iMac flat.
+- **Opens the Computers window when you click one, and only then.** One compact window
+  whose tabs are your computers, each with its chat app's logo: the browser live on a
+  white screen, and **Take over** or **Give back** beside what it is doing. Resize it,
+  maximize it, or keep it on top (the pin). Closing it only hides it; the computers keep
+  running. "Open the window when a chat starts using a computer" is in the tray, off.
+- **Minimizes to the notch.** The minimized window becomes its computers' logos in a black
   capsule hanging from the top of the screen: around the notch on a Mac that has one,
-  centred on Windows and Linux. Hover it to see what each computer is doing, with a live
-  thumbnail, and open or close it from there.
+  centred on Windows and Linux. Click a logo to open that tab; hover to see what each
+  computer is doing.
+- **Real logos.** Claude, Cursor, Gemini, Zed and Windsurf use their marks from
+  [simple-icons](https://simpleicons.org) (CC0). VS Code shows its own installed app icon,
+  and Codex a monogram until its mark is added.
 - These windows are the console's own small views (`apps/console/src/desktop`), so they
   need no login of their own. They talk to the app through one preload
   (`src/preload.cjs`) that exposes a state stream and a short list of requests, each

@@ -1,29 +1,24 @@
 /**
- * The corner of the screen: one small 3D computer per computer a chat is
- * using. Hover one to see which chat it belongs to and what it is doing;
- * click it to show or hide its window.
+ * The corner of the screen: one very small 3D computer for each computer a
+ * chat is using, on a small frosted tray. Minimal on purpose, so it never
+ * pulls the eye: white screens, no moving picture, a soft glow only when a
+ * chat waits for the person or the person holds it. Hover shows a tiny label
+ * with the chat app's name; a click opens the Computers window on that tab.
  *
  * The 3D is drawn by dock3d.ts on one canvas; the buttons here sit over it on
  * the same grid, so the row is keyboard- and screen-reader-usable and the
- * hover tooltip is plain DOM. The desktop app makes this window click-through
- * except while the pointer is over a computer (`interactive`). Without WebGL
- * the same buttons draw flat computers instead.
+ * label is plain DOM. The desktop app makes this window click-through except
+ * while the pointer is over a computer (`interactive`). Without WebGL the same
+ * buttons draw flat computers instead.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { useScreenFeed } from '../components/useScreenFeed';
-import { AppGlyph } from './AppGlyph';
-import { ago, desktopBridge, doing, statusOf, useDesktopState } from './bridge';
+import { desktopBridge, doing, statusOf, useDesktopState } from './bridge';
 import type { DesktopComputer } from './bridge';
 import type { DockStage } from './dock3d';
 import { TINTS, tintOf } from './tints';
 import type { TintName } from './tints';
-
-/** Which computers stand in the row: running ones, and any whose window is still around. */
-export function docked(list: DesktopComputer[]): DesktopComputer[] {
-  return list.filter((c) => c.state === 'running' || c.window !== 'closed');
-}
 
 export function Dock() {
   const desk = desktopBridge();
@@ -32,7 +27,7 @@ export function Dock() {
   const [stage, setStage] = useState<DockStage | null>(null);
   const [flat, setFlat] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
-  const list = docked(state?.computers ?? []);
+  const list = state?.computers ?? [];
   const items = list.map((c) => ({ id: c.id, status: statusOf(c), tint: tintOf(c.platform, c.id) }));
   const itemsKey = items.map((i) => `${i.id}:${i.status}:${i.tint}`).join(',');
 
@@ -78,14 +73,13 @@ export function Dock() {
   if (!desk) return <p className="desk-note">Open this from the Husk app.</p>;
   return (
     <div className={`dock${flat ? ' dock-flat' : ''}`}>
-      {list.length > 0 ? <span className="dock-tray" aria-hidden="true" style={{ width: list.length * 88 - 8 }} /> : null}
+      {list.length > 0 ? <span className="dock-tray" aria-hidden="true" style={{ width: list.length * 44 - 4 }} /> : null}
       <canvas ref={canvas} className="dock-canvas" aria-hidden="true" hidden={flat} />
       <ul className="dock-row" aria-label="Computers">
         {list.map((c) => (
           <Slot
             key={c.id}
             computer={c}
-            stage={stage}
             flat={flat}
             hovered={hover === c.id}
             onEnter={() => enter(c.id)}
@@ -100,7 +94,6 @@ export function Dock() {
 
 function Slot({
   computer: c,
-  stage,
   flat,
   hovered,
   onEnter,
@@ -108,37 +101,25 @@ function Slot({
   onClick,
 }: {
   computer: DesktopComputer;
-  stage: DockStage | null;
   flat: boolean;
   hovered: boolean;
   onEnter: () => void;
   onLeave: () => void;
   onClick: () => void;
 }) {
-  const { frame } = useScreenFeed(c.id, { fps: 1, enabled: c.live && c.state === 'running' });
-  useEffect(() => {
-    if (frame) stage?.setFrame(c.id, frame.src);
-  }, [stage, c.id, frame]);
   const status = statusOf(c);
   const tip = `tip-${c.id}`;
   return (
     <li className={`dock-slot dock-${status}`}>
       {hovered ? (
-        <div className="dock-tip" role="tooltip" id={tip}>
-          <span className="dock-tip-head">
-            <AppGlyph computer={c} size={16} />
-            <strong>{c.label}</strong>
-          </span>
-          <span className="dock-tip-doing">
-            {doing(c)}
-            {c.last ? ` · ${ago(c.last.at)}` : ''}
-          </span>
-        </div>
+        <span className="dock-tip" role="tooltip" id={tip}>
+          {c.platform ?? c.label}
+        </span>
       ) : null}
       <button
         type="button"
         className="dock-hit"
-        aria-label={`${c.label}: ${doing(c)}. ${c.window === 'open' ? 'Hide' : 'Show'} its window`}
+        aria-label={`${c.label}: ${doing(c)}. Open it`}
         aria-describedby={hovered ? tip : undefined}
         onPointerEnter={onEnter}
         onPointerLeave={onLeave}
@@ -146,22 +127,19 @@ function Slot({
         onBlur={onLeave}
         onClick={onClick}
       >
-        {flat ? <FlatComputer src={frame?.src} tint={tintOf(c.platform, c.id)} /> : null}
+        {flat ? <FlatComputer tint={tintOf(c.platform, c.id)} /> : null}
       </button>
-      <span className="dock-app" aria-hidden="true">
-        <AppGlyph computer={c} size={12} soft />
-      </span>
     </li>
   );
 }
 
-/** The same iMac, facing front, drawn in CSS for where WebGL is not available. */
-function FlatComputer({ src, tint }: { src: string | undefined; tint: TintName }) {
+/** The same small iMac, facing front with a white screen, drawn in CSS where WebGL is not available. */
+function FlatComputer({ tint }: { tint: TintName }) {
   const colours = { '--mac-back': TINTS[tint].back, '--mac-chin': TINTS[tint].chin } as CSSProperties;
   return (
     <span className="flat-mac" aria-hidden="true" style={colours}>
       <span className="flat-mac-display">
-        <span className="flat-mac-screen">{src ? <img src={src} alt="" draggable={false} /> : null}</span>
+        <span className="flat-mac-screen" />
         <span className="flat-mac-chin" />
       </span>
       <span className="flat-mac-neck" />

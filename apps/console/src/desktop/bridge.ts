@@ -4,10 +4,10 @@
  * in a plain browser it is absent, and these views say so.
  *
  * The desktop app is the one source of what is on screen: which computers
- * exist, whose window is open or minimized, who holds each one. It reads that
- * from the shared Husk every couple of seconds and sends it to every window,
- * so the computer window, the row of 3D computers and the notch never
- * disagree.
+ * are running, which one the Computers window shows, whether that window is
+ * open or minimized, who holds each computer. It reads that from the shared
+ * Husk every couple of seconds and sends it to every window, so the window,
+ * the corner row and the notch never disagree.
  */
 
 import { useEffect, useState } from 'react';
@@ -19,9 +19,6 @@ export interface DesktopComputer {
   /** The chat app: "Claude Code", "Claude Desktop", "Cursor"... */
   platform?: string;
   state: string;
-  window: 'open' | 'minimized' | 'closed';
-  /** On top of other windows. */
-  pinned: boolean;
   /** The open handoff on it, if any: the person's own hold, or a chat waiting for them. */
   handoffId?: string;
   /** The person took it. */
@@ -36,15 +33,27 @@ export interface DesktopComputer {
 }
 
 export interface DesktopState {
+  /** The running computers: the corner row, and the Computers window's tabs. */
   computers: DesktopComputer[];
+  /** The tab the Computers window shows. */
+  active?: string;
+  window: 'open' | 'minimized' | 'closed';
+  /** The window stays on top of other windows. */
+  pinned: boolean;
   /** A Mac with a notch: the pill wraps it, its logos left and right of `gap` pixels. */
   notch?: { gap: number; height: number };
 }
 
+/**
+ * What a page may ask. The desktop app takes each only from the page it is
+ * for: `toggle` from the corner row, `open` and `dismiss` from the notch,
+ * `select` and `window` from the Computers window.
+ */
 export type DesktopAct =
   | { type: 'toggle'; id: string }
   | { type: 'open'; id: string }
-  | { type: 'close'; id: string }
+  | { type: 'dismiss' }
+  | { type: 'select'; id: string }
   | { type: 'console'; id: string }
   | { type: 'interactive'; on: boolean }
   | { type: 'window'; op: 'close' | 'minimize' | 'maximize' | 'pin' }
@@ -85,6 +94,17 @@ export function statusOf(c: DesktopComputer, now = Date.now()): DeskStatus {
   if (c.held) return 'held';
   if (c.waiting) return 'waiting';
   return c.last && now - Date.parse(c.last.at) < 15_000 ? 'active' : 'idle';
+}
+
+/**
+ * A computer's name on its tab: its chat app, with the time its chat started
+ * where two computers belong to the same app; else its label.
+ */
+export function tabName(c: DesktopComputer, all: DesktopComputer[]): string {
+  if (!c.platform) return c.label;
+  const twin = all.some((o) => o.id !== c.id && o.platform === c.platform);
+  const time = /\b(\d{1,2}:\d{2})\b/.exec(c.label)?.[1];
+  return twin && time ? `${c.platform} ${time}` : c.platform;
 }
 
 /** What a computer is doing, in a few words. */

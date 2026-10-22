@@ -1,26 +1,26 @@
 /**
- * The notch: where a minimized computer window goes. A black capsule hanging
- * from the top of the screen holds the chat app logos of minimized computers.
- * On a Mac with a notch it wraps the notch, logos left and right of it;
- * elsewhere it is the same shape, centred. Hover opens it into a list: what
- * each computer is doing, a live thumbnail, Open and close.
+ * The notch: where the Computers window goes when it is minimized. A black
+ * capsule hanging from the top of the screen holds the logo of each computer
+ * in the window. On a Mac with a notch it wraps the notch, logos left and
+ * right of it; elsewhere it is the same shape, centred. A logo brings the
+ * window back on that computer's tab; hover opens a short list of what each
+ * is doing, with Open, and a way to put the window away altogether.
  *
- * The desktop app shows this window only while something is minimized, and
- * makes it click-through except while the pointer is on the capsule.
+ * The desktop app shows this window only while the Computers window is
+ * minimized, and makes it click-through except while the pointer is on it.
  */
 
 import { useState } from 'react';
 import type { CSSProperties } from 'react';
-import { useScreenFeed } from '../components/useScreenFeed';
 import { AppGlyph } from './AppGlyph';
-import { ago, desktopBridge, doing, statusOf, useDesktopState } from './bridge';
+import { ago, desktopBridge, doing, statusOf, tabName, useDesktopState } from './bridge';
 import type { DesktopComputer } from './bridge';
 
 export function Pill() {
   const desk = desktopBridge();
   const state = useDesktopState();
   const [open, setOpen] = useState(false);
-  const items = (state?.computers ?? []).filter((c) => c.window === 'minimized');
+  const items = state?.computers ?? [];
   const notch = state?.notch;
   if (!desk) return <p className="desk-note">Open this from the Husk app.</p>;
 
@@ -35,7 +35,7 @@ export function Pill() {
   const logos = (list: DesktopComputer[]) =>
     list.map((c) => (
       <button key={c.id} type="button" className="pill-logo" aria-label={`Open ${c.label}`} onClick={() => void desk.act({ type: 'open', id: c.id })}>
-        <AppGlyph computer={c} size={18} />
+        <AppGlyph computer={c} size={20} husk />
         <span className={`pill-dot pill-dot-${statusOf(c)}`} aria-hidden="true" />
       </button>
     ));
@@ -62,38 +62,30 @@ export function Pill() {
           )}
         </div>
         {open ? (
-          <ul className="pill-list" aria-label="Minimized computers">
-            {items.map((c) => (
-              <Row key={c.id} computer={c} />
-            ))}
-          </ul>
+          <>
+            <ul className="pill-list" aria-label="Computers">
+              {items.map((c) => (
+                <li key={c.id} className={`pill-row pill-row-${statusOf(c)}`}>
+                  <AppGlyph computer={c} size={26} husk />
+                  <span className="pill-text">
+                    <strong title={c.label}>{tabName(c, items)}</strong>
+                    <span title={doing(c)}>
+                      {doing(c)}
+                      {c.last ? ` · ${ago(c.last.at)}` : ''}
+                    </span>
+                  </span>
+                  <button type="button" className="pill-btn" aria-label={`Open ${tabName(c, items)}`} onClick={() => void desk.act({ type: 'open', id: c.id })}>
+                    Open
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <button type="button" className="pill-dismiss" onClick={() => void desk.act({ type: 'dismiss' })}>
+              Put the window away
+            </button>
+          </>
         ) : null}
       </div>
     </div>
-  );
-}
-
-function Row({ computer: c }: { computer: DesktopComputer }) {
-  const desk = desktopBridge();
-  const { frame } = useScreenFeed(c.id, { fps: 1, enabled: c.live && c.state === 'running' });
-  return (
-    <li className={`pill-row pill-row-${statusOf(c)}`}>
-      <span className="pill-thumb" aria-hidden="true">
-        {frame ? <img src={frame.src} alt="" draggable={false} /> : <AppGlyph computer={c} size={22} />}
-      </span>
-      <span className="pill-text">
-        <strong title={c.label}>{c.label}</strong>
-        <span title={doing(c)}>
-          {doing(c)}
-          {c.last ? ` · ${ago(c.last.at)}` : ''}
-        </span>
-      </span>
-      <button type="button" className="pill-btn" onClick={() => void desk?.act({ type: 'open', id: c.id })}>
-        Open
-      </button>
-      <button type="button" className="pill-btn pill-btn-x" aria-label={`Close ${c.label}’s window`} onClick={() => void desk?.act({ type: 'close', id: c.id })}>
-        ×
-      </button>
-    </li>
   );
 }

@@ -101,39 +101,38 @@ export function newlyWaiting(before, after) {
 
 // -- computers on the screen ------------------------------------------------
 
-/** One computer's place in the row of 3D computers, in screen points. The console's Dock.tsx uses the same. */
-export const SLOT_W = 88;
-export const SLOT_H = 84;
-/** Room above the row for a hover tooltip, and to its left for a long one. */
-const TIP_H = 70;
-const TIP_W = 180;
-const EDGE = 16;
+/** One computer's place in the corner row, in screen points: small, so it never distracts. Dock.tsx uses the same. */
+export const SLOT_W = 44;
+export const SLOT_H = 46;
+/** Room above the row for its small hover label, and to its left for a long one. */
+const TIP_H = 30;
+const TIP_W = 110;
+const EDGE = 12;
 
 /** A desktop window's page: one of the console's own small views, signed in like the console. */
-export function desktopUrl(rec, view, id) {
+export function desktopUrl(rec, view) {
   const token = rec.token ? `token=${encodeURIComponent(rec.token)}&` : '';
-  return `${rec.url}/#${token}view=${view}${id ? `&id=${encodeURIComponent(id)}` : ''}`;
+  return `${rec.url}/#${token}view=${view}`;
 }
 
-/** The row of 3D computers: the bottom-right corner of the work area, one slot per computer. */
+/** The corner row: the bottom-right of the work area, one small slot per computer. */
 export function dockBounds(workArea, count) {
   const width = Math.max(1, count) * SLOT_W + TIP_W;
   const height = SLOT_H + TIP_H;
   return { x: workArea.x + workArea.width - width - EDGE, y: workArea.y + workArea.height - height - EDGE / 2, width, height };
 }
 
-/** Where the nth computer window opens: above the row, each one up and to the left of the last. */
-export function computerWindowBounds(workArea, n, size = { width: 560, height: 420 }) {
-  const step = 28 * (n % 8);
-  const x = workArea.x + workArea.width - size.width - EDGE - step;
-  const y = workArea.y + workArea.height - size.height - SLOT_H - 2 * EDGE - step;
+/** The Computers window: compact, bottom-right, just above the corner row. */
+export function computersWindowBounds(workArea, size = { width: 480, height: 330 }) {
+  const x = workArea.x + workArea.width - size.width - EDGE;
+  const y = workArea.y + workArea.height - size.height - SLOT_H - 2 * EDGE;
   return { x: Math.max(workArea.x, x), y: Math.max(workArea.y, y), ...size };
 }
 
 /** The notch's window: centred on the display's top edge, tall enough to open into a list of `rows`. */
 export function pillBounds(display, rows) {
-  const width = 460;
-  const height = Math.min(400, 72 + Math.max(1, rows) * 56);
+  const width = 420;
+  const height = Math.min(360, 64 + Math.max(1, rows) * 46);
   return { x: Math.round(display.bounds.x + (display.bounds.width - width) / 2), y: display.bounds.y, width, height };
 }
 
@@ -147,25 +146,23 @@ export function notchOf(platform, display) {
 export const PUSHED_SCREEN = new Set(['docker', 'podman', 'local']);
 
 /**
- * What every desktop window is told: each computer from GET /v1/overview, who
- * holds it, and where its window is. `windows` maps an id to `{ state, pinned }`.
+ * The computers on the screen, from GET /v1/overview: every running one (the
+ * corner row, and the Computers window's tabs), and the tab being shown even
+ * once it stops. Each says who holds it and what it last did.
  */
-export function desktopComputers(overview, windows, icons = {}) {
+export function desktopComputers(overview, active, icons = {}) {
   if (!overview) return [];
   return overview.computers
-    .filter((c) => c.state !== 'destroyed')
+    .filter((c) => c.state === 'running' || (c.id === active && c.state !== 'destroyed'))
     .map((c) => {
       const handoff = (overview.handoffs ?? []).find((h) => h.computerId === c.id);
       const last = overview.activity?.[c.id];
-      const w = windows.get(c.id);
       const platform = c.platform;
       return {
         id: c.id,
         label: c.chatLabel ?? c.name ?? c.id,
         ...(platform ? { platform } : {}),
         state: c.state,
-        window: w?.state ?? 'closed',
-        pinned: w?.pinned ?? true,
         ...(handoff ? { handoffId: handoff.handoffId } : {}),
         held: handoff?.runId === 'person',
         ...(handoff && handoff.runId !== 'person' ? { waiting: handoff.reason } : {}),
@@ -177,8 +174,8 @@ export function desktopComputers(overview, windows, icons = {}) {
 }
 
 /**
- * Computers whose window opens by itself: running, used by a chat since `since`,
- * and without a window yet this run. One the person closed stays closed.
+ * With "open by itself" on (off unless chosen): a running computer a chat
+ * used since `since`, not shown yet this run. One the person closed stays closed.
  */
 export function toOpen(overview, since, seen) {
   if (!overview) return [];

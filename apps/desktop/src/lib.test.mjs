@@ -7,7 +7,7 @@ import {
   SLOT_H,
   SLOT_W,
   appIconPaths,
-  computerWindowBounds,
+  computersWindowBounds,
   consoleUrl,
   daemonCommand,
   desktopComputers,
@@ -99,22 +99,22 @@ test('the tray says what is running and what is waiting, and notifies once per h
 
 const workArea = { x: 0, y: 25, width: 1440, height: 875 };
 
-test('the row of 3D computers sits in the bottom-right corner, one slot per computer', () => {
+test('the corner row is small, in the bottom-right corner, one slot per computer', () => {
   const one = dockBounds(workArea, 1);
   const three = dockBounds(workArea, 3);
   assert.equal(three.width - one.width, 2 * SLOT_W);
-  assert.ok(one.height > SLOT_H, 'room above the row for a tooltip');
+  assert.ok(SLOT_W <= 48 && SLOT_H <= 48, 'small enough not to distract');
+  assert.ok(one.height > SLOT_H && one.height <= 80, 'room above the row for its small label, and no more');
   for (const b of [one, three]) {
     assert.ok(b.x + b.width <= workArea.x + workArea.width && b.y + b.height <= workArea.y + workArea.height, 'inside the work area');
   }
 });
 
-test('computer windows open above the row, each up and to the left of the last, never off the screen', () => {
-  const a = computerWindowBounds(workArea, 0);
-  const b = computerWindowBounds(workArea, 1);
-  assert.ok(b.x < a.x && b.y < a.y);
-  assert.ok(a.y + a.height <= dockBounds(workArea, 1).y + SLOT_H, 'above the 3D computers');
-  const tiny = computerWindowBounds({ x: 0, y: 0, width: 400, height: 300 }, 3);
+test('the Computers window opens compact, just above the corner row, never off the screen', () => {
+  const w = computersWindowBounds(workArea);
+  assert.ok(w.width <= 520 && w.height <= 360, 'compact');
+  assert.ok(w.x + w.width <= workArea.x + workArea.width && w.y + w.height <= dockBounds(workArea, 1).y + SLOT_H, 'above the corner row');
+  const tiny = computersWindowBounds({ x: 0, y: 0, width: 400, height: 300 });
   assert.ok(tiny.x >= 0 && tiny.y >= 0);
 });
 
@@ -145,17 +145,14 @@ const overview = {
   },
 };
 
-test('every window is told who holds each computer, and where its window is', () => {
-  const windows = new Map([['cmp_a', { state: 'minimized', pinned: false }]]);
-  const [a, b, c, ...rest] = desktopComputers(overview, windows, { 'Claude Desktop': 'data:image/png;base64,x' });
-  assert.equal(rest.length, 0, 'a destroyed computer is gone');
+test('the computers on the screen are the running ones, each with who holds it and what it did', () => {
+  const [a, b, ...rest] = desktopComputers(overview, undefined, { 'Claude Desktop': 'data:image/png;base64,x' });
+  assert.equal(rest.length, 0, 'a stopped or destroyed computer is not a tab');
   assert.deepEqual(a, {
     id: 'cmp_a',
     label: 'Claude Code · chat started 09:41',
     platform: 'Claude Code',
     state: 'running',
-    window: 'minimized',
-    pinned: false,
     handoffId: 'hnd_1',
     held: true,
     last: { tool: 'browser_goto', summary: 'https://example.com', at: '2026-10-22T10:00:05.000Z' },
@@ -165,12 +162,14 @@ test('every window is told who holds each computer, and where its window is', ()
   assert.equal(b.held, false);
   assert.equal(b.live, false, 'an ssh screen is an exec per frame, which counts as use');
   assert.equal(b.icon, 'data:image/png;base64,x');
-  assert.equal(c.window, 'closed');
-  assert.equal(c.label, 'cmp_c');
-  assert.deepEqual(desktopComputers(undefined, windows), []);
+  assert.equal(b.label, 'box');
+  // The tab being shown stays a tab when its computer stops.
+  assert.deepEqual(desktopComputers(overview, 'cmp_c').map((c) => c.id), ['cmp_a', 'cmp_b', 'cmp_c']);
+  assert.deepEqual(desktopComputers(overview, 'cmp_d').map((c) => c.id), ['cmp_a', 'cmp_b']);
+  assert.deepEqual(desktopComputers(undefined), []);
 });
 
-test('a window opens by itself only for a running computer a chat used since the app started, once', () => {
+test('with "open by itself" on, only a running computer a chat used since the app started opens, once', () => {
   const since = Date.parse('2026-10-22T09:30:00.000Z');
   assert.deepEqual(toOpen(overview, since, new Set()), ['cmp_a']);
   assert.deepEqual(toOpen(overview, since, new Set(['cmp_a'])), [], 'not again, even after the person closed it');
@@ -178,7 +177,7 @@ test('a window opens by itself only for a running computer a chat used since the
 });
 
 test('desktop windows are the console signed in, on their own view', () => {
-  assert.equal(desktopUrl({ url: 'http://127.0.0.1:7377', token: 'a b' }, 'computer', 'cmp_a'), 'http://127.0.0.1:7377/#token=a%20b&view=computer&id=cmp_a');
+  assert.equal(desktopUrl({ url: 'http://127.0.0.1:7377', token: 'a b' }, 'computers'), 'http://127.0.0.1:7377/#token=a%20b&view=computers');
   assert.equal(desktopUrl({ url: 'http://127.0.0.1:7377' }, 'dock'), 'http://127.0.0.1:7377/#view=dock');
 });
 

@@ -95,13 +95,14 @@ Set up Husk for me, so you get a computer of your own for tasks: a terminal and 
 After the restart: call computer_info, open https://example.com in the browser, and tell me what you see.
 ```
 
-A desktop app (`apps/desktop`) carries the same Husk with its own Node and puts each
-chat's computer on your screen: a small live window per computer in the bottom-right
-corner, which you can resize, maximize or minimize to a notch at the top of the screen
-(around the real notch on a Mac), and a small 3D computer for each that names its chat
-when you hover it. It sits in the tray to tell you when a chat is waiting for you. Its
-installers build and pass a smoke test in CI but are not released or signed yet; see
-[apps/desktop](apps/desktop/README.md).
+A desktop app (`apps/desktop`) carries the same Husk with its own Node and keeps each
+chat's computer one click away: a very small 3D computer for each in the bottom-right
+corner, which names its chat app when you hover it. Click one and a compact Computers
+window opens, its tabs your computers (each with its chat app's logo), the browser
+live on a white screen, Take over a click away. Minimize it and it goes to a notch at
+the top of the screen (around the real notch on a Mac). It sits in the tray to tell you
+when a chat is waiting for you. Its installers build and pass a smoke test in CI but are
+not released or signed yet; see [apps/desktop](apps/desktop/README.md).
 
 To add Husk to one app by hand instead:
 

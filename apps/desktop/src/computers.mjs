@@ -1,25 +1,27 @@
-// Computers on the screen: a small live window for each computer a chat uses,
-// the row of 3D computers in the bottom-right corner, and the notch at the top
-// where a minimized window goes.
+// Computers on the screen: a small row of 3D computers in the bottom-right
+// corner, one per computer a chat is using; one compact Computers window
+// whose tabs are those computers, opened only when the person clicks one; and
+// the notch at the top, where that window goes when it is minimized.
 //
 // The pages are the console's own views (apps/console/src/desktop), served by
 // the shared Husk and signed in like the console. This file places their
 // windows, tells every one of them the same state, and checks each request
-// against the window that sent it: a computer window can only work its own
-// window, the dock can only show and hide windows, the notch can open and
-// close them. Nothing a page sends reaches anything else.
+// against the window that sent it: the corner row can only show a computer,
+// the notch can open or dismiss the window, the window can switch its tab and
+// work itself. Nothing a page sends reaches anything else.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { BrowserWindow, app, ipcMain, screen, shell } from 'electron';
-import { appIconPaths, computerWindowBounds, desktopComputers, desktopUrl, dockBounds, external, notchOf, pillBounds, sameOrigin, toOpen } from './lib.mjs';
+import { appIconPaths, computersWindowBounds, desktopComputers, desktopUrl, dockBounds, external, notchOf, pillBounds, sameOrigin, toOpen } from './lib.mjs';
 
 const PRELOAD = join(import.meta.dirname, 'preload.cjs');
 const ID = /^cmp_[a-z0-9]{1,40}$/i;
-const DEFAULTS = { onScreen: true, notch: true, autoOpen: true };
+// The window opens when the person clicks a computer, not by itself, unless they choose that.
+const DEFAULTS = { onScreen: true, notch: true, autoOpen: false };
 const MAC = process.platform === 'darwin';
 // Linux cannot forward mouse moves through a click-through window, so there
-// the dock and the notch stay clickable over their whole (small) windows.
+// the corner row and the notch stay clickable over their whole (small) windows.
 const FORWARDS = process.platform !== 'linux';
 const webPreferences = { preload: PRELOAD, contextIsolation: true, sandbox: true, nodeIntegration: false };
 
@@ -30,18 +32,23 @@ export class Computers {
    */
   constructor(opts) {
     this.opts = opts;
-    /** id -> { win, state: 'open' | 'minimized' | 'closed', pinned, ready, pending } */
-    this.windows = new Map();
-    /** Computers that have had a window this run: none opens by itself twice. */
+    /** The Computers window, once opened, and where it is. */
+    this.win = undefined;
+    this.ready = false;
+    this.state = 'closed';
+    this.pending = 'show';
+    this.pinned = true;
+    /** The tab the window shows. */
+    this.active = undefined;
+    /** Computers shown this run: with "open by itself" on, none opens twice. */
     this.seen = new Set();
     this.since = Date.now() - 60_000;
-    this.waitingShown = new Set();
     this.overview = undefined;
     this.icons = {};
     this.iconsAsked = new Set();
     this.dock = undefined;
     this.pill = undefined;
-    // Closing a computer window only hides it, except when the app itself is quitting (Cmd+Q, logout).
+    // Closing the window only hides it, except when the app itself is quitting (Cmd+Q, logout).
     this.quitting = false;
     app.on('before-quit', () => {
       this.quitting = true;
@@ -50,7 +57,7 @@ export class Computers {
     this.settings = { ...DEFAULTS, ...readJson(this.file) };
     ipcMain.handle('husk:act', (event, msg) => this.act(event.sender, msg));
     ipcMain.on('husk:hello', (event) => {
-      if (this.whose(event.sender)) event.sender.send('husk:state', this.state());
+      if (this.whose(event.sender)) event.sender.send('husk:state', this.snapshot());
     });
   }
 
@@ -58,7 +65,7 @@ export class Computers {
   set(key, value) {
     this.settings[key] = value;
     writeJson(this.file, this.settings);
-    if (key === 'onScreen' && !value) for (const id of this.windows.keys()) this.close(id);
+    if (key === 'onScreen' && !value) this.close();
     this.layout();
     this.broadcast();
   }
@@ -67,47 +74,47 @@ export class Computers {
   update(overview) {
     if (!overview) return;
     this.overview = overview;
-    const live = new Set(overview.computers.filter((c) => c.state !== 'destroyed').map((c) => c.id));
-    for (const id of [...this.windows.keys()]) if (!live.has(id)) this.destroy(id);
-    if (this.settings.onScreen) {
-      if (this.settings.autoOpen) for (const id of toOpen(overview, this.since, this.seen)) this.open(id, { focus: false });
-      // A chat that asks for the person brings its window back, without taking the keyboard.
-      for (const h of overview.handoffs ?? []) {
-        if (h.runId === 'person' || !h.computerId || !live.has(h.computerId) || this.waitingShown.has(h.handoffId)) continue;
-        this.waitingShown.add(h.handoffId);
-        this.open(h.computerId, { focus: false });
-      }
+    if (this.settings.onScreen && this.settings.autoOpen) {
+      const next = toOpen(overview, this.since, this.seen)[0];
+      if (next) this.open(next, { focus: false });
     }
+    if (this.active && !this.computers().some((c) => c.id === this.active)) this.active = undefined;
     this.findIcons();
     this.layout();
     this.broadcast();
   }
 
-  state() {
+  computers() {
+    return desktopComputers(this.overview, this.active, this.icons);
+  }
+
+  snapshot() {
     const notch = notchOf(process.platform, screen.getPrimaryDisplay());
-    return { computers: desktopComputers(this.overview, this.windows, this.icons), ...(notch ? { notch } : {}) };
+    const computers = this.computers();
+    const active = this.active ?? computers[0]?.id;
+    return { computers, ...(active ? { active } : {}), window: this.state, pinned: this.pinned, ...(notch ? { notch } : {}) };
   }
 
   broadcast() {
-    const s = this.state();
+    const s = this.snapshot();
     for (const w of this.pages()) w.webContents.send('husk:state', s);
   }
 
   pages() {
-    return [this.dock, this.pill, ...[...this.windows.values()].map((r) => r.win)].filter((w) => w && !w.isDestroyed());
+    return [this.dock, this.pill, this.win].filter((w) => w && !w.isDestroyed());
   }
 
   /** Which of this app's windows sent a request, by its page's id; undefined for any other page. */
   whose(sender) {
     const is = (w) => w && !w.isDestroyed() && w.webContents.id === sender.id;
-    if (is(this.dock)) return { kind: 'dock' };
-    if (is(this.pill)) return { kind: 'pill' };
-    for (const [id, r] of this.windows) if (is(r.win)) return { kind: 'computer', id };
+    if (is(this.dock)) return 'dock';
+    if (is(this.pill)) return 'pill';
+    if (is(this.win)) return 'window';
     return undefined;
   }
 
   known(id) {
-    return typeof id === 'string' && ID.test(id) && Boolean(this.overview?.computers.some((c) => c.id === id && c.state !== 'destroyed'));
+    return typeof id === 'string' && ID.test(id) && this.computers().some((c) => c.id === id);
   }
 
   /** What a page asked for, if that page may ask it. */
@@ -116,25 +123,31 @@ export class Computers {
     if (!from || !msg || typeof msg !== 'object') return;
     switch (msg.type) {
       case 'interactive': {
-        const w = from.kind === 'dock' ? this.dock : from.kind === 'pill' ? this.pill : undefined;
+        const w = from === 'dock' ? this.dock : from === 'pill' ? this.pill : undefined;
         if (w && typeof msg.on === 'boolean' && FORWARDS) w.setIgnoreMouseEvents(!msg.on, { forward: true });
         return;
       }
       case 'toggle':
-        if (from.kind === 'dock' && this.known(msg.id)) this.toggle(msg.id);
+        if (from === 'dock' && this.known(msg.id)) this.toggle(msg.id);
         return;
       case 'open':
-        if (from.kind !== 'computer' && this.known(msg.id)) this.open(msg.id, { focus: true });
+        if (from === 'pill' && this.known(msg.id)) this.open(msg.id, { focus: true });
         return;
-      case 'close':
-        if (from.kind === 'pill' && this.known(msg.id)) this.close(msg.id);
+      case 'dismiss':
+        if (from === 'pill') this.close();
+        return;
+      case 'select':
+        if (from === 'window' && this.known(msg.id)) {
+          this.active = msg.id;
+          this.broadcast();
+        }
         return;
       case 'window':
-        if (from.kind !== 'computer') return;
-        if (msg.op === 'close') this.close(from.id);
-        else if (msg.op === 'minimize') this.minimize(from.id);
-        else if (msg.op === 'maximize') this.maximize(from.id);
-        else if (msg.op === 'pin') this.pin(from.id);
+        if (from !== 'window') return;
+        if (msg.op === 'close') this.close();
+        else if (msg.op === 'minimize') this.minimize();
+        else if (msg.op === 'maximize') this.maximize();
+        else if (msg.op === 'pin') this.pin();
         return;
       case 'console':
         if (this.known(msg.id)) this.opts.onConsole(msg.id);
@@ -146,151 +159,135 @@ export class Computers {
     }
   }
 
+  /** Show the window on this computer's tab. */
   open(id, { focus }) {
     this.seen.add(id);
-    let r = this.windows.get(id);
-    if (!r || r.win.isDestroyed()) r = this.create(id);
-    r.state = 'open';
-    r.pending = focus ? 'show' : 'inactive';
-    if (r.ready) {
-      if (r.win.isMinimized()) r.win.restore();
+    this.active = id;
+    if (!this.win || this.win.isDestroyed()) this.create();
+    this.state = 'open';
+    this.pending = focus ? 'show' : 'inactive';
+    if (this.ready) {
+      if (this.win.isMinimized()) this.win.restore();
       if (focus) {
-        r.win.show();
-        r.win.focus();
-      } else r.win.showInactive();
+        this.win.show();
+        this.win.focus();
+      } else this.win.showInactive();
     }
     this.layout();
     this.broadcast();
   }
 
-  create(id) {
-    const open = [...this.windows.values()].filter((w) => w.state !== 'closed').length;
-    const c = this.overview?.computers.find((x) => x.id === id);
+  create() {
     const win = new BrowserWindow({
-      ...computerWindowBounds(screen.getPrimaryDisplay().workArea, open),
-      minWidth: 340,
-      minHeight: 240,
+      ...computersWindowBounds(screen.getPrimaryDisplay().workArea),
+      minWidth: 320,
+      minHeight: 220,
       frame: false,
       show: false,
-      title: c?.chatLabel ?? 'Husk computer',
+      title: 'Computers',
       icon: this.opts.icon,
-      backgroundColor: '#0a0a0c',
+      backgroundColor: '#ffffff',
       fullscreenable: false,
       webPreferences,
     });
-    const r = { win, state: 'open', pinned: true, ready: false, pending: 'inactive' };
-    win.setAlwaysOnTop(true, 'floating');
+    this.win = win;
+    this.ready = false;
+    win.setAlwaysOnTop(this.pinned, 'floating');
     guard(win, () => this.opts.rec()?.url);
     win.once('ready-to-show', () => {
-      r.ready = true;
-      if (r.state !== 'open') return;
-      if (r.pending === 'show') win.show();
+      this.ready = true;
+      if (this.state !== 'open') return;
+      if (this.pending === 'show') win.show();
       else win.showInactive();
     });
-    // The system's own minimize (a shortcut, the taskbar) counts as to the notch too.
+    // The system's own minimize (a shortcut, the taskbar) goes to the notch too.
     win.on('minimize', () => {
-      r.state = 'minimized';
+      this.state = 'minimized';
       this.layout();
       this.broadcast();
     });
     win.on('restore', () => {
-      if (r.state !== 'minimized') return;
-      r.state = 'open';
+      if (this.state !== 'minimized') return;
+      this.state = 'open';
       this.layout();
       this.broadcast();
     });
-    // Windows signing out or shutting down: let the windows close.
+    // Windows signing out or shutting down: let the window close.
     win.on('session-end', () => {
       this.quitting = true;
     });
-    // Closing hides: the computer keeps running and its 3D computer stays.
+    // Closing hides: the computers keep running and stay in the corner.
     win.on('close', (event) => {
       if (this.quitting) return;
       event.preventDefault();
-      this.close(id);
+      this.close();
     });
     const rec = this.opts.rec();
-    if (rec) void win.loadURL(desktopUrl(rec, 'computer', id));
-    this.windows.set(id, r);
-    return r;
+    if (rec) void win.loadURL(desktopUrl(rec, 'computers'));
   }
 
-  minimize(id) {
-    const r = this.windows.get(id);
-    if (!r) return;
-    r.win.hide();
-    r.state = 'minimized';
+  minimize() {
+    if (!this.win || this.win.isDestroyed()) return;
+    this.win.hide();
+    this.state = 'minimized';
     this.layout();
     this.broadcast();
   }
 
-  close(id) {
-    const r = this.windows.get(id);
-    if (!r) return;
-    r.win.hide();
-    r.state = 'closed';
+  close() {
+    if (this.win && !this.win.isDestroyed()) this.win.hide();
+    this.state = 'closed';
     this.layout();
     this.broadcast();
   }
 
-  maximize(id) {
-    const r = this.windows.get(id);
-    if (!r) return;
-    if (r.win.isMaximized()) {
-      r.win.unmaximize();
-      r.win.setAlwaysOnTop(r.pinned, 'floating');
+  maximize() {
+    if (!this.win || this.win.isDestroyed()) return;
+    if (this.win.isMaximized()) {
+      this.win.unmaximize();
+      this.win.setAlwaysOnTop(this.pinned, 'floating');
     } else {
       // A maximized window on top of everything would be in the way of everything.
-      r.win.setAlwaysOnTop(false);
-      r.win.maximize();
+      this.win.setAlwaysOnTop(false);
+      this.win.maximize();
     }
   }
 
-  pin(id) {
-    const r = this.windows.get(id);
-    if (!r) return;
-    r.pinned = !r.pinned;
-    if (!r.win.isMaximized()) r.win.setAlwaysOnTop(r.pinned, 'floating');
+  pin() {
+    this.pinned = !this.pinned;
+    if (this.win && !this.win.isDestroyed() && !this.win.isMaximized()) this.win.setAlwaysOnTop(this.pinned, 'floating');
     this.broadcast();
   }
 
-  /** The dock's click: a window in front goes to the notch; anything else comes to the front. */
+  /** The corner's click: the tab already in front goes to the notch; anything else comes to the front. */
   toggle(id) {
-    const r = this.windows.get(id);
-    if (r && r.state === 'open' && r.win.isVisible() && r.win.isFocused()) this.minimize(id);
+    const front = this.state === 'open' && this.win && !this.win.isDestroyed() && this.win.isVisible() && this.win.isFocused();
+    if (front && this.active === id) this.minimize();
     else this.open(id, { focus: true });
-  }
-
-  destroy(id) {
-    const r = this.windows.get(id);
-    this.windows.delete(id);
-    if (r && !r.win.isDestroyed()) r.win.destroy();
   }
 
   /** Husk restarted with a new token: every page signs in again. */
   reload() {
     const rec = this.opts.rec();
     if (!rec) return;
-    for (const [id, r] of this.windows) if (!r.win.isDestroyed()) void r.win.loadURL(desktopUrl(rec, 'computer', id));
+    if (this.win && !this.win.isDestroyed()) void this.win.loadURL(desktopUrl(rec, 'computers'));
     if (this.dock && !this.dock.isDestroyed()) void this.dock.loadURL(desktopUrl(rec, 'dock'));
     if (this.pill && !this.pill.isDestroyed()) void this.pill.loadURL(desktopUrl(rec, 'pill'));
   }
 
-  /** The dock while any computer stands in it; the notch while anything is minimized. */
+  /** The corner row while any computer is running; the notch while the window is minimized. */
   layout() {
     const display = screen.getPrimaryDisplay();
-    const list = desktopComputers(this.overview, this.windows);
-    const standing = list.filter((c) => c.state === 'running' || c.window !== 'closed').length;
-    if (this.settings.onScreen && standing > 0) {
+    const count = this.computers().length;
+    if (this.settings.onScreen && count > 0) {
       this.dock ??= this.overlay('dock', false);
-      this.dock.setBounds(dockBounds(display.workArea, standing));
+      this.dock.setBounds(dockBounds(display.workArea, count));
       if (!this.dock.isVisible()) this.dock.showInactive();
     } else this.dock?.hide();
 
-    const minimized = list.filter((c) => c.window === 'minimized').length;
-    if (this.settings.notch && minimized > 0) {
+    if (this.settings.notch && this.state === 'minimized' && count > 0) {
       this.pill ??= this.overlay('pill', true);
-      const bounds = pillBounds(display, minimized);
+      const bounds = pillBounds(display, count);
       this.pill.setBounds(bounds);
       if (!this.pill.isVisible()) {
         this.pill.showInactive();
@@ -300,7 +297,7 @@ export class Computers {
     } else this.pill?.hide();
   }
 
-  /** A transparent, click-through window over everything: the dock, or the notch (`top`). */
+  /** A transparent, click-through window over everything: the corner row, or the notch (`top`). */
   overlay(view, top) {
     const w = new BrowserWindow({
       width: 10,
@@ -353,7 +350,7 @@ export class Computers {
   // -- smoke tests: what CI looks at ------------------------------------------
 
   windowOf(which) {
-    return which === 'dock' ? this.dock : which === 'pill' ? this.pill : this.windows.get(which)?.win;
+    return which === 'dock' ? this.dock : which === 'pill' ? this.pill : this.win;
   }
 
   async capture(which, file) {

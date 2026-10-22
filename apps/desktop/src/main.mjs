@@ -208,7 +208,7 @@ function refreshTray(status) {
         ? [
             { type: 'separator' },
             { label: 'Show computers on screen', type: 'checkbox', checked: computers.settings.onScreen, click: (item) => computers.set('onScreen', item.checked) },
-            { label: 'Open a computer when a chat starts using it', type: 'checkbox', checked: computers.settings.autoOpen, click: (item) => computers.set('autoOpen', item.checked) },
+            { label: 'Open the window when a chat starts using a computer', type: 'checkbox', checked: computers.settings.autoOpen, click: (item) => computers.set('autoOpen', item.checked) },
             { label: 'Minimize computers to the notch', type: 'checkbox', checked: computers.settings.notch, click: (item) => computers.set('notch', item.checked) },
           ]
         : []),
@@ -296,38 +296,58 @@ function checker() {
 
 const inside = (b, area) => b.x >= area.x && b.y >= area.y && b.x + b.width <= area.x + area.width && b.y + b.height <= area.y + area.height;
 
-/** Put the computers on the screen and look at them: the window, the 3D row, the notch. */
-async function walkComputers(check, id, prefix) {
+/**
+ * Look at the computers on the screen the way a person would: click a
+ * computer in the corner, see the Computers window open on its tab, switch
+ * tabs, minimize to the notch, open it again from there.
+ */
+async function walkComputers(check, ids, prefix) {
   const area = screen.getPrimaryDisplay().workArea;
-  const window = computers.windows.get(id)?.win;
-  check('the computer window opens inside the screen', window && inside(window.getBounds(), area), JSON.stringify(window?.getBounds()));
-  const status = await until(
-    () => computers.run(id, `(() => { const s = document.querySelector('.cw-status'); return s && s.getBoundingClientRect().bottom <= innerHeight ? s.textContent : ''; })()`),
-    10_000,
-  );
-  check('the window keeps its status line in view', status, status);
-  await sleep(2500); // the 3D row builds and its screens fill
+  await sleep(1500); // the corner row builds
   const dock = computers.dock?.getBounds();
-  check('the row of 3D computers sits in the bottom-right corner', dock && inside(dock, area) && dock.x + dock.width > area.x + area.width - 40, JSON.stringify(dock));
+  check('the corner row sits small in the bottom-right corner', dock && inside(dock, area) && dock.x + dock.width > area.x + area.width - 40 && dock.height <= 90, JSON.stringify(dock));
   const mode = await computers.run('dock', `document.querySelector('.dock-flat') ? 'flat' : '3D'`);
   const slots = await computers.run('dock', `document.querySelectorAll('.dock-slot').length`);
-  check('the row stands a computer per chat', slots > 0, `${slots} in ${mode}`);
-  if (SHOTS) {
-    await computers.capture(id, join(SHOTS, `${prefix}-window.png`));
-    await computers.capture('dock', join(SHOTS, `${prefix}-dock.png`));
-  }
+  check('the corner has a computer per chat', slots === ids.length, `${slots} in ${mode}`);
+  check('nothing opens until the person clicks', !computers.win || !computers.win.isVisible());
+  if (SHOTS) await computers.capture('dock', join(SHOTS, `${prefix}-dock.png`));
+
   await computers.run('dock', `document.querySelector('.dock-hit')?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))`);
   const tip = await until(() => computers.run('dock', `document.querySelector('.dock-tip')?.textContent ?? ''`), 3000);
-  // The label the app knows it by: a chat's own ("Claude Code · chat started 09:41"), else the computer's name.
-  const label = computers.state().computers.find((c) => c.id === id)?.label ?? id;
-  check('hovering a 3D computer names its chat', tip?.includes(label), tip);
-  await sleep(500); // the tooltip fades in and the computer lifts
+  const first = computers.computers().find((c) => c.id === ids[0]);
+  check('hovering a computer names its chat app, small', tip && tip.includes(first?.platform ?? first?.label ?? ''), tip);
+  await sleep(500); // the label fades in
   if (SHOTS) await computers.capture('dock', join(SHOTS, `${prefix}-dock-hover.png`));
   await computers.run('dock', `document.querySelector('.dock-hit')?.dispatchEvent(new PointerEvent('pointerout', { bubbles: true }))`);
 
-  computers.minimize(id);
+  // A click, through the same request the page sends.
+  await computers.run('dock', `document.querySelector('.dock-hit')?.click()`);
+  const opened = await until(() => computers.ready && computers.win?.isVisible(), 20_000);
+  check('clicking a computer opens the Computers window', opened);
+  if (!opened) return;
+  const win = computers.win.getBounds();
+  check('the window opens small, inside the screen', inside(win, area) && win.width <= 520, JSON.stringify(win));
+  const tabs = await until(() => computers.run('window', `document.querySelectorAll('.cw-tab').length`), 10_000);
+  check('its tabs are the computers', tabs === ids.length, `${tabs} tabs`);
+  const front = await computers.run('window', `document.querySelector('.cw-tab[aria-selected="true"]')?.dataset.id ?? ''`);
+  check('it opens on the computer that was clicked', front === ids[0], front);
+  const status = await until(
+    () => computers.run('window', `(() => { const s = document.querySelector('.cw-status'); return s && s.getBoundingClientRect().bottom <= innerHeight ? s.textContent : ''; })()`),
+    10_000,
+  );
+  check('the window keeps its status line in view', status, status);
+  if (ids.length > 1) {
+    await computers.run('window', `document.querySelectorAll('.cw-tab')[1]?.click()`);
+    const switched = await until(() => computers.run('window', `document.querySelector('.cw-tab[aria-selected="true"]')?.dataset.id === ${JSON.stringify(ids[1])}`), 5000);
+    check('another tab shows another computer', switched);
+    await computers.run('window', `document.querySelectorAll('.cw-tab')[0]?.click()`);
+  }
+  await sleep(800);
+  if (SHOTS) await computers.capture('window', join(SHOTS, `${prefix}-window.png`));
+
+  computers.minimize();
   const logos = await until(() => computers.run('pill', `document.querySelectorAll('.pill-logo').length`), 8000);
-  check('minimizing sends the window to the notch', logos >= 1, `${logos} in the notch`);
+  check('minimizing sends the window to the notch, with each computer’s logo', logos === ids.length, `${logos} in the notch`);
   const pill = computers.pill?.getBounds();
   const display = screen.getPrimaryDisplay().bounds;
   check(
@@ -338,12 +358,12 @@ async function walkComputers(check, id, prefix) {
   if (SHOTS) await computers.capture('pill', join(SHOTS, `${prefix}-notch.png`));
   await computers.run('pill', `document.querySelector('.pill')?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))`);
   const rows = await until(() => computers.run('pill', `document.querySelectorAll('.pill-row').length`), 3000);
-  check('the notch opens into a list on hover', rows >= 1, `${rows} rows`);
+  check('the notch opens into a list on hover', rows === ids.length, `${rows} rows`);
   await sleep(400);
   if (SHOTS) await computers.capture('pill', join(SHOTS, `${prefix}-notch-open.png`));
-  computers.open(id, { focus: true });
-  await sleep(600);
-  check('opening it from the notch brings the window back', computers.windows.get(id)?.win.isVisible() === true);
+  await computers.run('pill', `document.querySelector('.pill-row .pill-btn')?.click()`);
+  const back = await until(() => computers.win?.isVisible(), 5000);
+  check('opening it from the notch brings the window back', back);
 }
 
 /** HUSK_DESKTOP_SMOKE=1: two made-up chats' computers, one of them waiting for the person. */
@@ -351,7 +371,6 @@ async function smokeComputers() {
   const { check, passed } = checker();
   const at = new Date().toISOString();
   const made = (id, platform, minute) => ({ id, name: id, state: 'running', provider: 'docker', image: 'x', workdir: '/work', createdAt: at, lastUsedAt: at, platform, chatLabel: `${platform} · chat started 09:${minute}` });
-  computers.since = 0;
   computers.update({
     computers: [made('cmp_smokea1', 'Claude Code', '41'), made('cmp_smokeb2', 'Claude Desktop', '44')],
     activeRuns: [],
@@ -361,31 +380,27 @@ async function smokeComputers() {
       cmp_smokeb2: { at, tool: 'hand_off', ok: true, ms: 12, via: 'mcp' },
     },
   });
-  const opened = await until(() => computers.windows.get('cmp_smokea1')?.ready, 20_000);
-  check('a chat’s computer opens a window by itself', opened);
-  const shown = await until(() => computers.run('cmp_smokea1', `document.querySelector('.cw-name')?.textContent ?? ''`), 10_000);
-  check('the window names its chat', shown === 'Claude Code · chat started 09:41', shown);
-  if (opened) await walkComputers(check, 'cmp_smokea1', 'desktop');
+  const standing = await until(() => computers.run('dock', `document.querySelectorAll('.dock-slot').length`), 20_000);
+  check('two chats’ computers stand in the corner', standing === 2, `${standing}`);
+  if (standing) await walkComputers(check, ['cmp_smokea1', 'cmp_smokeb2'], 'desktop');
   return passed();
 }
 
 /** HUSK_DESKTOP_SMOKE=live: a real chat's computer, on a real Husk. */
 async function liveSmoke() {
   const { check, passed } = checker();
-  computers.since = Date.now();
   setInterval(() => void poll(), 1000);
   log('SMOKE live ready');
-  const id = await until(() => [...computers.windows.entries()].find(([, r]) => r.ready && r.state === 'open')?.[0], 90_000);
-  check('a chat’s computer opens a window by itself', id, id);
+  const id = await until(() => computers.computers().find((c) => c.state === 'running')?.id, 90_000);
+  check('a chat’s running computer stands in the corner', id, id);
   if (id) {
+    await walkComputers(check, [id], 'live');
     const width = await until(
-      () => computers.run(id, `(() => { const i = document.querySelector('.cw-screen img'); return i && i.naturalWidth > 0 ? i.naturalWidth : 0; })()`),
+      () => computers.run('window', `(() => { const i = document.querySelector('.cw-screen img'); return i && i.naturalWidth > 0 ? i.naturalWidth : 0; })()`),
       30_000,
     );
     check('the window shows the computer’s browser live', width, `${width}px wide`);
-    const tabs = await until(() => computers.run(id, `[...document.querySelectorAll('.cw-tab')].map((t) => t.textContent).join(' | ')`), 10_000);
-    check('the window names the browser’s tabs', tabs, tabs);
-    await walkComputers(check, id, 'live');
+    if (SHOTS) await computers.capture('window', join(SHOTS, 'live-window.png'));
   }
   app.exit(passed() ? 0 : 1);
 }
