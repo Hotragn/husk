@@ -41,6 +41,16 @@ describe('WS /v1/computers/:id/screen', { timeout: 30_000 }, () => {
     expect(await first(socket)).toMatchObject({ type: 'idle' });
   });
 
+  it('lists no tabs where no browser is open, without starting one or counting as use', async () => {
+    harness = await buildTestApp();
+    const { id } = (await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: {} })).json() as { id: string };
+    const before = (await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}` })).json().lastUsedAt;
+    const res = await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}/browser/tabs` });
+    expect(res.json()).toEqual({ tabs: [] });
+    expect((await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}` })).json().lastUsedAt).toBe(before);
+    expect((await harness.app.inject({ method: 'GET', url: '/v1/computers/cmp_nope/browser/tabs' })).statusCode).toBe(404);
+  });
+
   it('names a computer that does not exist, then closes', async () => {
     const port = await listen();
     socket = new WebSocket(`ws://127.0.0.1:${port}/v1/computers/cmp_nope/screen`);

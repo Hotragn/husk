@@ -1958,3 +1958,29 @@ pre.code {
 .row-gap-2 > p {
   margin: 0;
 }
+
+/* Connect: the prompt a chat sets Husk up with. */
+.connect-prompt {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.connect-prompt-app {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+}
+
+.connect-prompt-text {
+  width: 100%;
+  padding: var(--space-3);
+  border: var(--border-width-thin) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-sunken);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  line-height: var(--leading-code);
+  resize: vertical;
+}

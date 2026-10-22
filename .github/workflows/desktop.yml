@@ -43,9 +43,11 @@ jobs:
           npx electron-builder --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - name: Start the packaged app and load the console
+      - name: Start the packaged app, load the console, and put two computers on the screen
         working-directory: apps/desktop
         shell: bash
+        env:
+          HUSK_DESKTOP_SHOTS: ${{ runner.temp }}/desktop-shots
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
@@ -53,6 +55,12 @@ jobs:
           else
             npm run smoke
           fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-screens-${{ matrix.os }}
+          path: ${{ runner.temp }}/desktop-shots
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: husk-desktop-${{ matrix.os }}

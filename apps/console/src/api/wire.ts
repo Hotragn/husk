@@ -399,6 +399,14 @@ export interface ComputerChoice {
 }
 
 /** One message on `WS /v1/computers/:id/screen`. */
+/** One open tab, from `GET /v1/computers/:id/browser/tabs`. `active` is the one the screen shows. */
+export interface BrowserTab {
+  targetId: string;
+  url: string;
+  title: string;
+  active: boolean;
+}
+
 export type ScreenMessage =
   | { type: 'frame'; data: string; width: number; height: number }
   | { type: 'idle'; message: string }

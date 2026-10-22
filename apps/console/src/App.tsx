@@ -17,7 +17,8 @@ import { TerminalPanel } from './panels/TerminalPanel';
 import { FilesPanel } from './panels/FilesPanel';
 import { BrowserPanel } from './panels/BrowserPanel';
 import { HandoffsPanel, LinkedComputer, LinkedHandoff, useHandoffs } from './panels/HandoffsPanel';
-import { linkedComputerId, linkedHandoffId } from './state/viewerToken';
+import { desktopView, linkedComputerId, linkedHandoffId } from './state/viewerToken';
+import { DesktopView } from './desktop/DesktopView';
 import { HusksPanel } from './panels/HusksPanel';
 import { DoctorPanel } from './panels/DoctorPanel';
 import { EventsPanel } from './panels/EventsPanel';
@@ -50,11 +51,11 @@ function panelFromHash(): PanelId {
 }
 
 export default function App() {
-  return (
-    <ConnectionProvider>
-      <ConnectionShell />
-    </ConnectionProvider>
-  );
+  // The desktop app's own windows (a computer, the 3D row, the notch) share
+  // the connection and nothing else: no sidebar, no header.
+  const desk = desktopView();
+  if (desk) document.documentElement.dataset.view = desk.view;
+  return <ConnectionProvider>{desk ? <DesktopView view={desk} /> : <ConnectionShell />}</ConnectionProvider>;
 }
 
 function ConnectionShell() {

@@ -14,6 +14,7 @@ import type { ChatApp, ComputerChoice, ConnectResult, SetupState } from '../api/
 import { Badge, Button, ErrorBlock, PanelHeader, StatusDot } from '../components/primitives';
 import { useConnection } from '../state/connection';
 import { useResource } from '../state/useResource';
+import { setupPrompt } from './setupPrompt';
 
 const CONTAINERS = new Set(['docker', 'podman']);
 
@@ -162,6 +163,53 @@ export function ConnectPanel() {
         </ul>
       </div>
       </div>
+
+      <SetupFromChat apps={state.data?.apps ?? []} />
     </section>
+  );
+}
+
+/**
+ * The other way in: a prompt to paste into a chat, which then sets Husk up
+ * itself with the same `husk setup` this page drives.
+ */
+function SetupFromChat({ apps }: { apps: ChatApp[] }) {
+  const [appId, setAppId] = useState('all');
+  const [copied, setCopied] = useState(false);
+  const app = apps.find((a) => a.id === appId);
+  const prompt = setupPrompt(app ? { id: app.id, name: app.name } : undefined);
+  const copy = () =>
+    void navigator.clipboard.writeText(prompt).then(
+      () => setCopied(true),
+      () => setCopied(false),
+    );
+  return (
+    <div className="card connect-prompt">
+      <h2 className="h-sub">Or let your chat set it up</h2>
+      <p className="field-note">Paste this into the chat. It runs the setup, then tells you to restart the app.</p>
+      <label className="connect-prompt-app">
+        <span>Chat app</span>
+        <select
+          value={appId}
+          onChange={(e) => {
+            setAppId(e.target.value);
+            setCopied(false);
+          }}
+        >
+          <option value="all">Every chat app here</option>
+          {apps.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <textarea className="connect-prompt-text mono" readOnly value={prompt} rows={9} aria-label="Setup prompt" />
+      <div className="btn-row">
+        <Button variant="primary" onClick={copy}>
+          {copied ? 'Copied' : 'Copy prompt'}
+        </Button>
+      </div>
+    </div>
   );
 }

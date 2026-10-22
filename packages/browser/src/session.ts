@@ -408,9 +408,19 @@ export class BrowserSession {
    * becomes usable.
    */
   async tabs(): Promise<Array<{ targetId: string; url: string; title: string; active: boolean }>> {
-    const page = await this.activePage();
+    await this.activePage();
+    return this.liveTabs();
+  }
+
+  /**
+   * The open tabs, for someone watching: a computer window's tab names. Like
+   * the screen, it never starts the browser and never counts as use, so with
+   * no browser up it is an empty list.
+   */
+  async liveTabs(): Promise<Array<{ targetId: string; url: string; title: string; active: boolean }>> {
+    const page = this.livePage();
     const conn = this.conn;
-    if (!conn) return [];
+    if (!page || !conn) return [];
 
     const res = await conn.send('Target.getTargets', {});
     const infos = Array.isArray(res['targetInfos']) ? (res['targetInfos'] as Array<Record<string, unknown>>) : [];

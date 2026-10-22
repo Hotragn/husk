@@ -214,6 +214,35 @@ async function walkConsole(id, name) {
  * screen actually delivers at ?fps=4. The page it watches animates, so a
  * pushed screencast has something to push.
  */
+async function walkDesktop(id) {
+  const electron = join(root, 'apps', 'desktop', 'node_modules', '.bin', 'electron');
+  const shots = process.env.E2E_SHOTS ?? join(root, 'e2e-shots');
+  const app = spawn('xvfb-run', ['-a', electron, join(root, 'apps', 'desktop')], {
+    env: { ...env, HUSK_DESKTOP_SMOKE: 'live', HUSK_DESKTOP_SHOTS: shots, ELECTRON_DISABLE_SANDBOX: '1' },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  let out = '';
+  app.stdout.on('data', (chunk) => {
+    out += chunk;
+  });
+  const exited = new Promise((resolveExit) => app.on('exit', (code) => resolveExit(code)));
+  const killer = setTimeout(() => app.kill('SIGKILL'), 240_000);
+  try {
+    for (let i = 0; i < 480 && !out.includes('SMOKE live ready'); i++) await sleep(250);
+    check('the desktop app attaches to the shared Husk', out.includes('SMOKE live ready'));
+    // A chat's call, after the app started: its computer's window should open by itself.
+    await tool(id, 'browser_goto', { url: 'https://example.com' });
+    const code = await exited;
+    const lines = out.split(/\r?\n/).filter((l) => l.startsWith('SMOKE ok') || l.startsWith('SMOKE FAIL'));
+    for (const line of lines) console.log(`  desktop: ${line.slice('SMOKE '.length)}`);
+    const failed = lines.filter((l) => l.startsWith('SMOKE FAIL'));
+    check('the desktop app walks a real chat’s computer', code === 0 && failed.length === 0 && lines.length > 0, failed.join(' | ') || `${lines.length} checks, exit ${code}`);
+  } finally {
+    clearTimeout(killer);
+    app.kill();
+  }
+}
+
 async function measureBrowser(id) {
   const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
   const timed = async (name, args, n) => {
@@ -461,6 +490,12 @@ try {
   // drive the runner's own Chrome. Screenshots land in E2E_SHOTS.
   if (process.env.E2E_CONSOLE === '1') await walkConsole(id, made.body.name);
   else console.log('skip the console walkthrough (set E2E_CONSOLE=1 with playwright-core installed)');
+
+  // 9. The desktop app on this Husk: a chat's call opens the computer's own
+  // window, the 3D row and the notch (apps/desktop, HUSK_DESKTOP_SMOKE=live).
+  // CI sets E2E_DESKTOP=1, installs apps/desktop and runs it under xvfb.
+  if (process.env.E2E_DESKTOP === '1') await walkDesktop(id);
+  else console.log('skip the desktop app (set E2E_DESKTOP=1 with apps/desktop installed and xvfb-run)');
 
   console.log(`\n${steps.length} checks passed`);
 } catch (err) {

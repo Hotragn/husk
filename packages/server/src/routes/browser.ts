@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { browserFor, closeBrowserFor, inspectBrowserCapability } from '@husk-ai/browser';
+import { browserFor, browserSessionFor, closeBrowserFor, inspectBrowserCapability } from '@husk-ai/browser';
 import type { Computer } from '@husk-ai/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -92,6 +92,16 @@ export async function browserRoutes(app: FastifyInstance): Promise<void> {
     const { id } = req.params as { id: string };
     const computer = await mustGet(app, id);
     return inspectBrowserCapability(computer);
+  });
+
+  /**
+   * The open tabs, for a computer window's tab names. A viewer's call: it never
+   * starts a browser and never counts as using the computer.
+   */
+  app.get('/v1/computers/:id/browser/tabs', async (req: FastifyRequest) => {
+    const { id } = req.params as { id: string };
+    await mustGet(app, id);
+    return { tabs: (await browserSessionFor(id)?.liveTabs()) ?? [] };
   });
 
   app.post('/v1/computers/:id/browser/goto', async (req: FastifyRequest) => {

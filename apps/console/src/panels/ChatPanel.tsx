@@ -11,13 +11,13 @@
  * not send it to Husk.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { toDisplayError } from '../api/client';
 import type { DisplayError } from '../api/client';
-import type { ActivityEntry, BotDraft, ComputerInfo, HandoffInput, HandoffKey, Overview, PendingHandoff, ScreenMessage } from '../api/wire';
+import type { ActivityEntry, BotDraft, ComputerInfo, HandoffInput, HandoffKey, Overview, PendingHandoff } from '../api/wire';
 import { Badge, Button, ErrorBlock, Icon, StatusDot, formatWhen } from '../components/primitives';
 import { Screen, useInputQueue } from '../components/Screen';
-import type { Frame } from '../components/Screen';
+import { useScreenFeed } from '../components/useScreenFeed';
 import { useConnection } from '../state/connection';
 import { useResource } from '../state/useResource';
 import { stateTone } from './ComputersPanel';
@@ -84,14 +84,14 @@ export function ChatPanel({ computerId, onOpen }: { computerId: string | null; o
   );
 }
 
-type Hold = ReturnType<typeof useHold>;
+export type Hold = ReturnType<typeof useHold>;
 
 /**
  * The person's hold on a computer: take it, use it, give it back. Taking
  * pauses its chat at any moment; only Give back, or Done for a chat that asked,
  * lets the chat carry on.
  */
-function useHold(computerId: string, handoff: PendingHandoff | undefined, onChange: () => void) {
+export function useHold(computerId: string, handoff: PendingHandoff | undefined, onChange: () => void) {
   const { api } = useConnection();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<DisplayError | null>(null);
@@ -132,7 +132,7 @@ function useHold(computerId: string, handoff: PendingHandoff | undefined, onChan
   };
 }
 
-const SIDE_KEYS: Array<[HandoffKey, string]> = [
+export const SIDE_KEYS: Array<[HandoffKey, string]> = [
   ['Tab', 'Tab'],
   ['Enter', 'Enter'],
   ['Escape', 'Esc'],
@@ -269,43 +269,7 @@ export function LiveScreen({
   taking?: boolean;
   className?: string;
 }) {
-  const { api } = useConnection();
-  const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden');
-  const [frame, setFrame] = useState<Frame | null>(null);
-  const [note, setNote] = useState<string>('Connecting…');
-
-  useEffect(() => {
-    const onVis = () => setVisible(document.visibilityState !== 'hidden');
-    document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
-  }, []);
-
-  useEffect(() => {
-    if (!visible) {
-      setNote('Paused while this tab is hidden.');
-      return;
-    }
-    const ws = new WebSocket(api.socketUrl(`/v1/computers/${encodeURIComponent(id)}/screen${fps ? `?fps=${fps}` : ''}`));
-    ws.onmessage = (ev) => {
-      let msg: ScreenMessage;
-      try {
-        msg = JSON.parse(String(ev.data)) as ScreenMessage;
-      } catch {
-        return;
-      }
-      if (msg.type === 'frame') {
-        setFrame({ src: `data:image/jpeg;base64,${msg.data}`, width: msg.width, height: msg.height });
-        setNote('');
-      } else if (msg.type === 'idle') {
-        setFrame(null);
-        setNote('No browser open yet. It appears here when the chat opens a page.');
-      } else {
-        setNote(msg.message);
-      }
-    };
-    ws.onclose = () => setNote((n) => n || 'The screen disconnected. It reconnects when you come back to this tab.');
-    return () => ws.close();
-  }, [api, id, visible, fps]);
+  const { frame, note } = useScreenFeed(id, fps ? { fps } : {});
 
   return (
     <Screen

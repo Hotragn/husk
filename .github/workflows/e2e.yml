@@ -7,9 +7,9 @@ name: e2e
 on:
   push:
     branches: [main]
-    paths: ['packages/**', 'apps/console/**', 'package.json', 'package-lock.json', 'scripts/e2e-computers.mjs', '.github/workflows/e2e.yml']
+    paths: ['packages/**', 'apps/console/**', 'apps/desktop/**', 'package.json', 'package-lock.json', 'scripts/e2e-computers.mjs', '.github/workflows/e2e.yml']
   pull_request:
-    paths: ['packages/**', 'apps/console/**', 'package.json', 'package-lock.json', 'scripts/e2e-computers.mjs', '.github/workflows/e2e.yml']
+    paths: ['packages/**', 'apps/console/**', 'apps/desktop/**', 'package.json', 'package-lock.json', 'scripts/e2e-computers.mjs', '.github/workflows/e2e.yml']
 
 permissions:
   contents: read
@@ -30,9 +30,14 @@ jobs:
       - run: docker version
       # Drives the runner's own Chrome through the console. Not a dependency of Husk.
       - run: npm i --no-save playwright-core@1.48.2
+      # The desktop app, run from the checkout under a virtual display.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
+      - run: npm ci
+        working-directory: apps/desktop
       - run: npm run e2e:computers
         env:
           E2E_CONSOLE: '1'
+          E2E_DESKTOP: '1'
           E2E_SHOTS: ${{ runner.temp }}/e2e-shots
       - uses: actions/upload-artifact@v4
         if: always()
