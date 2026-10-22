@@ -166,14 +166,22 @@ export interface OciExecPlan {
   env?: Record<string, string>;
   user?: string;
   tty?: boolean;
+  /** Input will be written to the process's stdin. */
+  stdin?: boolean;
 }
 
 export function buildExecArgs(_cfg: OciConfig, plan: OciExecPlan): string[] {
-  const args = ['exec', '-i'];
   // A pty is what makes `isatty` true, which is what makes half of CLI tooling
   // print progress instead of nothing. It is never the default: with a tty the
   // engine merges stderr into stdout and we lose the split.
-  if (plan.tty) args.push('-t');
+  //
+  // `-t` with `-i` needs the engine CLI's own stdin to be a terminal, and the
+  // shared Husk's never is: Docker answers "the input device is not a TTY" and
+  // runs nothing. A tty command with no input to send needs no stdin, so it
+  // gets `-t` alone; one with input keeps `-i` and goes without the pty,
+  // because a pipe cannot be the person's terminal.
+  const tty = plan.tty === true && plan.stdin !== true;
+  const args = tty ? ['exec', '-t'] : ['exec', '-i'];
   if (plan.cwd) args.push('-w', plan.cwd);
   if (plan.env) {
     for (const [k, v] of Object.entries(plan.env)) args.push('-e', `${k}=${v}`);
@@ -401,6 +409,7 @@ export class OciComputer implements Computer {
       ...(req.env ? { env: req.env } : {}),
       ...(req.user ? { user: req.user } : {}),
       ...(req.tty ? { tty: true } : {}),
+      ...(req.stdin !== undefined ? { stdin: true } : {}),
     });
 
     const started = Date.now();
