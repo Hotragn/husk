@@ -86,6 +86,30 @@ export const BROWSER_TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'browser_script',
+    description:
+      'Run a short Python script against the current page when the next steps depend on what ' +
+      'the page shows -- branch, loop over results, retry -- all in ONE call. It runs in its own ' +
+      'process inside your computer, not on the host, and is stopped at timeoutSec. `page` has: ' +
+      'goto(url), click(ref= or role=, name=), fill(text, ref= or role=, name=, submit=), ' +
+      'wait_for_text(text, timeout=) / wait_for_url(part) / wait_for_selector(css) -> True or False, ' +
+      'has_text(text), snapshot() -> list of {ref, role, name}, text(ref= or selector=), url(), title(); ' +
+      'also sleep(seconds). A refused call raises PageError. Whatever you print comes back, and ' +
+      'so does a JSON-able value you assign to `result`. Example:\n' +
+      'if page.has_text("Accept cookies"):\n    page.click(role="button", name="Accept")\n' +
+      'result = [n["name"] for n in page.snapshot() if n["role"] == "link"]\n' +
+      'For steps that do not depend on the page, browser_run is simpler. Never type the ' +
+      "user's passwords or codes from a script: call hand_off.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        script: { type: 'string', description: 'Python 3 source. `page`, `sleep` and `PageError` are already defined.' },
+        timeoutSec: { type: 'number', description: 'Stop the script after this long. Defaults to 60, at most 600.' },
+      },
+      required: ['script'],
+    },
+  },
+  {
     name: 'browser_snapshot',
     description:
       'List everything on the current page you can read or act on, each with a `ref`. ' +
@@ -261,6 +285,13 @@ function renderSnapshot(nodes: SnapshotNode[]): string {
     .join('\n');
 }
 
+/** Long text cut in the middle, so the start and the end both survive. */
+function clampLength(body: string, max: number): string {
+  if (body.length <= max) return body;
+  const half = Math.floor(max / 2);
+  return `${body.slice(0, half)}\n[... ${body.length - max} characters cut ...]\n${body.slice(-half)}`;
+}
+
 /** The longest any one wait may be. */
 export const MAX_WAIT_SEC = 600;
 
@@ -380,6 +411,22 @@ export async function callBrowserTool(
       }
       const failed = outcomes.some((o) => o.error);
       return { content: [{ type: 'text', text: redact(lines.join('\n')) }, ...images], ...(failed ? { isError: true } : {}) };
+    }
+
+    case 'browser_script': {
+      const script = typeof args.script === 'string' ? args.script : '';
+      if (!script.trim()) return bad('script is empty');
+      if (script.length > 100_000) return bad('script is over 100 KB; keep it to the steps that need deciding');
+      const out = await session.script(script, secondsArg(args.timeoutSec, 60));
+      const parts = [`${out.error ? 'failed' : 'finished'} in ${out.ms} ms`];
+      if (out.output) parts.push(`printed:\n${out.output.trimEnd()}${out.truncated ? '\n[output past 64 KB was dropped]' : ''}`);
+      if (out.result !== null && out.result !== undefined) {
+        parts.push(`result: ${JSON.stringify(out.result, null, 2)}${out.resultTruncated ? '\n[the result was over 64 KB; this is its JSON, cut]' : ''}`);
+      }
+      if (out.error) parts.push(out.error.trimEnd());
+      // Cut before redacting: redact scans the whole string, so it gets the bounded one.
+      const body = redact(clampLength(parts.join('\n\n'), maxTextBytes));
+      return out.error ? bad(body) : text(body);
     }
 
     case 'browser_snapshot': {

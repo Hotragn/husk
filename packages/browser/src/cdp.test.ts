@@ -486,7 +486,10 @@ describe('ComputerDriverTransport keeps one driver running where it can', () => 
       expect((await t.run({ steps: [{ op: 'send', method: 'A' }] })).results).toEqual([{ fresh: true }]);
       expect(c.spawns).toHaveLength(2);
       expect(c.lines).toHaveLength(sent + 1);
-      expect(c.calls).toHaveLength(0);
+      // The only exec: the reaper, ending the wedged driver and its scripts from inside.
+      expect(c.calls).toHaveLength(1);
+      expect((c.calls[0]?.cmd as string[]).slice(0, 2)).toEqual(['python3', '-c']);
+      expect((c.calls[0]?.cmd as string[])[3]).toBe('9222');
     } finally {
       vi.useRealTimers();
     }
@@ -528,5 +531,96 @@ describe('ComputerDriverTransport keeps one driver running where it can', () => 
 
   it('says it cannot cast where the provider cannot hold a process open', async () => {
     expect(await new ComputerDriverTransport(okComputer([{}]), 9222).screencast('T1', 4)).toBe(false);
+  });
+});
+
+describe('the driver’s questions to the host', () => {
+  /** Replies the fake driver was sent, by call. */
+  const repliesOf = (c: { lines: string[] }) =>
+    c.lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((m) => m['op'] === 'hostReply');
+  const settle = () => new Promise((r) => setTimeout(r, 10));
+
+  it('are answered straight back, mid-request, with the session’s answer or its refusal', async () => {
+    // One at a time, as the driver asks: the next question only after the last answer.
+    const c = spawningComputer((req, out) => {
+      if (req['op'] === 'hostReply') {
+        if (req['call'] === 1) out({ event: 'host', call: 2, op: 'checkUrl', url: 'file:///etc/passwd' });
+        else out({ id: 1, ok: true, results: [{ asked: true }] });
+        return;
+      }
+      out({ event: 'host', call: 1, op: 'checkUrl', url: 'https://ok.test/' });
+    });
+    const t = new ComputerDriverTransport(c, 9222);
+    t.onHostCall((op, args) => {
+      if (String(args['url']).startsWith('file:')) throw new HuskError('E_EXEC_DENIED', 'refusing the file: scheme');
+      return `${op}:${String(args['url'])}`;
+    });
+    expect((await t.run({ steps: [{ op: 'action', do: 'script' }] })).results).toEqual([{ asked: true }]);
+    expect(repliesOf(c)).toEqual([
+      { op: 'hostReply', call: 1, value: 'checkUrl:https://ok.test/' },
+      { op: 'hostReply', call: 2, error: 'refusing the file: scheme' },
+    ]);
+  });
+
+  it('go unanswered outside a script request, and a flood mid-answer is dropped', async () => {
+    let release: (() => void) | undefined;
+    const asked: string[] = [];
+    const c = spawningComputer((req, out) => {
+      if (req['op'] === 'hostReply') return;
+      if (req['steps'] && (req['steps'] as Array<Record<string, unknown>>)[0]?.['do'] === 'script') {
+        // A flood while the first is being answered: only the first is.
+        for (let i = 1; i <= 50; i++) out({ event: 'host', call: i, op: 'checkUrl', url: 'https://ok.test/' });
+        release = () => out({ id: req['id'], ok: true, results: [{}] });
+        return;
+      }
+      // Something in the computer asking with no script running at all.
+      out({ event: 'host', call: 99, op: 'checkUrl', url: 'https://ok.test/' });
+      out({ id: req['id'], ok: true, results: [{}] });
+    });
+    const t = new ComputerDriverTransport(c, 9222);
+    t.onHostCall(async (_op, args) => {
+      asked.push(String(args['url']));
+      await settle();
+      return 'ok';
+    });
+    await t.run({ steps: [{ op: 'send', method: 'A' }] });
+    const script = t.run({ steps: [{ op: 'action', do: 'script' }] });
+    await settle();
+    await settle();
+    release!();
+    await script;
+    expect(asked).toHaveLength(1);
+    expect(repliesOf(c).map((r) => r['call'])).toEqual([1]);
+  });
+
+  it('refuse an oversized URL without saying it back', async () => {
+    const huge = `https://ok.test/${'a'.repeat(10_000)}`;
+    const c = spawningComputer((req, out) => {
+      if (req['op'] === 'hostReply') out({ id: 1, ok: true, results: [{}] });
+      else out({ event: 'host', call: 1, op: 'checkUrl', url: huge });
+    });
+    const t = new ComputerDriverTransport(c, 9222);
+    let called = false;
+    t.onHostCall(() => {
+      called = true;
+      return 'ok';
+    });
+    await t.run({ steps: [{ op: 'action', do: 'script' }] });
+    const [reply] = repliesOf(c);
+    expect(called).toBe(false);
+    expect(String(reply?.['error'])).toMatch(/at most 8192 characters/);
+    expect(JSON.stringify(reply).length).toBeLessThan(600);
+  });
+
+  it('a line that never ends kills the driver instead of filling the shared Husk', async () => {
+    const c = spawningComputer((req) => {
+      if (req['op'] === 'hostReply') return;
+      const spawned = c.spawns.at(-1)!;
+      const chunk = 'x'.repeat(1024 * 1024);
+      for (let i = 0; i < 70; i++) spawned.onStdout(chunk);
+    });
+    const t = new ComputerDriverTransport(c, 9222);
+    expect(await codeOf(() => t.run({ steps: [{ op: 'send', method: 'A' }] }))).toBe('E_COMPUTER_FAILED');
+    expect(c.kills).toBe(1);
   });
 });

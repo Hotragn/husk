@@ -307,6 +307,61 @@ print(n)"`;
   check('one long-lived driver serves the computer', drivers === '1', `${drivers} running`);
 }
 
+/**
+ * A browser_script that decides from what the page shows, against
+ * example.com, timed like the tools above. It also tries a file:// goto,
+ * which the host's policy must refuse and the script must survive.
+ */
+async function measureScript(id) {
+  // Both ways through the same `if`: once for words the page has (its title;
+  // example.com rewrites its body text now and then), once for words it lacks.
+  const source = [
+    'page.goto("https://example.com")',
+    'seen = []',
+    'for want in ["Example Domain", "No such words on this page"]:',
+    '    if want in page.title() or page.has_text(want):',
+    '        seen.append("has " + want)',
+    '    else:',
+    '        seen.append("lacks " + want)',
+    'links = [n["name"] for n in page.snapshot() if n["role"] == "link"]',
+    'result = {"seen": seen, "links": links}',
+    'try:',
+    '    page.goto("file:///etc/passwd")',
+    '    print("policy let file:// through")',
+    'except PageError as e:',
+    '    print("refused file://")',
+  ].join('\n');
+  const ms = [];
+  let last;
+  for (let i = 0; i < 3; i++) {
+    const started = performance.now();
+    last = await tool(id, 'browser_script', { script: source, timeoutSec: 60 });
+    ms.push(performance.now() - started);
+  }
+  const body = textOf(last);
+  const median = Math.round([...ms].sort((a, b) => a - b)[1]);
+  const line = `${'browser_script'.padEnd(20)} ${String(median).padStart(6)} ms (median; goto + branch + snapshot)`;
+  console.log(`${line}\n`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const { appendFileSync } = await import('node:fs');
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\`\`\`\n${line}\n\`\`\`\n`);
+  }
+  let result;
+  try {
+    result = JSON.parse(body.slice(body.indexOf('result: ') + 'result: '.length));
+  } catch {
+    result = undefined;
+  }
+  check(
+    'a browser_script branches on what example.com shows',
+    !last.isError &&
+      JSON.stringify(result?.seen) === JSON.stringify(['has Example Domain', 'lacks No such words on this page']) &&
+      result?.links?.length > 0,
+    body.slice(0, 400),
+  );
+  check('a browser_script goto obeys the network policy', /refused file:\/\//.test(body) && !/let file:\/\/ through/.test(body), body.slice(0, 300));
+}
+
 try {
   // 1. The shared Husk, as a chat's first call starts it.
   daemon = spawn(process.execPath, [bin, '--daemon'], { env, stdio: 'inherit' });
@@ -396,6 +451,9 @@ try {
 
   // 8. How fast the browser is, for before-and-after numbers.
   await measureBrowser(id);
+
+  // 8b. A script that makes its own decisions, run inside the computer.
+  await measureScript(id);
 
   // 9. The console in a real browser: Home's live screen, take over at any
   // moment, the chat's call waiting for Give back, the Chat and Connect pages.

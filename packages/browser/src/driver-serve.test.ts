@@ -129,6 +129,21 @@ async function fakeChromium(frames = 4): Promise<FakeChromium> {
 }
 
 /** The driver in serve mode, with line-at-a-time reading of what it prints. */
+/**
+ * The host's side of a script's questions, as the session answers them: a URL
+ * with "evil" in it is refused by policy, anything else is allowed -- and
+ * normalised, as `assertUrlAllowed` does, so a test can tell the driver went
+ * to the host's URL and not the script's.
+ */
+function answerHost(msg: Record<string, unknown>): Record<string, unknown> {
+  if (msg['op'] === 'checkUrl') {
+    const url = String(msg['url']);
+    return url.includes('evil') ? { error: `network policy refuses ${new URL(url).hostname}` } : { value: new URL(url).toString() };
+  }
+  if (msg['op'] === 'compact') return { value: (msg['nodes'] as unknown[]).map((_, i) => ({ ref: `e${i}`, role: 'button', name: 'Go' })) };
+  return { error: 'unknown' };
+}
+
 function serveDriver(port: number) {
   const child = spawn(python!, [join(here, 'driver.py'), '--serve', String(port)]) as ChildProcessWithoutNullStreams;
   const lines: Array<Record<string, unknown>> = [];
@@ -138,7 +153,9 @@ function serveDriver(port: number) {
   child.stdout.on('data', (chunk: string) => {
     partial += chunk;
     for (let i = partial.indexOf('\n'); i >= 0; i = partial.indexOf('\n')) {
-      lines.push(JSON.parse(partial.slice(0, i)) as Record<string, unknown>);
+      const msg = JSON.parse(partial.slice(0, i)) as Record<string, unknown>;
+      lines.push(msg);
+      if (msg['event'] === 'host') child.stdin.write(`${JSON.stringify({ op: 'hostReply', call: msg['call'], ...answerHost(msg) })}\n`);
       partial = partial.slice(i + 1);
       for (const w of waiters.splice(0)) w();
     }
@@ -242,5 +259,167 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
     const exited = new Promise<number | null>((resolve) => driver!.child.on('exit', resolve));
     driver.child.stdin.end();
     expect(await exited).toBe(0);
+  });
+});
+
+describe.skipIf(!python)('driver.py --serve, running a script', { timeout: 30_000 }, () => {
+  const script = (source: string, limitSec = 5) => ({
+    targetId: 'T1',
+    steps: [{ op: 'action', do: 'script', source, limitSec, timeoutMs: limitSec * 1000 }],
+  });
+  const outcome = (answer: Record<string, unknown>) => (answer['results'] as Array<Record<string, unknown>>)[0]!;
+
+  it('branches on the page and returns what it printed and its result', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    const out = outcome(
+      await driver.request(
+        script(
+          [
+            'if page.has_text("Go"):',
+            '    page.click(ref="e7")',
+            '    print("clicked")',
+            'else:',
+            '    print("no button")',
+            'result = {"url": page.url(), "links": [n["name"] for n in page.snapshot()]}',
+          ].join('\n'),
+        ),
+      ),
+    );
+    expect(out).toMatchObject({ output: 'clicked\n', result: { url: 'https://fake.test/', links: ['Go', 'Go'] }, error: null });
+    expect(fake.received.some((m) => m.method === 'Input.dispatchMouseEvent')).toBe(true);
+  });
+
+  it('checks every goto with the host first, and a refusal is the script’s to handle', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    const out = outcome(
+      await driver.request(
+        script(
+          [
+            'try:',
+            '    page.goto("https://evil.test/")',
+            'except PageError as e:',
+            '    print("refused:", e)',
+            'page.goto("https://fake.test/next")',
+          ].join('\n'),
+        ),
+      ),
+    );
+    expect(out['error']).toBeNull();
+    expect(String(out['output'])).toMatch(/^refused: network policy refuses evil\.test/);
+    const navigations = fake.received.filter((m) => m.method === 'Page.navigate').map((m) => m.params?.['url']);
+    expect(navigations).toEqual(['https://fake.test/next']);
+    expect(driver.lines.filter((l) => l['event'] === 'host' && l['op'] === 'checkUrl')).toHaveLength(2);
+  });
+
+  it('kills a script that runs past its limit, and the driver goes on', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    const started = Date.now();
+    const out = outcome(await driver.request(script('print("start")\nwhile True:\n    pass', 1)));
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(out).toMatchObject({ output: 'start\n', error: expect.stringMatching(/still running at its 1 s limit/) });
+    expect(await driver.request({ targetId: 'T1', steps: [{ op: 'send', method: 'Page.enable', session: true }] })).toMatchObject({ ok: true });
+  });
+
+  it('caps what a script prints', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    const out = outcome(await driver.request(script('for i in range(2000):\n    print("x" * 100)')));
+    expect(out['truncated']).toBe(true);
+    expect(String(out['output']).length).toBe(64 * 1024);
+  });
+
+  it('returns a crash as its traceback, pointing at the script’s own line', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    const out = outcome(await driver.request(script('x = 1\ny = x / 0')));
+    expect(String(out['error'])).toMatch(/File "<script>", line 2/);
+    expect(String(out['error'])).toMatch(/ZeroDivisionError/);
+    const syntax = outcome(await driver.request(script('if True print(1)')));
+    expect(String(syntax['error'])).toMatch(/SyntaxError/);
+  });
+
+  it('keeps the screencast going through a script, and after one crashes', async () => {
+    fake = await fakeChromium(6);
+    driver = serveDriver(fake.port);
+    await driver.request({ op: 'screencast', targetId: 'T1', fps: 10 });
+    await driver.until((l) => l['data'] === 'F1');
+    // Frames are acked while the script sleeps, then it crashes.
+    const out = outcome(await driver.request(script('sleep(0.6)\nraise RuntimeError("boom")')));
+    expect(String(out['error'])).toMatch(/RuntimeError: boom/);
+    expect(driver.lines.filter((l) => l['event'] === 'frame').length).toBeGreaterThanOrEqual(4);
+    await driver.until((l) => l['data'] === 'F6');
+    expect(await driver.request({ targetId: 'T1', steps: [{ op: 'send', method: 'Page.enable', session: true }] })).toMatchObject({ ok: true });
+  });
+});
+
+describe.skipIf(!python)('driver.py --serve, a script that misbehaves', { timeout: 60_000 }, () => {
+  const script = (source: string, limitSec = 20) => ({
+    targetId: 'T1',
+    steps: [{ op: 'action', do: 'script', source, limitSec, timeoutMs: limitSec * 1000 }],
+  });
+  const outcome = (answer: Record<string, unknown>) => (answer['results'] as Array<Record<string, unknown>>)[0]!;
+  const alive = async () =>
+    expect(await driver!.request({ targetId: 'T1', steps: [{ op: 'send', method: 'Page.enable', session: true }] })).toMatchObject({ ok: true });
+
+  it('goes where the host said, not where the script said', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    outcome(await driver.request(script('page.goto("HTTPS://FAKE.TEST:443/Next")')));
+    expect(fake.received.filter((m) => m.method === 'Page.navigate').map((m) => m.params?.['url'])).toEqual(['https://fake.test/Next']);
+  });
+
+  it('is stopped when it sends page calls and never reads the answers, and the driver goes on', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    const started = Date.now();
+    // Straight to the real pipe, past `page`, then never reading stdin again.
+    const flood = ['import json, sys', 'for i in range(20000):', '    sys.__stdout__.write(json.dumps({"t": "call", "op": "url"}) + "\\n")', 'sys.__stdout__.flush()', 'sleep(60)'].join('\n');
+    const out = outcome(await driver.request(script(flood)));
+    expect(String(out['error'])).toMatch(/stopped reading the answers/);
+    expect(Date.now() - started).toBeLessThan(20_000);
+    await alive();
+  });
+
+  it('caps a huge result, a huge error and a huge raw line', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    const big = outcome(await driver.request(script('result = "x" * 10**7')));
+    expect(big['resultTruncated']).toBe(true);
+    expect(String(big['result']).length).toBeLessThanOrEqual(64 * 1024);
+    const raised = outcome(await driver.request(script('raise ValueError("y" * 10**7)')));
+    expect(String(raised['error']).length).toBeLessThan(17 * 1024);
+    expect(String(raised['error'])).toMatch(/ValueError/);
+    // A line past the reader's limit, written past the runner, is dropped as it is read.
+    const raw = ['import json, sys', 'sys.__stdout__.write(json.dumps({"t": "done", "result": "z" * (2 * 1024 * 1024)}) + "\\n")', 'sys.__stdout__.flush()', 'result = "small"'].join('\n');
+    const line = outcome(await driver.request(script(raw)));
+    expect(line['result']).toBe('small');
+    expect(String(line['output'])).toMatch(/a line of over 1048576 bytes was dropped/);
+    await alive();
+  });
+
+  it.skipIf(process.platform !== 'linux')('kills a grandchild that left with setsid', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    const escape = [
+      'import subprocess, sys',
+      'p = subprocess.Popen([sys.executable, "-c", "import os, time; os.setsid(); time.sleep(120)"])',
+      'sleep(0.5)',
+      'print(p.pid)',
+    ].join('\n');
+    const out = outcome(await driver.request(script(escape)));
+    const pid = Number(String(out['output']).trim());
+    expect(pid).toBeGreaterThan(0);
+    await new Promise((r) => setTimeout(r, 500));
+    const { readFileSync } = await import('node:fs');
+    let state = 'gone';
+    try {
+      state = readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1]!.charAt(0);
+    } catch {
+      // No /proc entry: the process is gone, which is the point.
+    }
+    expect(['gone', 'Z', 'X']).toContain(state);
   });
 });

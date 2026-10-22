@@ -135,7 +135,17 @@ export interface CdpTransport {
   screencast?(targetId: string, fps: number): Promise<boolean>;
   stopScreencast?(targetId: string): Promise<void>;
   onScreencast?(fn: (e: ScreencastEvent) => void): () => void;
+  /**
+   * Answer the driver's questions mid-request -- may a script visit this URL,
+   * what does this tree compact to. A throw becomes the script's PageError.
+   */
+  onHostCall?(fn: HostCall): void;
+  /** Whether a request is waiting or running. */
+  busy?(): boolean;
 }
+
+/** One question from the driver, answered on the host. */
+export type HostCall = (op: string, args: Record<string, unknown>) => unknown;
 
 export interface CdpOptions {
   /** Default ceiling for one driver invocation. Defaults to 60s. */
@@ -298,6 +308,8 @@ export class ComputerDriverTransport implements CdpTransport {
   /** The driver answers one request at a time, so they go out one at a time and each timeout is its own. */
   private queue: Promise<unknown> = Promise.resolve();
   private readonly castListeners = new Set<(e: ScreencastEvent) => void>();
+  private inFlight = 0;
+  private hostCall: HostCall | undefined;
 
   constructor(
     private readonly computer: Computer,
@@ -310,8 +322,18 @@ export class ComputerDriverTransport implements CdpTransport {
 
   async run(req: DriverRequest): Promise<DriverResult> {
     const timeoutMs = req.timeoutMs ?? 60_000;
-    const served = await this.serve({ steps: req.steps, ...(req.targetId !== undefined ? { targetId: req.targetId } : {}) }, timeoutMs);
-    return served ? resultOf(served) : await this.runOneShot(req);
+    this.inFlight++;
+    try {
+      const served = await this.serve({ steps: req.steps, ...(req.targetId !== undefined ? { targetId: req.targetId } : {}) }, timeoutMs);
+      return served ? resultOf(served) : await this.runOneShot(req);
+    } finally {
+      this.inFlight--;
+    }
+  }
+
+  /** Whether a request is waiting or running, so the browser is not closed for idleness under it. */
+  busy(): boolean {
+    return this.inFlight > 0;
   }
 
   async screencast(targetId: string, fps: number): Promise<boolean> {
@@ -324,6 +346,20 @@ export class ComputerDriverTransport implements CdpTransport {
   async stopScreencast(targetId: string): Promise<void> {
     if (!this.server) return;
     await this.serve({ op: 'screencastStop', targetId }, 15_000).catch(() => undefined);
+  }
+
+  onHostCall(fn: HostCall): void {
+    this.hostCall = fn;
+  }
+
+  /**
+   * Kill this browser's driver and every script process, from inside the
+   * computer: by the driver's own command line, and by the tag each script
+   * carries in its environment. An exec, so it counts as use; it runs only
+   * after a wedge.
+   */
+  private async reap(): Promise<void> {
+    await this.computer.exec({ cmd: ['python3', '-c', REAP_SOURCE, String(this.port)], timeoutSec: 15 }).catch(() => undefined);
   }
 
   onScreencast(fn: (e: ScreencastEvent) => void): () => void {
@@ -342,7 +378,10 @@ export class ComputerDriverTransport implements CdpTransport {
       if (!server || server.exited) {
         const path = await this.install();
         try {
-          server = new DriverServer(this.computer, path, this.port, (e) => this.emit(e));
+          server = new DriverServer(this.computer, path, this.port, (e) => this.emit(e), (op, args) => {
+            if (!this.hostCall) throw new Error('this browser answers no questions from scripts');
+            return this.hostCall(op, args);
+          });
         } catch {
           // The provider refused to start it at all; an exec says why, if it is real.
           this.oneShot = true;
@@ -356,9 +395,16 @@ export class ComputerDriverTransport implements CdpTransport {
       // under it. Frames finish in well under the interval and never do.
       const beat = setInterval(() => this.computer.markUsed?.(), HEARTBEAT_MS);
       beat.unref?.();
+      // Only a script asks the host anything, so only its request opens the window.
+      const steps = Array.isArray(body['steps']) ? (body['steps'] as Array<Record<string, unknown>>) : [];
+      const hostCalls = steps.some((s) => s['op'] === 'action' && s['do'] === 'script');
       try {
-        return await server.request(body, timeoutMs);
+        return await server.request(body, timeoutMs, { hostCalls });
       } catch (err) {
+        // The backstop fired: the driver wedged, or something in the computer
+        // stopped it. Killing the exec does not reach a stopped process inside,
+        // so end it, and any script it ran, from inside too.
+        if (server.killed && err instanceof HuskError && err.code === 'E_EXEC_TIMEOUT') void this.reap();
         // Died by itself before it ever answered: whatever the reason -- no
         // python3, a provider that closes stdin -- one exec per request still
         // works. One husk killed proves nothing about the provider.
@@ -545,6 +591,34 @@ function resultOf(parsed: Record<string, unknown>): DriverResult {
 /** The longest delay Node's `setTimeout` honours; anything longer fires at once. */
 const MAX_TIMER_MS = 2_147_483_647;
 
+/** The longest line read from the driver. A full-page screenshot, base64, is far less. */
+const MAX_LINE_CHARS = 64 * 1024 * 1024;
+
+/** The longest URL a script may ask the host to check. */
+const MAX_HOST_URL = 8192;
+
+/**
+ * Run inside the computer by `reap`: SIGKILL the served driver on this port,
+ * and every process carrying a script's HUSK_SCRIPT tag. Its own command line
+ * has no element ending in driver.py, and its environment no tag.
+ */
+const REAP_SOURCE = [
+  'import glob, os, signal, sys',
+  'port = sys.argv[1].encode()',
+  "for d in glob.glob('/proc/[0-9]*'):",
+  '    try:',
+  "        argv = open(d + '/cmdline', 'rb').read().split(b'\\0')",
+  "        env = open(d + '/environ', 'rb').read().split(b'\\0')",
+  '    except OSError:',
+  '        continue',
+  "    served = any(a.endswith(b'driver.py') and argv[i + 1:i + 3] == [b'--serve', port] for i, a in enumerate(argv))",
+  "    if served or any(e.startswith(b'HUSK_SCRIPT=') for e in env):",
+  '        try:',
+  "            os.kill(int(d.rsplit('/', 1)[1]), signal.SIGKILL)",
+  '        except OSError:',
+  '            pass',
+].join('\n');
+
 /** How often a long-running served request records use. Well inside any idle timeout worth setting. */
 const HEARTBEAT_MS = 60_000;
 
@@ -564,6 +638,9 @@ class DriverServer {
     path: string,
     port: number,
     private readonly onEvent: (e: ScreencastEvent) => void,
+    private readonly onHost: HostCall = () => {
+      throw new Error('no host calls here');
+    },
   ) {
     this.proc = computer.spawn!({
       cmd: ['python3', path, '--serve', String(port)],
@@ -575,10 +652,14 @@ class DriverServer {
     });
   }
 
-  request(body: Record<string, unknown>, timeoutMs: number): Promise<Record<string, unknown>> {
+  request(body: Record<string, unknown>, timeoutMs: number, opts: { hostCalls?: boolean } = {}): Promise<Record<string, unknown>> {
     if (this.exited) return Promise.reject(this.gone(1));
     const id = this.nextId++;
-    return new Promise((resolve, reject) => {
+    if (opts.hostCalls) this.hostWindow = id;
+    const settled = (): void => {
+      if (this.hostWindow === id) this.hostWindow = undefined;
+    };
+    return new Promise<Record<string, unknown>>((resolve, reject) => {
       // The driver keeps its own deadline and reports a structured timeout.
       // This is the backstop for a driver that wedged, so it is the looser.
       const timer = setTimeout(() => {
@@ -604,7 +685,7 @@ class DriverServer {
         },
       });
       this.proc.write(`${JSON.stringify({ ...body, id, timeoutMs })}\n`);
-    });
+    }).finally(settled);
   }
 
   /**
@@ -618,17 +699,44 @@ class DriverServer {
     this.proc.kill();
   }
 
+  /**
+   * Bounded, because anything in the computer can write to this pipe: a line
+   * that never ends would otherwise grow until the shared Husk runs out of
+   * memory and takes every computer with it. A screenshot is the biggest
+   * honest line, well under the cap; past it, the driver is killed and the
+   * next call starts a fresh one.
+   */
   private read(chunk: string): void {
+    if (this.exited) return;
     let start = 0;
     for (let i = chunk.indexOf('\n'); i >= 0; i = chunk.indexOf('\n', start)) {
+      if (this.partsLength + (i - start) > MAX_LINE_CHARS) return this.overflow();
       this.parts.push(chunk.slice(start, i));
       start = i + 1;
       const line = this.parts.join('');
       this.parts = [];
+      this.partsLength = 0;
       this.line(line);
     }
-    if (start < chunk.length) this.parts.push(chunk.slice(start));
+    if (start < chunk.length) {
+      this.partsLength += chunk.length - start;
+      if (this.partsLength > MAX_LINE_CHARS) return this.overflow();
+      this.parts.push(chunk.slice(start));
+    }
   }
+
+  private overflow(): void {
+    this.parts = [];
+    this.partsLength = 0;
+    this.kill();
+  }
+
+  /** Host questions dropped unanswered: outside a script request, or while one was being answered. */
+  droppedHostCalls = 0;
+  /** The id of the script request in flight, the only time host questions are answered. */
+  private hostWindow: number | undefined;
+  private answering = false;
+  private partsLength = 0;
 
   private line(line: string): void {
     let msg: Record<string, unknown>;
@@ -650,9 +758,45 @@ class DriverServer {
         targetId,
         frame: { data: msg['data'], width: Number(msg['width']) || 0, height: Number(msg['height']) || 0 },
       });
+    } else if (msg['event'] === 'host') {
+      void this.answer(msg);
     } else if (msg['event'] === 'castEnded') {
       this.onEvent({ type: 'ended', ...(targetId ? { targetId } : {}), reason: String(msg['reason'] ?? 'it stopped') });
     }
+  }
+
+  /**
+   * Answer a question the driver asked mid-request. Written straight to the
+   * process, not queued: the request it belongs to is the one in flight.
+   *
+   * The questions come from inside the computer, so they are treated as
+   * hostile: answered only while a script request is in flight and one at a
+   * time -- the driver never has two -- with every other line dropped and
+   * counted; a URL is checked only up to MAX_HOST_URL characters; and no
+   * error repeats its input back. Replies are small, so writing them cannot
+   * pile up behind a process that does not read.
+   */
+  private async answer(msg: Record<string, unknown>): Promise<void> {
+    if (this.hostWindow === undefined || this.answering) {
+      this.droppedHostCalls++;
+      return;
+    }
+    const window = this.hostWindow;
+    this.answering = true;
+    const { event: _event, call, op, ...args } = msg;
+    let reply: Record<string, unknown>;
+    try {
+      if (op === 'checkUrl' && (typeof args['url'] !== 'string' || args['url'].length > MAX_HOST_URL)) {
+        throw new Error(`that URL is not a string of at most ${MAX_HOST_URL} characters`);
+      }
+      reply = { op: 'hostReply', call, value: (await this.onHost(String(op), args)) ?? null };
+    } catch (err) {
+      const e = err as HuskError;
+      reply = { op: 'hostReply', call, error: `${e.message}${e.hint ? ` (${e.hint})` : ''}`.slice(0, 500) };
+    } finally {
+      this.answering = false;
+    }
+    if (!this.exited && this.hostWindow === window) this.proc.write(`${JSON.stringify(reply)}\n`);
   }
 
   private gone(code: number): HuskError {

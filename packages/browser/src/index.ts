@@ -16,6 +16,7 @@ export type {
   DriverResult,
   ActionStep,
   DriverStep,
+  HostCall,
   ScreencastEvent,
   ScreenFrame,
   SendStep,
@@ -27,7 +28,7 @@ export type {
 export { DRIVER_PATH, DRIVER_SOURCE } from './driver.js';
 
 export { Page, backendNodeIdOf, compactAxTree, flattenAxTree, keyDescriptor, waitExpression } from './page.js';
-export type { ActionOutcome, AxNodeLike, ElementTarget, GotoResult, PageAction, ScreenshotOptions, SnapshotNode } from './page.js';
+export type { ActionOutcome, AxNodeLike, ElementTarget, GotoResult, PageAction, ScreenshotOptions, ScriptOutcome, SnapshotNode } from './page.js';
 
 export {
   CACHE_ROOT,
