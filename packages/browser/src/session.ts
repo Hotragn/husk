@@ -134,6 +134,9 @@ export class BrowserSession {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     if (this.idleMs <= 0) return;
     this.idleTimer = setTimeout(() => {
+      // A ten-minute script or wait is not idleness: closing the browser
+      // under it would kill the page it is working on. Check again later.
+      if (this.transport?.busy?.()) return this.touch();
       void this.close('idle');
     }, this.idleMs);
     this.idleTimer.unref?.();
@@ -197,7 +200,18 @@ export class BrowserSession {
 
   /** The driver's questions mid-request: may a script go here, and what does this tree compact to. */
   private answerHost(op: string, args: Record<string, unknown>): unknown {
-    if (op === 'checkUrl') return this.allowed(String(args['url'] ?? ''));
+    if (op === 'checkUrl') {
+      try {
+        return this.allowed(String(args['url'] ?? ''));
+      } catch (err) {
+        // The refusal goes back into the computer; its "not a valid URL: <url>"
+        // would echo whatever the script sent, so that one is said without it.
+        if (err instanceof HuskError && err.message.startsWith('not a valid URL')) {
+          throw new HuskError('E_EXEC_DENIED', 'not a valid URL', { hint: 'include the scheme, e.g. https://example.com' });
+        }
+        throw err;
+      }
+    }
     if (op === 'compact') {
       const nodes = Array.isArray(args['nodes']) ? (args['nodes'] as AxNodeLike[]) : [];
       const limit = typeof args['limit'] === 'number' ? args['limit'] : 400;

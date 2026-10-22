@@ -420,9 +420,12 @@ export async function callBrowserTool(
       const out = await session.script(script, secondsArg(args.timeoutSec, 60));
       const parts = [`${out.error ? 'failed' : 'finished'} in ${out.ms} ms`];
       if (out.output) parts.push(`printed:\n${out.output.trimEnd()}${out.truncated ? '\n[output past 64 KB was dropped]' : ''}`);
-      if (out.result !== null && out.result !== undefined) parts.push(`result: ${JSON.stringify(out.result, null, 2)}`);
+      if (out.result !== null && out.result !== undefined) {
+        parts.push(`result: ${JSON.stringify(out.result, null, 2)}${out.resultTruncated ? '\n[the result was over 64 KB; this is its JSON, cut]' : ''}`);
+      }
       if (out.error) parts.push(out.error.trimEnd());
-      const body = clampLength(redact(parts.join('\n\n')), maxTextBytes);
+      // Cut before redacting: redact scans the whole string, so it gets the bounded one.
+      const body = redact(clampLength(parts.join('\n\n'), maxTextBytes));
       return out.error ? bad(body) : text(body);
     }
 

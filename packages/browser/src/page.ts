@@ -500,6 +500,7 @@ export class Page {
       output: typeof r['output'] === 'string' ? r['output'] : '',
       truncated: r['truncated'] === true,
       result: r['result'] ?? null,
+      resultTruncated: r['resultTruncated'] === true,
       ms: typeof r['ms'] === 'number' ? r['ms'] : 0,
       ...(typeof r['error'] === 'string' ? { error: r['error'] } : {}),
     };
@@ -921,6 +922,8 @@ export interface ScriptOutcome {
   /** Output past 64 KB was dropped. */
   truncated: boolean;
   result: unknown;
+  /** The result's JSON was over 64 KB, so `result` is that JSON as a string, cut. */
+  resultTruncated: boolean;
   ms: number;
   error?: string;
 }

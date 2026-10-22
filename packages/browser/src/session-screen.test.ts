@@ -238,3 +238,27 @@ describe('what a script may visit', () => {
     expect(ask!('compact', { nodes })).toEqual([{ ref: 'e7', role: 'button', name: 'Go', depth: 0 }]);
   });
 });
+
+describe('a long request', () => {
+  it('keeps the browser from closing for idleness until it is done', async () => {
+    const transport = { ...fakeTransport(), inFlight: true, busy: () => transport.inFlight };
+    const session = new BrowserSession(fakeComputer(), { idleTimeoutMs: 50, transport: () => transport as CdpTransport });
+    await session.activePage();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(session.livePage()).toBeDefined();
+    transport.inFlight = false;
+    // livePage just re-armed the timer, so give it one more period.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(session.livePage()).toBeUndefined();
+  });
+});
+
+describe('a refused script URL', () => {
+  it('never says the URL back into the computer', async () => {
+    let ask: ((op: string, args: Record<string, unknown>) => unknown) | undefined;
+    const transport = { ...fakeTransport(), onHostCall: (fn: typeof ask) => void (ask = fn) };
+    const session = new BrowserSession(fakeComputer(), { idleTimeoutMs: 0, transport: () => transport as CdpTransport });
+    await session.activePage();
+    expect(() => ask!('checkUrl', { url: 'no scheme and a secret-looking blob' })).toThrow(/^not a valid URL$/);
+  });
+});

@@ -82,9 +82,17 @@ await browser.close();
 - **`page.ts`** — `goto`, `snapshot`, `click`, `type`, `press`, `screenshot`,
   `evaluate`, `content`, `text`, `waitForLoad`, `actions` for several at once,
   and `script` for a model's Python that decides as it goes. The script runs in
-  its own process inside the computer, killed at its limit (at most 600 s),
-  with its output capped at 64 KB. Every `page.goto` it makes is checked by the
-  host's network policy before Chromium moves.
+  its own process inside the computer and is stopped at its limit (at most
+  600 s). The stop kills its process group, plus every process that still
+  carries its tag in the environment, which catches a grandchild that called
+  `setsid`; one that also scrubs its environment escapes, as a process
+  started from `shell` would. Printed output, `result` and the error are each
+  capped. Every `page.goto` it makes is checked by the host's network policy
+  before Chromium moves. That check is what it is and no more: clicks,
+  `fill(submit=True)`, redirects and page scripts are not checked, as with
+  `browser_click`. And a script, like `shell`, runs in the computer, where
+  it can reach Chromium's raw CDP port on 127.0.0.1 itself. The computer,
+  not the check, is the boundary.
 - **`session.ts`** — one browser per computer, launched lazily and closed after
   five idle minutes, because a resident Chromium is a few hundred megabytes of
   RSS and a machine with four of them gets OOM-killed. The user-data-dir is

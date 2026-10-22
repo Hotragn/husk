@@ -35,7 +35,7 @@ a model's several actions are one round too (code over calls, an idea taken
 from ego-lite, MIT, Copyright (c) 2026 CitroLabs). Actions are data: nothing a
 model writes is executed here or on the host. The one exception is the
 ``script`` action, which runs a model's Python in a *separate* process in the
-computer, killed at its limit, talking to this one over pipes; see the scripts
+computer, stopped at its limit, talking to this one over pipes; see the scripts
 section below. It needs serve mode, because its gotos are checked by the host.
 
 Protocol, stdin -> stdout, one JSON object each (one per line in serve mode,
@@ -64,6 +64,7 @@ problem with a different fix, and the host side keeps them apart.
 """
 
 import base64
+import glob
 import json
 import os
 import queue
@@ -603,14 +604,32 @@ def act_screenshot(conn, sid, step, deadline):
 # A model-written Python script with real control flow -- if the login form is
 # there, fill it; loop over the results -- in one tool call. It runs in its own
 # process in the computer, never on the host and never in this one: a runaway
-# loop is killed at its limit, a crash is a traceback in its own process, and
-# this driver, its socket and the screencast go on. The script reaches the page
-# only through `page`, whose calls come back here as JSON lines and run as the
-# same actions `browser_run` uses; every goto is checked by the host's network
-# policy first. Names follow ego-lite's Playwright-style page API where they fit
+# loop is stopped at its limit (see `_kill_tree` for what that reaches), a
+# crash is a traceback in its own process, and this driver, its socket and the
+# screencast go on. Everything from the script is treated as hostile: its lines
+# are read bounded, its answers written from a thread so it cannot block this
+# one by not reading, and its output, result and error are capped.
+#
+# The script reaches the page through `page`, whose calls come back here as
+# JSON lines and run as the same actions `browser_run` uses; every goto is
+# checked by the host's network policy first. That is all the check covers:
+# clicks, submits, redirects and page scripts are not checked, and the script,
+# like `shell`, can open 127.0.0.1's CDP port itself. The computer is the
+# boundary. Names follow ego-lite's Playwright-style page API where they fit
 # (MIT, Copyright (c) 2026 CitroLabs).
 
 SCRIPT_OUTPUT_CAP = 64 * 1024
+SCRIPT_RESULT_CAP = 64 * 1024
+SCRIPT_ERROR_CAP = 16 * 1024
+# One line from a script, read at most this much at a time and dropped past it.
+SCRIPT_LINE_CAP = 1024 * 1024
+# Answers held for a script that has stopped reading them, before it is stopped.
+SCRIPT_BACKLOG_CAP = 1000
+OVERSIZED = object()
+
+
+class ScriptStalled(Exception):
+    """The script stopped reading its answers: nothing it does can be trusted to finish."""
 
 SCRIPT_RUNNER = r'''
 import json, linecache, sys, time, traceback
@@ -640,8 +659,10 @@ def _call(op, **args):
 
 class _Printed(object):
     def write(self, s):
-        if s:
-            _send({"t": "print", "s": s})
+        # In pieces, so one huge print is many small lines, none of them over
+        # what the driver will read in one go.
+        for i in range(0, len(s), 16384):
+            _send({"t": "print", "s": s[i:i + 16384]})
         return len(s)
 
     def flush(self):
@@ -698,13 +719,22 @@ def _main():
         tb = exc.__traceback__
         while tb is not None and tb.tb_frame.f_code.co_filename != "<script>":
             tb = tb.tb_next
-        _send({"t": "error", "traceback": "".join(traceback.format_exception(type(exc), exc, tb))})
+        text = "".join(traceback.format_exception(type(exc), exc, tb))
+        if len(text) > 16384:
+            text = text[:8192] + "\n[... %d characters cut ...]\n" % (len(text) - 16384) + text[-8192:]
+        _send({"t": "error", "traceback": text})
         return
     result = scope.get("result")
     try:
-        json.dumps(result)
+        encoded = json.dumps(result)
     except (TypeError, ValueError):
         result = repr(result)
+        encoded = json.dumps(result)
+    # Capped here so the line is small; the driver caps it again, since a
+    # script can write to the pipe without going through this.
+    if len(encoded) > 65536:
+        _send({"t": "done", "result": encoded[:65536], "resultTruncated": True})
+        return
     _send({"t": "done", "result": result})
 
 
@@ -765,15 +795,55 @@ def script_call(conn, sid, op, args, deadline):
     raise DriverError(ACTION, 'there is no page.%s' % (op,))
 
 
-def _kill_tree(child):
-    """The script and anything it started. Its own session on posix, so one signal reaches them all."""
-    try:
-        if os.name == 'posix':
+def _head_tail(text, cap):
+    """Text cut in the middle to `cap` characters, so its start and its end both survive."""
+    if len(text) <= cap:
+        return text
+    half = cap // 2
+    return text[:half] + '\n[... %d characters cut ...]\n' % (len(text) - cap) + text[-half:]
+
+
+def _tagged(tag):
+    """Every process whose environment carries this script's tag. Linux: it reads /proc."""
+    needle = ('HUSK_SCRIPT=%s' % tag).encode('ascii')
+    found = []
+    for path in glob.glob('/proc/[0-9]*/environ'):
+        try:
+            with open(path, 'rb') as handle:
+                if needle in handle.read().split(b'\0'):
+                    found.append(int(path.split('/')[2]))
+        except (OSError, ValueError):
+            pass
+    return found
+
+
+def _kill_tree(child, tag):
+    """
+    The script, its process group, and every process still carrying its tag.
+
+    A grandchild that calls setsid leaves the group, so the group signal misses
+    it, but it keeps the tag in its environment and that finds it. One that
+    also scrubs its own environment escapes both -- the honest limit of this,
+    and the same as a process started from `shell`. Such a survivor can hold
+    the pipes open; the reader threads are daemons, nothing here joins them
+    for more than a moment, and closing a pipe another thread is blocked
+    reading would deadlock on its lock, so the pipes are left to the reaper.
+    """
+    if os.name == 'posix':
+        try:
             os.killpg(child.pid, signal.SIGKILL)
-        else:
+        except Exception:
+            pass
+        for pid in _tagged(tag):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except Exception:
+                pass
+    else:
+        try:
             child.kill()
-    except Exception:
-        pass
+        except Exception:
+            pass
     try:
         child.wait(timeout=5)
     except Exception:
@@ -784,34 +854,77 @@ def act_script(conn, sid, step, deadline):
     if BRIDGE is None:
         raise DriverError(ACTION, 'scripts need the long-lived driver, which this provider cannot keep running; use browser_run')
     started = _now()
-    options = {'stdin': subprocess.PIPE, 'stdout': subprocess.PIPE, 'stderr': subprocess.PIPE}
+    tag = base64.b16encode(os.urandom(8)).decode('ascii')
+    options = {
+        'stdin': subprocess.PIPE,
+        'stdout': subprocess.PIPE,
+        'stderr': subprocess.PIPE,
+        'env': dict(os.environ, HUSK_SCRIPT=tag),
+    }
     if os.name == 'posix':
         options['start_new_session'] = True
     child = subprocess.Popen([sys.executable, '-I', '-c', SCRIPT_RUNNER], **options)
 
-    got = queue.Queue()
+    # Bounded both ways. Lines from the script queue up to a limit and then
+    # the reader stops reading, so a script that floods its stdout blocks on
+    # its own write rather than filling this process; a line past
+    # SCRIPT_LINE_CAP is dropped as it is read, never held whole. Replies go
+    # out from a thread, so a script that stops reading its stdin stalls that
+    # thread and never this one -- which still enforces the limit.
+    got = queue.Queue(maxsize=256)
+    replies = queue.Queue()
+    stopping = threading.Event()
     stderr = []
 
-    def pump(stream, sink):
-        for raw in iter(stream.readline, b''):
-            sink(raw)
-        sink(None)
+    def offer(item):
+        while not stopping.is_set():
+            try:
+                got.put(item, timeout=0.2)
+                BRIDGE.wake()
+                return
+            except queue.Full:
+                pass
 
-    def from_stdout(raw):
-        got.put(raw)
-        BRIDGE.wake()
+    def read_stdout():
+        dropping = False
+        for raw in iter(lambda: child.stdout.readline(SCRIPT_LINE_CAP), b''):
+            whole = raw.endswith(b'\n')
+            if dropping or not whole:
+                if not dropping:
+                    offer(OVERSIZED)
+                dropping = not whole
+                continue
+            offer(raw)
+        offer(None)
 
-    def from_stderr(raw):
-        if raw is not None and sum(len(b) for b in stderr) < 16384:
-            stderr.append(raw)
+    def read_stderr():
+        for raw in iter(lambda: child.stderr.readline(SCRIPT_LINE_CAP), b''):
+            if sum(len(b) for b in stderr) < 16384:
+                stderr.append(raw)
 
-    for stream, sink in ((child.stdout, from_stdout), (child.stderr, from_stderr)):
-        reader = threading.Thread(target=pump, args=(stream, sink))
-        reader.daemon = True
-        reader.start()
+    def write_replies():
+        while True:
+            data = replies.get()
+            if data is None:
+                return
+            try:
+                child.stdin.write(data)
+                child.stdin.flush()
+            except (OSError, ValueError):
+                return
+
+    for target in (read_stdout, read_stderr, write_replies):
+        thread = threading.Thread(target=target)
+        thread.daemon = True
+        thread.start()
+
+    def tell(obj):
+        if replies.qsize() >= SCRIPT_BACKLOG_CAP:
+            raise ScriptStalled()
+        replies.put((json.dumps(obj) + '\n').encode('utf-8'))
 
     printed = []
-    out = {'size': 0, 'truncated': False}
+    out = {'size': 0, 'truncated': False, 'resultTruncated': False}
 
     def say(text):
         room = SCRIPT_OUTPUT_CAP - out['size']
@@ -822,10 +935,6 @@ def act_script(conn, sid, step, deadline):
             text, out['truncated'] = text[:room], True
         printed.append(text)
         out['size'] += len(text)
-
-    def tell(obj):
-        child.stdin.write((json.dumps(obj) + '\n').encode('utf-8'))
-        child.stdin.flush()
 
     result, error, finished = None, None, False
     try:
@@ -843,14 +952,15 @@ def act_script(conn, sid, step, deadline):
                 tail = b''.join(stderr).decode('utf-8', 'replace')[-4000:].strip()
                 error = 'the script exited without finishing' + (':\n' + tail if tail else '')
                 break
+            if raw is OVERSIZED:
+                say('\n[a line of over %d bytes was dropped]\n' % SCRIPT_LINE_CAP)
+                continue
             try:
                 msg = json.loads(raw)
             except ValueError:
                 msg = {'t': 'print', 's': raw.decode('utf-8', 'replace')}
-            kind = msg.get('t')
-            if kind == 'print':
-                say(str(msg.get('s', '')))
-            elif kind == 'call':
+            kind = msg.get('t') if isinstance(msg, dict) else None
+            if kind == 'call':
                 try:
                     reply = {'ok': True, 'value': script_call(conn, sid, msg.get('op'), msg.get('args') or {}, deadline)}
                 except DriverError as exc:
@@ -861,19 +971,29 @@ def act_script(conn, sid, step, deadline):
                     reply = {'ok': False, 'error': exc.message}
                 tell(reply)
             elif kind == 'done':
+                # Capped here too: the runner caps it, but a script can write
+                # to the pipe without going through the runner.
                 result, finished = msg.get('result'), True
+                encoded = json.dumps(result)
+                if len(encoded) > SCRIPT_RESULT_CAP:
+                    result, out['resultTruncated'] = encoded[:SCRIPT_RESULT_CAP], True
+                elif msg.get('resultTruncated'):
+                    out['resultTruncated'] = True
             elif kind == 'error':
-                error, finished = str(msg.get('traceback') or 'the script failed'), True
-    except (OSError, ValueError):
-        # The script closed its end mid-call: it died, and its stdout says how.
-        if error is None and not finished:
-            error = 'the script exited without finishing'
+                error, finished = _head_tail(str(msg.get('traceback') or 'the script failed'), SCRIPT_ERROR_CAP), True
+            else:
+                say(str(msg.get('s', '')) if kind == 'print' else raw.decode('utf-8', 'replace'))
+    except ScriptStalled:
+        error = 'the script stopped reading the answers to its page calls and was stopped'
     finally:
-        _kill_tree(child)
+        stopping.set()
+        replies.put(None)
+        _kill_tree(child, tag)
     return {
         'output': ''.join(printed),
         'truncated': out['truncated'],
         'result': result,
+        'resultTruncated': out['resultTruncated'],
         'error': error,
         'ms': int((_now() - started) * 1000),
     }
@@ -1100,6 +1220,8 @@ class Bridge(object):
         self.deferred = []
         self.replies = {}
         self.next_call = 1
+        # The host closed stdin: whatever is in flight is for nobody now.
+        self.closing = False
 
     def wake(self):
         try:
@@ -1124,11 +1246,17 @@ class Bridge(object):
                 if isinstance(msg, dict) and msg.get('op') == 'hostReply':
                     self.replies[msg.get('call')] = msg
                     continue
+            else:
+                self.closing = True
             self.deferred.append(raw)
 
     def wait(self, conn, ready, deadline):
         """Block until `ready()`, pumping Chromium meanwhile. A clean TIMEOUT at the deadline."""
         while not ready():
+            if self.closing:
+                # Killed from the host, or the host went away: stop the script
+                # now rather than at its limit, and let the loop exit.
+                raise DriverError(BROWSER_GONE, 'the host closed the driver')
             now = _now()
             if now >= deadline:
                 raise DriverError(TIMEOUT, 'ran out of time', {'boundary': True})
