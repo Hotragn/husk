@@ -333,8 +333,8 @@ export function Activity({ id }: { id: string }) {
       <ol className="activity-list" aria-live="polite">
         {entries.map((e, i) => (
           <li key={`${e.at}-${i}`} className={e.ok ? undefined : 'activity-failed'}>
-            <strong>{e.tool}</strong>
-            <span className="field-note tnum" title={formatWhen(e.at)}>
+            <strong title={e.tool}>{e.tool}</strong>
+            <span className="field-note tnum activity-meta" title={formatWhen(e.at)}>
               {e.ok ? `${e.ms} ms` : 'failed'} · {timeOf(e.at)}
             </span>
             {e.summary ? <code className="mono">{e.summary}</code> : null}
@@ -347,7 +347,7 @@ export function Activity({ id }: { id: string }) {
 
 function timeOf(iso: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
 }
 
 /**

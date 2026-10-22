@@ -147,6 +147,10 @@ async function walkConsole(id, name) {
     await page.locator('.activity-list').getByText('after-give-back').first().waitFor({ timeout: 30_000 });
     await screen.waitFor({ timeout: 60_000 });
     check('the Chat page shows the live screen and the activity', true);
+    const gaps = await page.$$eval('.activity-list li', (rows) =>
+      rows.map((li) => li.querySelector('.activity-meta').getBoundingClientRect().left - li.querySelector('strong').getBoundingClientRect().right),
+    );
+    check('no tool name runs into its timing', gaps.length > 0 && gaps.every((g) => g >= 8), gaps.map(Math.round).join(','));
     await shot('03-chat.png');
     await page.getByRole('button', { name: 'Take over this computer' }).click();
     await page.getByRole('group', { name: 'Take over' }).waitFor({ timeout: 10_000 });
