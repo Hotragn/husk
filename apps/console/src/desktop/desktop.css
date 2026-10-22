@@ -424,7 +424,7 @@
   flex-direction: column;
   gap: 2px;
   width: max-content;
-  max-width: 260px;
+  max-width: 300px;
   padding: 8px 12px;
   border: 0.5px solid rgba(255, 255, 255, 0.12);
   border-radius: 12px;
@@ -457,30 +457,32 @@
   white-space: nowrap;
 }
 
-/* Flat computers, where WebGL is not available. */
+/* Flat computers, where WebGL is not available: the same iMac, facing front. */
 .flat-mac {
+  --mac-back: #b9bdc4;
+  --mac-chin: #e6e8eb;
   display: grid;
   justify-items: center;
   animation: desk-build 520ms cubic-bezier(0.2, 0.9, 0.3, 1.25);
 }
 
 .flat-mac-display {
-  display: block;
-  width: 58px;
+  display: grid;
+  grid-template-rows: 1fr 6px;
+  width: 52px;
   height: 38px;
-  padding: 2px;
-  border-radius: 5px;
-  background: linear-gradient(160deg, #eef0f3, #b9bcc4);
-  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.3), inset 0 0 0 0.5px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+  border-radius: 4px;
+  background: #f5f5f7;
+  box-shadow: 0 0 0 1px var(--mac-back), 0 6px 14px rgba(0, 0, 0, 0.3);
 }
 
 .flat-mac-screen {
   display: block;
-  width: 100%;
-  height: 100%;
+  margin: 1px 2px;
   overflow: hidden;
-  border-radius: 3px;
-  background: linear-gradient(135deg, #1d2a5b, #3b2f7a 55%, #0f766e);
+  border-radius: 1px;
+  background: linear-gradient(135deg, var(--mac-chin), var(--mac-back));
 }
 
 .flat-mac-screen img {
@@ -490,19 +492,24 @@
   object-fit: cover;
 }
 
+.flat-mac-chin {
+  display: block;
+  background: var(--mac-chin);
+}
+
 .flat-mac-neck {
   display: block;
-  width: 11px;
-  height: 10px;
-  background: linear-gradient(90deg, #c9ccd2, #a7aab2);
+  width: 16px;
+  height: 11px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--mac-back) 70%, #000), var(--mac-back));
 }
 
 .flat-mac-foot {
   display: block;
-  width: 26px;
+  width: 24px;
   height: 3px;
   border-radius: 2px;
-  background: linear-gradient(90deg, #d6d8dd, #a7aab2);
+  background: var(--mac-back);
 }
 
 .dock-waiting .flat-mac-display { box-shadow: 0 0 0 2px var(--color-warn), 0 0 18px rgba(251, 191, 36, 0.55); }

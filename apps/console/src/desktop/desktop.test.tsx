@@ -7,6 +7,7 @@ import type { DesktopComputer, DesktopState } from './bridge';
 import { ComputerWindow } from './ComputerWindow';
 import { Dock, docked } from './Dock';
 import { Pill } from './Pill';
+import { TINTS, tintOf } from './tints';
 
 const api = new HuskApi({ baseUrl: 'http://localhost:7377', token: 'test-token' });
 vi.mock('../state/connection', () => ({ useConnection: () => ({ api, revision: 0, invalidate: () => {} }) }));
@@ -172,6 +173,15 @@ describe('the row of 3D computers', () => {
     expect(sockets.sort()).toEqual(['/v1/computers/cmp_a01/screen?fps=1', '/v1/computers/cmp_a02/screen?fps=1']);
   });
 
+  it('draws each flat computer as a front-facing iMac in its chat app’s colour', async () => {
+    bridge({ computers: [computer('cmp_a01'), computer('cmp_a02', { platform: 'VS Code' })] });
+    const { container } = render(<Dock />);
+    await waitFor(() => expect(container.querySelector('.dock-flat')).not.toBeNull());
+    const macs = [...container.querySelectorAll<HTMLElement>('.flat-mac')];
+    expect(macs.map((m) => m.style.getPropertyValue('--mac-back'))).toEqual([TINTS.orange.back, TINTS.blue.back]);
+    expect(macs[0]!.querySelector('.flat-mac-chin')).not.toBeNull();
+  });
+
   it('opens no screen where watching would count as use', () => {
     bridge({ computers: [computer('cmp_a01', { live: false })] });
     render(<Dock />);
@@ -221,6 +231,17 @@ describe('the notch', () => {
     expect(screen.queryAllByRole('button', { name: /^Open / })).toHaveLength(0);
     push({ computers: [computer('cmp_a09', { window: 'minimized' })] });
     expect(await screen.findByRole('button', { name: 'Open Claude Code · chat started 09:09' })).toBeTruthy();
+  });
+});
+
+describe('the colours of the computers', () => {
+  it('keeps one colour per chat app, and a steady one for any other', () => {
+    expect(tintOf('Claude Code', 'cmp_a')).toBe('orange');
+    expect(tintOf('Claude Desktop', 'cmp_b')).toBe('orange');
+    expect(tintOf('VS Code', 'cmp_c')).toBe('blue');
+    expect(tintOf('Gemini CLI', 'cmp_d')).toBe('purple');
+    expect(tintOf(undefined, 'cmp_x1')).toBe(tintOf(undefined, 'cmp_x1'));
+    expect(Object.keys(TINTS)).toContain(tintOf('Some new app', 'cmp_x2'));
   });
 });
 

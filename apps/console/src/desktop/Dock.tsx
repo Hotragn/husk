@@ -11,11 +11,14 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { useScreenFeed } from '../components/useScreenFeed';
 import { AppGlyph } from './AppGlyph';
 import { ago, desktopBridge, doing, statusOf, useDesktopState } from './bridge';
 import type { DesktopComputer } from './bridge';
 import type { DockStage } from './dock3d';
+import { TINTS, tintOf } from './tints';
+import type { TintName } from './tints';
 
 /** Which computers stand in the row: running ones, and any whose window is still around. */
 export function docked(list: DesktopComputer[]): DesktopComputer[] {
@@ -30,8 +33,8 @@ export function Dock() {
   const [flat, setFlat] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   const list = docked(state?.computers ?? []);
-  const items = list.map((c) => ({ id: c.id, status: statusOf(c) }));
-  const itemsKey = items.map((i) => `${i.id}:${i.status}`).join(',');
+  const items = list.map((c) => ({ id: c.id, status: statusOf(c), tint: tintOf(c.platform, c.id) }));
+  const itemsKey = items.map((i) => `${i.id}:${i.status}:${i.tint}`).join(',');
 
   useEffect(() => {
     let alive = true;
@@ -40,7 +43,7 @@ export function Dock() {
       ({ createDockStage }) => {
         if (!alive || !canvas.current) return;
         try {
-          made = createDockStage(canvas.current, window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false);
+          made = createDockStage(canvas.current);
           setStage(made);
         } catch {
           setFlat(true);
@@ -142,7 +145,7 @@ function Slot({
         onBlur={onLeave}
         onClick={onClick}
       >
-        {flat ? <FlatComputer src={frame?.src} /> : null}
+        {flat ? <FlatComputer src={frame?.src} tint={tintOf(c.platform, c.id)} /> : null}
       </button>
       <span className="dock-app" aria-hidden="true">
         <AppGlyph computer={c} size={14} />
@@ -151,12 +154,14 @@ function Slot({
   );
 }
 
-/** A computer drawn in CSS, for where WebGL is not available. */
-function FlatComputer({ src }: { src: string | undefined }) {
+/** The same iMac, facing front, drawn in CSS for where WebGL is not available. */
+function FlatComputer({ src, tint }: { src: string | undefined; tint: TintName }) {
+  const colours = { '--mac-back': TINTS[tint].back, '--mac-chin': TINTS[tint].chin } as CSSProperties;
   return (
-    <span className="flat-mac" aria-hidden="true">
+    <span className="flat-mac" aria-hidden="true" style={colours}>
       <span className="flat-mac-display">
         <span className="flat-mac-screen">{src ? <img src={src} alt="" draggable={false} /> : null}</span>
+        <span className="flat-mac-chin" />
       </span>
       <span className="flat-mac-neck" />
       <span className="flat-mac-foot" />
