@@ -1945,3 +1945,7 @@ pre.code {
 .overview-card-held {
   border-color: var(--color-border-focus);
 }
+
+.row-gap-2 > p {
+  margin: 0;
+}

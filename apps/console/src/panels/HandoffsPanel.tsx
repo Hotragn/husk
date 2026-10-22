@@ -245,10 +245,12 @@ export function LinkedComputer() {
         taking={taking}
       />
       <div className="chat-side">
-        <div className="card control-card" role="status" aria-live="polite">
-          <h1 className="h-sub">{running ? 'Computer running' : `Computer ${computer.state}`}</h1>
-          {computer.label ? <p className="field-note">{computer.label}</p> : null}
-          <StatusDot tone="muted" label={handedBack ? 'Handed back to the chat' : 'The chat is in control'} />
+        <div className="card control-card">
+          <div className="row-gap-2" role="status">
+            <h1 className="h-sub">{running ? 'Computer running' : `Computer ${computer.state}`}</h1>
+            {computer.label ? <p className="field-note">{computer.label}</p> : null}
+            <StatusDot tone="muted" label={handedBack ? 'Handed back to the chat' : 'The chat is in control'} />
+          </div>
           {running ? (
             <Button variant="accent" loading={taking} onClick={() => void take()}>
               Take over
@@ -344,12 +346,14 @@ function HandoffView({ handoff, onDone }: { handoff: PendingHandoff; onDone: () 
       </div>
 
       <div className="chat-side">
-        <div className={`card control-card ${mine ? 'overview-held' : 'overview-card-waiting'}`} role="status" aria-live="polite">
-          <h2 className="h-sub">{mine ? 'You have this computer' : 'Paused, waiting for you'}</h2>
-          {mine ? null : <p className="handoff-reason">{handoff.reason}</p>}
-          <p className="field-note">
-            {mine ? 'Since' : `${handoff.husk} · since`} {formatWhen(handoff.createdAt)}
-          </p>
+        <div className={`card control-card ${mine ? 'overview-held' : 'overview-card-waiting'}`}>
+          <div className="row-gap-2" role="status">
+            <h2 className="h-sub">{mine ? 'You have this computer' : 'Paused, waiting for you'}</h2>
+            {mine ? null : <p className="handoff-reason">{handoff.reason}</p>}
+            <p className="field-note">
+              {mine ? 'Since' : `${handoff.husk} · since`} {formatWhen(handoff.createdAt)}
+            </p>
+          </div>
           {confirming ? (
             <>
               <Button variant="primary" loading={finishing} onClick={() => void finish()}>

@@ -117,9 +117,11 @@ export function OverviewPanel({ onOpen }: { onOpen: (target: OverviewTarget, com
       ) : null}
 
       {unplaced.map((h) => (
-        <div key={h.handoffId} className="overview-waiting" role="status">
-          <strong>Waiting for you · {h.husk}</strong>
-          <p className="handoff-reason">{h.reason}</p>
+        <div key={h.handoffId} className="overview-waiting">
+          <div className="row-gap-2" role="status">
+            <strong>Waiting for you · {h.husk}</strong>
+            <p className="handoff-reason">{h.reason}</p>
+          </div>
           <Button variant="primary" onClick={() => onOpen('handoffs', h.computerId ?? '')}>
             Take over
           </Button>

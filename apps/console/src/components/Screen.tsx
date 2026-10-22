@@ -92,7 +92,25 @@ export function Screen({
 }) {
   const imgRef = useRef<HTMLImageElement | null>(null);
   const keysRef = useRef<HTMLInputElement | null>(null);
+  const hitRef = useRef<HTMLButtonElement | null>(null);
   const [offer, setOffer] = useState(false);
+  // Closing the offer removes the focused button; focus goes on to what replaces it.
+  const refocus = useRef<'hit' | 'keys' | null>(null);
+  const closeOffer = (next: 'hit' | 'keys') => {
+    refocus.current = next;
+    setOffer(false);
+  };
+  useEffect(() => {
+    if (!refocus.current) return;
+    if (refocus.current === 'keys' && keysRef.current) {
+      keysRef.current.focus({ preventScroll: true });
+      refocus.current = null;
+      return;
+    }
+    // Not now, or while Take over is in flight, or after it failed: the screen. Never pulled from elsewhere.
+    if (!document.activeElement || document.activeElement === document.body) hitRef.current?.focus({ preventScroll: true });
+    if (refocus.current === 'hit' || !taking) refocus.current = null;
+  });
   // The wheel listener is attached once per image; it reads the latest of these.
   const latest = useRef({ frame, control });
   useEffect(() => {
@@ -186,14 +204,14 @@ export function Screen({
       ) : null}
 
       {!control && onTakeOver && frame && !offer ? (
-        <button type="button" className="screen-hit" aria-label="Take over this computer" onClick={() => setOffer(true)} />
+        <button ref={hitRef} type="button" className="screen-hit" aria-label="Take over this computer" onClick={() => setOffer(true)} />
       ) : null}
 
       {offer && !control && onTakeOver ? (
         <div
           className="screen-offer"
           onKeyDown={(e) => {
-            if (e.key === 'Escape') setOffer(false);
+            if (e.key === 'Escape') closeOffer('hit');
           }}
         >
           <div className="screen-offer-card" role="group" aria-label="Take over">
@@ -204,14 +222,14 @@ export function Screen({
                 variant="accent"
                 loading={taking}
                 onClick={() => {
-                  setOffer(false);
+                  closeOffer('keys');
                   onTakeOver();
                 }}
                 autoFocus
               >
                 Take over
               </Button>
-              <Button variant="ghost" onClick={() => setOffer(false)}>
+              <Button variant="ghost" onClick={() => closeOffer('hit')}>
                 Not now
               </Button>
             </div>

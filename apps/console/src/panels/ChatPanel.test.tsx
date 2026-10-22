@@ -109,6 +109,22 @@ describe('Chat panel', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/v1/computers/cmp_chat/takeover')).toBe(true));
   });
 
+  it('keeps keyboard focus on the screen when the offer closes, whichever way', async () => {
+    render(<ChatPanel computerId="cmp_chat" onOpen={() => {}} />);
+    await frameShown();
+    const hit = () => screen.getByRole('button', { name: 'Take over this computer' });
+    fireEvent.click(hit());
+    fireEvent.click(screen.getByRole('button', { name: 'Not now' }));
+    await waitFor(() => expect(document.activeElement).toBe(hit()));
+    fireEvent.click(hit());
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Not now' }), { key: 'Escape' });
+    await waitFor(() => expect(document.activeElement).toBe(hit()));
+    fireEvent.click(hit());
+    fireEvent.click(within(screen.getByRole('group', { name: 'Take over' })).getByRole('button', { name: 'Take over' }));
+    await waitFor(() => expect(calls.some((c) => c.path === '/v1/computers/cmp_chat/takeover')).toBe(true));
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
   it('sends clicks, typing and keys straight to the page while held, in order, and gives back', async () => {
     overview.handoffs = [{ handoffId: 'hnd_me', runId: 'person', husk: 'you', reason: 'You took over this computer', computerId: 'cmp_chat', createdAt: '' }];
     try {

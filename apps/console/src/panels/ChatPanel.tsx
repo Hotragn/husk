@@ -146,7 +146,9 @@ function Control({ handoff, hold, running }: { handoff: PendingHandoff | undefin
   if (!handoff) {
     return (
       <div className="card control-card">
-        <StatusDot tone="muted" label="The chat is in control" />
+        <div role="status">
+          <StatusDot tone="muted" label="The chat is in control" />
+        </div>
         <Button variant="accent" loading={hold.busy} disabled={!running} onClick={() => void hold.take()}>
           Take over
         </Button>
@@ -157,9 +159,11 @@ function Control({ handoff, hold, running }: { handoff: PendingHandoff | undefin
   }
   const mine = handoff.runId === 'person';
   return (
-    <div className={`card control-card ${mine ? 'overview-held' : 'overview-card-waiting'}`} role="status">
-      <StatusDot tone={mine ? 'info' : 'warn'} label={mine ? 'You’re in control' : 'Waiting for you'} />
-      {mine ? null : <p className="handoff-reason">{handoff.reason}</p>}
+    <div className={`card control-card ${mine ? 'overview-held' : 'overview-card-waiting'}`}>
+      <div className="row-gap-2" role="status">
+        <StatusDot tone={mine ? 'info' : 'warn'} label={mine ? 'You’re in control' : 'Waiting for you'} />
+        {mine ? null : <p className="handoff-reason">{handoff.reason}</p>}
+      </div>
       {confirming ? (
         <>
           <Button variant="primary" loading={hold.busy} onClick={() => void hold.giveBack()}>
@@ -225,9 +229,11 @@ export function TakeOver({
   }
   const mine = handoff.runId === 'person';
   return (
-    <div className={`overview-waiting${mine ? ' overview-held' : ''}`} role="status">
-      <strong>{mine ? 'You have this computer' : 'Waiting for you'}</strong>
-      {mine ? null : <p className="handoff-reason">{handoff.reason}</p>}
+    <div className={`overview-waiting${mine ? ' overview-held' : ''}`}>
+      <div className="row-gap-2" role="status">
+        <strong>{mine ? 'You have this computer' : 'Waiting for you'}</strong>
+        {mine ? null : <p className="handoff-reason">{handoff.reason}</p>}
+      </div>
       <div className="btn-row">
         <Button variant="primary" size="sm" onClick={() => onOpen('chat', computerId)}>
           {mine ? 'Use it' : 'Take over'}
