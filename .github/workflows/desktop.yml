@@ -48,6 +48,9 @@ jobs:
         shell: bash
         env:
           HUSK_DESKTOP_SHOTS: ${{ runner.temp }}/desktop-shots
+          # Windows and macOS runners have real desktops, taskbar and menu bar
+          # included: film the corner and the notch on them (Linux runs headless).
+          HUSK_DESKTOP_FILM: ${{ runner.os != 'Linux' && format('{0}/desktop-shots/film', runner.temp) || '' }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update -qq && sudo apt-get install -y -qq xvfb

@@ -35,7 +35,7 @@ jobs:
       # With ffmpeg's recommended packages this once sat silent until the job
       # timed out, waiting on a question nobody can answer: never ask, take
       # only what is needed, and give up early.
-      - run: sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends xvfb xauth xcompmgr x11-xserver-utils ffmpeg
+      - run: sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends xvfb xauth xcompmgr ffmpeg
         timeout-minutes: 8
       - run: npm ci
         working-directory: apps/desktop

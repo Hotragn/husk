@@ -380,19 +380,25 @@ async function walkConsole(id, name) {
 async function walkDesktop(id) {
   const electron = join(root, 'apps', 'desktop', 'node_modules', '.bin', 'electron');
   const shots = process.env.E2E_SHOTS ?? join(root, 'e2e-shots');
-  // Its own screen, so the walk can be filmed as a person would see it: a soft
-  // desktop colour, and a compositor so the corner and the notch are truly
-  // transparent. Without these tools it runs under xvfb-run, unfilmed.
+  // Its own screen, so the walk can be filmed as a person would see it: a
+  // compositor so the corner and the notch are truly transparent, over the
+  // person's own work. Without these tools it runs under xvfb-run, unfilmed.
   const display = ':99';
   const helpers = [];
   const has = (bin) => spawnSync('which', [bin]).status === 0;
-  const filmable = ['Xvfb', 'xcompmgr', 'xsetroot', 'ffmpeg'].every(has);
+  const filmable = ['Xvfb', 'xcompmgr', 'ffmpeg'].every(has);
   if (filmable) {
     helpers.push(spawn('Xvfb', [display, '-screen', '0', '1280x800x24', '-nolisten', 'tcp'], { stdio: 'ignore' }));
     await sleep(1500);
-    spawnSync('xsetroot', ['-display', display, '-solid', '#dfe4ec']);
     helpers.push(spawn('xcompmgr', ['-d', display], { stdio: 'ignore' }));
     await sleep(500);
+    // The person's own work fills the screen behind Husk, as on a real desktop: an editor, in the runner's Chrome.
+    if (has('google-chrome')) {
+      const profile = mkdtempSync(join(tmpdir(), 'husk-screen-'));
+      const flags = ['--no-first-run', '--no-default-browser-check', '--password-store=basic', `--user-data-dir=${profile}`];
+      helpers.push(spawn('google-chrome', [...flags, '--window-position=0,0', '--window-size=1280,800', '--app=https://vscode.dev'], { env: { ...env, DISPLAY: display }, stdio: 'ignore' }));
+      await sleep(8000);
+    }
   }
   const app = filmable
     ? spawn(electron, [join(root, 'apps', 'desktop')], {
@@ -620,7 +626,13 @@ try {
 
   // 2. A Docker computer with a browser.
   // Unique: the name is the container's, and another `e2e` container would clash.
-  const made = await api('POST', '/v1/computers', { name: `e2e-${process.pid}-${Date.now()}`, provider: 'docker', flavor: 'full' });
+  // Labelled the way Husk labels a Claude Code chat's computer, so every picture shows that app's mark.
+  const made = await api('POST', '/v1/computers', {
+    name: `e2e-${process.pid}-${Date.now()}`,
+    provider: 'docker',
+    flavor: 'full',
+    labels: { 'husk.platform': 'Claude Code' },
+  });
   check('a docker computer is created', made.status === 201, JSON.stringify(made.body).slice(0, 300));
   const id = made.body.id;
   created.push(id);

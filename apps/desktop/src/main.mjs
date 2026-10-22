@@ -11,7 +11,7 @@ import { spawn } from 'node:child_process';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { app, BrowserWindow, Menu, Notification, Tray, dialog, nativeImage, screen, shell } from 'electron';
+import { app, BrowserWindow, Menu, Notification, Tray, desktopCapturer, dialog, nativeImage, screen, shell, systemPreferences } from 'electron';
 import { Computers } from './computers.mjs';
 import {
   consoleUrl,
@@ -33,12 +33,14 @@ const POLL_MS = 2000;
 // no provider anything, put two made-up computers on the screen and check
 // their windows, print what loaded, stop the Husk it started, and quit.
 // `HUSK_DESKTOP_SMOKE=live`: attach to a running Husk, wait for a real chat's
-// computer to open its window by itself, walk it, and quit, leaving Husk
-// running (scripts/e2e-computers.mjs). Both write pictures to
-// HUSK_DESKTOP_SHOTS when it is set. CI uses them; a person never sees either.
+// computer to stand in the corner, walk it, and quit, leaving Husk running
+// (scripts/e2e-computers.mjs). Both write pictures to HUSK_DESKTOP_SHOTS when
+// it is set, and the made-up walk films the whole screen into
+// HUSK_DESKTOP_FILM when that is set. CI uses them; a person never sees either.
 const SMOKE = process.env.HUSK_DESKTOP_SMOKE === '1';
 const LIVE = process.env.HUSK_DESKTOP_SMOKE === 'live';
 const SHOTS = process.env.HUSK_DESKTOP_SHOTS;
+const FILM = SMOKE ? process.env.HUSK_DESKTOP_FILM : undefined;
 // CI machines have no GPU. The 3D row is the app's own page, so software WebGL is safe for it there.
 if (SMOKE || LIVE) app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 // Linux draws a transparent window see-through only when asked, and a compositor is running (the e2e films one).
@@ -305,8 +307,8 @@ const inside = (b, area) => b.x >= area.x && b.y >= area.y && b.x + b.width <= a
  */
 async function walkComputers(check, ids, prefix) {
   const area = screen.getPrimaryDisplay().workArea;
-  // The live run is filmed: each step stays on the screen long enough to be seen.
-  const beat = () => sleep(LIVE ? 1500 : 0);
+  // A filmed run is watched: each step stays on the screen long enough to be seen.
+  const beat = () => sleep(LIVE || FILM ? 1500 : 0);
   await sleep(1500); // the corner row builds
   const dock = computers.dock?.getBounds();
   check('the corner row sits small in the bottom-right corner', dock && inside(dock, area) && dock.x + dock.width > area.x + area.width - 40 && dock.height <= 90, JSON.stringify(dock));
@@ -381,7 +383,7 @@ async function smokeComputers() {
   const at = new Date().toISOString();
   const made = (id, platform, minute) => ({ id, name: id, state: 'running', provider: 'docker', image: 'x', workdir: '/work', createdAt: at, lastUsedAt: at, platform, chatLabel: `${platform} · chat started 09:${minute}` });
   computers.update({
-    computers: [made('cmp_smokea1', 'Claude Code', '41'), made('cmp_smokeb2', 'Claude Desktop', '44')],
+    computers: [made('cmp_smokea1', 'Claude Code', '41'), made('cmp_smokeb2', 'Cursor', '44')],
     activeRuns: [],
     handoffs: [{ handoffId: 'hnd_smoke', runId: 'chat', husk: 'chat', reason: 'Sign in to GitHub', computerId: 'cmp_smokeb2', createdAt: at }],
     activity: {
@@ -391,8 +393,53 @@ async function smokeComputers() {
   });
   const standing = await until(() => computers.run('dock', `document.querySelectorAll('.dock-slot').length`), 20_000);
   check('two chats’ computers stand in the corner', standing === 2, `${standing}`);
-  if (standing) await walkComputers(check, ['cmp_smokea1', 'cmp_smokeb2'], 'desktop');
+  if (standing) {
+    const stop = FILM ? filmScreen(FILM) : null;
+    await walkComputers(check, ['cmp_smokea1', 'cmp_smokeb2'], 'desktop');
+    if (stop) log(`SMOKE film: ${await stop()} frames of the whole screen`);
+  }
   return passed();
+}
+
+/**
+ * The whole screen, about five times a second, the way a person sees the
+ * corner and the notch on their own desktop: JPEG frames in `dir`, named by
+ * their time, for the PR tooling to join into a GIF. The made-up computers
+ * have nothing to show, so nothing is filmed while their window is open.
+ * macOS asks the person before anything records the screen; where that was
+ * not allowed already, this films nothing rather than ask.
+ */
+function filmScreen(dir) {
+  if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
+    log('SMOKE film: this Mac does not allow recording the screen');
+    return async () => 0;
+  }
+  mkdirSync(dir, { recursive: true });
+  const display = screen.getPrimaryDisplay();
+  const scale = Math.min(1, 1280 / display.size.width);
+  const thumbnailSize = { width: Math.round(display.size.width * scale), height: Math.round(display.size.height * scale) };
+  const start = Date.now();
+  let frames = 0;
+  let filming = true;
+  const done = (async () => {
+    while (filming) {
+      const t = Date.now();
+      if (!computers.win?.isVisible()) {
+        const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize }).catch(() => []);
+        const shot = (sources.find((s) => s.display_id === String(display.id)) ?? sources[0])?.thumbnail;
+        if (shot && !shot.isEmpty()) {
+          writeFileSync(join(dir, `f${String(frames).padStart(4, '0')}-${t - start}.jpg`), shot.toJPEG(90));
+          frames++;
+        }
+      }
+      await sleep(Math.max(0, 200 - (Date.now() - t)));
+    }
+  })();
+  return async () => {
+    filming = false;
+    await done;
+    return frames;
+  };
 }
 
 /** HUSK_DESKTOP_SMOKE=live: a real chat's computer, on a real Husk. */
