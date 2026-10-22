@@ -141,6 +141,35 @@ describe('with the shared Husk', { timeout: 30_000 }, () => {
     expect(r.text).toContain('ran locally');
   });
 
+  it("links a computer whose tools run here to this process's viewer, never to the shared Husk", async () => {
+    const f = fakeShared();
+    f.shared.callTool = async () => {
+      throw new RunLocally('cannot see it');
+    };
+    const asked: string[] = [];
+    f.shared.linkToken = async (id) => {
+      asked.push(id);
+      throw new RunLocally('no such computer there');
+    };
+    const call = await chat(f.shared);
+    const first = await call('shell', { command: 'ls' });
+    expect(first.text).toMatch(/take it over at http:\/\/127\.0\.0\.1:\d+\/#computer=cmp_chat&token=[0-9a-f]{64} /);
+    expect(first.text).not.toContain('undefined');
+    expect(first.text).not.toContain(':7377');
+    expect(asked).toEqual([]);
+  });
+
+  it('falls back to its own viewer when the shared Husk has no link for the computer', async () => {
+    const f = fakeShared();
+    f.shared.linkToken = async () => {
+      throw new RunLocally('no such computer there');
+    };
+    const call = await chat(f.shared);
+    const first = await call('shell', { command: 'ls' });
+    expect(first.text).toMatch(/take it over at http:\/\/127\.0\.0\.1:\d+\/#computer=cmp_chat&token=[0-9a-f]{64} /);
+    expect(first.text).not.toContain(':7377');
+  });
+
   it("accepts the shared Husk's own handoff id in hand_off_done", async () => {
     const f = fakeShared();
     const call = await chat(f.shared);

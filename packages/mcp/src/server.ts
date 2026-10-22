@@ -534,7 +534,7 @@ export class HuskMcpServer {
     const reason = redact(text);
 
     const open = this.handoffs.list().find((h) => !h.computerId || !computer || h.computerId === computer.id);
-    if (open) throw new Error(heldText(open.handoffId, open.reason));
+    if (open) throw new Error(open.runId === PERSON_RUN ? takenText(open.handoffId) : heldText(open.handoffId, open.reason));
 
     // In the shared Husk when there is one: it holds this chat's browser, and its
     // console, the overview and Husk Bar show the person what is waiting.
@@ -666,12 +666,18 @@ export class HuskMcpServer {
 
   /** A fresh link for one computer: its handoff if one is waiting, otherwise a look at it. */
   private async linkFor(computerId: string): Promise<string> {
-    const daemon = await this.shared();
+    // A computer whose tools run here is not in the shared Husk: its link is this process's viewer.
+    const daemon = this.localComputers.has(computerId) ? undefined : await this.shared();
     if (daemon) {
-      const token = await daemon.linkToken(computerId);
-      const held = this.handoffs.list().find((h) => h.computerId === computerId);
-      const remoteId = held ? this.remoteHandoffs.get(held.handoffId) : undefined;
-      return remoteId ? handoffLink(daemon.url, remoteId, token) : computerLink(daemon.url, computerId, token);
+      try {
+        const token = await daemon.linkToken(computerId);
+        const held = this.handoffs.list().find((h) => h.computerId === computerId);
+        const remoteId = held ? this.remoteHandoffs.get(held.handoffId) : undefined;
+        return remoteId ? handoffLink(daemon.url, remoteId, token) : computerLink(daemon.url, computerId, token);
+      } catch (err) {
+        // The shared Husk has no such computer: this process's viewer can still open it.
+        if (!(err instanceof RunLocally)) throw err;
+      }
     }
     const { origin } = await this.openViewerServer();
     const token = this.tokens.mint(`computer:${computerId}`);

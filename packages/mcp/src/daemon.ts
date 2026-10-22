@@ -194,7 +194,11 @@ function client(first: DaemonRecord, doFetch: typeof fetch, read: () => DaemonRe
       await call('DELETE', `/v1/handoffs/${id(handoffId)}`);
     },
     async linkToken(computerId) {
-      return String((await call('POST', `/v1/computers/${id(computerId)}/link`)).json.token);
+      const { status, json } = await call('POST', `/v1/computers/${id(computerId)}/link`);
+      if (status === 404) throw new RunLocally(`the shared husk has no computer ${computerId}`);
+      // Never a link that opens nothing: `token=undefined` reads as a working link.
+      if (typeof json.token !== 'string' || !json.token) throw new Error('the shared husk gave no link token');
+      return json.token;
     },
     async callTool(computerId, name, args, signal) {
       const res = await send('POST', `/v1/computers/${id(computerId)}/tools/${id(name)}`, { args, via: 'mcp' }, signal);

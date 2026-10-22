@@ -1,7 +1,7 @@
 import { HUSK_VERSION, createLogger } from '@husk-ai/core';
 import type { DaemonRecord } from '@husk-ai/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DaemonUnreachable, connectDaemon, newer } from './daemon.js';
+import { DaemonUnreachable, RunLocally, connectDaemon, newer } from './daemon.js';
 
 const log = createLogger({ level: 'silent' });
 const record = (version = HUSK_VERSION): DaemonRecord => ({
@@ -85,6 +85,16 @@ describe('connectDaemon', () => {
     await expect(d.callTool('cmp_1', 'shell', {})).rejects.toBeInstanceOf(DaemonUnreachable);
     mode = 'error';
     expect(await d.callTool('cmp_1', 'shell', {})).toEqual({ isError: true, content: [{ type: 'text', text: 'no computer\nstart it' }] });
+  });
+
+  it('never makes a link token out of a 404 or an empty answer', async () => {
+    let answer = new Response(JSON.stringify({ error: { code: 'E_COMPUTER_NOT_FOUND', message: 'no' } }), { status: 404 });
+    const d = (await connectDaemon({ log, read: () => record(), fetchImpl: fakeFetch(HUSK_VERSION, () => answer) }))!;
+    await expect(d.linkToken('cmp_1')).rejects.toBeInstanceOf(RunLocally);
+    answer = new Response('{}', { status: 200 });
+    await expect(d.linkToken('cmp_1')).rejects.toThrow('no link token');
+    answer = new Response(JSON.stringify({ token: 'abc' }), { status: 200 });
+    expect(await d.linkToken('cmp_1')).toBe('abc');
   });
 
   it('picks up a restarted daemon (new token) and retries once, since a 401 means nothing ran', async () => {

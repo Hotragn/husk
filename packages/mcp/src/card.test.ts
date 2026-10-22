@@ -200,7 +200,13 @@ describe('a card link opens one computer and nothing else', () => {
     const held = await call('shell', { command: 'echo', computer: 'cmp_1' });
     expect(held.isError).toBe(true);
     expect(held.content[0]!.text).toContain('took over this computer');
+    expect(held.content[0]!.text).toContain('computer_open_ui');
     expect((await call('hand_off_done', { handoff: handoffId })).isError).toBe(true);
+    // Asking for the person again gets the same words, never "call hand_off_done".
+    const handOff = await call('hand_off', { reason: 'Sign in', computer: 'cmp_1' });
+    expect(handOff.isError).toBe(true);
+    expect(handOff.content[0]!.text).toContain('took over this computer');
+    expect(handOff.content[0]!.text).not.toContain('then call hand_off_done');
     // Give back with the same link, which still opens the computer afterwards.
     const auth = { authorization: `Bearer ${tokenIn(url)}` };
     expect((await fetch(`${originIn(url)}/v1/handoffs/${handoffId}/done`, { method: 'POST', headers: auth })).status).toBe(200);
