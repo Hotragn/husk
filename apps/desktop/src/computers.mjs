@@ -356,7 +356,10 @@ export class Computers {
   async capture(which, file) {
     const w = this.windowOf(which);
     if (!w || w.isDestroyed()) return false;
-    const img = await w.webContents.capturePage();
+    // A page whose GPU process failed to start (a CI machine without a GPU, now and then) can
+    // wait for its next frame forever: give up on the picture, not on the walk.
+    const img = await Promise.race([w.webContents.capturePage(), new Promise((r) => setTimeout(r, 15_000))]);
+    if (!img) return false;
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, img.toPNG());
     return !img.isEmpty();

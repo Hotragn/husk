@@ -103,7 +103,8 @@ describe('the Computers window', () => {
     expect(acts).toEqual([{ type: 'select', id: 'cmp_a02' }]);
     push(desk([computer('cmp_a01'), computer('cmp_a02', { platform: 'Cursor' })], { active: 'cmp_a02' }));
     await waitFor(() => expect(screen.getByRole('tab', { name: /Cursor/ }).getAttribute('aria-selected')).toBe('true'));
-    expect(sockets).toEqual(['/v1/computers/cmp_a01/screen', '/v1/computers/cmp_a02/screen']);
+    // The new tab's screen opens its socket from an effect, a moment after the tab is in front.
+    await waitFor(() => expect(sockets).toEqual(['/v1/computers/cmp_a01/screen', '/v1/computers/cmp_a02/screen']));
   });
 
   it('gives a held computer back, with the page keys at hand', async () => {
