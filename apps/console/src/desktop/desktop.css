@@ -362,6 +362,19 @@
   font-family: var(--font-ui);
 }
 
+/* Where the computers sit: a soft frosted tray, as the macOS Dock has, sized to the row. */
+.dock-tray {
+  position: absolute;
+  right: 4px;
+  bottom: 6px;
+  height: 66px;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.12));
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  transition: width 260ms cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
 .dock-canvas {
   position: absolute;
   right: 0;
@@ -408,11 +421,11 @@
 
 .dock-app {
   position: absolute;
-  right: 16px;
-  bottom: 10px;
+  right: 18px;
+  bottom: 12px;
   display: flex;
-  border-radius: 5px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
   pointer-events: none;
 }
 
@@ -472,16 +485,16 @@
   width: 52px;
   height: 38px;
   overflow: hidden;
-  border-radius: 4px;
+  border-radius: 7px 7px 4px 4px;
   background: #f5f5f7;
   box-shadow: 0 0 0 1px var(--mac-back), 0 6px 14px rgba(0, 0, 0, 0.3);
 }
 
 .flat-mac-screen {
   display: block;
-  margin: 1px 2px;
+  margin: 2px 3px 1px;
   overflow: hidden;
-  border-radius: 1px;
+  border-radius: 3px 3px 1px 1px;
   background: linear-gradient(135deg, var(--mac-chin), var(--mac-back));
 }
 
@@ -499,15 +512,15 @@
 
 .flat-mac-neck {
   display: block;
-  width: 16px;
-  height: 11px;
+  width: 10px;
+  height: 6px;
   background: linear-gradient(180deg, color-mix(in srgb, var(--mac-back) 70%, #000), var(--mac-back));
 }
 
 .flat-mac-foot {
   display: block;
-  width: 24px;
-  height: 3px;
+  width: 18px;
+  height: 2px;
   border-radius: 2px;
   background: var(--mac-back);
 }
@@ -697,4 +710,18 @@
   .pill,
   .pill-logo,
   .cw-pill { transition: none; }
+}
+
+/* On a light desktop the tooltip is light frosted glass, as soft as the row it names. */
+@media (prefers-color-scheme: light) {
+  .dock-tip {
+    border-color: rgba(0, 0, 0, 0.08);
+    background: rgba(255, 255, 255, 0.86);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+    color: #18181b;
+  }
+
+  .dock-tip-doing {
+    color: #52525b;
+  }
 }

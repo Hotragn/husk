@@ -174,6 +174,50 @@ async function walkConsole(id, name) {
     await shot('04-connect.png');
     check('the Connect page loads', true);
 
+    // The computer's own tools, as a person sees them: its browser, its files, its terminal.
+    await nav.getByRole('button', { name: 'Home', exact: true }).click();
+    await card.getByRole('button', { name: 'Browser', exact: true }).click();
+    await page.getByRole('tab', { name: /Rendered/ }).click();
+    await page.locator('#browse-url').fill('example.com');
+    await page.getByRole('button', { name: 'Open', exact: true }).click();
+    await page.locator('#browser-view img').first().waitFor({ timeout: 90_000 });
+    await sleep(1500);
+    await shot('07-browser.png');
+    check('the Browser panel shows the computer’s page, rendered in its Chromium', true);
+
+    await nav.getByRole('button', { name: 'Home', exact: true }).click();
+    await card.getByRole('button', { name: 'Files', exact: true }).click();
+    await page.getByRole('button', { name: 'hello.txt', exact: true }).click();
+    await page.getByText('from the e2e').first().waitFor({ timeout: 30_000 });
+    await sleep(500);
+    await shot('08-files.png');
+    check('the Files panel lists /work and opens a file', true);
+
+    await nav.getByRole('button', { name: 'Home', exact: true }).click();
+    await card.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await page.locator('.xterm-rows').getByText(/one command per line/).waitFor({ timeout: 30_000 });
+    await page.locator('.xterm-helper-textarea').focus();
+    await page.keyboard.type('uname -sr && ls -la /work && cat /work/hello.txt');
+    await page.keyboard.press('Enter');
+    await page.locator('.xterm-rows').getByText(/from the e2e/).last().waitFor({ timeout: 30_000 });
+    await sleep(500);
+    await shot('09-terminal.png');
+    check('the Terminal panel runs a command on the computer', true);
+
+    // One picture of the computer's browser, files and terminal together, for the PRs.
+    const tile = (file, caption) =>
+      `<figure><img src="data:image/png;base64,${readFileSync(join(shots, file)).toString('base64')}"><figcaption>${caption}</figcaption></figure>`;
+    const board = await browser.newPage({ viewport: { width: 2100, height: 700 } });
+    await board.setContent(
+      `<style>body{margin:0;padding:28px;background:#0a0a0c;font:600 18px Inter,system-ui,sans-serif;color:#f4f4f5;display:grid;grid-template-columns:repeat(3,1fr);gap:22px}` +
+        `figure{margin:0}img{width:100%;border-radius:12px;border:1px solid #24242a;display:block}figcaption{margin-top:12px;color:#b4b4bc}</style>` +
+        tile('07-browser.png', 'Browser: its own Chromium, rendered') +
+        tile('08-files.png', 'Files: /work, opened from the console') +
+        tile('09-terminal.png', 'Terminal: a command run on the computer'),
+    );
+    await board.screenshot({ path: join(shots, '10-computer-browser-files-terminal.png'), fullPage: true });
+    await board.close();
+
     await page.getByRole('button', { name: 'Switch to light theme' }).click();
     await nav.getByRole('button', { name: 'Home', exact: true }).click();
     await live.waitFor({ timeout: 60_000 });

@@ -1,20 +1,21 @@
 /**
- * The 3D computers' colours, after the colours an iMac comes in: a deep back,
- * stand and edges, and a pale chin under a white bezel. A chat app keeps one
- * colour, so its computers are recognisable across the row at a glance; an
- * app not listed gets a steady colour from the computer's id.
+ * The 3D computers' colours, after the colours an iMac comes in, softened so
+ * they sit quietly on any desktop: a muted back, stand and edges, and a paler
+ * chin under a white bezel. A chat app keeps one colour, so its computers are
+ * recognisable across the row at a glance; an app not listed gets a steady
+ * colour from the computer's id.
  */
 
 export type TintName = 'blue' | 'green' | 'pink' | 'silver' | 'yellow' | 'orange' | 'purple';
 
 export const TINTS: Record<TintName, { back: string; chin: string }> = {
-  blue: { back: '#3f6cc4', chin: '#9fb9ea' },
-  green: { back: '#3b8a63', chin: '#9fd1b3' },
-  pink: { back: '#d4607b', chin: '#eeaabb' },
-  silver: { back: '#b9bdc4', chin: '#d3d6db' },
-  yellow: { back: '#dca93a', chin: '#efd282' },
-  orange: { back: '#d9693a', chin: '#f1ac8a' },
-  purple: { back: '#7a62c2', chin: '#bfaeee' },
+  blue: { back: '#9db3d9', chin: '#d3def0' },
+  green: { back: '#9fc4ae', chin: '#d5e7dc' },
+  pink: { back: '#e2adbb', chin: '#f1d7de' },
+  silver: { back: '#c9ccd2', chin: '#e3e5e8' },
+  yellow: { back: '#e4d099', chin: '#f2e8cb' },
+  orange: { back: '#e7b499', chin: '#f3dccf' },
+  purple: { back: '#b5a9dc', chin: '#ded8f0' },
 };
 
 const BY_APP: Array<[RegExp, TintName]> = [

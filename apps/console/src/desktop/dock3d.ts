@@ -13,17 +13,18 @@
  */
 
 import {
-  ACESFilmicToneMapping,
   AmbientLight,
   BoxGeometry,
   CanvasTexture,
   Color,
   DirectionalLight,
+  ExtrudeGeometry,
   Group,
   Mesh,
   MeshBasicMaterial,
   MeshPhysicalMaterial,
   MeshStandardMaterial,
+  NeutralToneMapping,
   OrthographicCamera,
   PMREMGenerator,
   PlaneGeometry,
@@ -65,14 +66,20 @@ const GLOW: Record<DeskStatus, { color: number; strength: number; pulse: boolean
   held: { color: 0x2dd4bf, strength: 0.75, pulse: false },
 };
 
-// The iMac, in CSS pixels, around the slot's centre: a 52 x 38 display whose
-// white bezel holds a 16:10 screen above a 6px coloured chin, on a blade and a foot.
+// The iMac, in CSS pixels: a 52 x 38 display, curved at the top corners and
+// a little less at the bottom, whose white bezel holds a 16:10 screen above a
+// 6px coloured chin, on a short blade and a small foot.
 const W = 52;
 const H = 38;
 const CHIN = 6;
-const LIFT = 7; // the display's centre, above the slot's
-const SCREEN_W = 48;
-const SCREEN_H = 30;
+const TOP_R = 4.5;
+const BOTTOM_R = 3;
+const LIFT = 5; // the display's centre, above the model's
+const BASE_Y = 40; // the model's centre in its slot, from the bottom
+const SCREEN_W = 45;
+const SCREEN_H = 28.125;
+/** The screen's centre: its top edge 2px below the display's, inside the curved corners. */
+const SCREEN_Y = H / 2 - 2 - SCREEN_H / 2;
 /** Facing front, leaned back a little: the top edge and the foot show. Straighter on hover. */
 const TILT = 0.12;
 const TILT_HOVER = 0.03;
@@ -108,15 +115,16 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
   const renderer = new WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'low-power' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = SRGBColorSpace;
-  renderer.toneMapping = ACESFilmicToneMapping;
+  // Neutral keeps soft colours soft, where ACES lifts pale tints to white.
+  renderer.toneMapping = NeutralToneMapping;
   renderer.setClearColor(0x000000, 0);
 
   const scene = new Scene();
   const pmrem = new PMREMGenerator(renderer);
   const room = new RoomEnvironment();
   scene.environment = pmrem.fromScene(room, 0.04).texture;
-  scene.add(new AmbientLight(0xffffff, 0.45));
-  const key = new DirectionalLight(0xffffff, 1.5);
+  scene.add(new AmbientLight(0xffffff, 0.55));
+  const key = new DirectionalLight(0xffffff, 1.2);
   key.position.set(-70, 140, 180);
   scene.add(key);
 
@@ -127,13 +135,13 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
   const shadow = new MeshBasicMaterial({ map: radial('0,0,0', 0.5), transparent: true, depthWrite: false });
   const glowMap = radial('255,255,255', 1);
   const geo = {
-    body: new RoundedBoxGeometry(W, H, 2.2, 4, 1.8),
-    bezel: panel(W - 1, H - CHIN - 1, 1.4, 0),
-    chin: panel(W - 1, CHIN, 0, 1.4),
+    body: shell(),
+    bezel: panel(W - 1, H - CHIN - 0.5, TOP_R - 0.5, 0),
+    chin: panel(W - 1, CHIN - 0.5, 0, BOTTOM_R - 0.5),
     screen: new PlaneGeometry(SCREEN_W, SCREEN_H),
-    blade: new BoxGeometry(12, 13, 1),
-    foot: new RoundedBoxGeometry(26, 1, 15, 3, 0.5),
-    shadow: new PlaneGeometry(46, 10),
+    blade: new BoxGeometry(10, 6, 0.9),
+    foot: new RoundedBoxGeometry(18, 0.9, 11, 3, 0.45),
+    shadow: new PlaneGeometry(38, 8),
     glow: new PlaneGeometry(82, 62),
   };
 
@@ -145,8 +153,8 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
       const t = TINTS[tint];
       look = {
         // Anodised aluminium: the back, the edges, the blade and the foot.
-        body: new MeshPhysicalMaterial({ color: new Color(t.back), metalness: 0.55, roughness: 0.34, clearcoat: 0.35, clearcoatRoughness: 0.3 }),
-        chin: new MeshStandardMaterial({ color: new Color(t.chin), metalness: 0.15, roughness: 0.42 }),
+        body: new MeshPhysicalMaterial({ color: new Color(t.back), metalness: 0.3, roughness: 0.48, clearcoat: 0.25, clearcoatRoughness: 0.4 }),
+        chin: new MeshStandardMaterial({ color: new Color(t.chin), metalness: 0.05, roughness: 0.5 }),
         wallpaper: wallpaperOf(t.chin, t.back),
       };
       looks.set(tint, look);
@@ -169,21 +177,21 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
     display.position.set(0, LIFT, 0);
     const body = new Mesh(geo.body, look.body);
     const face = new Mesh(geo.bezel, bezel);
-    face.position.set(0, CHIN / 2, 1.12);
+    face.position.set(0, (CHIN - 0.5) / 2, 1.12);
     const chin = new Mesh(geo.chin, look.chin);
-    chin.position.set(0, -H / 2 + 0.5 + CHIN / 2, 1.12);
+    chin.position.set(0, -H / 2 + 0.5 + (CHIN - 0.5) / 2, 1.12);
     const screen = new Mesh(geo.screen, new MeshBasicMaterial({ map: look.wallpaper, transparent: true, opacity: 0, toneMapped: false }));
-    screen.position.set(0, CHIN / 2, 1.16);
+    screen.position.set(0, SCREEN_Y, 1.16);
     display.add(body, face, chin, screen);
 
-    // The blade runs down behind the chin to the foot, leaning back a little.
+    // A short blade runs down behind the chin to a small foot, leaning back a little.
     const blade = new Mesh(geo.blade, look.body);
-    blade.position.set(0, LIFT - H / 2 - 5.5, -2.4);
-    blade.rotation.x = -0.2;
+    blade.position.set(0, LIFT - H / 2 - 2, -2.2);
+    blade.rotation.x = -0.18;
     const foot = new Mesh(geo.foot, look.body);
-    foot.position.set(0, LIFT - H / 2 - 12.2, -2.2);
+    foot.position.set(0, LIFT - H / 2 - 5.3, -2);
     const under = new Mesh(geo.shadow, shadow);
-    under.position.set(0, LIFT - H / 2 - 13, -12);
+    under.position.set(0, LIFT - H / 2 - 6.5, -12);
     // Normal blending: an additive glow vanishes on a transparent canvas over the desktop.
     const glow = new Mesh(geo.glow, new MeshBasicMaterial({ map: glowMap, color: 0x000000, transparent: true, opacity: 0, depthWrite: false }));
     glow.position.set(0, LIFT, -14);
@@ -192,7 +200,7 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
     group.rotation.set(TILT, 0, 0);
     group.scale.setScalar(0.001);
     const x = slotX(index);
-    group.position.set(x, SLOT_H / 2, 0);
+    group.position.set(x, BASE_Y, 0);
     scene.add(group);
     return { id: item.id, group, display, blade, foot, screen, glow, born: now, index, x, status: item.status, hover: 0, hoverTo: 0 };
   }
@@ -230,7 +238,7 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
     m.x += (slotX(m.index) - m.x) * 0.25;
     if (Math.abs(slotX(m.index) - m.x) > 0.3) moving = true;
     else m.x = slotX(m.index);
-    m.group.position.set(m.x, SLOT_H / 2 + 4 * m.hover, 0);
+    m.group.position.set(m.x, BASE_Y + 4 * m.hover, 0);
 
     const g = GLOW[m.status];
     const pulse = g.pulse ? 0.65 + 0.35 * Math.sin(now / 260) : 1;
@@ -347,8 +355,32 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
   };
 }
 
+/**
+ * The display's body: a rounded rectangle, curved more at the top than the
+ * bottom, extruded thin with a soft bevel on every edge. Centred on z, its
+ * front face at z = 1.1, where the bezel, the chin and the screen sit.
+ */
+function shell(): ExtrudeGeometry {
+  const bevel = 0.3;
+  const body = new ExtrudeGeometry(outline(W - 2 * bevel, H - 2 * bevel, TOP_R - bevel, BOTTOM_R - bevel), {
+    depth: 1.6,
+    bevelEnabled: true,
+    bevelThickness: bevel,
+    bevelSize: bevel,
+    bevelSegments: 3,
+    curveSegments: 12,
+  });
+  body.translate(0, 0, -0.8);
+  return body;
+}
+
 /** A flat panel of the display's face, centred, with its top or bottom corners rounded. */
 function panel(w: number, h: number, top: number, bottom: number): ShapeGeometry {
+  return new ShapeGeometry(outline(w, h, top, bottom), 12);
+}
+
+/** A centred rectangle with its top and bottom corners rounded by `top` and `bottom`. */
+function outline(w: number, h: number, top: number, bottom: number): Shape {
   const x = -w / 2;
   const y = -h / 2;
   const s = new Shape();
@@ -361,7 +393,7 @@ function panel(w: number, h: number, top: number, bottom: number): ShapeGeometry
   s.quadraticCurveTo(x, y + h, x, y + h - top);
   s.lineTo(x, y + bottom);
   s.quadraticCurveTo(x, y, x + bottom, y);
-  return new ShapeGeometry(s, 6);
+  return s;
 }
 
 function clamp01(v: number): number {
@@ -395,7 +427,7 @@ function radial(rgb: string, alpha: number): CanvasTexture {
   return t;
 }
 
-/** What a screen shows before its first frame: a wallpaper in the computer's own colour, as an iMac's is. */
+/** What a screen shows before its first frame: a soft wallpaper in the computer's own colour, as an iMac's is. */
 function wallpaperOf(light: string, deep: string): CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 160;
@@ -406,6 +438,12 @@ function wallpaperOf(light: string, deep: string): CanvasTexture {
     grad.addColorStop(0, light);
     grad.addColorStop(1, deep);
     g.fillStyle = grad;
+    g.fillRect(0, 0, 160, 100);
+    // A wash of light from the top left, so the screen reads as glass, not paint.
+    const sheen = g.createRadialGradient(40, 22, 0, 40, 22, 110);
+    sheen.addColorStop(0, 'rgba(255,255,255,0.45)');
+    sheen.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = sheen;
     g.fillRect(0, 0, 160, 100);
   }
   const t = new CanvasTexture(c);

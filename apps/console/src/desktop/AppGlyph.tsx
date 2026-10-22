@@ -22,8 +22,12 @@ export function monogram(platform: string | undefined): { text: string; color: s
   return { text: (name.trim()[0] ?? 'H').toUpperCase(), color: '#3f3f46' };
 }
 
-/** The chat app a computer belongs to: its icon, else a monogram. Decorative: callers label it. */
-export function AppGlyph({ computer, size = 20 }: { computer: Pick<DesktopComputer, 'platform' | 'icon'>; size?: number }) {
+/**
+ * The chat app a computer belongs to: its icon, else a monogram. Decorative:
+ * callers label it. `soft` pales a monogram to a tint with its colour as the
+ * letter, for where it sits beside the soft 3D computers.
+ */
+export function AppGlyph({ computer, size = 20, soft = false }: { computer: Pick<DesktopComputer, 'platform' | 'icon'>; size?: number; soft?: boolean }) {
   if (computer.icon) {
     return <img className="glyph" src={computer.icon} width={size} height={size} alt="" draggable={false} />;
   }
@@ -32,7 +36,13 @@ export function AppGlyph({ computer, size = 20 }: { computer: Pick<DesktopComput
     <span
       className="glyph glyph-mono"
       aria-hidden="true"
-      style={{ width: size, height: size, background: m.color, fontSize: Math.round(size * (m.text.length > 1 ? 0.42 : 0.55)) }}
+      style={{
+        width: size,
+        height: size,
+        background: soft ? `color-mix(in srgb, ${m.color} 18%, #fff)` : m.color,
+        ...(soft ? { color: m.color } : {}),
+        fontSize: Math.round(size * (m.text.length > 1 ? 0.42 : 0.55)),
+      }}
     >
       {m.text}
     </span>

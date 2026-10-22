@@ -78,6 +78,7 @@ export function Dock() {
   if (!desk) return <p className="desk-note">Open this from the Husk app.</p>;
   return (
     <div className={`dock${flat ? ' dock-flat' : ''}`}>
+      {list.length > 0 ? <span className="dock-tray" aria-hidden="true" style={{ width: list.length * 88 - 8 }} /> : null}
       <canvas ref={canvas} className="dock-canvas" aria-hidden="true" hidden={flat} />
       <ul className="dock-row" aria-label="Computers">
         {list.map((c) => (
@@ -148,7 +149,7 @@ function Slot({
         {flat ? <FlatComputer src={frame?.src} tint={tintOf(c.platform, c.id)} /> : null}
       </button>
       <span className="dock-app" aria-hidden="true">
-        <AppGlyph computer={c} size={14} />
+        <AppGlyph computer={c} size={12} soft />
       </span>
     </li>
   );
