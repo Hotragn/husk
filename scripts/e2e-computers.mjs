@@ -113,6 +113,16 @@ async function walkConsole(id, name) {
     await live.waitFor({ timeout: 60_000 });
     check('Home shows the browser live on a computer in use', (await live.evaluate((img) => img.naturalWidth)) > 0);
     await shot('01-home-live.png');
+    // Live means current: move the computer to a different page while Home is
+    // open, and the card's picture must change with it. A kept frame of an
+    // earlier page once passed the check above.
+    const before = await live.getAttribute('src');
+    await tool(id, 'browser_goto', { url: 'http://127.0.0.1:8765/' });
+    const moved = await page
+      .waitForFunction(([sel, was]) => document.querySelector(sel)?.getAttribute('src') !== was, [`img[alt="The browser on ${id}, live"]`, before], { timeout: 30_000 })
+      .then(() => true, () => false);
+    check('Home’s live picture follows the page', moved);
+    await tool(id, 'browser_goto', { url: 'https://example.com' });
 
     // Take over without being asked, and the chat's next call waits.
     await card.getByRole('button', { name: 'Take over' }).click();

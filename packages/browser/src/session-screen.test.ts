@@ -36,8 +36,22 @@ function fakeTransport(pushes = true) {
     pushes,
     casts: [] as Array<{ targetId: string; fps: number }>,
     stops: [] as string[],
+    /** Pictures taken with `Page.frame`, and what the next one shows. */
+    shots: 0,
+    shot: 'captured',
     async run(req: DriverRequest): Promise<DriverResult> {
-      return { results: req.steps.map((s) => (s.op === 'send' && s.method === 'Target.createTarget' ? { targetId: 'T1' } : {})) };
+      return {
+        results: req.steps.map((s) => {
+          if (s.op !== 'send') return {};
+          if (s.method === 'Target.createTarget') return { targetId: 'T1' };
+          if (s.method === 'Page.getLayoutMetrics') return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } };
+          if (s.method === 'Page.captureScreenshot') {
+            t.shots++;
+            return { data: t.shot };
+          }
+          return {};
+        }),
+      };
     },
     async close(): Promise<void> {},
     async screencast(targetId: string, fps: number): Promise<boolean> {
@@ -118,6 +132,46 @@ describe('the shared screencast', () => {
     const seen: ScreenFrame[] = [];
     await session.watchScreen(1, (f) => seen.push(f));
     expect(seen.map((f) => f.data)).toEqual(['still']);
+  });
+
+  it('never shows a new viewer a frame from a cast that has stopped', async () => {
+    // The bug: the page moved on with nobody watching, and the next viewer was
+    // shown what it looked like before.
+    const { transport, session } = await launched();
+    vi.useFakeTimers();
+    const stopA = await session.watchScreen(4, () => undefined);
+    transport.push('T1', 'old page');
+    stopA!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(transport.stops).toEqual(['T1']);
+    transport.shot = 'page now';
+    const seen: string[] = [];
+    await session.watchScreen(4, (f) => seen.push(f.data));
+    expect(seen).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(seen).toEqual(['page now']);
+  });
+
+  it('takes the first picture itself when a still page pushes nothing, and that is not use', async () => {
+    const { computer, transport, session } = await launched();
+    const used = computer.used;
+    vi.useFakeTimers();
+    const seen: string[] = [];
+    await session.watchScreen(1, (f) => seen.push(f.data));
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(seen).toEqual(['captured']);
+    expect(transport.shots).toBe(1);
+    expect(computer.used).toBe(used);
+  });
+
+  it('takes no picture when the cast sends one in time', async () => {
+    const { transport, session } = await launched();
+    vi.useFakeTimers();
+    await session.watchScreen(4, () => undefined);
+    await vi.advanceTimersByTimeAsync(300);
+    transport.push('T1', 'painted');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(transport.shots).toBe(0);
   });
 
   it('hands viewers back to poll when pushing stops for good after it started', async () => {
