@@ -9,7 +9,7 @@
 //
 //   node scripts/e2e-computers.mjs
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -94,6 +94,100 @@ function mcpSession(args) {
   return { child, request, notify };
 }
 
+/** A small project the "chat" writes and tests on its computer, so the pictures show real work. */
+const PROJECT = {
+  'package.json': `${JSON.stringify({ name: 'slugify-demo', version: '1.0.0', type: 'module', scripts: { test: 'node --test' } }, null, 2)}\n`,
+  // The computer's root is read-only, so npm keeps its cache and logs in /tmp, and stays quiet.
+  '.npmrc': 'cache=/tmp/.npm\nupdate-notifier=false\nfund=false\n',
+  'README.md': '# slugify-demo\n\nTurns titles into URL slugs. Written and tested by a chat on its Husk computer.\n',
+  'src/slugify.js': String.raw`/** "Hello, World!" -> "hello-world" */
+export function slugify(title) {
+  return title
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+`,
+  'test/slugify.test.js': String.raw`import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { slugify } from '../src/slugify.js';
+
+test('turns spaces and punctuation into single dashes', () => {
+  assert.equal(slugify('Hello, World!'), 'hello-world');
+});
+
+test('drops accents', () => {
+  assert.equal(slugify('Crème brûlée'), 'creme-brulee');
+});
+
+test('trims dashes at either end', () => {
+  assert.equal(slugify('  -Husk-  '), 'husk');
+});
+
+test('keeps digits', () => {
+  assert.equal(slugify('Top 10 tips for 2026'), 'top-10-tips-for-2026');
+});
+`,
+};
+const REPO_PAGE = 'https://github.com/Hotragn/husk';
+const WIKI_PAGE = 'https://en.wikipedia.org/wiki/Personal_computer';
+
+/** What a chat does on its computer: write a project, run its tests, look things up. */
+async function stageProject(id) {
+  await tool(id, 'shell', { command: 'mkdir -p /work/slugify-demo/src /work/slugify-demo/test' });
+  for (const [path, content] of Object.entries(PROJECT)) await tool(id, 'write_file', { path: `/work/slugify-demo/${path}`, content });
+  const run = textOf(await tool(id, 'shell', { command: 'cd /work/slugify-demo && npm test 2>&1 | tail -12' }));
+  check('the chat’s project tests pass on the computer', /pass 4/.test(run) && /fail 0/.test(run), run.replace(/\s+/g, ' ').slice(-120));
+  const repo = await tool(id, 'browser_goto', { url: REPO_PAGE });
+  check('the computer’s browser opens a real site', !repo.isError, REPO_PAGE);
+}
+
+/**
+ * Film `action` as a GIF: a screenshot of `area` (a locator, or the page)
+ * a few times a second while it runs, joined by ffmpeg. False where ffmpeg
+ * is missing; the walk goes on either way.
+ */
+async function film(page, file, action, { area, fps = 6 } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'husk-film-'));
+  let frames = 0;
+  let filming = true;
+  const loop = (async () => {
+    while (filming) {
+      const t = Date.now();
+      try {
+        await (area ?? page).screenshot({ path: join(dir, `f${String(frames).padStart(4, '0')}.png`) });
+        frames++;
+      } catch {
+        // a frame mid-navigation; the next one lands
+      }
+      await sleep(Math.max(0, 1000 / fps - (Date.now() - t)));
+    }
+  })();
+  try {
+    await action();
+    await sleep(800);
+  } finally {
+    filming = false;
+    await loop;
+  }
+  const out = join(process.env.E2E_SHOTS ?? join(root, 'e2e-shots'), file);
+  const made = frames > 1 && gif(join(dir, 'f%04d.png'), out, fps, ['-framerate', String(fps)]);
+  rmSync(dir, { recursive: true, force: true });
+  return made;
+}
+
+/** A GIF from frames or a video, at its own size, with a palette so text stays crisp. */
+function gif(input, out, fps, inputArgs = []) {
+  const r = spawnSync('ffmpeg', [
+    '-y', '-loglevel', 'error', ...inputArgs, '-i', input,
+    '-vf', `fps=${fps},split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4`,
+    out,
+  ]);
+  return r.status === 0;
+}
+
 async function walkConsole(id, name) {
   const { chromium } = await import('playwright-core');
   const shots = process.env.E2E_SHOTS ?? join(root, 'e2e-shots');
@@ -106,8 +200,8 @@ async function walkConsole(id, name) {
     const shot = (file, on = page) => on.screenshot({ path: join(shots, file), fullPage: true });
     const screen = page.locator(`img[alt="The browser on ${id}, live"]`);
 
-    // In use a moment ago, with its browser open: Home shows it live.
-    await tool(id, 'browser_goto', { url: 'https://example.com' });
+    // The chat's real work first: a project, its tests, Husk's own page in the browser.
+    await stageProject(id);
     await page.goto(`${rec.url}/#token=${rec.token}&panel=home`);
     const card = page.getByRole('article', { name });
     const live = card.locator(`img[alt="The browser on ${id}, live"]`);
@@ -123,21 +217,34 @@ async function walkConsole(id, name) {
       .waitForFunction(([sel, was]) => document.querySelector(sel)?.getAttribute('src') !== was, [`img[alt="The browser on ${id}, live"]`, before], { timeout: 30_000 })
       .then(() => true, () => false);
     check('Home’s live picture follows the page', moved);
-    await tool(id, 'browser_goto', { url: 'https://example.com' });
 
-    // Take over without being asked: the chat page, its screen now the person's.
-    await card.getByRole('button', { name: 'Take over', exact: true }).click();
-    await page.getByText('You’re in control').waitFor({ timeout: 30_000 });
-    await page.locator('.screen-held img').waitFor({ timeout: 30_000 });
-    check('Take over opens the chat page with the screen held', true);
+    // A real page with a real search box, the cursor in it, as a chat leaves it before it needs the person.
+    await tool(id, 'browser_goto', { url: WIKI_PAGE });
+    const tree = textOf(await tool(id, 'browser_snapshot'));
+    const search = /\b(e\d+)\s+(?:searchbox|combobox|textbox)\s+"[^"]*search/i.exec(tree)?.[1];
+    if (search) await tool(id, 'browser_click', { ref: search });
+    else console.log('  (no search box in the snapshot; the take-over types into the page as it is)');
+    await live.waitFor({ timeout: 60_000 });
+
+    // Take over without being asked, and type into the real page: filmed.
+    const filmed = await film(page, 'take-over.gif', async () => {
+      await card.getByRole('button', { name: 'Take over', exact: true }).click();
+      await page.getByText('You’re in control').waitFor({ timeout: 30_000 });
+      await page.locator('.screen-held img').waitFor({ timeout: 30_000 });
+      await page.locator('input[aria-label="Type into the page"]').focus();
+      await page.keyboard.type('Husk computer', { delay: 140 });
+      await sleep(2500);
+    });
+    check('Take over opens the chat page with the screen held', true, filmed ? 'filmed take-over.gif' : 'no ffmpeg, no GIF');
+    await shot('02-taken-over.png');
 
     // A click on the screen goes to the page, mapped from the frame, and focuses the keyboard.
     const box = await screen.boundingBox();
     const clicked = page.waitForResponse((r) => r.url().endsWith('/input') && r.request().method() === 'POST');
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height * 0.9);
+    // The page's left margin: nothing there to follow, so what the person typed stays on the page.
+    await page.mouse.click(box.x + box.width * 0.012, box.y + box.height * 0.6);
     check('a click on the held screen reaches the page', (await clicked).status() === 204);
     check('the click focuses the keyboard on the page', (await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))) === 'Type into the page');
-    await shot('02-taken-over.png');
 
     let settled = false;
     const started = Date.now();
@@ -151,6 +258,10 @@ async function walkConsole(id, name) {
     await page.getByRole('button', { name: 'Give back' }).click();
     const result = await call;
     check('Give back lets the waiting call run', !result.isError && /after-give-back/.test(textOf(result)), `${Date.now() - started} ms`);
+    if (search) {
+      const typed = textOf(await tool(id, 'browser_snapshot'));
+      check('what the person typed reached the real page', /Husk computer/.test(typed));
+    }
 
     // The chat's page, free again: the live screen, what the chat did, and Take over on a click.
     await page.getByText('The chat is in control').waitFor({ timeout: 30_000 });
@@ -178,31 +289,40 @@ async function walkConsole(id, name) {
     await nav.getByRole('button', { name: 'Home', exact: true }).click();
     await card.getByRole('button', { name: 'Browser', exact: true }).click();
     await page.getByRole('tab', { name: /Rendered/ }).click();
-    await page.locator('#browse-url').fill('example.com');
+    await page.locator('#browse-url').fill('github.com/Hotragn/husk');
     await page.getByRole('button', { name: 'Open', exact: true }).click();
     await page.locator('#browser-view img').first().waitFor({ timeout: 90_000 });
-    await sleep(1500);
+    await sleep(2500);
     await shot('07-browser.png');
     check('the Browser panel shows the computer’s page, rendered in its Chromium', true);
 
     await nav.getByRole('button', { name: 'Home', exact: true }).click();
     await card.getByRole('button', { name: 'Files', exact: true }).click();
-    await page.getByRole('button', { name: 'hello.txt', exact: true }).click();
-    await page.getByText('from the e2e').first().waitFor({ timeout: 30_000 });
+    await page.getByRole('button', { name: 'slugify-demo/', exact: true }).click();
+    await page.getByRole('button', { name: 'src/', exact: true }).click();
+    await page.getByRole('button', { name: 'slugify.js', exact: true }).click();
+    await page.getByText('export function slugify').first().waitFor({ timeout: 30_000 });
     await sleep(500);
     await shot('08-files.png');
-    check('the Files panel lists /work and opens a file', true);
+    check('the Files panel walks the chat’s project and opens its code', true);
 
     await nav.getByRole('button', { name: 'Home', exact: true }).click();
     await card.getByRole('button', { name: 'Terminal', exact: true }).click();
     await page.locator('.xterm-rows').getByText(/one command per line/).waitFor({ timeout: 30_000 });
     await page.locator('.xterm-helper-textarea').focus();
-    await page.keyboard.type('uname -sr && ls -la /work && cat /work/hello.txt');
-    await page.keyboard.press('Enter');
-    await page.locator('.xterm-rows').getByText(/from the e2e/).last().waitFor({ timeout: 30_000 });
-    await sleep(500);
+    const tested = await film(
+      page,
+      'terminal-tests.gif',
+      async () => {
+        await page.keyboard.type('cd /work/slugify-demo && npm test', { delay: 60 });
+        await page.keyboard.press('Enter');
+        await page.locator('.xterm-rows').getByText(/pass 4/).last().waitFor({ timeout: 60_000 });
+        await sleep(1500);
+      },
+      { area: page.locator('.term-frame') },
+    );
     await shot('09-terminal.png');
-    check('the Terminal panel runs a command on the computer', true);
+    check('the Terminal panel runs the chat’s tests on the computer', true, tested ? 'filmed terminal-tests.gif' : 'no ffmpeg, no GIF');
 
     // One picture of the computer's browser, files and terminal together, for the PRs.
     const tile = (file, caption) =>
@@ -211,9 +331,9 @@ async function walkConsole(id, name) {
     await board.setContent(
       `<style>body{margin:0;padding:28px;background:#0a0a0c;font:600 18px Inter,system-ui,sans-serif;color:#f4f4f5;display:grid;grid-template-columns:repeat(3,1fr);gap:22px}` +
         `figure{margin:0}img{width:100%;border-radius:12px;border:1px solid #24242a;display:block}figcaption{margin-top:12px;color:#b4b4bc}</style>` +
-        tile('07-browser.png', 'Browser: its own Chromium, rendered') +
-        tile('08-files.png', 'Files: /work, opened from the console') +
-        tile('09-terminal.png', 'Terminal: a command run on the computer'),
+        tile('07-browser.png', 'Browser: GitHub in its own Chromium') +
+        tile('08-files.png', 'Files: the chat’s project, its code open') +
+        tile('09-terminal.png', 'Terminal: the project’s tests, run on the computer'),
     );
     await board.screenshot({ path: join(shots, '10-computer-browser-files-terminal.png'), fullPage: true });
     await board.close();
@@ -253,29 +373,66 @@ async function walkConsole(id, name) {
 }
 
 /**
- * How fast the browser is, for a PR to quote: the median milliseconds of each
- * browser tool through the shared route, and the frames a second the live
- * screen actually delivers at ?fps=4. The page it watches animates, so a
- * pushed screencast has something to push.
+ * The real desktop app on this Husk (HUSK_DESKTOP_SMOKE=live), walked on a
+ * real chat's computer while the chat keeps browsing, and filmed from the
+ * screen where the tools for it are there.
  */
 async function walkDesktop(id) {
   const electron = join(root, 'apps', 'desktop', 'node_modules', '.bin', 'electron');
   const shots = process.env.E2E_SHOTS ?? join(root, 'e2e-shots');
-  const app = spawn('xvfb-run', ['-a', electron, join(root, 'apps', 'desktop')], {
-    env: { ...env, HUSK_DESKTOP_SMOKE: 'live', HUSK_DESKTOP_SHOTS: shots, ELECTRON_DISABLE_SANDBOX: '1' },
-    stdio: ['ignore', 'pipe', 'inherit'],
-  });
+  // Its own screen, so the walk can be filmed as a person would see it: a soft
+  // desktop colour, and a compositor so the corner and the notch are truly
+  // transparent. Without these tools it runs under xvfb-run, unfilmed.
+  const display = ':99';
+  const helpers = [];
+  const has = (bin) => spawnSync('which', [bin]).status === 0;
+  const filmable = ['Xvfb', 'xcompmgr', 'xsetroot', 'ffmpeg'].every(has);
+  if (filmable) {
+    helpers.push(spawn('Xvfb', [display, '-screen', '0', '1280x800x24', '-nolisten', 'tcp'], { stdio: 'ignore' }));
+    await sleep(1500);
+    spawnSync('xsetroot', ['-display', display, '-solid', '#dfe4ec']);
+    helpers.push(spawn('xcompmgr', ['-d', display], { stdio: 'ignore' }));
+    await sleep(500);
+  }
+  const app = filmable
+    ? spawn(electron, [join(root, 'apps', 'desktop')], {
+        env: { ...env, DISPLAY: display, HUSK_DESKTOP_SMOKE: 'live', HUSK_DESKTOP_SHOTS: shots, ELECTRON_DISABLE_SANDBOX: '1' },
+        stdio: ['ignore', 'pipe', 'inherit'],
+      })
+    : spawn('xvfb-run', ['-a', electron, join(root, 'apps', 'desktop')], {
+        env: { ...env, HUSK_DESKTOP_SMOKE: 'live', HUSK_DESKTOP_SHOTS: shots, ELECTRON_DISABLE_SANDBOX: '1' },
+        stdio: ['ignore', 'pipe', 'inherit'],
+      });
   let out = '';
   app.stdout.on('data', (chunk) => {
     out += chunk;
   });
-  const exited = new Promise((resolveExit) => app.on('exit', (code) => resolveExit(code)));
+  let done = false;
+  const exited = new Promise((resolveExit) =>
+    app.on('exit', (code) => {
+      done = true;
+      resolveExit(code);
+    }),
+  );
   const killer = setTimeout(() => app.kill('SIGKILL'), 240_000);
+  const video = join(tmpdir(), `husk-desktop-${process.pid}.mp4`);
+  let recorder;
   try {
     for (let i = 0; i < 480 && !out.includes('SMOKE live ready'); i++) await sleep(250);
     check('the desktop app attaches to the shared Husk', out.includes('SMOKE live ready'));
-    // A chat's call, after the app started: its computer's window should open by itself.
-    await tool(id, 'browser_goto', { url: 'https://example.com' });
+    if (filmable) {
+      // The right of the screen, at its own size: the notch at the top centre, the window and the corner at the bottom right.
+      const grab = ['-f', 'x11grab', '-draw_mouse', '0', '-framerate', '10', '-video_size', '880x800', '-i', `${display}.0+400,0`];
+      recorder = spawn('ffmpeg', ['-y', '-loglevel', 'error', ...grab, '-codec:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', video], {
+        stdio: ['pipe', 'ignore', 'inherit'],
+      });
+    }
+    // The chat goes on working while the person looks: real pages, one after another.
+    const pages = [REPO_PAGE, WIKI_PAGE, `${REPO_PAGE}/issues`];
+    for (let i = 0; !done && i < 12; i++) {
+      await tool(id, 'browser_goto', { url: pages[i % pages.length] }).catch(() => undefined);
+      for (let t = 0; t < 24 && !done; t++) await sleep(250);
+    }
     const code = await exited;
     const lines = out.split(/\r?\n/).filter((l) => l.startsWith('SMOKE ok') || l.startsWith('SMOKE FAIL'));
     for (const line of lines) console.log(`  desktop: ${line.slice('SMOKE '.length)}`);
@@ -284,9 +441,23 @@ async function walkDesktop(id) {
   } finally {
     clearTimeout(killer);
     app.kill();
+    if (recorder) {
+      recorder.stdin.end('q');
+      await new Promise((r) => recorder.on('exit', r));
+      const made = existsSync(video) && gif(video, join(shots, 'desktop.gif'), 6);
+      console.log(made ? '  desktop: filmed desktop.gif from the real screen' : '  desktop: no GIF of the screen');
+      rmSync(video, { force: true });
+    }
+    for (const h of helpers) h.kill();
   }
 }
 
+/**
+ * How fast the browser is, for a PR to quote: the median milliseconds of each
+ * browser tool through the shared route, and the frames a second the live
+ * screen actually delivers at ?fps=4. The page it watches animates, so a
+ * pushed screencast has something to push.
+ */
 async function measureBrowser(id) {
   const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
   const timed = async (name, args, n) => {

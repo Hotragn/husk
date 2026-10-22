@@ -30,8 +30,9 @@ jobs:
       - run: docker version
       # Drives the runner's own Chrome through the console. Not a dependency of Husk.
       - run: npm i --no-save playwright-core@1.48.2
-      # The desktop app, run from the checkout under a virtual display.
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
+      # The desktop app, run from the checkout on a virtual screen with a
+      # compositor, and ffmpeg to film that screen and the console as GIFs.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb xcompmgr x11-xserver-utils ffmpeg
       - run: npm ci
         working-directory: apps/desktop
       - run: npm run e2e:computers

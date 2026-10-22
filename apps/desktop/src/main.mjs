@@ -41,6 +41,8 @@ const LIVE = process.env.HUSK_DESKTOP_SMOKE === 'live';
 const SHOTS = process.env.HUSK_DESKTOP_SHOTS;
 // CI machines have no GPU. The 3D row is the app's own page, so software WebGL is safe for it there.
 if (SMOKE || LIVE) app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+// Linux draws a transparent window see-through only when asked, and a compositor is running (the e2e films one).
+if ((SMOKE || LIVE) && process.platform === 'linux') app.commandLine.appendSwitch('enable-transparent-visuals');
 const BIN = runtimeBin({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() });
 
 /** ~/.husk, owner-only, as the rest of Husk makes it. */
@@ -303,6 +305,8 @@ const inside = (b, area) => b.x >= area.x && b.y >= area.y && b.x + b.width <= a
  */
 async function walkComputers(check, ids, prefix) {
   const area = screen.getPrimaryDisplay().workArea;
+  // The live run is filmed: each step stays on the screen long enough to be seen.
+  const beat = () => sleep(LIVE ? 1500 : 0);
   await sleep(1500); // the corner row builds
   const dock = computers.dock?.getBounds();
   check('the corner row sits small in the bottom-right corner', dock && inside(dock, area) && dock.x + dock.width > area.x + area.width - 40 && dock.height <= 90, JSON.stringify(dock));
@@ -311,6 +315,7 @@ async function walkComputers(check, ids, prefix) {
   check('the corner has a computer per chat', slots === ids.length, `${slots} in ${mode}`);
   check('nothing opens until the person clicks', !computers.win || !computers.win.isVisible());
   if (SHOTS) await computers.capture('dock', join(SHOTS, `${prefix}-dock.png`));
+  await beat();
 
   await computers.run('dock', `document.querySelector('.dock-hit')?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))`);
   const tip = await until(() => computers.run('dock', `document.querySelector('.dock-tip')?.textContent ?? ''`), 3000);
@@ -318,6 +323,7 @@ async function walkComputers(check, ids, prefix) {
   check('hovering a computer names its chat app, small', tip && tip.includes(first?.platform ?? first?.label ?? ''), tip);
   await sleep(500); // the label fades in
   if (SHOTS) await computers.capture('dock', join(SHOTS, `${prefix}-dock-hover.png`));
+  await beat();
   await computers.run('dock', `document.querySelector('.dock-hit')?.dispatchEvent(new PointerEvent('pointerout', { bubbles: true }))`);
 
   // A click, through the same request the page sends.
@@ -344,6 +350,7 @@ async function walkComputers(check, ids, prefix) {
   }
   await sleep(800);
   if (SHOTS) await computers.capture('window', join(SHOTS, `${prefix}-window.png`));
+  await beat();
 
   computers.minimize();
   const logos = await until(() => computers.run('pill', `document.querySelectorAll('.pill-logo').length`), 8000);
@@ -356,11 +363,13 @@ async function walkComputers(check, ids, prefix) {
     JSON.stringify(pill),
   );
   if (SHOTS) await computers.capture('pill', join(SHOTS, `${prefix}-notch.png`));
+  await beat();
   await computers.run('pill', `document.querySelector('.pill')?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))`);
   const rows = await until(() => computers.run('pill', `document.querySelectorAll('.pill-row').length`), 3000);
   check('the notch opens into a list on hover', rows === ids.length, `${rows} rows`);
   await sleep(400);
   if (SHOTS) await computers.capture('pill', join(SHOTS, `${prefix}-notch-open.png`));
+  await beat();
   await computers.run('pill', `document.querySelector('.pill-row .pill-btn')?.click()`);
   const back = await until(() => computers.win?.isVisible(), 5000);
   check('opening it from the notch brings the window back', back);
@@ -401,6 +410,7 @@ async function liveSmoke() {
     );
     check('the window shows the computer’s browser live', width, `${width}px wide`);
     if (SHOTS) await computers.capture('window', join(SHOTS, 'live-window.png'));
+    await sleep(8000); // the chat browses on in the window, for the film
   }
   app.exit(passed() ? 0 : 1);
 }
