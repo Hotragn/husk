@@ -394,7 +394,8 @@ async function smokeComputers() {
   const standing = await until(() => computers.run('dock', `document.querySelectorAll('.dock-slot').length`), 20_000);
   check('two chats’ computers stand in the corner', standing === 2, `${standing}`);
   if (standing) {
-    const stop = FILM ? filmScreen(FILM) : null;
+    // Filmed from when the corner has drawn its computers: software WebGL on CI takes a moment.
+    const stop = FILM ? await sleep(1500).then(() => filmScreen(FILM)) : null;
     await walkComputers(check, ['cmp_smokea1', 'cmp_smokeb2'], 'desktop');
     if (stop) log(`SMOKE film: ${await stop()} frames of the whole screen`);
   }

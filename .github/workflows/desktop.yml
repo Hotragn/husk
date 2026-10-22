@@ -56,6 +56,17 @@ jobs:
             sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
             ELECTRON_DISABLE_SANDBOX=1 xvfb-run -a npm run smoke
           else
+            # The person's own work fills the screen behind Husk, as on a real
+            # desktop: an editor in the runner's Chrome, over the runner's log
+            # window on Windows and the black desktop on macOS.
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              chrome="/c/Program Files/Google/Chrome/Application/chrome.exe"; at=0,0; size=1024,720
+            else
+              chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; at=0,25; size=1024,680
+            fi
+            "$chrome" --no-first-run --no-default-browser-check --use-mock-keychain --user-data-dir="$RUNNER_TEMP/screen" \
+              --window-position=$at --window-size=$size --app=https://vscode.dev > /dev/null 2>&1 &
+            sleep 10
             npm run smoke
           fi
       - uses: actions/upload-artifact@v4
