@@ -224,13 +224,18 @@ function ComputerCard({
   );
 }
 
+/** Where the screen is a pushed screencast, which never counts as using the computer. */
+const PUSHED_SCREEN = new Set(['docker', 'podman', 'local']);
+
 /**
- * Live only while the computer is in use anyway: a chat acted on it in the last
- * two minutes, a run is on it, or a person holds it. Every frame runs the
- * driver inside the computer, which counts as use, so a live screen on an idle
- * card would keep that computer from ever stopping while Home is open.
+ * Whether the card shows the screen live. Always, where the screen is pushed.
+ * Elsewhere (ssh, fly) each frame is an exec that counts as use, so only while
+ * the computer is in use anyway: a chat acted on it in the last two minutes, a
+ * run is on it, or a person holds it. Otherwise Home open would keep an idle
+ * computer from ever stopping.
  */
 function inUse(row: Row): boolean {
+  if (PUSHED_SCREEN.has(row.computer.provider)) return true;
   return Boolean(row.run || row.handoff || (row.last && Date.now() - Date.parse(row.last.at) < 120_000));
 }
 

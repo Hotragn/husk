@@ -14,7 +14,7 @@ const computer = (id: string, state: 'running' | 'stopped', lastUsedAt: string, 
 const REASON = '<img src=x onerror="alert(1)"> Sign in to example.com';
 const overview: Overview = {
   computers: [
-    computer('cmp_idle', 'running', '2026-10-20T09:00:00Z', { chatLabel: 'Cursor · chat started 09:00', platform: 'Cursor' }),
+    computer('cmp_idle', 'running', '2026-10-20T09:00:00Z', { chatLabel: 'Cursor · chat started 09:00', platform: 'Cursor', provider: 'ssh' }),
     computer('cmp_stopped', 'stopped', '2026-10-19T09:00:00Z'),
     computer('cmp_busy', 'running', '2026-10-20T08:00:00Z'),
     computer('cmp_wait', 'running', '2026-10-20T07:00:00Z', { chatLabel: 'Claude Desktop · chat started 07:00', platform: 'Claude Desktop' }),
@@ -100,7 +100,7 @@ describe('Overview panel', () => {
     expect(container.textContent).not.toMatch(/CPU|memory|disk/);
   });
 
-  it('looks at an idle computer’s browser only when asked, since a frame counts as using the computer', async () => {
+  it('looks at an idle ssh computer’s browser only when asked, since a frame there counts as using it', async () => {
     const { container } = render(<OverviewPanel onOpen={() => {}} />);
     await screen.findByText('Running triage · step 2 · shell');
     expect(requests.some((p) => p.endsWith('/thumbnail'))).toBe(false);
@@ -111,7 +111,7 @@ describe('Overview panel', () => {
     expect(container.querySelector('.overview-thumb')).toBeNull();
   });
 
-  it('shows the screen live, slowly, only on computers in use', async () => {
+  it('shows the screen live, slowly, on every pushed-screen computer, and on ssh only while in use', async () => {
     render(<OverviewPanel onOpen={() => {}} />);
     await screen.findByText('Running triage · step 2 · shell');
     expect(sockets.sort()).toEqual(['/v1/computers/cmp_busy/screen?fps=1', '/v1/computers/cmp_wait/screen?fps=1']);
