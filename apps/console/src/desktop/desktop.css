@@ -34,8 +34,9 @@
 }
 
 .cw {
-  display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  position: relative;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   color: var(--color-text);
   font-family: var(--font-ui);
@@ -196,6 +197,10 @@
   white-space: nowrap;
 }
 
+.cw-tab-blank {
+  font-style: italic;
+}
+
 .cw-tab-on {
   background: var(--color-raised);
   color: var(--color-text);
@@ -225,6 +230,7 @@
 .cw-body {
   position: relative;
   display: grid;
+  flex: 1 1 auto;
   min-height: 0;
   background: #000;
 }

@@ -72,6 +72,7 @@ beforeEach(() => {
           tabs: [
             { targetId: 't1', url: 'https://example.com/', title: 'Example Domain', active: true },
             { targetId: 't2', url: 'https://github.com/login', title: '', active: false },
+            { targetId: 't3', url: 'about:blank', title: 'about:blank', active: false },
           ],
         });
       if (path.endsWith('/takeover')) return Response.json({ handoffId: 'hnd_me', runId: 'person', husk: 'you', reason: 'x', createdAt: '' }, { status: 201 });
@@ -96,6 +97,8 @@ describe('a computer window', () => {
     expect(within(tabs).getByText('Example Domain').getAttribute('aria-current')).toBe('page');
     // A tab with no title yet goes by its host.
     expect(within(tabs).getByText('github.com')).toBeTruthy();
+    // A blank one is a new tab, as a browser says.
+    expect(within(tabs).getByText('New tab')).toBeTruthy();
     expect(sockets).toEqual(['/v1/computers/cmp_a01/screen']);
     fireEvent.click(screen.getByRole('button', { name: 'Take over' }));
     await waitFor(() => expect(requests).toContain('POST /v1/computers/cmp_a01/takeover'));

@@ -77,8 +77,13 @@ function Window({ desk, computer: c }: { desk: DesktopBridge; computer: DesktopC
       {tabs.data && tabs.data.length > 0 ? (
         <nav className="cw-tabs" aria-label="Tabs on this computer">
           {tabs.data.map((t) => (
-            <span key={t.targetId} className={`cw-tab${t.active ? ' cw-tab-on' : ''}`} title={t.url} aria-current={t.active ? 'page' : undefined}>
-              {t.title || hostOf(t.url)}
+            <span
+              key={t.targetId}
+              className={`cw-tab${t.active ? ' cw-tab-on' : ''}${isBlank(t) ? ' cw-tab-blank' : ''}`}
+              title={t.url}
+              aria-current={t.active ? 'page' : undefined}
+            >
+              {tabName(t)}
             </span>
           ))}
         </nav>
@@ -207,6 +212,14 @@ function Glyph({ d }: { d: string }) {
       <path d={d} />
     </svg>
   );
+}
+
+const isBlank = (t: BrowserTab) => t.url === 'about:blank' || t.url === '';
+
+/** A tab's name as a browser shows it: its title, else its host; a blank one is a new tab. */
+function tabName(t: BrowserTab): string {
+  if (isBlank(t)) return 'New tab';
+  return t.title && t.title !== t.url ? t.title : hostOf(t.url);
 }
 
 function hostOf(url: string): string {

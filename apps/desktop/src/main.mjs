@@ -301,6 +301,11 @@ async function walkComputers(check, id, prefix) {
   const area = screen.getPrimaryDisplay().workArea;
   const window = computers.windows.get(id)?.win;
   check('the computer window opens inside the screen', window && inside(window.getBounds(), area), JSON.stringify(window?.getBounds()));
+  const status = await until(
+    () => computers.run(id, `(() => { const s = document.querySelector('.cw-status'); return s && s.getBoundingClientRect().bottom <= innerHeight ? s.textContent : ''; })()`),
+    10_000,
+  );
+  check('the window keeps its status line in view', status, status);
   await sleep(2500); // the 3D row builds and its screens fill
   const dock = computers.dock?.getBounds();
   check('the row of 3D computers sits in the bottom-right corner', dock && inside(dock, area) && dock.x + dock.width > area.x + area.width - 40, JSON.stringify(dock));
@@ -313,7 +318,10 @@ async function walkComputers(check, id, prefix) {
   }
   await computers.run('dock', `document.querySelector('.dock-hit')?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))`);
   const tip = await until(() => computers.run('dock', `document.querySelector('.dock-tip')?.textContent ?? ''`), 3000);
-  check('hovering a 3D computer names its chat', /started/.test(tip ?? ''), tip);
+  // The label the app knows it by: a chat's own ("Claude Code · chat started 09:41"), else the computer's name.
+  const label = computers.state().computers.find((c) => c.id === id)?.label ?? id;
+  check('hovering a 3D computer names its chat', tip?.includes(label), tip);
+  await sleep(500); // the tooltip fades in and the computer lifts
   if (SHOTS) await computers.capture('dock', join(SHOTS, `${prefix}-dock-hover.png`));
   await computers.run('dock', `document.querySelector('.dock-hit')?.dispatchEvent(new PointerEvent('pointerout', { bubbles: true }))`);
 
