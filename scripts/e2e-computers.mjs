@@ -103,7 +103,8 @@ async function walkConsole(id, name) {
   try {
     const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
     page.on('pageerror', (err) => errors.push(err.message));
-    const shot = (file) => page.screenshot({ path: join(shots, file), fullPage: true });
+    const shot = (file, on = page) => on.screenshot({ path: join(shots, file), fullPage: true });
+    const screen = page.locator(`img[alt="The browser on ${id}, live"]`);
 
     // In use a moment ago, with its browser open: Home shows it live.
     await tool(id, 'browser_goto', { url: 'https://example.com' });
@@ -114,12 +115,20 @@ async function walkConsole(id, name) {
     check('Home shows the browser live on a computer in use', (await live.evaluate((img) => img.naturalWidth)) > 0);
     await shot('01-home-live.png');
 
-    // Take over without being asked, and the chat's next call waits.
-    await card.getByRole('button', { name: 'Take over' }).click();
-    await page.getByRole('heading', { name: 'You have this computer' }).waitFor({ timeout: 30_000 });
-    await page.locator('.handoff-screen img').waitFor({ timeout: 30_000 });
-    check('Take over opens the computer for the person', true);
+    // Take over without being asked: the chat page, its screen now the person's.
+    await card.getByRole('button', { name: 'Take over', exact: true }).click();
+    await page.getByText('You’re in control').waitFor({ timeout: 30_000 });
+    await page.locator('.screen-held img').waitFor({ timeout: 30_000 });
+    check('Take over opens the chat page with the screen held', true);
+
+    // A click on the screen goes to the page, mapped from the frame, and focuses the keyboard.
+    const box = await screen.boundingBox();
+    const clicked = page.waitForResponse((r) => r.url().endsWith('/input') && r.request().method() === 'POST');
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height * 0.9);
+    check('a click on the held screen reaches the page', (await clicked).status() === 204);
+    check('the click focuses the keyboard on the page', (await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))) === 'Type into the page');
     await shot('02-taken-over.png');
+
     let settled = false;
     const started = Date.now();
     const call = tool(id, 'shell', { command: 'echo after-give-back' }).finally(() => {
@@ -128,29 +137,57 @@ async function walkConsole(id, name) {
     await sleep(3000);
     check('the chat’s call waits while the person holds the computer', !settled);
 
-    // Give back, and the waiting call runs.
+    // Give back, beside the screen, and the waiting call runs.
     await page.getByRole('button', { name: 'Give back' }).click();
-    await page.getByRole('button', { name: 'Yes, hand back to the agent' }).click();
     const result = await call;
     check('Give back lets the waiting call run', !result.isError && /after-give-back/.test(textOf(result)), `${Date.now() - started} ms`);
 
-    // The chat's page: live screen and what the chat did.
-    const nav = page.getByRole('navigation', { name: 'Console sections' });
-    await nav.getByRole('button', { name: 'Home', exact: true }).click();
-    await card.getByRole('button', { name: `Open ${name}` }).click();
-    await page.locator(`.chat-screen img[alt="The browser on ${id}, live"]`).waitFor({ timeout: 60_000 });
-    await page.locator('.activity-list').getByText('browser_goto').first().waitFor({ timeout: 30_000 });
+    // The chat's page, free again: the live screen, what the chat did, and Take over on a click.
+    await page.getByText('The chat is in control').waitFor({ timeout: 30_000 });
+    await page.locator('.activity-list').getByText('after-give-back').first().waitFor({ timeout: 30_000 });
+    await screen.waitFor({ timeout: 60_000 });
     check('the Chat page shows the live screen and the activity', true);
     await shot('03-chat.png');
+    await page.getByRole('button', { name: 'Take over this computer' }).click();
+    await page.getByRole('group', { name: 'Take over' }).waitFor({ timeout: 10_000 });
+    check('clicking the free screen offers Take over', true);
+    await page.keyboard.press('Escape');
 
+    const nav = page.getByRole('navigation', { name: 'Console sections' });
     await nav.getByRole('button', { name: 'Connect', exact: true }).click();
     await page.getByRole('heading', { name: 'Connect', exact: true }).waitFor({ timeout: 30_000 });
     await sleep(3000);
     await shot('04-connect.png');
     check('the Connect page loads', true);
+
+    await page.getByRole('button', { name: 'Switch to light theme' }).click();
+    await nav.getByRole('button', { name: 'Home', exact: true }).click();
+    await live.waitFor({ timeout: 60_000 });
+    await shot('05-home-light.png');
+    check('the light theme applies', (await page.evaluate(() => document.documentElement.dataset.theme)) === 'light');
+
+    // What a chat app without cards links to (Claude Code): its own computer, and Take over.
+    const { body } = await api('POST', `/v1/computers/${id}/link`);
+    const linked = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+    linked.on('pageerror', (err) => errors.push(err.message));
+    await linked.goto(`${rec.url}/#computer=${encodeURIComponent(id)}&token=${body.token}`);
+    await linked.getByRole('button', { name: 'Take over', exact: true }).click();
+    await linked.getByText('You have this computer').waitFor({ timeout: 30_000 });
+    await linked.locator('.screen-held img').waitFor({ timeout: 30_000 });
+    check('a chat’s link takes the computer over', true);
+    await shot('06-link-taken-over.png', linked);
+    await linked.getByRole('button', { name: 'Give back' }).click();
+    await linked.getByText('Handed back to the chat').waitFor({ timeout: 30_000 });
+    await linked.getByText('Computer running').waitFor({ timeout: 10_000 });
+    check('the link gives the computer back and keeps working', true);
+    const after = await tool(id, 'shell', { command: 'echo after-link' });
+    check('the chat has its computer again after the link gives it back', !after.isError && /after-link/.test(textOf(after)));
+
     check('the console threw no errors', errors.length === 0, errors.join(' | '));
   } catch (err) {
-    await browser.contexts()[0]?.pages()[0]?.screenshot({ path: join(shots, 'failed.png'), fullPage: true }).catch(() => undefined);
+    for (const [i, p] of browser.contexts().flatMap((c) => c.pages()).entries()) {
+      await p.screenshot({ path: join(shots, `failed-${i}.png`), fullPage: true }).catch(() => undefined);
+    }
     throw err;
   } finally {
     await browser.close();

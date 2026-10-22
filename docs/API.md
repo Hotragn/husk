@@ -414,17 +414,21 @@ GET    /v1/handoffs/:handoffId/state -> { handoffId, state: "open"|"done"|"abort
 POST   /v1/computers/:id/link      -> { token }        (for a chat's card or plain link)
 GET    /v1/scoped/computer         -> { computerId, label?, state, handoff: PendingHandoff | null }
 GET    /v1/scoped/computer/screen  -> image/jpeg, read-only
+POST   /v1/scoped/computer/takeover -> 201 PendingHandoff (runId "person"), or the handoff already open
 ```
 
 One handoff per computer at a time. The chat polls `state`, which also keeps the
 handoff alive: a chat that stops polling for a minute has gone, and its handoff is
 cancelled (never marked done), so the computer is free again. `state` says how a
 handoff ended, so a chat is never told "done" for one that was cancelled. `token` is short-lived and scoped to that computer
-(`computer:<id>`): it opens the two `/v1/scoped/` routes and that computer's
+(`computer:<id>`): it opens the `/v1/scoped/` routes and that computer's
 `/v1/handoffs/:handoffId` routes, and nothing else. Not the handoff list, not the
 computers, not the routes that mint tokens. It rides in the link's `#fragment` and is
 sent back as a bearer token. It dies after 10 minutes unused, stays alive while the
-console uses it, and never outlives 8 hours.
+console uses it, and never outlives 8 hours. `scoped/computer/takeover` is Take over
+for the link's own computer, the same as `/v1/computers/:id/takeover`; the person then
+uses and gives back that handoff with the same token, which keeps working after Give
+back. A chat's own handoff ending revokes its token; a person's take-over ending does not.
 
 With no shared Husk (`HUSK_DAEMON=off`, or none could be started), the MCP server
 serves the same per-handoff and `/v1/scoped/` routes on its own loopback viewer, as it

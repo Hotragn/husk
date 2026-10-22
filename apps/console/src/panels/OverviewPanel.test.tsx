@@ -70,7 +70,7 @@ describe('Overview panel', () => {
     const { container } = render(<OverviewPanel onOpen={() => {}} />);
     await screen.findByText('Running triage · step 2 · shell');
     const text = container.querySelector('.overview-summary')?.textContent ?? '';
-    expect(text.replace(/\s+/g, ' ')).toBe('3 running · 1 waiting on you · 1 stopped');
+    expect(text.replace(/\s+/g, ' ')).toBe('3 running 1 waiting on you 1 stopped');
   });
 
   it('shows what each computer is doing, with the waiting reason as text', async () => {
@@ -81,21 +81,23 @@ describe('Overview panel', () => {
     expect(screen.getByText('Cursor · chat started 09:00')).toBeTruthy();
   });
 
-  it('takes over and opens Terminal, Files and Browser on the right computer', async () => {
+  it('takes over on the chat page, and opens Terminal on the right computer', async () => {
     const onOpen = vi.fn();
     render(<OverviewPanel onOpen={onOpen} />);
     const waiting = await screen.findByRole('article', { name: 'Claude Desktop · chat started 07:00' });
     fireEvent.click(within(waiting).getByRole('button', { name: 'Take over' }));
     fireEvent.click(within(waiting).getByRole('button', { name: 'Terminal' }));
     expect(onOpen.mock.calls).toEqual([
-      ['handoffs', 'cmp_wait'],
+      ['chat', 'cmp_wait'],
       ['terminal', 'cmp_wait'],
     ]);
   });
 
-  it('says not available rather than inventing numbers', async () => {
-    render(<OverviewPanel onOpen={() => {}} />);
-    expect((await screen.findAllByText('CPU not available · memory not available · disk not available')).length).toBeGreaterThan(0);
+  it('shows only what was measured, never an estimate', async () => {
+    const { container } = render(<OverviewPanel onOpen={() => {}} />);
+    await screen.findByText('Running triage · step 2 · shell');
+    await vi.waitFor(() => expect(requests.some((p) => p.endsWith('/stats'))).toBe(true));
+    expect(container.textContent).not.toMatch(/CPU|memory|disk/);
   });
 
   it('looks at an idle computer’s browser only when asked, since a frame counts as using the computer', async () => {
@@ -120,7 +122,7 @@ describe('Overview panel', () => {
     render(<OverviewPanel onOpen={onOpen} />);
     const idle = await screen.findByRole('article', { name: 'Cursor · chat started 09:00' });
     fireEvent.click(within(idle).getByRole('button', { name: 'Take over' }));
-    await vi.waitFor(() => expect(onOpen).toHaveBeenCalledWith('handoffs', 'cmp_idle'));
+    await vi.waitFor(() => expect(onOpen).toHaveBeenCalledWith('chat', 'cmp_idle'));
     expect(requests).toContain('POST /v1/computers/cmp_idle/takeover');
 
     overview.handoffs.push({ handoffId: 'hnd_me', runId: 'person', husk: 'you', reason: 'x', computerId: 'cmp_idle', createdAt: '' });
@@ -155,7 +157,7 @@ describe('Overview panel', () => {
       const { container } = render(<OverviewPanel onOpen={() => {}} />);
       await screen.findByText('Running triage · step 2 · shell');
       expect(container.querySelector('.overview-summary')?.textContent?.replace(/\s+/g, ' ')).toBe(
-        '3 running · 1 waiting on you · 1 stopped · 1 other',
+        '3 running 1 waiting on you 1 stopped 1 other',
       );
     } finally {
       overview.computers.pop();

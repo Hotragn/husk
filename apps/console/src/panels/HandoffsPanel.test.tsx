@@ -56,9 +56,10 @@ describe('Handoffs panel', () => {
     const field = (await screen.findByLabelText('Type into the page')) as HTMLInputElement;
     expect(field.type).toBe('password');
     expect(field.autocomplete).toBe('off');
-    fireEvent.change(field, { target: { value: '913377' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    fireEvent.change(field, { target: { value: '913' } });
+    fireEvent.change(field, { target: { value: '377' } });
     await waitFor(() => expect(requests.some((r) => r.path.endsWith('/input'))).toBe(true));
+    expect(requests.filter((r) => r.path.endsWith('/input'))).toHaveLength(1);
     const sent = requests.find((r) => r.path.endsWith('/input'));
     expect(sent?.body).toEqual({ type: 'text', text: '913377' });
     expect(sent?.auth).toBe('Bearer test-token');
@@ -93,12 +94,22 @@ describe('Handoffs panel', () => {
 
 describe('a computer opened from its in-chat card', () => {
   let scoped: Response | (() => Response);
+  let posts: string[];
   beforeEach(() => {
+    posts = [];
     vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:frame', revokeObjectURL: () => {} }));
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (input: string) => {
+      vi.fn(async (input: string, init: RequestInit = {}) => {
         const path = new URL(input).pathname;
+        if (init.method === 'POST') posts.push(path);
+        if (path === '/v1/scoped/computer/takeover') {
+          return Response.json({ handoffId: 'hnd_me', runId: 'person', husk: 'you', reason: 'You took over this computer', computerId: 'cmp_1', createdAt: '' }, { status: 201 });
+        }
+        if (path === '/v1/handoffs/hnd_me/screen') {
+          return new Response(new Blob(['jpeg']), { headers: { 'content-type': 'image/jpeg', 'x-husk-viewport': '1280x720' } });
+        }
+        if (path === '/v1/handoffs/hnd_me/done') return Response.json({ handoffId: 'hnd_me', outcome: 'done' });
         if (path === '/v1/scoped/computer') return typeof scoped === 'function' ? scoped() : scoped;
         if (path === '/v1/scoped/computer/screen') return Response.json({ error: { code: 'E_BROWSER_NOT_FOUND', message: 'no' } }, { status: 404 });
         if (path === '/v1/handoffs/hnd_1/screen') {
@@ -145,7 +156,7 @@ describe('a computer opened from its in-chat card', () => {
       render(<LinkedComputer />);
       fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
       fireEvent.click(await screen.findByRole('button', { name: 'Yes, hand back to the agent' }));
-      expect(await screen.findByText(/Nothing needs you right now/)).toBeTruthy();
+      expect(await screen.findByText('Handed back to the chat')).toBeTruthy();
       // The model hands off again: a new handoff on the same computer.
       current = { ...handoff, handoffId: 'hnd_2', reason: 'Enter the 2FA code.' };
       await vi.advanceTimersByTimeAsync(3500);
@@ -153,6 +164,22 @@ describe('a computer opened from its in-chat card', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('takes the computer from the link, and gives it back without losing the link', async () => {
+    let current: unknown = null;
+    scoped = () => Response.json({ computerId: 'cmp_1', state: 'running', handoff: current });
+    render(<LinkedComputer />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Take over' }));
+    expect(await screen.findByText('You have this computer')).toBeTruthy();
+    expect(posts).toEqual(['/v1/scoped/computer/takeover']);
+    expect(screen.getByLabelText('Type into the page')).toBeTruthy();
+    current = { handoffId: 'hnd_me', runId: 'person', husk: 'you', reason: 'You took over this computer', computerId: 'cmp_1', createdAt: '' };
+    // The person's own hold: Give back needs no second question.
+    fireEvent.click(screen.getByRole('button', { name: 'Give back' }));
+    expect(await screen.findByText('Handed back to the chat')).toBeTruthy();
+    expect(posts).toEqual(['/v1/scoped/computer/takeover', '/v1/handoffs/hnd_me/done']);
+    expect(screen.getByRole('button', { name: 'Take over' })).toBeTruthy();
   });
 
   it('says plainly when the link has expired', async () => {

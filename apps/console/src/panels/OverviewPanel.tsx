@@ -13,7 +13,7 @@
 import { useEffect, useState } from 'react';
 import { toDisplayError } from '../api/client';
 import type { ActiveRunInfo, ActivityEntry, ComputerInfo, ComputerStats, DoctorReport, Overview, PendingHandoff } from '../api/wire';
-import { Badge, Button, EmptyState, ErrorBlock, PanelHeader, StatusDot, formatBytes, formatWhen } from '../components/primitives';
+import { Badge, Button, EmptyState, ErrorBlock, Icon, StatusDot, formatBytes, formatWhen } from '../components/primitives';
 import { useConnection } from '../state/connection';
 import { useResource } from '../state/useResource';
 import { stateTone } from './ComputersPanel';
@@ -81,23 +81,30 @@ export function OverviewPanel({ onOpen }: { onOpen: (target: OverviewTarget, com
 
   return (
     <section className="panel" aria-labelledby="overview-title">
-      <PanelHeader title="Computers" lede="Every computer, what it is doing, and whether it is waiting on you." />
-      <span id="overview-title" className="visually-hidden">
-        Computers overview
-      </span>
-
-      {overview.data ? (
-        <p className="overview-summary" role="status">
-          <strong>{running}</strong> running · <strong className={waiting ? 'overview-waiting-count' : undefined}>{waiting}</strong>{' '}
-          waiting on you · <strong>{stopped}</strong> stopped
-          {other > 0 ? (
-            <>
-              {' '}
-              · <strong>{other}</strong> other
-            </>
-          ) : null}
-        </p>
-      ) : null}
+      <div className="panel-head">
+        <h1 id="overview-title">Computers</h1>
+        {overview.data ? (
+          <p className="overview-summary" role="status">
+            <span className="stat">
+              <strong>{running}</strong> running
+            </span>{' '}
+            <span className={waiting ? 'stat stat-alert' : 'stat'}>
+              <strong>{waiting}</strong> waiting on you
+            </span>{' '}
+            <span className="stat">
+              <strong>{stopped}</strong> stopped
+            </span>
+            {other > 0 ? (
+              <>
+                {' '}
+                <span className="stat">
+                  <strong>{other}</strong> other
+                </span>
+              </>
+            ) : null}
+          </p>
+        ) : null}
+      </div>
 
       {overview.error ? <ErrorBlock error={overview.error} retry={overview.reload} /> : null}
       {actionError ? <ErrorBlock error={actionError} /> : null}
@@ -105,14 +112,16 @@ export function OverviewPanel({ onOpen }: { onOpen: (target: OverviewTarget, com
       {overview.data && rows.length === 0 ? (
         <EmptyState
           title="No computers yet."
-          body="A computer starts the first time a chat or a husk needs one. Nothing runs in advance."
+          body="One starts the first time a chat needs it."
         />
       ) : null}
 
       {unplaced.map((h) => (
-        <div key={h.handoffId} className="overview-waiting" role="status">
-          <strong>Waiting for you · {h.husk}</strong>
-          <p className="handoff-reason">{h.reason}</p>
+        <div key={h.handoffId} className="overview-waiting">
+          <div className="row-gap-2" role="status">
+            <strong>Waiting for you · {h.husk}</strong>
+            <p className="handoff-reason">{h.reason}</p>
+          </div>
           <Button variant="primary" onClick={() => onOpen('handoffs', h.computerId ?? '')}>
             Take over
           </Button>
@@ -157,49 +166,60 @@ function ComputerCard({
       : `last used ${formatWhen(computer.lastUsedAt)}`;
 
   return (
-    <article className={`card overview-card${handoff ? ' overview-card-waiting' : ''}`} aria-label={name}>
+    <article className={`card overview-card${handoff ? (handoff.runId === 'person' ? ' overview-card-held' : ' overview-card-waiting') : ''}`} aria-label={name}>
       <header className="overview-card-head">
-        <StatusDot tone={stateTone(computer.state)} label={computer.state} />
-        <h3 className="overview-card-name">{name}</h3>
+        <div>
+          <h2 className="overview-card-name">{name}</h2>
+          <div className="overview-card-meta">
+            {computer.platform ? <Badge>{computer.platform}</Badge> : null}
+            {isolation ? <IsolationBadge isolated={isolation.isolated} kind={isolation.isolationKind} /> : <Badge>{computer.provider}</Badge>}
+          </div>
+        </div>
+        <StatusDot pill tone={stateTone(computer.state)} label={computer.state} />
       </header>
-      <div className="btn-row">
-        {computer.platform ? <Badge>{computer.platform}</Badge> : null}
-        {isolation ? <IsolationBadge isolated={isolation.isolated} kind={isolation.isolationKind} /> : <Badge>{computer.provider}</Badge>}
-        <span className="field-note mono">{computer.id}</span>
-      </div>
-      <p className="field-note">{activity}</p>
-      {last && !run ? (
-        <p className="field-note">
-          Last: <strong>{last.tool}</strong>
-          {last.summary ? <code className="mono"> {last.summary}</code> : null} · {formatWhen(last.at)}
-          {last.ok ? '' : ' · failed'}
-        </p>
-      ) : null}
-
-      {handoff || computer.state === 'running' ? <TakeOver computerId={computer.id} handoff={handoff} onOpen={onOpen} onChange={onChange} /> : null}
 
       {computer.state !== 'running' ? null : inUse(row) ? <LiveScreen id={computer.id} fps={1} /> : <BrowserLook id={computer.id} />}
-      <StatsLine id={computer.id} running={computer.state === 'running'} />
 
-      <div className="btn-row">
-        <Button size="sm" variant="primary" onClick={() => onOpen('chat', computer.id)} aria-label={`Open ${name}`}>
-          Open
-        </Button>
-        <Button size="sm" onClick={() => onOpen('terminal', computer.id)}>
-          Terminal
-        </Button>
-        <Button size="sm" onClick={() => onOpen('files', computer.id)}>
-          Files
-        </Button>
-        <Button size="sm" onClick={() => onOpen('browser', computer.id)}>
-          Browser
-        </Button>
-        {computer.state === 'running' ? (
-          <Button size="sm" onClick={onStop} aria-label={`Stop ${computer.id}`}>
-            Stop
-          </Button>
+      <div>
+        <p className="field-note overview-line">{activity}</p>
+        {last && !run ? (
+          <p className="field-note overview-line">
+            <strong>{last.tool}</strong>
+            {last.summary ? <code className="mono"> {last.summary}</code> : null}
+            {last.ok ? '' : ' · failed'}
+          </p>
         ) : null}
+        <StatsLine id={computer.id} running={computer.state === 'running'} />
       </div>
+
+      {handoff ? <TakeOver computerId={computer.id} handoff={handoff} onOpen={onOpen} onChange={onChange} /> : null}
+
+      <footer className="overview-card-foot">
+        <div className="btn-row">
+          <Button size="sm" variant="primary" onClick={() => onOpen('chat', computer.id)} aria-label={`Open ${name}`}>
+            Open
+          </Button>
+          {!handoff && computer.state === 'running' ? (
+            <TakeOver computerId={computer.id} handoff={undefined} onOpen={onOpen} onChange={onChange} />
+          ) : null}
+        </div>
+        <div className="btn-row">
+          <Button size="sm" variant="ghost" className="btn-icon" onClick={() => onOpen('terminal', computer.id)} aria-label="Terminal" title="Terminal">
+            <Icon name="terminal" />
+          </Button>
+          <Button size="sm" variant="ghost" className="btn-icon" onClick={() => onOpen('files', computer.id)} aria-label="Files" title="Files">
+            <Icon name="files" />
+          </Button>
+          <Button size="sm" variant="ghost" className="btn-icon" onClick={() => onOpen('browser', computer.id)} aria-label="Browser" title="Browser">
+            <Icon name="browser" />
+          </Button>
+          {computer.state === 'running' ? (
+            <Button size="sm" variant="ghost" className="btn-icon" onClick={onStop} aria-label={`Stop ${computer.id}`} title="Stop">
+              <Icon name="stop" />
+            </Button>
+          ) : null}
+        </div>
+      </footer>
     </article>
   );
 }
@@ -240,17 +260,17 @@ function BrowserLook({ id }: { id: string }) {
     }
   };
   return (
-    <div>
+    <div className="overview-look">
       {url ? <img className="overview-thumb" src={url} alt={`The browser on ${id}`} /> : null}
       {none ? <p className="field-note">No browser is open on this computer.</p> : null}
-      <Button size="sm" loading={busy} onClick={() => void look()}>
-        {url ? 'Look again' : 'Look at browser'}
+      <Button size="sm" variant="ghost" loading={busy} onClick={() => void look()}>
+        <Icon name="browser" /> {url ? 'Look again' : 'Look at browser'}
       </Button>
     </div>
   );
 }
 
-/** CPU, memory and disk where measured; "not available" where not. Never an estimate. */
+/** CPU, memory and disk, only where measured. Never an estimate. */
 function StatsLine({ id, running }: { id: string; running: boolean }) {
   const { api } = useConnection();
   const stats = useResource<ComputerStats>((signal) => api.computerStats(id, signal), [api, id, running], true, {
@@ -260,15 +280,15 @@ function StatsLine({ id, running }: { id: string; running: boolean }) {
   });
   const s = stats.data;
   if (!s) return null;
-  const cpu = s.cpuPercent === null ? 'CPU not available' : `CPU ${s.cpuPercent.toFixed(1)}%`;
-  const mem =
-    s.memoryBytes === null
-      ? 'memory not available'
-      : `memory ${formatBytes(s.memoryBytes)}${s.memoryLimitBytes !== null ? ` of ${formatBytes(s.memoryLimitBytes)}` : ''}`;
-  const disk = s.diskBytes === null ? 'disk not available' : `disk ${formatBytes(s.diskBytes)}`;
+  const measured = [
+    s.cpuPercent === null ? null : `CPU ${s.cpuPercent.toFixed(1)}%`,
+    s.memoryBytes === null ? null : `memory ${formatBytes(s.memoryBytes)}${s.memoryLimitBytes !== null ? ` of ${formatBytes(s.memoryLimitBytes)}` : ''}`,
+    s.diskBytes === null ? null : `disk ${formatBytes(s.diskBytes)}`,
+  ].filter(Boolean);
+  if (measured.length === 0) return null;
   return (
-    <p className="field-note tnum" title={s.notes?.join('; ')}>
-      {cpu} · {mem} · {disk}
+    <p className="field-note overview-line tnum" title={s.notes?.join('; ')}>
+      {measured.join(' · ')}
     </p>
   );
 }
