@@ -350,17 +350,26 @@ export class ComputerDriverTransport implements CdpTransport {
         }
         this.server = server;
       }
+      // An exec records use while it runs, and a served request runs no exec.
+      // So a request still going after a while -- a long browser_run, a long
+      // wait -- records it too, or the idle reaper takes the computer out from
+      // under it. Frames finish in well under the interval and never do.
+      const beat = setInterval(() => this.computer.markUsed?.(), HEARTBEAT_MS);
+      beat.unref?.();
       try {
         return await server.request(body, timeoutMs);
       } catch (err) {
-        // Died before it ever answered: whatever the reason -- no python3, a
-        // provider that closes stdin -- one exec per request still works.
-        if (server.exited && !server.answered) {
+        // Died by itself before it ever answered: whatever the reason -- no
+        // python3, a provider that closes stdin -- one exec per request still
+        // works. One husk killed proves nothing about the provider.
+        if (server.exited && !server.answered && !server.killed) {
           this.oneShot = true;
           if (err instanceof HuskError && err.details?.['missingDriver'] === true) this.installed = undefined;
           return undefined;
         }
         throw err;
+      } finally {
+        clearInterval(beat);
       }
     });
     this.queue = next.catch(() => undefined);
@@ -407,7 +416,7 @@ export class ComputerDriverTransport implements CdpTransport {
         // The driver enforces its own deadline and reports a structured
         // timeout. This one is the backstop for a driver that wedged, so it has
         // to be the looser of the two or it would mask the useful error.
-        timeoutSec: Math.ceil(timeoutMs / 1000) + 15,
+        timeoutSec: Math.min(Math.ceil(timeoutMs / 1000) + 15, Math.floor(MAX_TIMER_MS / 1000)),
         maxOutputBytes: this.maxOutputBytes,
       })
       .catch((err: unknown) => {
@@ -533,9 +542,17 @@ function resultOf(parsed: Record<string, unknown>): DriverResult {
  * growing buffer, because a full-page screenshot is one line of many
  * megabytes and rescanning it on every chunk is quadratic.
  */
+/** The longest delay Node's `setTimeout` honours; anything longer fires at once. */
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** How often a long-running served request records use. Well inside any idle timeout worth setting. */
+const HEARTBEAT_MS = 60_000;
+
 class DriverServer {
   answered = false;
   exited = false;
+  /** Husk stopped it, after a timeout or a close. Not a sign the provider cannot run one. */
+  killed = false;
   private readonly proc: ComputerProcess;
   private parts: string[] = [];
   private stderr = '';
@@ -572,7 +589,9 @@ class DriverServer {
             hint: 'the page is probably blocked on something -- a dialog, or a script that never yields; husk restarts the driver',
           }),
         );
-      }, timeoutMs + 15_000);
+        // Clamped: past 2^31-1 ms Node fires a timer at once, which would kill
+        // a healthy driver the moment a long wait went out.
+      }, Math.min(timeoutMs + 15_000, MAX_TIMER_MS));
       this.pending.set(id, {
         resolve: (v) => {
           clearTimeout(timer);
@@ -588,7 +607,14 @@ class DriverServer {
     });
   }
 
+  /**
+   * Stop it, and stop using it now. The process gets a moment to see its stdin
+   * close before the signal, and must not be written to in that moment, so it
+   * counts as gone from here: the next request starts a fresh one.
+   */
   kill(): void {
+    this.killed = true;
+    this.exit(137);
     this.proc.kill();
   }
 
@@ -640,6 +666,7 @@ class DriverServer {
   }
 
   private exit(code: number): void {
+    if (this.exited) return;
     this.exited = true;
     const err = this.gone(code);
     for (const waiting of this.pending.values()) waiting.reject(err);

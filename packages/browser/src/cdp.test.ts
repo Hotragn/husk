@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { HuskError, isHuskError } from '@husk-ai/core';
 import type { Computer, ComputerProcess, ExecRequest, ExecResult, SpawnRequest } from '@husk-ai/core';
 import { CdpConnection, ComputerDriverTransport, DRIVER_SCRATCH_PATH, createTarget, waitResultOf } from './cdp.js';
@@ -367,9 +367,18 @@ describe('createTarget', () => {
  * A computer that can hold a process open, playing the long-lived driver:
  * each line in is a request, and `answer` decides what goes back.
  */
-function spawningComputer(answer: (req: Record<string, unknown>, out: (obj: unknown) => void, exit: (code: number) => void) => void) {
-  const c = okComputer([{ oneShot: true }]) as FakeComputer & { spawns: SpawnRequest[] };
+function spawningComputer(
+  answer: (req: Record<string, unknown>, out: (obj: unknown) => void, exit: (code: number) => void) => void,
+  opts: { exitOnKill?: boolean } = {},
+) {
+  const c = okComputer([{ oneShot: true }]) as FakeComputer & { spawns: SpawnRequest[]; lines: string[]; used: number; kills: number };
   c.spawns = [];
+  c.lines = [];
+  c.used = 0;
+  c.kills = 0;
+  (c as { markUsed?: () => void }).markUsed = () => {
+    c.used++;
+  };
   (c as { spawn?: Computer['spawn'] }).spawn = (req: SpawnRequest): ComputerProcess => {
     c.spawns.push(req);
     let gone = false;
@@ -381,9 +390,14 @@ function spawningComputer(answer: (req: Record<string, unknown>, out: (obj: unkn
     const out = (obj: unknown) => req.onStdout(`${JSON.stringify(obj)}\n`);
     return {
       write: (data) => {
+        c.lines.push(data);
         for (const line of data.split('\n').filter(Boolean)) answer(JSON.parse(line) as Record<string, unknown>, out, exit);
       },
-      kill: () => exit(137),
+      // A real kill gives the process two seconds to see stdin close first.
+      kill: () => {
+        c.kills++;
+        if (opts.exitOnKill !== false) exit(137);
+      },
     };
   };
   return c;
@@ -452,6 +466,64 @@ describe('ComputerDriverTransport keeps one driver running where it can', () => 
     expect(await t.screencast('T1', 4)).toBe(true);
     await t.stopScreencast('T1');
     expect(seen).toEqual(['T1:JPEG:800', 'stopped']);
+  });
+
+  it('never writes to a driver it killed, and starts a fresh one without giving up on serving', async () => {
+    vi.useFakeTimers();
+    try {
+      // The first request wedges; the kill is pending; the next must not reuse it.
+      const c = spawningComputer(
+        (req, out) => {
+          if (c.spawns.length > 1) out({ id: req['id'], ok: true, results: [{ fresh: true }] });
+        },
+        { exitOnKill: false },
+      );
+      const t = new ComputerDriverTransport(c, 9222);
+      const wedged = codeOf(() => t.run({ steps: [{ op: 'send', method: 'A' }], timeoutMs: 1000 }));
+      await vi.advanceTimersByTimeAsync(16_500);
+      expect(await wedged).toBe('E_EXEC_TIMEOUT');
+      const sent = c.lines.length;
+      expect((await t.run({ steps: [{ op: 'send', method: 'A' }] })).results).toEqual([{ fresh: true }]);
+      expect(c.spawns).toHaveLength(2);
+      expect(c.lines).toHaveLength(sent + 1);
+      expect(c.calls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('records use while a long request runs, since no exec is there to do it', async () => {
+    vi.useFakeTimers();
+    try {
+      let answer: (() => void) | undefined;
+      const c = spawningComputer((req, out) => {
+        answer = () => out({ id: req['id'], ok: true, results: [{}] });
+      });
+      const t = new ComputerDriverTransport(c, 9222);
+      const long = t.run({ steps: [{ op: 'send', method: 'A' }], timeoutMs: 300_000 });
+      await vi.advanceTimersByTimeAsync(150_000);
+      expect(c.used).toBe(2);
+      answer!();
+      await long;
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(c.used).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not kill the driver at once when a wait is longer than a timer can hold', async () => {
+    vi.useFakeTimers();
+    try {
+      const c = spawningComputer(() => undefined);
+      const t = new ComputerDriverTransport(c, 9222);
+      void t.run({ steps: [{ op: 'send', method: 'A' }], timeoutMs: 3_000_000_000 }).catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(60_000);
+      // Unclamped, Node fires a timer over 2^31-1 ms after 1 ms, killing a healthy driver.
+      expect(c.kills).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('says it cannot cast where the provider cannot hold a process open', async () => {

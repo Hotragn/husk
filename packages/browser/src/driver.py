@@ -84,9 +84,11 @@ ACTION = 'action'              # a page action could not be done: no such elemen
 INTERNAL = 'internal'          # a bug in this file
 
 # Reading a 12 MB full-page screenshot off the socket must not be mistaken for a
-# hang, so once a frame header is in hand the payload gets its own generous
-# budget rather than the caller's.
-PAYLOAD_GRACE_SEC = 60.0
+# hang, so once a frame header is in hand the payload gets its own budget rather
+# than the caller's. Ten seconds is ages for loopback, and it must stay under the
+# host's 15-second margin past the deadline (cdp.ts), or the host kills a driver
+# that was only finishing a read and would have answered.
+PAYLOAD_GRACE_SEC = 10.0
 
 
 class DriverError(Exception):

@@ -380,7 +380,15 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
         idle = false;
         if (!watched) {
           watched = session;
-          const stop = await session.watchScreen(fps, (frame) => send({ type: 'frame', ...frame }));
+          const stop = await session.watchScreen(
+            fps,
+            (frame) => send({ type: 'frame', ...frame }),
+            // Pushing stopped for good after it started: ask for frames instead.
+            () => {
+              stopWatching = undefined;
+              polling = true;
+            },
+          );
           if (!open) stop?.();
           else if (stop) stopWatching = stop;
           else polling = true;

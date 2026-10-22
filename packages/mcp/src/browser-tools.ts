@@ -261,6 +261,18 @@ function renderSnapshot(nodes: SnapshotNode[]): string {
     .join('\n');
 }
 
+/** The longest any one wait may be. */
+export const MAX_WAIT_SEC = 600;
+
+/**
+ * A model's timeout in seconds, made safe: a finite positive number, at most
+ * MAX_WAIT_SEC, else the default. Unchecked, `3000000` overflowed the host's
+ * timer, which then fired at once and killed the driver.
+ */
+export function secondsArg(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.min(value, MAX_WAIT_SEC) : fallback;
+}
+
 const ACTION_NAMES: ReadonlySet<string> = new Set(['goto', 'click', 'fill', 'wait', 'snapshot', 'screenshot']);
 
 /** The model's actions as `PageAction`s, or the reason one is not an action. */
@@ -274,7 +286,9 @@ function parseActions(raw: unknown): PageAction[] | string {
     const at = `action ${i + 1}`;
     if (!ACTION_NAMES.has(kind)) return `${at}: do must be one of ${[...ACTION_NAMES].join(', ')}`;
     const s = (k: string): string | undefined => (typeof a[k] === 'string' ? (a[k] as string) : undefined);
-    const ms = typeof a['timeoutSec'] === 'number' ? { timeoutMs: a['timeoutSec'] * 1000 } : {};
+    // Left out when absent or unusable, so each action keeps its own default.
+    const sec = secondsArg(a['timeoutSec'], 0);
+    const ms = sec > 0 ? { timeoutMs: sec * 1000 } : {};
     const el = { ...(s('ref') ? { ref: s('ref') } : {}), ...(s('role') ? { role: s('role') } : {}), ...(s('name') ? { name: s('name') } : {}) };
     if ((kind === 'click' || kind === 'fill') && !el.ref && !el.role && !el.name) return `${at}: say which element, with ref or role and name`;
     if (kind === 'goto') {
@@ -340,7 +354,7 @@ export async function callBrowserTool(
     case 'browser_goto': {
       const url = String(args.url ?? '');
       if (!url.trim()) return bad('url is empty');
-      const timeoutSec = typeof args.timeoutSec === 'number' ? args.timeoutSec : 30;
+      const timeoutSec = secondsArg(args.timeoutSec, 30);
       const result = await session.goto(url, { timeoutMs: timeoutSec * 1000 });
       const page = await session.activePage();
       const head = [
@@ -420,7 +434,7 @@ export async function callBrowserTool(
     }
 
     case 'browser_wait_for': {
-      const timeoutMs = (typeof args.timeoutSec === 'number' ? args.timeoutSec : 15) * 1000;
+      const timeoutMs = secondsArg(args.timeoutSec, 15) * 1000;
       if (!args.text && !args.selector) return bad('pass text or selector');
       const page = await session.activePage();
       const res = await page.waitFor(

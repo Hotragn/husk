@@ -10,10 +10,12 @@ const page = {
   press: vi.fn(async () => {}),
 };
 const live = { on: true };
+// Hoisted: the mock factory below reads it when the module loads, not when called.
+const markUsedFor = vi.hoisted(() => vi.fn());
 
 vi.mock('@husk-ai/browser', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@husk-ai/browser')>();
-  return { ...actual, livePageFor: (id: string) => (live.on && id === 'cmp_1' ? page : undefined) };
+  return { ...actual, markUsedFor, livePageFor: (id: string) => (live.on && id === 'cmp_1' ? page : undefined) };
 });
 
 let harness: TestApp | undefined;
@@ -42,6 +44,7 @@ function input(id: string, payload: unknown, headers: Record<string, string> = {
 beforeEach(() => {
   live.on = true;
   for (const fn of Object.values(page)) fn.mockClear();
+  markUsedFor.mockClear();
 });
 
 afterEach(async () => {
@@ -61,6 +64,16 @@ describe('handoff viewer', () => {
     expect(res.headers['cache-control']).toBe('no-store');
     expect(res.headers['x-husk-viewport']).toBe('1280x720');
     expect(res.rawPayload.toString()).toBe('jpeg-bytes');
+  });
+
+  it('counts a person’s input as using the computer, and their watching as not', async () => {
+    // Without this a long 2FA in a take-over is idle time, and the reaper takes
+    // the computer while the person types.
+    const id = await openHandoff();
+    await harness!.app.inject({ method: 'GET', url: `/v1/handoffs/${id}/screen` });
+    expect(markUsedFor).not.toHaveBeenCalled();
+    await input(id, { type: 'text', text: '913377' });
+    expect(markUsedFor).toHaveBeenCalledWith('cmp_1');
   });
 
   it('says there is no browser rather than launching one', async () => {

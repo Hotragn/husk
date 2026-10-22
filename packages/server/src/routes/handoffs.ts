@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { livePageFor } from '@husk-ai/browser';
+import { livePageFor, markUsedFor } from '@husk-ai/browser';
 import type { Page } from '@husk-ai/browser';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -289,6 +289,10 @@ export function registerHandoffRoutes(app: FastifyInstance, opts: HandoffRouteOp
       throw invalidSpec(parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`));
     }
     const page = pageFor(req);
+    // A person typing a 2FA code is using the computer, so its idle timer must
+    // not reap it under them. Their frames above are only watching, and are not.
+    const { computerId } = open(req);
+    if (computerId) markUsedFor(computerId);
     const input = parsed.data;
     if (input.type === 'click') {
       await page.clickAt(input.x, input.y, { button: input.button ?? 'left', clickCount: input.double ? 2 : 1 });

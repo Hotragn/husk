@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Computer, ComputerInfo, ExecResult } from '@husk-ai/core';
 import type { CdpTransport, DriverRequest, DriverResult, ScreencastEvent, ScreenFrame } from './cdp.js';
-import { BrowserSession } from './session.js';
+import { BrowserSession, browserFor, closeBrowserFor, markUsedFor } from './session.js';
 
 /**
  * The shared screencast, and what counts as using the computer, with no
@@ -33,6 +33,7 @@ function fakeComputer(): Computer & { used: number } {
 function fakeTransport(pushes = true) {
   let listener: ((e: ScreencastEvent) => void) | undefined;
   const t = {
+    pushes,
     casts: [] as Array<{ targetId: string; fps: number }>,
     stops: [] as string[],
     async run(req: DriverRequest): Promise<DriverResult> {
@@ -40,7 +41,7 @@ function fakeTransport(pushes = true) {
     },
     async close(): Promise<void> {},
     async screencast(targetId: string, fps: number): Promise<boolean> {
-      if (!pushes) return false;
+      if (!t.pushes) return false;
       t.casts.push({ targetId, fps });
       return true;
     },
@@ -52,6 +53,9 @@ function fakeTransport(pushes = true) {
       return () => {
         listener = undefined;
       };
+    },
+    end(reason: string) {
+      listener?.({ type: 'ended', reason });
     },
     push(targetId: string, data: string) {
       listener?.({ type: 'frame', targetId, frame: { data, width: 800, height: 600 } });
@@ -116,6 +120,19 @@ describe('the shared screencast', () => {
     expect(seen.map((f) => f.data)).toEqual(['still']);
   });
 
+  it('hands viewers back to poll when pushing stops for good after it started', async () => {
+    // The driver died and its replacement fell back to one exec per call: a
+    // viewer left waiting for pushed frames would stare at one frame forever.
+    const { transport, session } = await launched();
+    vi.useFakeTimers();
+    const stopped = vi.fn();
+    expect(await session.watchScreen(4, () => undefined, stopped)).toBeTypeOf('function');
+    transport.pushes = false;
+    transport.end('the browser driver exited');
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(stopped).toHaveBeenCalledOnce();
+  });
+
   it('says it cannot push, so the caller polls, when the transport cannot cast', async () => {
     const { session } = await launched(false);
     expect(await session.watchScreen(4, () => undefined)).toBeUndefined();
@@ -132,5 +149,14 @@ describe('what counts as using the computer', () => {
     expect(computer.used).toBe(afterLaunch);
     await session.activePage();
     expect(computer.used).toBe(afterLaunch + 1);
+  });
+
+  it('a person’s input does, through markUsedFor', async () => {
+    const computer = fakeComputer();
+    browserFor(computer);
+    markUsedFor(computer.id);
+    expect(computer.used).toBe(1);
+    markUsedFor('no-such-computer');
+    await closeBrowserFor(computer.id);
   });
 });

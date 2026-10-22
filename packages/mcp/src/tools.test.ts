@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { TOOLS, callTool } from './tools.js';
-import { BROWSER_TOOLS } from './browser-tools.js';
+import { BROWSER_TOOLS, MAX_WAIT_SEC, secondsArg } from './browser-tools.js';
 import type { Computer } from '@husk-ai/core';
 import { PROBE_COMPUTER_INFO } from '@husk-ai/core';
 
@@ -149,5 +149,16 @@ describe('computer_info', () => {
     const result = await callTool(computer, 'computer_info', {});
     expect(result.isError).toBe(true);
     expect(result.content[0]).toMatchObject({ text: expect.stringContaining('probe timed out') });
+  });
+});
+
+describe('model timeouts', () => {
+  it('are finite, positive and at most ten minutes, whatever the model sends', () => {
+    expect(secondsArg(3_000_000, 15)).toBe(MAX_WAIT_SEC);
+    expect(secondsArg(Infinity, 15)).toBe(15);
+    expect(secondsArg(Number.NaN, 15)).toBe(15);
+    expect(secondsArg(-5, 15)).toBe(15);
+    expect(secondsArg('30', 15)).toBe(15);
+    expect(secondsArg(20, 15)).toBe(20);
   });
 });

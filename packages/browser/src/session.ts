@@ -90,6 +90,8 @@ interface Viewer {
   lastAt: number;
   pending?: ScreenFrame;
   timer?: ReturnType<typeof setTimeout>;
+  /** Told when pushing stops for good, so the caller can poll. */
+  stopped?: () => void;
 }
 
 export class BrowserSession {
@@ -199,12 +201,20 @@ export class BrowserSession {
    * the end -- a page that repaints once and goes still must not leave a slow
    * viewer looking at the frame before. None of this counts as using the
    * computer, and none of it launches a browser.
+   *
+   * `onStop` fires if pushing becomes impossible later -- a tab that will not
+   * cast, a driver that fell back to one exec per call -- so the caller can
+   * start polling rather than show a frozen frame forever.
    */
-  async watchScreen(fps: number, onFrame: (frame: ScreenFrame) => void): Promise<(() => void) | undefined> {
-    const viewer: Viewer = { fps: Math.max(1, fps), send: onFrame, lastAt: 0 };
+  async watchScreen(
+    fps: number,
+    onFrame: (frame: ScreenFrame) => void,
+    onStop?: () => void,
+  ): Promise<(() => void) | undefined> {
+    const viewer: Viewer = { fps: Math.max(1, fps), send: onFrame, lastAt: 0, ...(onStop ? { stopped: onStop } : {}) };
     this.viewers.add(viewer);
     await this.syncCast();
-    if (this.pushes === false) {
+    if (this.pushes === false || !this.viewers.has(viewer)) {
       this.viewers.delete(viewer);
       return undefined;
     }
@@ -219,7 +229,19 @@ export class BrowserSession {
 
   /** Bring the screencast in line with the viewers and the active tab. Serialised, so two changes cannot cross. */
   private syncCast(): Promise<void> {
-    this.castSync = this.castSync.then(() => this.syncCastNow()).catch(() => undefined);
+    this.castSync = this.castSync
+      .then(() => this.syncCastNow())
+      .catch(() => undefined)
+      .then(() => {
+        if (this.pushes !== false) return;
+        // Nothing will be pushed to these viewers again: hand each back to its
+        // caller, which polls instead.
+        for (const viewer of [...this.viewers]) {
+          this.viewers.delete(viewer);
+          if (viewer.timer) clearTimeout(viewer.timer);
+          viewer.stopped?.();
+        }
+      });
     return this.castSync;
   }
 
@@ -362,6 +384,8 @@ export class BrowserSession {
     await conn.send('Target.activateTarget', { targetId }).catch(() => undefined);
     this.page = page;
     this.touch();
+    // A new tab gets its own try at casting, whatever the last one did.
+    this.pushes = undefined;
     void this.syncCast();
     return { url: await page.url(), title: await page.title() };
   }
@@ -519,6 +543,18 @@ export function browserFor(computer: Computer, opts: SessionOptions = {}): Brows
 /** The live page on this computer, if its browser is already up. Never launches. */
 export function livePageFor(computerId: string): Page | undefined {
   return sessions.get(computerId)?.livePage();
+}
+
+/**
+ * Record a person's input to this computer's browser as use.
+ *
+ * A tool call records itself through `activePage`. A person in a handoff or a
+ * take-over comes in through `livePage`, which must not, because frames do
+ * too, so their input routes call this. With a long-lived driver nothing else
+ * would: the clicks and keystrokes run no `exec`.
+ */
+export function markUsedFor(computerId: string): void {
+  sessions.get(computerId)?.computer.markUsed?.();
 }
 
 /** This computer's browser session if it has one, for watching its screen. Never creates one. */
