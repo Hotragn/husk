@@ -284,7 +284,7 @@ export class Computers {
     if (this.settings.onScreen && count > 0) {
       this.dock ??= this.overlay('dock', false);
       this.dock.setBounds(dockBounds(display.workArea, count));
-      if (!this.dock.isVisible() && this.drawn.has(this.dock)) this.dock.showInactive();
+      if (!this.dock.isVisible() && this.drawn.has(this.dock)) reveal(this.dock);
     } else this.dock?.hide();
 
     if (this.settings.notch && this.state === 'minimized' && count > 0) {
@@ -292,7 +292,7 @@ export class Computers {
       const bounds = pillBounds(display, count);
       this.pill.setBounds(bounds);
       if (!this.pill.isVisible() && this.drawn.has(this.pill)) {
-        this.pill.showInactive();
+        reveal(this.pill);
         // macOS keeps a window below the menu bar until it is shown at its level; then it may sit on top.
         this.pill.setBounds(bounds);
       }
@@ -378,6 +378,21 @@ export class Computers {
     // A page that stopped answering answers nothing after 10 s, so its checks fail instead of the walk hanging.
     return Promise.race([w.webContents.executeJavaScript(js), new Promise((r) => setTimeout(r, 10_000))]);
   }
+}
+
+/**
+ * Show an overlay without a black first frame. macOS puts a newly shown
+ * transparent window's empty surface on screen for a frame before the page's
+ * picture reaches it, even when the page drew while hidden, so there the
+ * window goes on screen fully transparent and turns visible a moment later.
+ */
+function reveal(w) {
+  if (!MAC) return w.showInactive();
+  w.setOpacity(0);
+  w.showInactive();
+  setTimeout(() => {
+    if (!w.isDestroyed()) w.setOpacity(1);
+  }, 120);
 }
 
 /** The page stays on Husk's own origin; any other web link opens in the default browser. */
