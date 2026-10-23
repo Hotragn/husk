@@ -48,6 +48,8 @@ export class Computers {
     this.iconsAsked = new Set();
     this.dock = undefined;
     this.pill = undefined;
+    /** Overlays that have drawn a first frame. Shown before it, a transparent window flashes black. */
+    this.drawn = new WeakSet();
     // Closing the window only hides it, except when the app itself is quitting (Cmd+Q, logout).
     this.quitting = false;
     app.on('before-quit', () => {
@@ -282,14 +284,14 @@ export class Computers {
     if (this.settings.onScreen && count > 0) {
       this.dock ??= this.overlay('dock', false);
       this.dock.setBounds(dockBounds(display.workArea, count));
-      if (!this.dock.isVisible()) this.dock.showInactive();
+      if (!this.dock.isVisible() && this.drawn.has(this.dock)) this.dock.showInactive();
     } else this.dock?.hide();
 
     if (this.settings.notch && this.state === 'minimized' && count > 0) {
       this.pill ??= this.overlay('pill', true);
       const bounds = pillBounds(display, count);
       this.pill.setBounds(bounds);
-      if (!this.pill.isVisible()) {
+      if (!this.pill.isVisible() && this.drawn.has(this.pill)) {
         this.pill.showInactive();
         // macOS keeps a window below the menu bar until it is shown at its level; then it may sit on top.
         this.pill.setBounds(bounds);
@@ -323,6 +325,11 @@ export class Computers {
     w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: top });
     if (FORWARDS) w.setIgnoreMouseEvents(true, { forward: true });
     guard(w, () => this.opts.rec()?.url);
+    // On screen only once the page has drawn, and then wherever layout says it belongs.
+    w.once('ready-to-show', () => {
+      this.drawn.add(w);
+      this.layout();
+    });
     const rec = this.opts.rec();
     if (rec) void w.loadURL(desktopUrl(rec, view));
     return w;

@@ -310,6 +310,7 @@ async function walkComputers(check, ids, prefix) {
   // A filmed run is watched: each step stays on the screen long enough to be seen.
   const beat = () => sleep(LIVE || FILM ? 1500 : 0);
   await sleep(1500); // the corner row builds
+  check('the corner comes on screen once it has drawn', await until(() => computers.dock?.isVisible(), 10_000));
   const dock = computers.dock?.getBounds();
   check('the corner row sits small in the bottom-right corner', dock && inside(dock, area) && dock.x + dock.width > area.x + area.width - 40 && dock.height <= 90, JSON.stringify(dock));
   const mode = await computers.run('dock', `document.querySelector('.dock-flat') ? 'flat' : '3D'`);
@@ -355,8 +356,9 @@ async function walkComputers(check, ids, prefix) {
   await beat();
 
   computers.minimize();
-  const logos = await until(() => computers.run('pill', `document.querySelectorAll('.pill-logo').length`), 8000);
-  check('minimizing sends the window to the notch, with each computer’s logo', logos === ids.length, `${logos} in the notch`);
+  // On screen as well: it is shown only once it has drawn, so it never flashes black.
+  const logos = await until(() => computers.pill?.isVisible() && computers.run('pill', `document.querySelectorAll('.pill-logo').length`), 8000);
+  check('minimizing sends the window to the notch, with each computer’s logo', logos === ids.length, `${logos ?? 0} in the notch${computers.pill?.isVisible() ? '' : ', not on screen'}`);
   const pill = computers.pill?.getBounds();
   const display = screen.getPrimaryDisplay().bounds;
   check(
