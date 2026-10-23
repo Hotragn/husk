@@ -374,7 +374,9 @@ export class Computers {
 
   run(which, js) {
     const w = this.windowOf(which);
-    return w && !w.isDestroyed() ? w.webContents.executeJavaScript(js) : Promise.resolve(undefined);
+    if (!w || w.isDestroyed()) return Promise.resolve(undefined);
+    // A page that stopped answering answers nothing after 10 s, so its checks fail instead of the walk hanging.
+    return Promise.race([w.webContents.executeJavaScript(js), new Promise((r) => setTimeout(r, 10_000))]);
   }
 }
 

@@ -43,8 +43,14 @@ const SHOTS = process.env.HUSK_DESKTOP_SHOTS;
 const FILM = SMOKE ? process.env.HUSK_DESKTOP_FILM : undefined;
 // CI machines have no GPU. The 3D row is the app's own page, so software WebGL is safe for it there.
 if (SMOKE || LIVE) app.commandLine.appendSwitch('enable-unsafe-swiftshader');
-// Linux draws a transparent window see-through only when asked, and a compositor is running (the e2e films one).
-if ((SMOKE || LIVE) && process.platform === 'linux') app.commandLine.appendSwitch('enable-transparent-visuals');
+if ((SMOKE || LIVE) && process.platform === 'linux') {
+  // Linux draws a transparent window see-through only when asked, and a compositor is running (the e2e films one).
+  app.commandLine.appendSwitch('enable-transparent-visuals');
+  // A virtual screen has no hardware GL, so the GPU process's first start fails and it starts again on
+  // SwiftShader; a page that draws in between can stop answering for good. Start on SwiftShader.
+  app.commandLine.appendSwitch('use-gl', 'angle');
+  app.commandLine.appendSwitch('use-angle', 'swiftshader');
+}
 const BIN = runtimeBin({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() });
 
 /** ~/.husk, owner-only, as the rest of Husk makes it. */
