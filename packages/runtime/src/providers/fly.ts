@@ -16,6 +16,7 @@ import type {
 } from '@husk-ai/core';
 import { GUEST_ROOT, evaluateCommand, normaliseGuestPath, shellQuote } from '../policy.js';
 import { expired, forgetInfo, loadInfos, persistInfo } from '../registry.js';
+import { EXEC_TAG, REAP_SCRIPT, STOP_UNCONFIRMED, newExecTag, timerMs } from '../reap.js';
 import { parseLsLong } from './oci-common.js';
 import { resolveImage } from '../images.js';
 
@@ -125,8 +126,11 @@ export async function flyRequest<T>(
   path: string,
   body?: unknown,
   timeoutMs?: number,
+  /** A caller's stop, on top of the timeout. */
+  signal?: AbortSignal,
 ): Promise<T> {
   const url = `${cfg.baseUrl}${path}`;
+  const timeout = AbortSignal.timeout(timeoutMs ?? cfg.timeoutMs);
   let res: Response;
   try {
     res = await cfg.fetch(url, {
@@ -137,7 +141,7 @@ export async function flyRequest<T>(
         Accept: 'application/json',
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(timeoutMs ?? cfg.timeoutMs),
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
     });
   } catch (err) {
     const aborted = (err as Error).name === 'TimeoutError' || (err as Error).name === 'AbortError';
@@ -342,8 +346,14 @@ class FlyComputer implements Computer {
       });
     }
 
+    // A stop that arrived before the start runs nothing at all.
+    if (req.signal?.aborted) {
+      return { exitCode: 124, stdout: '', stderr: '', durationMs: 0, truncated: false, timedOut: true };
+    }
     const script = typeof req.cmd === 'string' ? req.cmd : shellQuote(req.cmd);
-    const env = { ...this.info.spec.env, ...req.env };
+    // Inherited by everything the command starts, so a stop can find all of it (reap.ts).
+    const tag = newExecTag();
+    const env = { ...this.info.spec.env, ...req.env, [EXEC_TAG]: tag };
     const assignments = Object.entries(env)
       .map(([k, v]) => `${k}=${shellQuote([v])}`)
       .join(' ');
@@ -362,15 +372,20 @@ class FlyComputer implements Computer {
         { command: ['/bin/sh', '-c', wrapped], timeout: timeoutSec > 0 ? timeoutSec : 0 },
         // A little slack over the remote timeout, so the remote one wins and we
         // learn the exit code instead of guessing at a dead socket.
-        (timeoutSec > 0 ? timeoutSec + 15 : 3600) * 1000,
+        timerMs(timeoutSec > 0 ? timeoutSec + 15 : 3600) as number,
+        req.signal,
       );
     } catch (err) {
-      const timedOut = /timed out/.test((err as Error).message);
+      const timedOut = /timed out/.test((err as Error).message) || req.signal?.aborted === true;
       if (!timedOut) throw err;
+      // Whether the machine ends the command when the request goes away is not
+      // documented, so the stop also reaps it there.
+      const stopped = await this.raw(`set -- ${shellQuote([tag])}\n${REAP_SCRIPT}`, 15).then((r) => r.exit_code === 0, () => false);
+      const message = (err as Error).message;
       return {
         exitCode: 124,
         stdout: '',
-        stderr: (err as Error).message,
+        stderr: stopped ? message : `${message}\n${STOP_UNCONFIRMED}`,
         durationMs: Date.now() - started,
         truncated: false,
         timedOut: true,

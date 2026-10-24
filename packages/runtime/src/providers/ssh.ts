@@ -19,6 +19,7 @@ import type {
 } from '@husk-ai/core';
 import { GUEST_ROOT, GUEST_TMP, OutputBuffer, evaluateCommand, normaliseGuestPath, shellQuote } from '../policy.js';
 import { expired, forgetInfo, loadInfos, persistInfo } from '../registry.js';
+import { EXEC_TAG, STOP_UNCONFIRMED, newExecTag, reapArgv, timerMs } from '../reap.js';
 import { parseLsLong } from './oci-common.js';
 
 /**
@@ -699,7 +700,10 @@ class SshComputer implements Computer {
     const script = typeof req.cmd === 'string' ? req.cmd : shellQuote(req.cmd);
     // Only what the spec asked for. Nothing from this laptop's environment goes
     // over the wire -- the remote already has its own, and ours holds secrets.
-    const env: Record<string, string> = { ...this.info.spec.env, ...req.env, HUSK: '1' };
+    // Inherited by everything the command starts, so a stop can find all of it
+    // on the remote: killing the local ssh client does not end a `-T` session's command.
+    const tag = newExecTag();
+    const env: Record<string, string> = { ...this.info.spec.env, ...req.env, HUSK: '1', [EXEC_TAG]: tag };
     const assignments = Object.entries(env)
       .map(([k, v]) => `${k}=${shellQuote([v])}`)
       .join(' ');
@@ -710,9 +714,9 @@ class SshComputer implements Computer {
 
     const timeoutSec = req.timeoutSec ?? 120;
     const r = await this.remote(command, {
-      // The local kill is the backstop; closing the channel is what actually
-      // stops the remote, because sshd HUPs the session when the channel dies.
-      timeoutMs: (timeoutSec > 0 ? timeoutSec : 3600) * 1000,
+      // The local kill is the backstop. Without a pty, sshd does not HUP the
+      // command when the channel dies, so a stop also reaps it on the remote.
+      timeoutMs: timerMs(timeoutSec > 0 ? timeoutSec : 3600) as number,
       ...(req.maxOutputBytes !== undefined ? { maxOutputBytes: req.maxOutputBytes } : {}),
       ...(req.stdin !== undefined ? { stdin: req.stdin } : {}),
       ...(req.signal ? { signal: req.signal } : {}),
@@ -722,14 +726,21 @@ class SshComputer implements Computer {
     });
 
     this.touch();
+    const stopped = r.timedOut ? await this.reap(tag) : true;
     return {
       exitCode: r.code,
       stdout: r.stdout,
-      stderr: r.stderr,
+      stderr: stopped ? r.stderr : `${r.stderr}${r.stderr ? '\n' : ''}${STOP_UNCONFIRMED}`,
       durationMs: Date.now() - started,
       truncated: r.truncated,
       timedOut: r.timedOut,
     };
+  }
+
+  /** Kill, on the remote, every process one exec started. True once that is done. */
+  private async reap(tag: string): Promise<boolean> {
+    const r = await this.remote(shellQuote(reapArgv(tag)), { timeoutMs: 15_000 }).catch(() => undefined);
+    return r?.code === 0;
   }
 
   /** Run a filesystem command with the symlink guard in front of it. */

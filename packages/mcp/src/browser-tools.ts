@@ -300,8 +300,8 @@ export const MAX_WAIT_SEC = 600;
  * MAX_WAIT_SEC, else the default. Unchecked, `3000000` overflowed the host's
  * timer, which then fired at once and killed the driver.
  */
-export function secondsArg(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.min(value, MAX_WAIT_SEC) : fallback;
+export function secondsArg(value: unknown, fallback: number, max = MAX_WAIT_SEC): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.min(value, max) : fallback;
 }
 
 const ACTION_NAMES: ReadonlySet<string> = new Set(['goto', 'click', 'fill', 'wait', 'snapshot', 'screenshot']);
