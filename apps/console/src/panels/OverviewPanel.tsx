@@ -18,6 +18,7 @@ import { useConnection } from '../state/connection';
 import { useResource } from '../state/useResource';
 import { stateTone } from './ComputersPanel';
 import { IsolationBadge } from './DoctorPanel';
+import { LiveScreen, TakeOver } from './ChatPanel';
 
 export type OverviewTarget = 'chat' | 'terminal' | 'files' | 'browser' | 'handoffs';
 
@@ -62,7 +63,8 @@ export function OverviewPanel({ onOpen }: { onOpen: (target: OverviewTarget, com
   const running = rows.filter((r) => r.computer.state === 'running').length;
   const stopped = rows.filter((r) => r.computer.state === 'stopped').length;
   const other = rows.length - running - stopped;
-  const waiting = overview.data?.handoffs.length ?? 0;
+  // A computer the person took themselves is not waiting on them.
+  const waiting = overview.data?.handoffs.filter((h) => h.runId !== 'person').length ?? 0;
   // A handoff raised before its run had a computer has no card to sit on.
   const listed = new Set(rows.map((r) => r.computer.id));
   const unplaced = overview.data?.handoffs.filter((h) => !h.computerId || !listed.has(h.computerId)) ?? [];
@@ -125,6 +127,7 @@ export function OverviewPanel({ onOpen }: { onOpen: (target: OverviewTarget, com
             isolation={doctor.data?.providers.find((p) => p.name === row.computer.provider)}
             onOpen={onOpen}
             onStop={() => void stop(row.computer.id)}
+            onChange={overview.reload}
           />
         ))}
       </div>
@@ -137,11 +140,13 @@ function ComputerCard({
   isolation,
   onOpen,
   onStop,
+  onChange,
 }: {
   row: Row;
   isolation: DoctorReport['providers'][number] | undefined;
   onOpen: (target: OverviewTarget, computerId: string) => void;
   onStop: () => void;
+  onChange: () => void;
 }) {
   const { computer, run, handoff, last } = row;
   const name = computer.chatLabel ?? (computer.name && computer.name !== computer.id ? computer.name : computer.id);
@@ -171,17 +176,9 @@ function ComputerCard({
         </p>
       ) : null}
 
-      {handoff ? (
-        <div className="overview-waiting" role="status">
-          <strong>Waiting for you</strong>
-          <p className="handoff-reason">{handoff.reason}</p>
-          <Button variant="primary" onClick={() => onOpen('handoffs', computer.id)}>
-            Take over
-          </Button>
-        </div>
-      ) : null}
+      {handoff || computer.state === 'running' ? <TakeOver computerId={computer.id} handoff={handoff} onOpen={onOpen} onChange={onChange} /> : null}
 
-      {computer.state === 'running' ? <BrowserLook id={computer.id} /> : null}
+      {computer.state !== 'running' ? null : inUse(row) ? <LiveScreen id={computer.id} fps={1} /> : <BrowserLook id={computer.id} />}
       <StatsLine id={computer.id} running={computer.state === 'running'} />
 
       <div className="btn-row">
@@ -205,6 +202,16 @@ function ComputerCard({
       </div>
     </article>
   );
+}
+
+/**
+ * Live only while the computer is in use anyway: a chat acted on it in the last
+ * two minutes, a run is on it, or a person holds it. Every frame runs the
+ * driver inside the computer, which counts as use, so a live screen on an idle
+ * card would keep that computer from ever stopping while Home is open.
+ */
+function inUse(row: Row): boolean {
+  return Boolean(row.run || row.handoff || (row.last && Date.now() - Date.parse(row.last.at) < 120_000));
 }
 
 /**

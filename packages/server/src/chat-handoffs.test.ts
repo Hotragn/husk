@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { takeover } from './routes/tools.js';
 import { buildTestApp } from './testing.js';
 import type { TestApp } from './testing.js';
 
@@ -94,6 +95,49 @@ describe('the chat tool route', { timeout: 30_000 }, () => {
     const info = (await harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/tools/computer_info`, payload: {} })).json();
     expect(info.isError).toBeUndefined();
     expect(ran).toEqual(['computer_info']);
+  });
+});
+
+describe('a person taking a computer from the console', { timeout: 30_000 }, () => {
+  const ran: string[] = [];
+  async function taken() {
+    ran.length = 0;
+    harness = await buildTestApp({
+      runTool: async (_c, name) => {
+        ran.push(name);
+        return { content: [{ type: 'text', text: 'ran' }] };
+      },
+    });
+    const { id } = (await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: {} })).json() as { id: string };
+    const res = await harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/takeover` });
+    expect(res.statusCode).toBe(201);
+    return { id, handoffId: (res.json() as { handoffId: string }).handoffId };
+  }
+  const shell = (id: string) => harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/tools/shell`, payload: { args: {} } });
+
+  it('pauses a chat’s call until the person gives the computer back, then runs it', async () => {
+    const { id, handoffId } = await taken();
+    const call = shell(id);
+    await new Promise((r) => setTimeout(r, 600));
+    expect(ran).toEqual([]);
+    await harness.app.inject({ method: 'POST', url: `/v1/handoffs/${handoffId}/done` });
+    expect((await call).json().content[0].text).toBe('ran');
+  });
+
+  it('tells the chat it is paused when the person keeps it, and offers it no done to call', async () => {
+    const { id, handoffId } = await taken();
+    const before = takeover.waitMs;
+    takeover.waitMs = 300;
+    try {
+      const res = (await shell(id)).json();
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain('took over this computer');
+      expect(ran).toEqual([]);
+    } finally {
+      takeover.waitMs = before;
+    }
+    // Taking it again while held hands back the same one; it has no lease to run out.
+    expect((await harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/takeover` })).json().handoffId).toBe(handoffId);
   });
 });
 

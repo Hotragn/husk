@@ -28,4 +28,15 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: docker version
+      # Drives the runner's own Chrome through the console. Not a dependency of Husk.
+      - run: npm i --no-save playwright-core@1.48.2
       - run: npm run e2e:computers
+        env:
+          E2E_CONSOLE: '1'
+          E2E_SHOTS: ${{ runner.temp }}/e2e-shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: console-screenshots
+          path: ${{ runner.temp }}/e2e-shots
+          if-no-files-found: ignore

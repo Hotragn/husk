@@ -32,6 +32,17 @@ export function heldText(handoffId: string, reason: string): string {
   );
 }
 
+/** The `runId` of a handoff the person started from the console, rather than one a chat asked for. */
+export const PERSON_RUN = 'person';
+
+/** For a chat whose computer the person took from the console. It did not ask, so it has no done to call. */
+export function takenText(handoffId: string): string {
+  return (
+    `The user took over this computer from the Husk console (handoff ${handoffId}). Stop using it: tell the user ` +
+    'you are paused until they press Give back in Husk, then try again. Do not call hand_off_done for this handoff.'
+  );
+}
+
 export class HandoffRegistry {
   private readonly pending = new Map<string, Waiter>();
   /** How recent handoffs ended, so a chat polling for one is told done or not, never left to guess. */

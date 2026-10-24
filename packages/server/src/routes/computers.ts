@@ -333,6 +333,8 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
    */
   app.get('/v1/computers/:id/screen', { websocket: true }, (socket, req) => {
     const { id } = req.params as { id: string };
+    // `?fps=1` for a small screen among many, such as a card on Home. Never above the cap.
+    const fps = Math.min(SCREEN_FPS, Math.max(1, Number((req.query as { fps?: string }).fps) || SCREEN_FPS));
     let open = true;
     socket.on('close', () => {
       open = false;
@@ -359,7 +361,7 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
           continue;
         }
         idle = false;
-        let wait = 1000 / SCREEN_FPS;
+        let wait = 1000 / fps;
         try {
           const frame = await page.frame(60);
           send({ type: 'frame', ...frame });

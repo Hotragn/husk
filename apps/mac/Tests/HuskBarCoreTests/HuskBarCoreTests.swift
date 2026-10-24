@@ -18,6 +18,12 @@ final class SummaryTests: XCTestCase {
         XCTAssertTrue(Summary(overview(running: 2, waiting: 1)).isWaiting)
     }
 
+    func testAComputerThePersonTookIsNotWaitingOnThem() {
+        let taken = Handoff(handoffId: "hnd_me", reason: "You took over this computer", computerId: "cmp_0", runId: "person")
+        let o = Overview(computers: [Computer(id: "cmp_0", state: "running", provider: "docker")], activeRuns: [], handoffs: [taken])
+        XCTAssertEqual(Summary(o), .running(1))
+    }
+
     func testStoppedComputersDoNotShowThePill() {
         let o = Overview(computers: [Computer(id: "cmp_1", state: "stopped", provider: "local")], activeRuns: [], handoffs: [])
         XCTAssertEqual(Summary(o), .idle)

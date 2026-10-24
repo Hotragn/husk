@@ -86,7 +86,8 @@ export function external(url) {
 export function trayStatus(overview) {
   if (!overview) return { label: 'Husk is starting', waiting: [] };
   const running = overview.computers.filter((c) => c.state === 'running').length;
-  const waiting = overview.handoffs ?? [];
+  // A computer the person took themselves is not waiting on them.
+  const waiting = (overview.handoffs ?? []).filter((h) => h.runId !== 'person');
   const parts = [`${running} computer${running === 1 ? '' : 's'} running`];
   if (waiting.length) parts.push(`${waiting.length} waiting for you`);
   return { label: parts.join(' · '), waiting };

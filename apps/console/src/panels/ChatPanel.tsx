@@ -12,7 +12,7 @@
 import { useEffect, useState } from 'react';
 import { toDisplayError } from '../api/client';
 import type { DisplayError } from '../api/client';
-import type { ActivityEntry, BotDraft, ComputerInfo, Overview, ScreenMessage } from '../api/wire';
+import type { ActivityEntry, BotDraft, ComputerInfo, Overview, PendingHandoff, ScreenMessage } from '../api/wire';
 import { Badge, Button, EmptyState, ErrorBlock, PanelHeader, StatusDot, formatWhen } from '../components/primitives';
 import { useConnection } from '../state/connection';
 import { useResource } from '../state/useResource';
@@ -45,15 +45,7 @@ export function ChatPanel({ computerId, onOpen }: { computerId: string | null; o
         <span className="field-note mono">{computer.id}</span>
       </div>
 
-      {handoff ? (
-        <div className="overview-waiting" role="status">
-          <strong>Waiting for you</strong>
-          <p className="handoff-reason">{handoff.reason}</p>
-          <Button variant="primary" onClick={() => onOpen('handoffs', computer.id)}>
-            Take over
-          </Button>
-        </div>
-      ) : null}
+      <TakeOver computerId={computer.id} handoff={handoff} onOpen={onOpen} onChange={overview.reload} />
 
       <div className="chat-grid">
         <LiveScreen id={computer.id} />
@@ -82,8 +74,80 @@ function describe(c: ComputerInfo): string {
   return 'What this computer has done, and its browser, live.';
 }
 
-/** The browser, live, while this tab is visible. */
-export function LiveScreen({ id }: { id: string }) {
+/**
+ * The person's hold on a computer. With no hold, Take over pauses its chat at
+ * any moment; a chat that asked for them shows why; one they took shows Give
+ * back. Only Give back, or Done in Handoffs, lets the chat carry on.
+ */
+export function TakeOver({
+  computerId,
+  handoff,
+  onOpen,
+  onChange,
+}: {
+  computerId: string;
+  handoff: PendingHandoff | undefined;
+  onOpen: (target: OverviewTarget, id: string) => void;
+  onChange: () => void;
+}) {
+  const { api } = useConnection();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<DisplayError | null>(null);
+  const act = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+      onChange();
+    } catch (err) {
+      setError(toDisplayError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const failed = error ? <ErrorBlock error={error} /> : null;
+
+  if (!handoff) {
+    return (
+      <div>
+        <Button
+          size="sm"
+          loading={busy}
+          onClick={() =>
+            void act(async () => {
+              await api.takeOver(computerId);
+              onOpen('handoffs', computerId);
+            })
+          }
+        >
+          Take over
+        </Button>
+        {failed}
+      </div>
+    );
+  }
+  const mine = handoff.runId === 'person';
+  return (
+    <div className="overview-waiting" role="status">
+      <strong>{mine ? 'You have this computer' : 'Waiting for you'}</strong>
+      <p className="handoff-reason">{mine ? 'Its chat is paused until you give it back.' : handoff.reason}</p>
+      <div className="btn-row">
+        <Button variant="primary" size="sm" onClick={() => onOpen('handoffs', computerId)}>
+          {mine ? 'Use it' : 'Take over'}
+        </Button>
+        {mine ? (
+          <Button size="sm" loading={busy} onClick={() => void act(() => api.handoffDone(handoff.handoffId))}>
+            Give back
+          </Button>
+        ) : null}
+      </div>
+      {failed}
+    </div>
+  );
+}
+
+/** The browser, live, while this tab is visible. `fps` below the server's 4 for a small screen among many. */
+export function LiveScreen({ id, fps }: { id: string; fps?: number }) {
   const { api } = useConnection();
   const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden');
   const [frame, setFrame] = useState<{ src: string; width: number; height: number } | null>(null);
@@ -100,7 +164,7 @@ export function LiveScreen({ id }: { id: string }) {
       setNote('Paused while this tab is hidden.');
       return;
     }
-    const ws = new WebSocket(api.socketUrl(`/v1/computers/${encodeURIComponent(id)}/screen`));
+    const ws = new WebSocket(api.socketUrl(`/v1/computers/${encodeURIComponent(id)}/screen${fps ? `?fps=${fps}` : ''}`));
     ws.onmessage = (ev) => {
       let msg: ScreenMessage;
       try {
@@ -120,7 +184,7 @@ export function LiveScreen({ id }: { id: string }) {
     };
     ws.onclose = () => setNote((n) => n || 'The screen disconnected. It reconnects when you come back to this tab.');
     return () => ws.close();
-  }, [api, id, visible]);
+  }, [api, id, visible, fps]);
 
   return (
     <figure className="chat-screen" aria-label="Live browser">
