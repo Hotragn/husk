@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { HUSK_VERSION, clearDaemonRecord, createLogger, ensurePaths, writeDaemonRecord } from '@husk-ai/core';
+import { HUSK_PROTOCOL, HUSK_VERSION, clearDaemonRecord, createLogger, ensurePaths, writeDaemonRecord } from '@husk-ai/core';
 import type { Logger, ModelProvider } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
@@ -160,7 +160,14 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
 
   log.info(`husk serve listening on ${url}`);
   if (daemon) {
-    writeDaemonRecord({ url, token: config.token ?? null, pid: process.pid, version: HUSK_VERSION, startedAt: new Date().toISOString() });
+    writeDaemonRecord({
+      url,
+      token: config.token ?? null,
+      pid: process.pid,
+      version: HUSK_VERSION,
+      protocol: HUSK_PROTOCOL,
+      startedAt: new Date().toISOString(),
+    });
   }
   if (!config.token) log.info('no HUSK_TOKEN set -- loopback connections only');
 

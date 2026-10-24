@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
+import { HUSK_RANGE } from './identity.js';
 
 /**
  * The chat apps `husk setup` can connect, and how each one is told about Husk.
@@ -44,7 +45,8 @@ export function baseLaunch(
   env: NodeJS.ProcessEnv = process.env,
   self: { electron?: string; execPath: string; script?: string } = { electron: process.versions.electron, execPath: process.execPath, script: process.argv[1] },
 ): HuskLaunch {
-  const npx: HuskLaunch = { command: 'npx', args: ['-y', '@husk-ai/mcp'] };
+  // A range, not "latest": a later release that speaks another protocol must not start under a running Husk.
+  const npx: HuskLaunch = { command: 'npx', args: ['-y', `@husk-ai/mcp@${HUSK_RANGE}`] };
   if (!env.HUSK_LAUNCH) {
     // A Husk the desktop app's own launch line started (a chat started it,
     // not the app) is still the app's copy: keep chat apps on it, not npx.

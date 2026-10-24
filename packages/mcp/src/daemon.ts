@@ -3,7 +3,7 @@ import { closeSync, openSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HUSK_VERSION, ensurePaths, readDaemonRecord } from '@husk-ai/core';
+import { HUSK_PROTOCOL, HUSK_VERSION, ensurePaths, readDaemonRecord } from '@husk-ai/core';
 import type { DaemonRecord, Logger } from '@husk-ai/core';
 import type { ToolResult } from './tools.js';
 
@@ -33,6 +33,8 @@ export interface DaemonClient {
   cancel(handoffId: string): Promise<void>;
   /** A short-lived token that opens one computer's page in the console. */
   linkToken(computerId: string): Promise<string>;
+  /** This chat runs that computer in its own process: the console says so rather than offer a take-over. */
+  markInChat(computerId: string): Promise<void>;
 }
 
 export interface ConnectOptions {
@@ -45,6 +47,13 @@ export interface ConnectOptions {
   read?: () => DaemonRecord | undefined;
   launch?: () => void;
   fetchImpl?: typeof fetch;
+  /** Told why, when the chat is left to run its tools in its own process. Not for HUSK_DAEMON=off, a choice. */
+  onLocal?: (why: string) => void;
+}
+
+/** Whether this chat can use that Husk: the same release, or one that speaks the same protocol. */
+export function speaksOurs(rec: Pick<DaemonRecord, 'version' | 'protocol'>): boolean {
+  return rec.version === HUSK_VERSION || rec.protocol === HUSK_PROTOCOL;
 }
 
 /**
@@ -84,6 +93,7 @@ export async function connectDaemon(opts: ConnectOptions): Promise<DaemonClient 
   }
   if (!rec) {
     opts.log.info('no shared husk is running; tools run in this process, and the console will not see this chat');
+    opts.onLocal?.('no shared Husk could be started');
     return undefined;
   }
   if (rec.version !== HUSK_VERSION && newer(HUSK_VERSION, rec.version) && opts.start !== false) {
@@ -103,11 +113,17 @@ export async function connectDaemon(opts: ConnectOptions): Promise<DaemonClient 
         await new Promise((r) => setTimeout(r, 250));
         rec = await live();
       }
-      if (!rec) return undefined;
+      if (!rec) {
+        opts.onLocal?.('the shared Husk stepped aside for this release, and the new one did not start');
+        return undefined;
+      }
     }
   }
-  if (rec.version !== HUSK_VERSION) {
+  // Another release that speaks the same protocol is as good as this one: a
+  // patch apart must not split a chat from the console.
+  if (!speaksOurs(rec)) {
     opts.log.info(`the shared husk is ${rec.version}, this is ${HUSK_VERSION}; tools run in this process until it restarts`);
+    opts.onLocal?.(`the shared Husk is ${rec.version}, which this chat (${HUSK_VERSION}) cannot talk to`);
     return undefined;
   }
   opts.log.info(`using the shared husk at ${rec.url}`);
@@ -131,7 +147,7 @@ function client(first: DaemonRecord, doFetch: typeof fetch, read: () => DaemonRe
    */
   const reread = (): boolean => {
     const next = read();
-    if (!next || next.version !== rec.version || (next.pid === rec.pid && next.token === rec.token)) return false;
+    if (!next || !speaksOurs(next) || (next.pid === rec.pid && next.token === rec.token)) return false;
     rec = next;
     return true;
   };
@@ -199,6 +215,9 @@ function client(first: DaemonRecord, doFetch: typeof fetch, read: () => DaemonRe
       // Never a link that opens nothing: `token=undefined` reads as a working link.
       if (typeof json.token !== 'string' || !json.token) throw new Error('the shared husk gave no link token');
       return json.token;
+    },
+    async markInChat(computerId) {
+      await call('POST', `/v1/computers/${id(computerId)}/in-chat`);
     },
     async callTool(computerId, name, args, signal) {
       const res = await send('POST', `/v1/computers/${id(computerId)}/tools/${id(name)}`, { args, via: 'mcp' }, signal);

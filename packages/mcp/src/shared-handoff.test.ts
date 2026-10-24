@@ -12,7 +12,7 @@ import type { Computer, Logger } from '@husk-ai/core';
 import type { ComputerManager } from '@husk-ai/runtime';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RunLocally } from './daemon.js';
+import { DaemonUnreachable, RunLocally } from './daemon.js';
 import type { DaemonClient } from './daemon.js';
 import { HuskMcpServer } from './server.js';
 
@@ -42,6 +42,7 @@ function fakeShared() {
     async complete(h) { log.push(`done ${h}`); open.delete(h); ended.set(h, 'done'); },
     async cancel(h) { log.push(`cancel ${h}`); open.delete(h); ended.set(h, 'aborted'); },
     async linkToken() { return 'cardtoken'; },
+    async markInChat(id) { log.push(`in-chat ${id}`); },
   };
   return { shared, open, ended, log };
 }
@@ -53,10 +54,10 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => s.close()));
 });
 
-async function chat(shared: DaemonClient) {
+async function chat(shared: DaemonClient, connect?: () => Promise<DaemonClient | undefined>) {
   const manager = { async ensure() { return computer; }, async create() { return computer; } } as unknown as ComputerManager;
   const server = new HuskMcpServer({
-    manager, ephemeral: false, logger: silent, shared,
+    manager, ephemeral: false, logger: silent, shared, ...(connect ? { connect } : {}),
     workspaceStore: new WorkspaceStore({ root: mkdtempSync(join(tmpdir(), 'husk-shared-')) }),
   });
   servers.push(server);
@@ -177,5 +178,44 @@ describe('with the shared Husk', { timeout: 30_000 }, () => {
     await call('hand_off', { reason: 'Sign in' });
     expect((await call('hand_off_done', { handoff: 'hnd_remote' })).isError).toBe(false);
     expect(f.log).toContain('done hnd_remote');
+  });
+});
+
+describe('when the shared Husk goes away mid-chat', { timeout: 30_000 }, () => {
+  const gone = (): DaemonClient => ({
+    ...fakeShared().shared,
+    async callTool() {
+      throw new DaemonUnreachable('the shared husk at http://127.0.0.1:7377 refused the connection');
+    },
+  });
+
+  it('starts it again and retries the call there, once', async () => {
+    const again = fakeShared();
+    const call = await chat(gone(), async () => again.shared);
+    const r = await call('shell', { command: 'ls' });
+    expect(r.text).toContain('ran shell in the shared husk');
+    expect(r.text).not.toContain("chat's own process");
+  });
+
+  it('runs the call here only when it cannot be started again, and says so once', async () => {
+    const call = await chat(gone(), async () => undefined);
+    const first = await call('shell', { command: 'ls' });
+    expect(first.text).toContain("running in this chat's own process (the shared husk at http://127.0.0.1:7377 refused the connection)");
+    expect(first.text).toContain('ran locally');
+    expect((await call('shell', { command: 'ls' })).text).not.toContain("chat's own process");
+  });
+});
+
+describe('a computer the shared Husk cannot reach', { timeout: 30_000 }, () => {
+  it('runs here, is marked in the console, and the chat is told once', async () => {
+    const f = fakeShared();
+    f.shared.callTool = async (id) => {
+      throw new RunLocally(`the shared husk cannot see computer ${id}`);
+    };
+    const call = await chat(f.shared);
+    const first = await call('shell', { command: 'ls' });
+    expect(first.text).toContain("running in this chat's own process (the shared husk cannot see computer cmp_chat)");
+    expect(f.log).toContain('in-chat cmp_chat');
+    expect((await call('shell', { command: 'ls' })).text).not.toContain("chat's own process");
   });
 });

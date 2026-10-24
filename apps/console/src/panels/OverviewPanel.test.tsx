@@ -27,6 +27,11 @@ describe('sortRows', () => {
   it('puts waiting first, then busy, then idle by most recent use', () => {
     expect(sortRows(overview).map((r) => r.computer.id)).toEqual(['cmp_wait', 'cmp_busy', 'cmp_idle', 'cmp_stopped']);
   });
+
+  it('marks a computer its chat runs itself, and only that one', () => {
+    const rows = sortRows({ ...overview, inChat: ['cmp_idle'] });
+    expect(rows.filter((r) => r.inChat).map((r) => r.computer.id)).toEqual(['cmp_idle']);
+  });
 });
 
 describe('Overview panel', () => {

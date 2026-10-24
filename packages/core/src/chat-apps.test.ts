@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { baseLaunch, chatAppDefs, connectChatApp, detectChatApps, disconnectChatApp, huskLaunch } from './chat-apps.js';
+import { HUSK_RANGE } from './identity.js';
 
 let home = '';
 afterEach(() => {
@@ -18,9 +19,9 @@ const dirOf = (id: string) => chatAppDefs(home).find((d) => d.id === id)!.dir;
 
 describe('chat apps', () => {
   it('builds the launch line from the computer choice', () => {
-    expect(huskLaunch()).toEqual({ command: 'npx', args: ['-y', '@husk-ai/mcp'] });
-    expect(huskLaunch({ provider: 'docker', flavor: 'full' }).args).toEqual(['-y', '@husk-ai/mcp', '--provider', 'docker', '--flavor', 'full']);
-    expect(huskLaunch({ provider: 'auto' }).args).toEqual(['-y', '@husk-ai/mcp']);
+    expect(huskLaunch()).toEqual({ command: 'npx', args: ['-y', `@husk-ai/mcp@${HUSK_RANGE}`] });
+    expect(huskLaunch({ provider: 'docker', flavor: 'full' }).args).toEqual(['-y', `@husk-ai/mcp@${HUSK_RANGE}`, '--provider', 'docker', '--flavor', 'full']);
+    expect(huskLaunch({ provider: 'auto' }).args).toEqual(['-y', `@husk-ai/mcp@${HUSK_RANGE}`]);
   });
 
   it('finds an app by its folder, and never looks outside the home it was given', () => {
@@ -43,7 +44,7 @@ describe('chat apps', () => {
     expect(r.backup && existsSync(r.backup)).toBe(true);
     const after = JSON.parse(readFileSync(file, 'utf8'));
     expect(after).toEqual({
-      mcpServers: { other: { command: 'x' }, husk: { command: 'npx', args: ['-y', '@husk-ai/mcp', '--provider', 'docker'] } },
+      mcpServers: { other: { command: 'x' }, husk: { command: 'npx', args: ['-y', `@husk-ai/mcp@${HUSK_RANGE}`, '--provider', 'docker'] } },
       theme: 'dark',
     });
     expect(detectChatApps(home).find((a) => a.id === 'claude-desktop')?.connected).toBe(true);
@@ -53,7 +54,7 @@ describe('chat apps', () => {
     fresh();
     mkdirSync(dirOf('vscode'), { recursive: true });
     await connectChatApp('vscode', huskLaunch(), { home });
-    expect(JSON.parse(readFileSync(fileOf('vscode'), 'utf8'))).toEqual({ servers: { husk: { type: 'stdio', command: 'npx', args: ['-y', '@husk-ai/mcp'] } } });
+    expect(JSON.parse(readFileSync(fileOf('vscode'), 'utf8'))).toEqual({ servers: { husk: { type: 'stdio', command: 'npx', args: ['-y', `@husk-ai/mcp@${HUSK_RANGE}`] } } });
   });
 
   it('refuses to edit a file it cannot parse, and leaves it exactly as it was', async () => {
@@ -134,7 +135,7 @@ describe('editing configs safely', () => {
     writeFileSync(fileOf('cursor'), JSON.stringify({ mcpServers: { husk: { command: 'old', env: { HUSK_TOKEN: 'x' }, disabled: false } } }));
     await connectChatApp('cursor', huskLaunch({ provider: 'docker' }), { home });
     expect(JSON.parse(readFileSync(fileOf('cursor'), 'utf8')).mcpServers.husk).toEqual({
-      command: 'npx', args: ['-y', '@husk-ai/mcp', '--provider', 'docker'], env: { HUSK_TOKEN: 'x' }, disabled: false,
+      command: 'npx', args: ['-y', `@husk-ai/mcp@${HUSK_RANGE}`, '--provider', 'docker'], env: { HUSK_TOKEN: 'x' }, disabled: false,
     });
     expect(readdirSync(dirOf('cursor')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });

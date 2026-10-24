@@ -1,4 +1,4 @@
-import { HUSK_VERSION } from '@husk-ai/core';
+import { HUSK_PROTOCOL, HUSK_VERSION } from '@husk-ai/core';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import { assertBindIsSafe, installAuth, isLoopbackHost } from './auth.js';
@@ -94,6 +94,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   app.get('/health', async () => ({
     ok: true,
     version: HUSK_VERSION,
+    protocol: HUSK_PROTOCOL,
     uptimeSec: Math.round((deps.now() - deps.startedAt) / 1000),
   }));
 
@@ -201,6 +202,8 @@ export const ADMISSION_EXEMPT: ReadonlySet<string> = new Set([
   'POST /v1/computers/:id/takeover',
   'POST /v1/computers/:id/handoffs',
   'POST /v1/computers/:id/link',
+  // A chat telling this Husk it runs that computer itself: a note, not a change.
+  'POST /v1/computers/:id/in-chat',
   // Reads.
   'POST /v1/computers/:id/browser/snapshot',
   'POST /v1/computers/:id/bot',

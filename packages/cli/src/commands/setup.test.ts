@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { HUSK_RANGE } from '@husk-ai/core';
 import type { ChatApp } from '@husk-ai/core';
 import type { DoctorProbes, ProviderRow } from './doctor.js';
 import { pickApps, recommended, run } from './setup.js';
@@ -53,7 +54,7 @@ describe('husk setup, unattended', () => {
     expect(out[0]).toMatchObject({
       provider: 'local',
       flavor: null,
-      launch: { command: 'npx', args: ['-y', '@husk-ai/mcp', '--provider', 'local'] },
+      launch: { command: 'npx', args: ['-y', `@husk-ai/mcp@${HUSK_RANGE}`, '--provider', 'local'] },
       results: [],
     });
   });
