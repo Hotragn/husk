@@ -162,16 +162,7 @@ Then actually run the thing you changed. `husk doctor`, `husk up`, `husk exec` �
 CLI is the product's face, and a change that typechecks but reads badly in a terminal
 is not done.
 
-### Two checks that fail on every PR from a fork
-
-If you are contributing from a fork, `Vercel – husk-dev` and `Vercel – husk-dev-docs`
-will both go red with **"Authorization required to deploy."** That is not your change
-and there is nothing to fix on your side.
-
-Vercel requires a maintainer to authorise a deployment built from a fork, because the
-build would otherwise run your branch's code with this project's environment variables
-and OIDC token. The red mark is that protection working. We would rather a contributor
-see two confusing checks than hand every fork a set of deployment credentials.
+### The checks to read
 
 The check that speaks for your change is **`packages`** — the matrix across Node 20 and
 22 on Linux, macOS and Windows — along with `duplicated facts still agree` and

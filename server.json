@@ -4,7 +4,7 @@
   "title": "Husk",
   "description": "A real Linux computer for your agent: shell, persistent /work, files, ports, a browser.",
   "version": "0.1.4",
-  "websiteUrl": "https://husk-dev.vercel.app/",
+  "websiteUrl": "https://www.huskai.dev/",
   "repository": {
     "url": "https://github.com/Hotragn/husk",
     "source": "github"

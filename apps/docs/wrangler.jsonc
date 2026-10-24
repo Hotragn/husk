@@ -1,0 +1,12 @@
+// Cloudflare serves `out/`, the static export `next build` writes. There is no
+// Worker script: every request is a file, and a path with no file gets
+// `404.html` with a 404 status. Headers come from `public/_headers`.
+{
+  "name": "husk-docs",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./out",
+    "not_found_handling": "404-page"
+  },
+  "routes": [{ "pattern": "docs.huskai.dev", "custom_domain": true }]
+}

@@ -1,4 +1,3 @@
-import { Analytics } from "@vercel/analytics/next";
 import type { Metadata, Viewport } from "next";
 
 import { SiteFooter } from "@/components/SiteFooter";
@@ -16,10 +15,11 @@ import "./globals.css";
  */
 
 /**
- * Vercel Web Analytics is served from `/_vercel/insights/` on this origin, not
- * a third-party host, so the property `public/fonts/README.md` argues for --
- * no request leaving for anyone the reader did not choose to talk to -- still
- * holds.
+ * Page views are counted by Cloudflare Web Analytics, which Cloudflare adds to
+ * each page as it serves it; there is no analytics code in this repository.
+ * The beacon loads from `static.cloudflareinsights.com` -- Cloudflare's own
+ * host, the company already serving every byte of this site -- so no third
+ * party learns of a visit, and it sets no cookie.
  *
  * Worth being precise, because this site says "no telemetry": that claim is
  * about the product. `husk` the CLI phones nobody and nothing here changes it.
@@ -90,7 +90,6 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <SiteHeader />
         {children}
         <SiteFooter />
-        <Analytics />
       </body>
     </html>
   );
