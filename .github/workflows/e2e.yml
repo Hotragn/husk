@@ -32,11 +32,21 @@ jobs:
       - run: npm i --no-save playwright-core@1.48.2
       # The desktop app, run from the checkout on a virtual screen with a
       # compositor, and ffmpeg to film that screen and the console as GIFs.
-      # With ffmpeg's recommended packages this once sat silent until the job
-      # timed out, waiting on a question nobody can answer: never ask, take
-      # only what is needed, and give up early.
-      - run: sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends xvfb xauth xcompmgr ffmpeg
-        timeout-minutes: 8
+      # This step stalled twice with nothing printed, even non-interactive and
+      # without recommended packages. Now it says what it is doing, a stalled
+      # download times out and is tried again, and the image's own package
+      # lists are tried before a fresh index from every configured repository.
+      - name: Install the virtual screen and ffmpeg
+        timeout-minutes: 15
+        run: |
+          get='-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30'
+          for attempt in 1 2 3; do
+            if [ "$attempt" -gt 1 ]; then timeout 120 sudo apt-get update $get || true; fi
+            timeout 180 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              -o DPkg::Lock::Timeout=60 $get xvfb xauth xcompmgr ffmpeg && exit 0
+            sudo dpkg --configure -a || true
+          done
+          exit 1
       - run: npm ci
         working-directory: apps/desktop
       - run: npm run e2e:computers
