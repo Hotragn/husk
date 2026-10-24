@@ -256,7 +256,8 @@ describe.skipIf(!built)('--json purity', { timeout: 30_000 }, () => {
  */
 const integration = process.env.HUSK_INTEGRATION === '1';
 
-describe.skipIf(!built || !integration)('doctor, against this machine', () => {
+// A first doctor on a fresh machine probes every provider, which takes seconds.
+describe.skipIf(!built || !integration)('doctor, against this machine', { timeout: 120_000 }, () => {
   it('always exits 0, because it reports rather than fails', () => {
     expect(husk(['doctor']).status).toBe(0);
   });
