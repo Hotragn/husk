@@ -190,6 +190,16 @@ export class HandoffRegistry {
     return [...this.pending.values()].map(({ settle: _s, ...rest }) => rest);
   }
 
+  /**
+   * The hold that stops this change, if any: anyone but the person is refused
+   * while a handoff holds the computer. Synchronous, so a check and the start
+   * of the work it lets through are one step.
+   */
+  admit(computerId: string, by: 'person' | 'program'): PendingHandoff | undefined {
+    if (by === 'person') return undefined;
+    return this.list().find((h) => h.computerId === computerId);
+  }
+
   request(
     args: { runId: string; husk: string; reason: string; computerId?: string; signal: AbortSignal },
     onRaised: (pending: PendingHandoff) => void,

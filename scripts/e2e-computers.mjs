@@ -37,17 +37,18 @@ const created = [];
 
 async function cleanup() {
   mcp?.child.kill();
-  for (const id of created) await api('DELETE', `/v1/computers/${id}?confirm=${id}`).catch(() => undefined);
+  // As the owner, so a run that failed while it held a computer still tidies it away.
+  for (const id of created) await api('DELETE', `/v1/computers/${id}?confirm=${id}`, undefined, rec.token, { 'x-husk-as': 'person' }).catch(() => undefined);
   daemon?.kill();
   rmSync(home, { recursive: true, force: true });
 }
 process.once('SIGINT', () => void cleanup().finally(() => process.exit(130)));
 const textOf = (result) => (result.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
 
-async function api(method, path, body, token = rec.token) {
+async function api(method, path, body, token = rec.token, headers = {}) {
   const res = await fetch(`${rec.url}${path}`, {
     method,
-    headers: { authorization: `Bearer ${token}`, ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
+    headers: { authorization: `Bearer ${token}`, ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...headers },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(600_000),
   });

@@ -18,6 +18,7 @@ export const SERVER_ERROR_CODES = [
   'E_BROWSER_NOT_FOUND',
   'E_TRANSCRIPT_NOT_FOUND',
   'E_ROUTE_NOT_FOUND',
+  'E_COMPUTER_HELD',
 ] as const;
 
 export type ServerErrorCode = HuskErrorCode | (typeof SERVER_ERROR_CODES)[number];
@@ -56,6 +57,7 @@ const EXPLICIT: Partial<Record<ServerErrorCode, number>> = {
   E_MODEL_UNAVAILABLE: 503,
   E_EXEC_TIMEOUT: 504,
   E_NOT_IMPLEMENTED: 501,
+  E_COMPUTER_HELD: 409,
 };
 
 /**

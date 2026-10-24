@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
 import { SseStream, closedEarly } from '../sse.js';
+import { programCall } from './handoffs.js';
 import { browseInComputer } from '@husk-ai/core';
 import { browserSessionFor, livePageFor } from '@husk-ai/browser';
 import type { BrowserSession } from '@husk-ai/browser';
@@ -219,19 +220,26 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
     const signal = closedEarly(reply);
     const body = parseOr422(ExecSchema, req.body);
     const computer = await mustGet(app, id);
-    const result: ExecResult = await computer.exec({ ...body, signal } as ExecRequest);
-    return result;
+    const call = programCall(ctx.runner.handoffs, id, req, 'exec', signal);
+    try {
+      const result: ExecResult = await computer.exec({ ...body, signal: call.signal } as ExecRequest);
+      return result;
+    } finally {
+      call.done();
+    }
   });
 
   app.post('/v1/computers/:id/exec/stream', async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = parseOr422(ExecSchema, req.body);
     const computer = await mustGet(app, id);
+    // Before the stream opens, so a refusal is still an error reply.
+    const call = programCall(ctx.runner.handoffs, id, req, 'exec', closedEarly(reply));
     const stream = new SseStream(req, reply);
     try {
       const result = await computer.exec({
         ...body,
-        signal: stream.signal,
+        signal: AbortSignal.any([call.signal, stream.signal]),
         onStdout: (data) => stream.send({ type: 'stdout', data }),
         onStderr: (data) => stream.send({ type: 'stderr', data }),
       } as ExecRequest);
@@ -244,6 +252,8 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
       } else {
         stream.close();
       }
+    } finally {
+      call.done();
     }
     return reply;
   });
