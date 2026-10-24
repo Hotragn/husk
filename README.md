@@ -80,8 +80,10 @@ each app's config file before changing it and touches only its own `husk` entry.
 > published: npm has 0.1.4. Until the next release, run it from a checkout with
 > `npm ci && npm run build && node packages/cli/dist/bin.js setup`.
 
-Or let the chat do it. Paste this into Claude Code, Codex, Gemini CLI, Cursor or any
-chat that can run a command (the Connect page makes one for a single app):
+Once the next release is on npm, you can let the chat do it. Paste this into Claude Code,
+Codex, Gemini CLI, Cursor or any chat that can run a command (the Connect page makes one
+for a single app). Until then the `npx` line in it fails, because npm's 0.1.4 has no
+`setup`: use the checkout command above instead.
 
 ```text
 Set up Husk for me, so you get a computer of your own for tasks: a terminal and a real browser, kept apart from my files.
@@ -90,7 +92,7 @@ Set up Husk for me, so you get a computer of your own for tasks: a terminal and 
    npx -y @husk-ai/cli@latest setup --computer auto --apps all --yes
    It picks the safest computer this machine can run (a Docker container if Docker is installed) and adds Husk to my chat apps. If you can't run terminal commands, show me that line and I'll run it.
 2. Tell me to restart my chat apps so the Husk tools load.
-3. Suggest I install the Husk app from https://github.com/Hotragn/husk/releases/latest. It shows your computer in a small window, and I can take over any time.
+3. Tell me that if the Husk desktop app is installed, it shows your computer in a small window and I can take over any time.
 
 After the restart: call computer_info, open https://example.com in the browser, and tell me what you see.
 ```
@@ -121,13 +123,15 @@ teaches the model when to use which tool and when to hand the computer to you:
 /plugin install husk --marketplace Hotragn/husk
 ```
 
-The default computer profile exposes eight workspace tools plus 23 computer tools.
+The default computer profile exposes eight workspace tools plus 26 computer tools.
 Eight are for the machine — `shell`, `read_file`, `write_file`,
-`edit_file`, `list_dir`, `expose_port`, `browse`, `computer_info` — thirteen
+`edit_file`, `list_dir`, `expose_port`, `browse`, `computer_info` — fifteen
 `browser_*` tools that drive a real Chromium inside that same machine, addressed by
-accessibility ref rather than pixel coordinates, and `hand_off` / `hand_off_done`,
+accessibility ref rather than pixel coordinates, `hand_off` / `hand_off_done`,
 which give you the computer for a login, a 2FA code or a CAPTCHA and give it back
-only when you say you're done.
+only when you say you're done, and `computer_open_ui`, which gives the chat a link
+to show you the computer. Apps that render MCP Apps cards also get the card's two
+tools.
 
 The first tool result says what kind of machine it got. A model that thinks it is
 sandboxed when it is not makes worse decisions than one that knows.
@@ -228,9 +232,9 @@ checks. Five worked examples live in [`examples/`](examples/).
   <img alt="The husk monorepo: four entry points over an orchestration layer over runtime, models, browser and sessions, all on @husk-ai/core" src="docs/diagrams/png/02-system-architecture.light.png">
 </picture>
 
-Eleven packages and three apps. Dependencies run downhill: the other ten packages
-import `@husk-ai/core`, core imports nothing from the workspace, and nothing imports
-`@husk-ai/cli`.
+Thirteen packages and five apps. Dependencies run downhill: core imports nothing from
+the workspace, every other package except `console-assets` (the built console, no code)
+imports it, and nothing imports `@husk-ai/cli`.
 
 ```
 packages/
@@ -241,12 +245,16 @@ packages/
   browser      Chromium lifecycle and CDP automation
   agent        tool-calling loop and built-in tools
   adapters     Discord, Slack, Telegram, webhook
-  mcp          MCP server (stdio)
+  mcp          MCP server (stdio), and the shared Husk every chat forwards to
   server       control-plane API + bot host
   sdk          typed client for the control plane
+  workspaces   named local workspaces: sources, results, export
+  console-assets  the built console, served by server
   cli          the husk command
 apps/
   console      dashboard: live terminal, files, browser
+  desktop      the desktop app: corner, Computers window, notch, tray
+  mac          Husk Bar, a macOS menu-bar companion
   docs         documentation site (Next.js + MDX)
   web          marketing site (Next.js + Three.js)
 ```
@@ -331,11 +339,12 @@ four dotted octets is not a rule.
 Alpha, pre-1.0. The `husk.yaml` schema and the HTTP contract can still change between
 releases. What is known not to work today:
 
-- **The rendered browser is only confirmed on `local`.** The thirteen `browser_*` tools
-  drive Chromium there today. On the container providers the root filesystem is mounted
-  read-only, so Chromium's shared libraries have to arrive in the image rather than
-  through a package manager, and that path is still being worked out. `browse`, which
-  fetches a page and strips the tags, works everywhere.
+- **On container providers the rendered browser needs the `full` flavor.** CI drives
+  the fifteen `browser_*` tools on Docker with `full` (Playwright's image, which carries
+  Chromium's libraries). The slim flavors cannot run Chromium: their root filesystem is
+  read-only, so the libraries cannot be added later. `base` (`debian:bookworm-slim`) has
+  neither curl nor python3, so even `browse` fails there. Pass `--flavor full`, or choose
+  "Include a browser" in `husk setup` or on the Connect page.
 - **`fly` is the least exercised provider.** It has tests. It has far fewer real hours
   than `docker` and `local`.
 

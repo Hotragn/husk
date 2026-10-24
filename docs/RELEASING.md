@@ -1,6 +1,6 @@
 # Husk — releasing
 
-Eleven packages publish together, at one version, in dependency order. Every
+Thirteen packages publish together, at one version, in dependency order. Every
 cross-workspace pin is exact, so the order is not a preference: publishing a package
 before something it depends on produces an immediate `notarget` for anyone installing
 in between.
@@ -31,7 +31,7 @@ because that step had been sitting on `main`, unused, since `0.1.2`.
 2. **`npm run preflight`.** Read-only: manifests, publish order, and what the registry
    already has.
 
-3. **`npm run install-smoke`.** Packs all eleven, installs them into a scratch directory
+3. **`npm run install-smoke`.** Packs all thirteen, installs them into a scratch directory
    outside the checkout, and drives the installed copies: the CLI lifecycle, an MCP
    handshake over stdio, an SDK import. Everything else in the gate tests the *workspace*,
    where a symlink satisfies an import the published package never declared — which is how
@@ -67,7 +67,7 @@ and treating a 404 as a failed publish is how a release gets attempted twice.
 
 **`npm audit signatures --json` only reports problems.** It emits `invalid` and
 `missing` and enumerates nothing that passed, so a clean run means "nothing failed",
-not "all eleven have provenance". Confirming provenance means decoding each
+not "all thirteen have provenance". Confirming provenance means decoding each
 attestation individually.
 
 Both of these belong to a wider rule: **check the artifact, never the exit status.**

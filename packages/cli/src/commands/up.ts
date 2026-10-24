@@ -113,7 +113,8 @@ export async function run(argv: string[]): Promise<number> {
       ],
       ['image', info.imageFallback ? `${info.image} ${ui.yellow('(fallback)')}` : ui.dim(info.image)],
       ['workdir', info.workdir],
-      ['network', info.spec?.network?.mode ?? spec.network?.mode ?? 'egress'],
+      // No policy means full access minus internal addresses (core/net.ts), not egress.
+      ['network', info.spec?.network?.mode ?? spec.network?.mode ?? 'full (internal addresses refused)'],
     ]),
   );
 

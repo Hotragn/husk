@@ -206,6 +206,20 @@ if (!SITES_ONLY) {
      `dependencies` alone would have missed all three. The group is part of what
      has to be checked, not part of what is trusted.
   --------------------------------------------------------------------------- */
+  /* ---------------------------------------------------------------------------
+     The tool counts. The README said "23 computer tools" and "thirteen
+     `browser_*`" for two releases after there were 26 and fifteen, because a
+     count in prose has nothing to be checked against. These are counted from
+     the definitions themselves, the way the model sees them.
+  --------------------------------------------------------------------------- */
+  const TOOLS = toolCounts();
+  const toolHint = (doc) => `the code defines ${TOOLS.computer} computer tools (${TOOLS.browser} browser_*) and ${TOOLS.workspace} workspace tools; update ${doc}`;
+  contains('README.md', `${words(TOOLS.workspace)} workspace tools plus ${TOOLS.computer} computer tools`, toolHint('README.md'));
+  contains('README.md', `${words(TOOLS.browser)}\n\`browser_*\` tools`, toolHint('README.md'));
+  contains('packages/mcp/README.md', `lists these ${TOOLS.computer} tools plus ${words(TOOLS.workspace)} workspace tools`, toolHint('packages/mcp/README.md'));
+  contains('packages/mcp/README.md', `${words(TOOLS.browser)} tools that drive a real Chromium`, toolHint('packages/mcp/README.md'));
+  contains('apps/desktop/README.md', `then ${TOOLS.computer + TOOLS.workspace} tools listed`, toolHint('apps/desktop/README.md'));
+
   const GROUPS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
   for (const dir of readdirSync(join(ROOT, 'packages'))) {
     const rel = `packages/${dir}/package.json`;
@@ -290,6 +304,35 @@ if (SITES_ONLY) {
     `HUSK_VERSION = '${VERSION}'`,
     `package.json is on ${VERSION}; the docs must not describe an older one`,
   );
+
+  contains(
+    'apps/web/src/lib/content.ts',
+    `BROWSER_TOOL_COUNT = ${toolCounts().browser};`,
+    'the site counts the browser tools packages/mcp/src/browser-tools.ts defines',
+  );
+}
+
+/**
+ * Tools as `packages/mcp` defines them, counted from source: this check runs
+ * without a build. Machine tools are the top-level entries of `tools.ts`, browser
+ * tools the `browser_*` names in `browser-tools.ts`, plus the two hand-off tools
+ * and `computer_open_ui`. The card's two app-only tools are not counted: only
+ * apps that render the card see them.
+ */
+function toolCounts() {
+  const names = (file, re) => new Set([...read(file).matchAll(re)].map((m) => m[1]));
+  const machine = names('packages/mcp/src/tools.ts', /^ {4}name: '([a-z_]+)',$/gm).size;
+  const browser = names('packages/mcp/src/browser-tools.ts', /name: '(browser_[a-z_]+)'/g).size;
+  const handoff = names('packages/mcp/src/handoff-tools.ts', /^ {4}name: '(hand_off[a-z_]*)',$/gm).size;
+  const openUi = read('packages/mcp/src/card.ts').includes("name: 'computer_open_ui'") ? 1 : 0;
+  const workspace = names('packages/mcp/src/workspace-tools.ts', /^\s*tool\('([a-z_]+)'/gm).size;
+  return { browser, workspace, computer: machine + browser + handoff + openUi };
+}
+
+/** Small counts as the prose writes them. */
+function words(n) {
+  const w = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
+  return w[n] ?? String(n);
 }
 
 /* ---------------------------------------------------------------------------- */

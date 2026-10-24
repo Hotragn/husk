@@ -59,7 +59,10 @@ Run `husk help <command>` for flags and examples. Every command has both.
 **Computers** — `up` `ps` `rm` `stop` `start` `exec` `shell` `cp`
 **Agents** — `init` `run` `validate`
 **Chats** — `import` `distill`
+**Setup** — `setup` (pick where computers run, connect your chat apps, start the shared Husk; `--remove` undoes it) and `onboard`
 **System** — `doctor` `serve` `mcp` `models` `version`
+
+`setup` is on `main` and not yet on npm, where 0.1.4 maps `setup` to `onboard`.
 
 ## Built for pipes as well as people
 

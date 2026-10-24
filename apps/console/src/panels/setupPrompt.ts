@@ -14,7 +14,7 @@ export function setupPrompt(app?: { id: string; name: string }): string {
     `   npx -y @husk-ai/cli@latest setup --computer auto --apps ${apps} --yes`,
     `   It picks the safest computer this machine can run (a Docker container if Docker is installed) and adds Husk to ${name}. If you can't run terminal commands, show me that line and I'll run it.`,
     `2. Tell me to restart ${name} so the Husk tools load.`,
-    '3. Suggest I install the Husk app from https://github.com/Hotragn/husk/releases/latest. It shows your computer in a small window, and I can take over any time.',
+    '3. Tell me that if the Husk desktop app is installed, it shows your computer in a small window and I can take over any time.',
     '',
     'After the restart: call computer_info, open https://example.com in the browser, and tell me what you see.',
   ].join('\n');

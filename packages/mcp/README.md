@@ -30,9 +30,14 @@ Works the same in Cursor, Zed, or anything else that speaks MCP:
 | `edit_file` | exact-string replace; fails loudly if the match is missing or ambiguous |
 | `list_dir` | list a directory |
 | `expose_port` | publish a port and get a reachable URL |
+| `browse` | fetch a public page from inside the computer, as text plus its links |
 | `computer_info` | OS, kernel, CPU, memory, disk, network, installed runtimes |
+| `browser_*` | fifteen tools that drive a real Chromium inside the same computer, by accessibility ref: `browser_goto`, `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_select`, `browser_hover`, `browser_scroll`, `browser_upload`, `browser_wait_for`, `browser_screenshot`, `browser_tabs`, `browser_status`, `browser_run` (several steps in one call) and `browser_script` (a short Python script with control flow, run inside the computer) |
 | `hand_off` | give the computer to the user for a login, 2FA code, CAPTCHA or payment prompt |
 | `hand_off_done` | take it back once the user says they are done |
+| `computer_open_ui` | a link the chat can give you to watch the computer and take it over |
+
+The `computer` profile (the default) lists these 26 tools plus eight workspace tools; apps that render the computer card also get its two app-only tools. `--profile starter` lists the workspace tools only.
 
 While a handoff is open every other computer tool refuses, so the model cannot type into
 the page you are signing in on. Clients that support MCP form elicitation (Claude Code,
@@ -51,7 +56,10 @@ probing it with `uname`, `nproc`, `df` and `which python3`.
 --session <key>     reuse a named machine (default: unique to this server process)
 --provider <name>   docker | podman | local | ssh | fly
 --flavor <name>     base | python | node | full
---network <mode>    none | egress | full
+--network <mode>    none | egress | full (default: full, minus internal addresses)
+--profile <name>    computer (all tools; default) | starter (workspace tools only)
+--daemon            run the shared Husk every chat goes through (started for you on the
+                    first tool call; HUSK_DAEMON=off keeps tools in each chat's process)
 --memory <mb>       memory ceiling
 --cpus <n>          cpu ceiling
 --keep              leave the machine running after the client disconnects

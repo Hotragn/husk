@@ -31,8 +31,8 @@ though the driver holds none.
 Either way a request is a list of steps rather than a single command, so a
 sequence that depends on its own outcome is one round, and ``action`` steps are
 whole page actions -- goto, click, fill, wait, snapshot, screenshot -- so that
-a model's several actions are one round too (code over calls, an idea taken
-from ego-lite, MIT, Copyright (c) 2026 CitroLabs). Actions are data: nothing a
+a model's several actions are one round too (code over calls; see
+THIRD_PARTY_NOTICES.md). Actions are data: nothing a
 model writes is executed here or on the host. The one exception is the
 ``script`` action, which runs a model's Python in a *separate* process in the
 computer, stopped at its limit, talking to this one over pipes; see the scripts
@@ -615,8 +615,8 @@ def act_screenshot(conn, sid, step, deadline):
 # checked by the host's network policy first. That is all the check covers:
 # clicks, submits, redirects and page scripts are not checked, and the script,
 # like `shell`, can open 127.0.0.1's CDP port itself. The computer is the
-# boundary. Names follow ego-lite's Playwright-style page API where they fit
-# (MIT, Copyright (c) 2026 CitroLabs).
+# boundary. Names follow the Playwright-style page API credited in
+# THIRD_PARTY_NOTICES.md, where they fit.
 
 SCRIPT_OUTPUT_CAP = 64 * 1024
 SCRIPT_RESULT_CAP = 64 * 1024
