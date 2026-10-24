@@ -113,5 +113,6 @@ export function computerLink(origin: string, computerId: string, token: string):
 }
 
 export { HandoffRegistry, PERSON_RUN, heldText, takenText } from './handoffs.js';
+export { underControl } from './routes/handoffs.js';
 export { ScopedTokens } from './scoped-tokens.js';
 export type { PendingHandoff } from './handoffs.js';

@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { browserFor, inspectBrowserCapability } from '@husk-ai/browser';
+import { browserFor, inspectBrowserCapability, withCallSignal } from '@husk-ai/browser';
 import type { ActionOutcome, PageAction, SnapshotNode } from '@husk-ai/browser';
 import type { Computer } from '@husk-ai/core';
 import { redact } from '@husk-ai/core';
@@ -373,12 +373,22 @@ async function pageState(computer: Computer, limit = 400): Promise<ToolResult> {
   return text(redact(`now at ${url}\n\n${renderSnapshot(await page.snapshot({ limit }))}`));
 }
 
-export async function callBrowserTool(
+/**
+ * Run one browser tool. `signal` is the call's: when the chat cancels it, or a
+ * person takes the computer over, what it is doing in the browser stops where
+ * it runs and the rest of it is refused.
+ */
+export function callBrowserTool(
   computer: Computer,
   name: string,
   args: Record<string, unknown>,
   maxTextBytes: number,
+  signal?: AbortSignal,
 ): Promise<ToolResult> {
+  return withCallSignal(signal, () => browserTool(computer, name, args, maxTextBytes));
+}
+
+async function browserTool(computer: Computer, name: string, args: Record<string, unknown>, maxTextBytes: number): Promise<ToolResult> {
   const session = browserFor(computer);
 
   switch (name) {

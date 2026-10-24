@@ -190,6 +190,13 @@ describe('shell', () => {
     expect(text).toContain(STOP_UNCONFIRMED);
   });
 
+  it('says a command its caller stopped was stopped, not that it timed out', async () => {
+    const result = await callTool(stub({ timedOut: true, exitCode: 124, durationMs: 3000 }).computer, 'shell', { command: 'sleep 9' }, AbortSignal.abort());
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain('[stopped after 3s]');
+    expect(text).not.toContain('timed out');
+  });
+
   it('hands the chat’s cancel to the command, and to the computer_info probe', async () => {
     const signals: Array<AbortSignal | undefined> = [];
     const computer = {

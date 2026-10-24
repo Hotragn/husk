@@ -20,7 +20,7 @@ import type { ToolDef, ToolResult } from './tools.js';
 import { DaemonUnreachable, RunLocally, connectDaemon } from './daemon.js';
 import type { DaemonClient } from './daemon.js';
 import { WorkspaceStore } from '@husk-ai/workspaces';
-import { HandoffRegistry, PERSON_RUN, ScopedTokens, computerLink, handoffLink, startWorkspaceViewer, takenText } from '@husk-ai/server/workspace-viewer';
+import { HandoffRegistry, PERSON_RUN, ScopedTokens, computerLink, handoffLink, startWorkspaceViewer, takenText, underControl } from '@husk-ai/server/workspace-viewer';
 import { CARD_APP_TOOLS, CARD_APP_TOOL_NAMES, CARD_HTML, CARD_MIME, CARD_URI, OPEN_UI_TOOL, UI_EXTENSION } from './card.js';
 import type { CardState } from './card.js';
 import type { WorkspaceProfile } from '@husk-ai/server/workspace-viewer';
@@ -299,12 +299,15 @@ export class HuskMcpServer {
         }
       }
     }
-    return audited(
-      { computerId: computer.id, via: 'mcp', tool: name, args },
-      () => callTool(computer, name, args, signal),
-      // MCP tools report failure in the result rather than by throwing, so
-      // the wrapper is told how to recognise one.
-      (r) => (r.isError ? firstText(r.content) : undefined),
+    // Its own computer: the take-over from this chat's viewer stops it, as the shared Husk's does.
+    return underControl(this.handoffs, computer.id, name, signal, (stop) =>
+      audited(
+        { computerId: computer.id, via: 'mcp', tool: name, args },
+        () => callTool(computer, name, args, stop),
+        // MCP tools report failure in the result rather than by throwing, so
+        // the wrapper is told how to recognise one.
+        (r) => (r.isError ? firstText(r.content) : undefined),
+      ),
     );
   }
 

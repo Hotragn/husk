@@ -537,6 +537,39 @@ async function checkStops(id) {
 }
 
 /**
+ * A person taking over stops the AI where it is. A browser script that would
+ * run two minutes is seen running, then cut off part-way; its process is gone
+ * from the computer; the chat is told. After Give back, a page action waits
+ * until the AI has looked at the page again.
+ */
+async function checkTakeover(id) {
+  const scripts = `n=0; for d in /proc/[0-9]*; do tr '\\0' '\\n' < "$d/environ" 2>/dev/null | grep -q '^HUSK_SCRIPT=' && n=$((n+1)); done; echo $n`;
+  const count = async () => textOf(await tool(id, 'shell', { command: scripts })).trim();
+  const call = tool(id, 'browser_script', { script: 'import time\ntime.sleep(120)\nprint("finished")', timeoutSec: 150 });
+  let seen = '0';
+  for (let i = 0; i < 60 && seen === '0'; i++) {
+    await sleep(500);
+    seen = await count();
+  }
+  const started = Date.now();
+  const taken = await api('POST', `/v1/computers/${id}/takeover`);
+  const stopped = textOf(await call);
+  check(
+    'a take-over stops a running browser script, and tells the chat',
+    seen !== '0' && taken.status === 201 && /stopped part-way/.test(stopped),
+    `${seen} running, stopped in ${Date.now() - started} ms: ${stopped.slice(0, 160)}`,
+  );
+  await api('POST', `/v1/handoffs/${taken.body.handoffId}/done`);
+  const left = await count();
+  check('the stopped script is gone from the computer', left === '0', left);
+  const early = textOf(await tool(id, 'browser_click', { ref: 'e99999' }));
+  check('after Give back, a page action waits for a fresh look', /stopped part-way/.test(early), early.slice(0, 160));
+  await tool(id, 'browser_snapshot');
+  const after = textOf(await tool(id, 'browser_click', { ref: 'e99999' }));
+  check('once the AI has looked again, the page action runs', !/stopped part-way/.test(after), after.slice(0, 160));
+}
+
+/**
  * How fast the browser is, for a PR to quote: the median milliseconds of each
  * browser tool through the shared route, and the frames a second the live
  * screen actually delivers at ?fps=4. The page it watches animates, so a
@@ -790,6 +823,9 @@ try {
 
   // 8b. A script that makes its own decisions, run inside the computer.
   await measureScript(id);
+
+  // 8c. Taking over stops the AI where it is, scripts included.
+  await checkTakeover(id);
 
   // 9. The console in a real browser: Home's live screen, take over at any
   // moment, the chat's call waiting for Give back, the Chat and Connect pages.

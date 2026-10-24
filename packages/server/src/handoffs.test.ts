@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HandoffRegistry } from './handoffs.js';
+import { ComputerControl, HandoffRegistry } from './handoffs.js';
 import { buildTestApp, fakeAgentFactory, sampleSpec, type TestApp } from './testing.js';
 
 function raise(registry: HandoffRegistry, signal = new AbortController().signal) {
@@ -128,5 +128,79 @@ describe('handoff over HTTP', () => {
     expect(res.statusCode).toBe(401);
     const list = await harness.app.inject({ method: 'GET', url: '/v1/handoffs' });
     expect(list.statusCode).toBe(401);
+  });
+});
+
+describe('ComputerControl', () => {
+  const page = (url: string, title = 'T', tab = 'tab1') => ({ tab, url, title });
+  const none = async () => undefined;
+
+  it('stops the calls on the computer a person takes, and only those', async () => {
+    const control = new ComputerControl();
+    const mine = control.start('c1', 'shell');
+    const other = control.start('c2', 'shell');
+    const stopping = control.stop('c1');
+    expect(mine.signal.aborted).toBe(true);
+    expect(mine.takenOver()).toBe(true);
+    expect(other.signal.aborted).toBe(false);
+    mine.done();
+    expect(await stopping).toEqual(['shell']);
+    other.done();
+    expect(await control.stop('c1')).toEqual([]);
+  });
+
+  it('aborts on the caller’s own signal too, without calling that a take-over', () => {
+    const cancel = new AbortController();
+    const call = new ComputerControl().start('c1', 'shell', cancel.signal);
+    cancel.abort();
+    expect(call.signal.aborted).toBe(true);
+    expect(call.takenOver()).toBe(false);
+    call.done();
+  });
+
+  it('waits for stopped calls to end, but not for ever', async () => {
+    const control = new ComputerControl();
+    control.start('c1', 'browser_script');
+    const started = Date.now();
+    expect(await control.stop('c1', 50)).toEqual(['browser_script']);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it('after Give back refuses a page action only when the page changed, saying what changed', async () => {
+    const control = new ComputerControl();
+    control.mark('c1', page('https://a.test/'), false);
+    expect(await control.refusal('c1', 'browser_click', async () => page('https://a.test/'))).toBeUndefined();
+
+    control.mark('c1', page('https://a.test/', 'A'), false);
+    const why = await control.refusal('c1', 'browser_click', async () => page('https://b.test/', 'B'));
+    expect(why).toContain('"B" at https://b.test/');
+    expect(why).toContain('"A" at https://a.test/');
+    // Still refused until it looks again. Reads and commands run meanwhile.
+    expect(await control.refusal('c1', 'browser_type', none)).toBe(why);
+    expect(await control.refusal('c1', 'browser_wait_for', none)).toBeUndefined();
+    expect(await control.refusal('c1', 'shell', none)).toBeUndefined();
+    expect(await control.refusal('c1', 'browser_snapshot', none)).toBeUndefined();
+    expect(await control.refusal('c1', 'browser_click', none)).toBeUndefined();
+  });
+
+  it('says so when the person moved to another tab', async () => {
+    const control = new ComputerControl();
+    control.mark('c1', page('https://a.test/'), false);
+    expect(await control.refusal('c1', 'browser_run', async () => page('https://a.test/', 'T', 'tab2'))).toContain('in another tab');
+  });
+
+  it('after a browser call stopped part-way, refuses page actions until a fresh look', async () => {
+    const control = new ComputerControl();
+    control.mark('c1', undefined, true);
+    expect(await control.refusal('c1', 'browser_click', none)).toContain('stopped part-way');
+    expect(await control.refusal('c1', 'browser_goto', none)).toBeUndefined();
+    expect(await control.refusal('c1', 'browser_click', none)).toBeUndefined();
+  });
+
+  it('compares with the page the AI last saw, across a second take-over', async () => {
+    const control = new ComputerControl();
+    control.mark('c1', page('https://a.test/'), false);
+    control.mark('c1', page('https://b.test/'), false);
+    expect(await control.refusal('c1', 'browser_click', async () => page('https://b.test/'))).toContain('https://a.test/');
   });
 });

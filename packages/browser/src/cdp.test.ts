@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { HuskError, isHuskError } from '@husk-ai/core';
 import type { Computer, ComputerProcess, ExecRequest, ExecResult, SpawnRequest } from '@husk-ai/core';
-import { CdpConnection, ComputerDriverTransport, DRIVER_SCRATCH_PATH, createTarget, waitResultOf } from './cdp.js';
+import { CdpConnection, ComputerDriverTransport, DRIVER_SCRATCH_PATH, createTarget, waitResultOf, withCallSignal, forNoCall } from './cdp.js';
 import type { CdpTransport, DriverRequest, DriverResult } from './cdp.js';
 import { DRIVER_SOURCE } from './driver.js';
 
@@ -622,5 +622,52 @@ describe('the driver’s questions to the host', () => {
     const t = new ComputerDriverTransport(c, 9222);
     expect(await codeOf(() => t.run({ steps: [{ op: 'send', method: 'A' }] }))).toBe('E_COMPUTER_FAILED');
     expect(c.kills).toBe(1);
+  });
+});
+
+describe('a caller stopping its browser call', () => {
+  const sent = (c: { lines: string[] }, method: string) => c.lines.join('').includes(`"method":"${method}"`);
+
+  it('kills the request where it runs, refuses the rest, and leaves a person’s requests alone', async () => {
+    const c = spawningComputer((req, out) => {
+      const method = (req['steps'] as Array<{ method?: string }> | undefined)?.[0]?.method;
+      if (method !== 'HANG') out({ id: req['id'], ok: true, results: [{ method }] });
+    });
+    const t = new ComputerDriverTransport(c, 9222);
+    const call = new AbortController();
+    const hanging = withCallSignal(call.signal, () => t.run({ steps: [{ op: 'send', method: 'HANG' }] }));
+    const queued = withCallSignal(call.signal, () => t.run({ steps: [{ op: 'send', method: 'NEXT' }] }));
+    for (let i = 0; i < 200 && !sent(c, 'HANG'); i++) await new Promise((r) => setTimeout(r, 5));
+    call.abort();
+    expect(await codeOf(() => hanging)).toBe('E_ABORTED');
+    expect(await codeOf(() => queued)).toBe('E_ABORTED');
+    expect(c.kills).toBe(1);
+    expect(sent(c, 'NEXT')).toBe(false);
+    // Killed inside the computer too, scripts included, before anything else started.
+    expect(c.calls.some((r) => Array.isArray(r.cmd) && r.cmd[1] === '-c' && String(r.cmd[2]).includes('HUSK_SCRIPT='))).toBe(true);
+    // A person's request belongs to no call: it gets a fresh driver and runs.
+    expect((await t.run({ steps: [{ op: 'send', method: 'LOOK' }] })).results).toEqual([{ method: 'LOOK' }]);
+    expect(c.spawns).toHaveLength(2);
+  });
+
+  it('starts nothing when its caller has already gone', async () => {
+    const c = spawningComputer((req, out) => out({ id: req['id'], ok: true, results: [{}] }));
+    const t = new ComputerDriverTransport(c, 9222);
+    expect(await codeOf(() => withCallSignal(AbortSignal.abort(), () => t.run({ steps: [{ op: 'send', method: 'A' }] })))).toBe('E_ABORTED');
+    expect(c.spawns).toHaveLength(0);
+  });
+
+  it('runs shared work started inside a call, like the launch, as nobody’s', async () => {
+    const c = spawningComputer((req, out) => out({ id: req['id'], ok: true, results: [{}] }));
+    const t = new ComputerDriverTransport(c, 9222);
+    const shared = withCallSignal(AbortSignal.abort(), () => forNoCall(() => t.run({ steps: [{ op: 'send', method: 'A' }] })));
+    await expect(shared).resolves.toMatchObject({ results: [{}] });
+  });
+
+  it('hands the signal to the exec where the driver runs one exec per request', async () => {
+    const c = okComputer([{}]);
+    const call = new AbortController();
+    await withCallSignal(call.signal, () => new ComputerDriverTransport(c, 9222).run({ steps: [{ op: 'send', method: 'A' }] }));
+    expect(c.calls.at(-1)?.signal).toBe(call.signal);
   });
 });
