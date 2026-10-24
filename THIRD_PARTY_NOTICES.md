@@ -7,7 +7,7 @@ required at run time.
 
 https://github.com/citrolabs/ego-lite
 
-Two ideas in `@husk-ai/browser` and `@husk-ai/mcp` come from ego-lite's MIT
+Three ideas in `@husk-ai/browser` and `@husk-ai/mcp` come from ego-lite's MIT
 licensed agent-side code and docs:
 
 - *Code over calls*: one call runs several page actions in a single round,

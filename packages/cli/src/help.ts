@@ -80,7 +80,7 @@ export const COMMANDS: HelpEntry[] = [
       ['--flavor <f>', 'base | python | node | full (default: base)'],
       ['--memory <size>', 'e.g. 2g, 512m'],
       ['--cpus <n>', 'cpu allocation'],
-      ['--network <mode>', 'none | egress | full (default: egress)'],
+      ['--network <mode>', 'none | egress | full (default: full, minus internal addresses)'],
       ['--packages <p,..>', 'install these in the machine at create time; repeatable'],
       ['--persist', 'keep the filesystem across restarts'],
       ['--json', 'print the computer record instead of the summary'],

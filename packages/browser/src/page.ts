@@ -138,8 +138,8 @@ interface Built {
 /**
  * `Accessibility.getFullAXTree` as a compact tree, in document order.
  *
- * The rules are ego-lite's (docs/native-snapshot-ref-requirement.md in
- * citrolabs/ego-lite, MIT, Copyright (c) 2026 CitroLabs): drop text that is
+ * The rules come from a third-party snapshot spec (see THIRD_PARTY_NOTICES.md):
+ * drop text that is
  * empty or only whitespace, drop an unnamed container left with no children,
  * and replace an unnamed container that has one child with that child. An
  * unnamed container with several children stays, because it is what keeps two
@@ -475,7 +475,7 @@ export class Page {
   /**
    * Several page actions in one driver round, stopping at the first that fails.
    *
-   * Code over calls, ego-lite's idea (MIT, Copyright (c) 2026 CitroLabs): the
+   * Code over calls (credited in THIRD_PARTY_NOTICES.md): the
    * cost of a browser tool is mostly the round trip, so a model that knows its
    * next five steps should pay for one. The actions are data and the driver
    * runs them; the only page script involved is what this file builds from

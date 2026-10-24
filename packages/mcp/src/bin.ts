@@ -21,7 +21,7 @@ options
   --session <key>     reuse a named machine (default: unique to this server process)
   --provider <name>   docker | podman | local | ssh | fly  (default: best available)
   --flavor <name>     base | python | node | full          (default: base)
-  --network <mode>    none | egress | full                 (default: egress)
+  --network <mode>    none | egress | full                 (default: full, minus internal addresses)
   --memory <mb>       memory ceiling
   --cpus <n>          cpu ceiling
   --keep              leave the machine running after the client disconnects

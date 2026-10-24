@@ -25,16 +25,23 @@ Guardrails handle (1) and (2). Only isolation handles (3).
 
 ### Isolated — `docker`, `podman`, `fly`
 
-A kernel boundary. The agent runs as uid 1000 in a container with:
+A kernel boundary. On `docker` and `podman` the agent runs as uid 1000 in a container
+with:
 
 - `--cap-drop ALL` and `--security-opt no-new-privileges`
 - a read-only root filesystem, with writable layers only at `/work` and `/tmp`
 - memory, CPU and pid limits (`--pids-limit 512`, so a fork bomb hits a ceiling)
 - the root account locked, no sudo, no setuid path to privilege
-- the network policy you declared
+- `--network none` when you declare `mode: none` (see [Network policy](#network-policy)
+  for what `egress` does and does not stop)
 
 An injected model in this mode can wreck the container. It cannot reach your home
 directory, your SSH keys, your Docker socket, or your other containers.
+
+`fly` machines are Firecracker microVMs: a different machine from yours, so the same
+holds for your laptop. Husk does not yet pass the hardening above to them, though: no
+user, read-only root, capability or network settings. Inside the VM the agent runs
+with the image's defaults.
 
 `husk doctor` reports `isolated: true`.
 
@@ -100,10 +107,19 @@ computer:
   safe reading of an under-specified policy.
 - `full` — unrestricted, minus explicit denies.
 
-On `docker`, `none` is enforced by the kernel (`--network none`). On `egress`, hostname
-allow-listing is enforced at the tool layer, not by a firewall — a process that opens a
+On `docker` and `podman`, `none` is enforced by the kernel (`--network none`). On
+`local`, `ssh` and `fly` it is not applied at all yet. On `egress`, hostname
+allow-listing is applied at the tool layer, not by a firewall — a process that opens a
 raw socket is not stopped. That is a real limitation and it is why `none` and `full` are
 the honest choices when the distinction matters.
+
+The tool layer checks the URLs Husk itself opens: `browse`, `browser_goto`, the `goto`
+steps of `browser_run` and the `page.goto` calls of `browser_script`. A page can still
+navigate itself — a link, a redirect, a pop-up — so for the rendered browser it is a
+guardrail, not a boundary. Making it cover every navigation is tracked in
+[#187](https://github.com/Hotragn/husk/issues/187). With no policy set, which is the
+MCP server's default, public addresses are allowed and Husk refuses internal ones
+(loopback it does not own, private ranges, link-local, the cloud metadata address).
 
 ## Secrets
 
@@ -146,15 +162,27 @@ In `readonly`, dangerous tools are never offered.
 ## What we do not do
 
 - **No telemetry.** Not off by default — absent. No analytics, no crash reporter, no
-  phone-home. The only calls Husk makes are to the model provider you configured and to a
-  registry when pulling an image.
+  phone-home. The only calls Husk makes are to the model provider you configured, to a
+  registry when pulling an image, and — the first time a computer needs the rendered
+  browser and has no Chromium of its own — to Chrome for Testing (Playwright's build on
+  arm64), from inside that computer.
 - **No credential storage.** Husk reads keys from the environment and never writes them to
   `~/.husk`. One thing does land there verbatim: `husk import` caches the transcript you
   gave it, so a chat log containing a key keeps that key in `~/.husk/transcripts`. What
   Husk *derives* from it is redacted first — the distilled `husk.yaml`, its name, its
   slug and its filename — but the cached copy of your own file is not rewritten.
 - **No remote execution by default.** `husk serve` binds loopback, and it refuses to start
-  on a non-loopback address without `HUSK_TOKEN` set.
+  on a non-loopback address without `HUSK_TOKEN` set. The shared Husk that a chat starts
+  also binds loopback, always with a token it mints and writes to `~/.husk/daemon.json`
+  (owner-only); any program running as you can read that file. The links Husk gives a
+  chat, so it can show you a computer, carry a short-lived token scoped to that one
+  computer (ten minutes unused, eight hours at most). The chat sees the link, so it holds
+  that token too.
+- **Take over is cooperation, not a security boundary.** Taking over, and a chat's
+  hand-off, stop the AI's Husk tool calls. They do not stop code already running in the
+  computer, or a chat app that can run commands on your machine itself (Claude Code,
+  Codex). Today a tool call that is already running when you take over finishes first;
+  stopping it at once is tracked in [#187](https://github.com/Hotragn/husk/issues/187).
 
 ## Securing the repository itself
 

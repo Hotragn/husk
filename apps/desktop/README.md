@@ -70,7 +70,7 @@ to the maintainer and are not in this repository.
 
 On Windows 11 on ARM: the packaged app starts its bundled Husk, opens the console signed
 in, and shuts down cleanly in smoke mode. The app binary run as Node starts the MCP server
-over stdio (initialize, then 32 tools listed). The `desktop` workflow builds and
+over stdio (initialize, then 34 tools listed). The `desktop` workflow builds and
 smoke-tests it on Windows, macOS and Linux.
 
 Not yet checked by a person: the tray, notifications and Start at login on each platform,

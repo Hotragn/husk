@@ -118,6 +118,14 @@ GET    /v1/computers/:id/activity -> { "entries": ActivityEntry[] }   (oldest fi
 POST   /v1/computers/:id/bot    body: { "useModel"?: boolean } -> { transcriptId, spec, yaml, distilled }
 POST   /v1/computers/:id/stop   -> ComputerInfo
 POST   /v1/computers/:id/start  -> ComputerInfo
+GET    /v1/computers/:id/browser/status     -> whether a browser can run here (never installs one)
+GET    /v1/computers/:id/browser/tabs       -> { "tabs": [...] } of an already-open browser (never launches one)
+POST   /v1/computers/:id/browser/goto       body: { "url", "timeoutSec"? } -> { url, loaded, title }
+POST   /v1/computers/:id/browser/snapshot   body: { "limit"? } -> { url, nodes }
+POST   /v1/computers/:id/browser/click      body: { "ref" } -> { url, nodes }
+POST   /v1/computers/:id/browser/type       body: { "ref", "text", "submit"? } -> { url, nodes }
+GET    /v1/computers/:id/browser/screenshot ?fullPage=1 -> image/png
+DELETE /v1/computers/:id/browser            -> 204, and the browser is closed
 ```
 
 A computer made from a chat app carries `platform` ("Claude Desktop", "Cursor",

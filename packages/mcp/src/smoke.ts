@@ -1,5 +1,5 @@
 /**
- * End-to-end smoke test, run by CI and by anyone debugging an install.
+ * End-to-end smoke test, run by hand when debugging an install (no workflow runs it).
  *
  * Deliberately does not mock: it creates a real computer with whatever provider is
  * available, drives every tool through the same `callTool` the MCP handler uses,

@@ -129,7 +129,7 @@ sets it, and `error` is terminal.
 
 ## The model router
 
-One `ModelProvider` interface, ten implementations, no SDK dependencies — the wire-format
+One `ModelProvider` interface, eleven implementations, no SDK dependencies — the wire-format
 translation *is* the package. Aliases (`opus`, `sonnet`, `gemma`, `free`, `auto`) resolve
 to `provider/model` so a `husk.yaml` written against Ollama runs against Opus by changing
 one line.
@@ -193,8 +193,12 @@ That is the whole onboarding for the largest audience. `@husk-ai/mcp` exposes th
 as MCP tools over stdio, so Claude Code — or Cursor, or Zed, or anything speaking MCP —
 gets a Linux machine mid-conversation with no account, no config file, and no signup.
 
-Stdio is the only transport today. A streamable-HTTP transport for remote clients is
-specified in [SPEC-remote-mcp.md](SPEC-remote-mcp.md) and not implemented.
+Stdio is the only transport a chat app uses today. Behind it, each chat's MCP process
+forwards its computer tools over loopback HTTP to one shared Husk (`husk-mcp --daemon`,
+found through `~/.husk/daemon.json`), which owns every computer's browser, take-overs and
+activity, so the console and the desktop app see every chat. A streamable-HTTP transport
+for remote clients is specified in [SPEC-remote-mcp.md](SPEC-remote-mcp.md) and not
+implemented.
 
 ## Deliberate non-goals
 

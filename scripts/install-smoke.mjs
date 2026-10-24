@@ -19,7 +19,7 @@
  *    the workspace link satisfied the import. Only someone installing from the
  *    registry got the old package, and only when `husk serve` lazy-imported it.
  *
- * Neither is findable without leaving the repository. So this packs all eleven,
+ * Neither is findable without leaving the repository. So this packs all thirteen,
  * installs them into a scratch directory outside the checkout, and then asks
  * the installed copies to do real work: the CLI lifecycle, an MCP handshake
  * over stdio, and an SDK import against the installed dependency graph.

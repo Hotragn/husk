@@ -286,7 +286,7 @@ export const MCP_TOOLS: Array<{ name: string; what: string }> = [
 ];
 
 /**
- * The browser, from `packages/mcp/src/browser-tools.ts`. Five of thirteen — the
+ * The browser, from `packages/mcp/src/browser-tools.ts`. Five of fifteen — the
  * five that make the shape obvious. A real Chromium inside the computer, driven
  * by structured page text rather than by pixels, which is why an agent can use
  * it without seeing.
@@ -299,8 +299,8 @@ export const BROWSER_TOOLS: Array<{ name: string; what: string }> = [
   { name: "browser_screenshot", what: "take a screenshot, to check a layout or show you" },
 ];
 
-/** Thirteen ship; the list above is the first five. */
-export const BROWSER_TOOL_COUNT = 13;
+/** Fifteen ship; the list above is the first five. */
+export const BROWSER_TOOL_COUNT = 15;
 
 /**
  * The first three prompts, in the order that proves the most fastest.

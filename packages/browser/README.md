@@ -101,8 +101,8 @@ await browser.close();
 ## Refs, not coordinates
 
 `snapshot()` turns `Accessibility.getFullAXTree` into a compact tree of
-`{ ref, role, name, value, depth }`, by ego-lite's rules (MIT, Copyright (c)
-2026 CitroLabs; see `THIRD_PARTY_NOTICES.md`): blank text and empty containers
+`{ ref, role, name, value, depth }`, by the rules credited in
+`THIRD_PARTY_NOTICES.md`: blank text and empty containers
 go, a container with one child becomes that child, and groups, refs, order and
 frame boundaries stay. A `ref` of `e42` is Chromium's backend node id, so
 it identifies the same element across snapshots for as long as the element is in
@@ -115,18 +115,24 @@ explicitly rather than resolving them to something nearby.
 
 ## Network policy
 
-Every navigation goes through `assertUrlAllowed` from `@husk-ai/core`, with the
-same `loopbackIsOwn` rule `browseInComputer` uses: `docker`, `podman` and `fly`
-own their loopback, `local` and `ssh` do not. `mode: 'full'` still refuses
-`169.254.169.254`. A real browser — which will follow a redirect chain a
-prompt-injected page hands it — makes this matter more, not less.
+Every URL Husk opens — `goto`, the `goto` steps of `run`, and the `page.goto` calls of
+a script — goes through `assertUrlAllowed` from `@husk-ai/core`, with the same
+`loopbackIsOwn` rule `browseInComputer` uses: `docker`, `podman` and `fly` own their
+loopback, `local` and `ssh` do not. `mode: 'full'` still refuses `169.254.169.254`.
+A real browser — which will follow a redirect chain a prompt-injected page hands it —
+makes this matter more, not less, and today the check does not see a page navigating
+itself (links, redirects, pop-ups) or a tab opened with `newTab`. Closing those gaps
+is tracked in [#187](https://github.com/Hotragn/husk/issues/187).
 
 ## Not sandboxed by itself
 
-Chromium runs with `--no-sandbox`. The computer *is* the sandbox; Chromium's own
-namespace sandbox cannot nest inside an unprivileged container, and on the
-`local` provider there is no kernel boundary to begin with. Run untrusted pages
-in a `docker` or `podman` computer.
+Chromium runs with `--no-sandbox` on every provider today. In a container that is
+required: Chromium's own namespace sandbox cannot nest inside an unprivileged
+container, and the container is the boundary. On `local` and `ssh` it is not: there
+Chromium's sandbox is the only thing between a hostile page and your account, and
+keeping it on outside containers is tracked in
+[#187](https://github.com/Hotragn/husk/issues/187). Run untrusted pages in a `docker`
+or `podman` computer.
 
 One caveat measured rather than assumed: on `local` under **WSL2**, Windows'
 loopback relay forwards a WSL `127.0.0.1` listener to the Windows host, so the

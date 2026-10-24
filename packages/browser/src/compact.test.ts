@@ -3,9 +3,8 @@ import { compactAxTree } from './page.js';
 import type { AxNodeLike, SnapshotNode } from './page.js';
 
 /**
- * The compact snapshot, against ego-lite's acceptance fixture
- * (docs/native-snapshot-ref-requirement.md in citrolabs/ego-lite, MIT,
- * Copyright (c) 2026 CitroLabs): nested containers, blank text, two sibling
+ * The compact snapshot, against the acceptance fixture of the snapshot spec
+ * credited in THIRD_PARTY_NOTICES.md: nested containers, blank text, two sibling
  * groups, an iframe, an image, an SVG, a canvas and an empty table cell.
  */
 

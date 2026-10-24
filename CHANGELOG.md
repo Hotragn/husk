@@ -11,8 +11,55 @@ not here.
 
 ## [Unreleased]
 
+### Added
+
+- **Workspaces.** Named local workspaces keep the public sources you add and the
+  results your chat writes, with a viewer, downloads and ZIP export. They need no
+  Docker and no extra API key. `--profile starter` serves the workspace tools only; it is
+  what the Claude Desktop extension uses
+  ([#151](https://github.com/Hotragn/husk/pull/151)).
+- **Hand-offs.** `hand_off` and `hand_off_done` give you the computer for a login, a 2FA
+  code or a CAPTCHA, and give it back only when you say so
+  ([#164](https://github.com/Hotragn/husk/pull/164)). Every chat gets its own computer,
+  which is kept until you delete it
+  ([#165](https://github.com/Hotragn/husk/pull/165)).
+- **The computer card.** In apps that render MCP Apps, the chat shows its computer's state
+  and a link ([#166](https://github.com/Hotragn/husk/pull/166)).
+- **The console's Home** is an overview of every computer
+  ([#167](https://github.com/Hotragn/husk/pull/167)).
+- **Husk Bar**, a macOS menu-bar and notch companion
+  ([#168](https://github.com/Hotragn/husk/pull/168)).
+- **One shared Husk for every chat on the machine.** Each chat's tools go through it, so
+  the console shows every chat's computer, its live browser and what it did last
+  ([#175](https://github.com/Hotragn/husk/pull/175)). Each chat's computer has its own
+  page, with the live browser, its activity, Take over and Make this a bot
+  ([#176](https://github.com/Hotragn/husk/pull/176)).
+- **`husk setup`** picks where computers run, connects your chat apps and starts the
+  shared Husk. The console's Connect page does the same
+  ([#177](https://github.com/Hotragn/husk/pull/177)).
+- **The desktop app** carries its own Node and keeps each chat's computer one click away:
+  - a corner of small computers;
+  - a Computers window whose tabs are your computers;
+  - a notch when it is minimized;
+  - a tray that tells you when a chat is waiting.
+
+  It is not released or signed yet
+  ([#178](https://github.com/Hotragn/husk/pull/178),
+  [#185](https://github.com/Hotragn/husk/pull/185)).
+- **Take over at any moment**, from the console, the desktop app or a chat's link
+  ([#180](https://github.com/Hotragn/husk/pull/180),
+  [#182](https://github.com/Hotragn/husk/pull/182)).
+- **A faster browser.** One long-lived driver per computer, and a pushed live screen.
+  `browser_run` does several steps in one call
+  ([#181](https://github.com/Hotragn/husk/pull/181)), and `browser_script` runs a short
+  Python script with control flow inside the computer
+  ([#184](https://github.com/Hotragn/husk/pull/184)).
+
 ### Fixed
 
+- **Open bugs from the first users:** chat triggers, symlinks, duplicate names, `~/.husk`,
+  a cold WSL and the model choice
+  ([#174](https://github.com/Hotragn/husk/pull/174)).
 - **`computer_info` reported the host's CPU count and no memory limit at all**, when
   both are limits husk set. A computer created with `--cpus=0.5 --memory=512m` described
   itself as having the host's 10 cores and 7724MB, because `nproc` and `free` read
