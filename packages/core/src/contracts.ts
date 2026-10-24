@@ -64,6 +64,7 @@ export { messageText } from './types/model.js';
 export type {
   ToolContext,
   Tool,
+  AdmittedTool,
   ApprovalMode,
   ApprovalRequest,
   Approver,

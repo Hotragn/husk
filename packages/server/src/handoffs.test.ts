@@ -204,3 +204,31 @@ describe('ComputerControl', () => {
     expect(await control.refusal('c1', 'browser_click', async () => page('https://b.test/'))).toContain('https://a.test/');
   });
 });
+
+describe('a husk run on a computer a person holds', { timeout: 30_000 }, () => {
+  let harness: TestApp | undefined;
+  afterEach(async () => {
+    await harness?.cleanup();
+    harness = undefined;
+  });
+
+  async function toolOutput(take: boolean): Promise<string> {
+    // The fake manager names its first computer cmp_1, so the run can be told it up front.
+    const h = (harness = await buildTestApp({ agent: fakeAgentFactory({ toolOn: { computerId: 'cmp_1', name: 'shell' } }) }));
+    const { id } = (await h.app.inject({ method: 'POST', url: '/v1/computers', payload: {} })).json() as { id: string };
+    expect(id).toBe('cmp_1');
+    if (take) await h.app.inject({ method: 'POST', url: `/v1/computers/${id}/takeover` });
+    for await (const e of h.app.husk.runner.stream(sampleSpec(), { input: 'go' }, new AbortController().signal)) {
+      if (e.type === 'tool_end') return e.output;
+    }
+    return 'no tool_end';
+  }
+
+  it('has its computer tools refused, with who holds the computer', async () => {
+    expect(await toolOutput(true)).toContain('took over this computer');
+  });
+
+  it('runs them as before when nobody holds it', async () => {
+    expect(await toolOutput(false)).toBe('ran');
+  });
+});

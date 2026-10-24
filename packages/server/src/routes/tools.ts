@@ -5,7 +5,7 @@ import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
 import { PERSON_RUN, heldText, takenText } from '../handoffs.js';
 import { closedEarly } from '../sse.js';
-import { underControl } from './handoffs.js';
+import { underControl } from '../control.js';
 
 /** How long a chat's call waits for a person to give back a computer they took. Tests shorten it. */
 export const takeover = { waitMs: 45_000 };

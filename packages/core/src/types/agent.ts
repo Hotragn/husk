@@ -77,6 +77,15 @@ export interface ApprovalRequest {
  */
 export type Approver = (req: ApprovalRequest) => Promise<boolean>;
 
+/**
+ * A tool call a host let in, or why it did not: a refusal (the call does not
+ * run), or the signal the call runs under, `done()` once it ends, and
+ * `stopped()`, the text for a call a person's take-over cut off.
+ */
+export type AdmittedTool =
+  | { refused: string }
+  | { signal: AbortSignal; done(): void; stopped(): string | undefined };
+
 export interface RunOptions {
   input: string | ModelMessage[];
   /** Prior turns to continue from. */
@@ -102,6 +111,11 @@ export interface RunOptions {
    * handoff is refused at once: nobody is there to take it, so waiting would hang.
    */
   onHandoff?: (request: HandoffRequest, signal: AbortSignal) => Promise<HandoffOutcome>;
+  /**
+   * Lets each tool call that acts on the computer in, for a host that shares
+   * the computer with a person. Absent means every call runs, as before.
+   */
+  admitTool?: (call: ToolCallPart, signal: AbortSignal) => Promise<AdmittedTool>;
   /** Named values interpolated into the persona template. */
   vars?: Record<string, string>;
 }
