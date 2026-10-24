@@ -1,5 +1,5 @@
-import { Analytics } from '@vercel/analytics/next';
 import type { Metadata, Viewport } from 'next';
+import { Analytics } from '@/components/Analytics';
 import { Footer } from '@/components/Footer';
 import { Header } from '@/components/Header';
 import { ThemeScript } from '@/components/ThemeScript';
@@ -9,10 +9,10 @@ import { commitMono, generalSans } from './fonts';
 import './globals.css';
 
 /**
- * Vercel Web Analytics is served from `/_vercel/insights/` on this origin, not
- * a third-party host, so the property `public/fonts/README.md` argues for --
- * no request leaving for anyone the reader did not choose to talk to -- still
- * holds.
+ * Page views are counted by PostHog (`components/Analytics.tsx`), which is a
+ * third party: the browser sends each view to us.i.posthog.com. It sets no
+ * cookie and records no session, and the pages that disclose analytics name
+ * it.
  *
  * Worth being precise, because this site says "no telemetry": that claim is
  * about the product. `husk` the CLI phones nobody and nothing here changes it.
