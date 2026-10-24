@@ -301,7 +301,7 @@ export class HuskMcpServer {
     }
     return audited(
       { computerId: computer.id, via: 'mcp', tool: name, args },
-      () => callTool(computer, name, args),
+      () => callTool(computer, name, args, signal),
       // MCP tools report failure in the result rather than by throwing, so
       // the wrapper is told how to recognise one.
       (r) => (r.isError ? firstText(r.content) : undefined),

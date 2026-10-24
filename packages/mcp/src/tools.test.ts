@@ -189,6 +189,21 @@ describe('shell', () => {
     expect(text).not.toContain('was stopped');
     expect(text).toContain(STOP_UNCONFIRMED);
   });
+
+  it('hands the chat’s cancel to the command, and to the computer_info probe', async () => {
+    const signals: Array<AbortSignal | undefined> = [];
+    const computer = {
+      info: { id: 'cmp_test', provider: 'docker', image: 'debian:bookworm-slim', spec: {} },
+      exec: async (req: { signal?: AbortSignal }) => {
+        signals.push(req.signal);
+        return { exitCode: 1, stdout: '', stderr: '', durationMs: 1, timedOut: false, truncated: false };
+      },
+    } as unknown as Computer;
+    const cancel = new AbortController();
+    await callTool(computer, 'shell', { command: 'sleep 9' }, cancel.signal);
+    await callTool(computer, 'computer_info', {}, cancel.signal);
+    expect(signals).toEqual([cancel.signal, cancel.signal]);
+  });
 });
 
 describe('model timeouts', () => {

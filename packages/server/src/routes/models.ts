@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ctxOf } from '../context.js';
 import { invalidSpec } from '../errors.js';
-import { SseStream, pipeSse } from '../sse.js';
+import { SseStream, closedEarly, pipeSse } from '../sse.js';
 
 const ContentPartSchema: z.ZodType<unknown> = z.union([
   z.object({ type: z.literal('text'), text: z.string() }),
@@ -87,11 +87,10 @@ export async function modelRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
-  app.post('/v1/models/chat', async (req) => {
+  app.post('/v1/models/chat', async (req, reply) => {
+    const signal = closedEarly(reply);
     const chat = parseChat(req.body);
-    const abort = new AbortController();
-    req.raw.on('close', () => abort.abort(new Error('client disconnected')));
-    return router.chat({ ...chat, signal: abort.signal });
+    return router.chat({ ...chat, signal });
   });
 
   app.post('/v1/models/chat/stream', async (req, reply) => {

@@ -152,7 +152,8 @@ export interface ToolRunResult {
   content: Array<{ type: string; [k: string]: unknown }>;
   isError?: boolean;
 }
-export type ToolRunner = (computer: Computer, name: string, args: Record<string, unknown>) => Promise<ToolRunResult>;
+/** Runs one chat tool. `signal` aborts when the chat cancels the call or goes away; the tool stops its work. */
+export type ToolRunner = (computer: Computer, name: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<ToolRunResult>;
 
 
 export type AdapterFactory = (kind: string, options?: TelegramAdapterOptions & SlackAdapterOptions) => Adapter | undefined;
