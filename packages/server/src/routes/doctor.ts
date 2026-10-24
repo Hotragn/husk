@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { ENV_KEYS, HUSK_VERSION, mapLimit, paths } from '@husk-ai/core';
+import { compareModelPreference } from '@husk-ai/models';
 import type { FastifyInstance } from 'fastify';
 import { ctxOf } from '../context.js';
 import { findOrphanedWorkspaces } from '@husk-ai/runtime';
@@ -111,7 +112,9 @@ export async function doctorRoutes(app: FastifyInstance): Promise<void> {
           if (a.available) {
             // Only ask a reachable provider for its catalogue; listing against a
             // dead endpoint turns doctor into a pile of timeouts.
-            base.models = (await p.listModels().catch(() => [])).map((m) => m.id).slice(0, 12);
+            // Best first, as `husk doctor` and the router order them, so the
+            // selection below is the model husk would actually use (#121).
+            base.models = (await p.listModels().catch(() => [])).sort(compareModelPreference).map((m) => m.id).slice(0, 12);
           }
           return base;
         } catch (err) {
@@ -190,7 +193,7 @@ export async function doctorRoutes(app: FastifyInstance): Promise<void> {
         isolated: firstProvider?.isolated ?? null,
         model: firstModel,
         modelReason: firstModel
-          ? `first reachable model on ${firstModelProvider?.displayName ?? 'the selected provider'}`
+          ? `preferred available model on ${firstModelProvider?.displayName ?? 'the selected provider'} (capabilities, catalog quality, and local size tier)`
           : 'no model provider is reachable',
       },
       warnings,

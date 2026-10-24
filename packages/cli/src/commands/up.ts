@@ -1,4 +1,5 @@
 import { slug } from '@husk-ai/core';
+import { ensureRunning } from '@husk-ai/runtime';
 import type { ComputerSpec } from '@husk-ai/core';
 import { parse, parseChoice, parseCount, parseMemory } from '../args.js';
 import { manager } from '../lib/computers.js';
@@ -75,10 +76,14 @@ export async function run(argv: string[]): Promise<number> {
     ...(parseEnv(values.env as string[] | undefined) ? { env: parseEnv(values.env as string[] | undefined) } : {}),
   };
 
-  const spin = ui.spinner(`creating ${name}`);
+  // `up` on a name that exists brings that computer up rather than making a
+  // second one under the same name (#112). Its settings are left as they are.
+  const existing = (await mgr.list()).find((c) => c.name === name && c.state !== 'destroyed');
+  const spin = ui.spinner(existing ? `starting ${name}` : `creating ${name}`);
   let computer;
   try {
-    computer = await mgr.create(spec);
+    const found = existing ? await mgr.get(existing.id) : null;
+    computer = found ? await ensureRunning(found) : await mgr.create(spec);
   } finally {
     spin.stop();
   }
@@ -91,7 +96,10 @@ export async function run(argv: string[]): Promise<number> {
   }
 
   const availability = status.find((s) => s.name === info.provider);
-  ui.print(`${ui.green('✓')} ${ui.bold(info.name)} is up`);
+  ui.print(`${ui.green('✓')} ${ui.bold(info.name)} ${existing ? 'was already here, and is up' : 'is up'}`);
+  if (existing && argv.some((a) => a.startsWith('--') && !a.startsWith('--json') && !a.startsWith('--no-color'))) {
+    ui.print(ui.dim(`  its settings were not changed -- \`husk rm ${info.name}\` first to make it again with new ones`));
+  }
   ui.print();
   ui.print(
     ui.fields([
@@ -105,7 +113,7 @@ export async function run(argv: string[]): Promise<number> {
       ],
       ['image', info.imageFallback ? `${info.image} ${ui.yellow('(fallback)')}` : ui.dim(info.image)],
       ['workdir', info.workdir],
-      ['network', spec.network?.mode ?? 'egress'],
+      ['network', info.spec?.network?.mode ?? spec.network?.mode ?? 'egress'],
     ]),
   );
 

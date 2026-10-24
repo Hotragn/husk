@@ -1,6 +1,6 @@
 import { readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { ensurePaths } from '@husk-ai/core';
+import { ensurePaths, paths } from '@husk-ai/core';
 import type { ComputerInfo, ProviderName } from '@husk-ai/core';
 
 /**
@@ -22,7 +22,7 @@ export async function persistInfo(info: ComputerInfo): Promise<void> {
 }
 
 export async function loadInfos(provider?: ProviderName): Promise<ComputerInfo[]> {
-  const p = ensurePaths();
+  const p = paths(); // read-only: never creates ~/.husk
   let files: string[];
   try {
     files = await readdir(p.computers);
@@ -85,7 +85,7 @@ export async function touchInfo(id: string, at = new Date()): Promise<void> {
  * record must never make something look idler than it is.
  */
 export async function lastUsedTimes(): Promise<Map<string, string>> {
-  const p = ensurePaths();
+  const p = paths(); // read-only: never creates ~/.husk
   const out = new Map<string, string>();
   let files: string[];
   try {

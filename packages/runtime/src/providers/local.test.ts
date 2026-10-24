@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { LocalProvider, setShellPlan, windowsHint, windowsReason } from './local.js';
+import { LocalProvider, setShellPlan, windowsHint, windowsReason, wslWorks } from './local.js';
 import type { ShellPlan } from './local.js';
 import type { Computer } from '@husk-ai/core';
 import { ComputerManager } from '../manager.js';
@@ -65,6 +65,28 @@ async function freshComputer(): Promise<Computer> {
 // The /work contract is a posix-and-WSL promise; the cmd.exe fallback reports
 // its own truthful workdir instead and is covered by the degradation tests.
 describe.skipIf(process.platform === 'win32')('local provider /work contract', () => {
+  // #113: a link made in the shell holds a guest target the host cannot follow.
+  it('follows a symlink that stays inside /work, for a file and a directory', async () => {
+    const c = await freshComputer();
+    const r = await c.exec({
+      cmd: 'echo INSIDE > /work/real.txt && ln -s /work/real.txt /work/link.txt && mkdir /work/sub && echo X > /work/sub/x && ln -s /work/sub /work/link-dir',
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+
+    expect(Buffer.from(await c.readFile('/work/link.txt')).toString().trim()).toBe('INSIDE');
+    expect((await c.listDir('/work/link-dir')).map((e) => e.name)).toEqual(['x']);
+    expect((await c.stat('/work/link.txt'))?.type).toBe('file');
+  });
+
+  // /etc/hosts exists on Linux and macOS; a dangling link would only prove "missing".
+  it('refuses a symlink that leaves the workspace, as a path outside it', async () => {
+    const c = await freshComputer();
+    const r = await c.exec({ cmd: 'ln -s /etc/hosts /work/escape' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    // Refused as a path outside the workspace, not reported as missing.
+    await expect(c.readFile('/work/escape')).rejects.toMatchObject({ code: 'E_FS_DENIED', message: expect.not.stringMatching(/^cannot read/) });
+  });
+
   it('runs a script written through the file tools via its /work path', async () => {
     const c = await freshComputer();
     await c.writeFile('/work/hello.sh', 'echo marker-from-work\n');
@@ -219,5 +241,42 @@ describe('the local provider', () => {
       expect(windowsReason(plan())).toBeNull();
       expect(windowsHint(plan())).toBeNull();
     });
+  });
+});
+
+// #110: the first WSL use after boot can outlast the probe that starts it.
+describe('wslWorks', () => {
+  const answer = (stdout: string, error?: string) =>
+    (() => ({ stdout: Buffer.from(stdout), stderr: Buffer.alloc(0), status: 0, signal: null, pid: 1, output: [], ...(error ? { error: Object.assign(new Error(error), { code: error }) } : {}) })) as never;
+
+  it('tries a cold distro once more when the first probe times out', () => {
+    const calls: number[] = [];
+    let n = 0;
+    const run = ((_cmd: string, _args: string[], opts: { timeout: number }) => {
+      calls.push(opts.timeout);
+      return n++ === 0 ? (answer('', 'ETIMEDOUT') as () => unknown)() : (answer('husk-wsl-ok\n') as () => unknown)();
+    }) as never;
+    expect(wslWorks('Ubuntu', run)).toBe(true);
+    expect(calls).toEqual([15_000, 30_000]);
+  });
+
+  it('does not retry on a re-check, which runs inside a live server', () => {
+    const calls: number[] = [];
+    const run = ((_c: string, _a: string[], opts: { timeout: number }) => {
+      calls.push(opts.timeout);
+      return (answer('', 'ETIMEDOUT') as () => unknown)();
+    }) as never;
+    expect(wslWorks('Ubuntu', run, false)).toBe(false);
+    expect(calls).toEqual([15_000]);
+  });
+
+  it('does not retry a distro that answered with an error', () => {
+    let n = 0;
+    const run = (() => {
+      n++;
+      return (answer('Catastrophic failure') as () => unknown)();
+    }) as never;
+    expect(wslWorks('Ubuntu', run)).toBe(false);
+    expect(n).toBe(1);
   });
 });

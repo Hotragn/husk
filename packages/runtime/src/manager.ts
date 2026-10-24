@@ -1,6 +1,7 @@
 import { readFile, mkdir, rename, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { HuskError, chatIdentityOf, createLogger, ensurePaths, notifyComputerDestroyed } from '@husk-ai/core';
+import { createHash } from 'node:crypto';
+import { HuskError, chatIdentityOf, createLogger, notifyComputerDestroyed, paths } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -161,8 +162,8 @@ export class ComputerManager {
     });
   }
 
-  private async assertQuota(): Promise<void> {
-    const live = (await this.list()).filter((c) => c.state === 'running' || c.state === 'creating');
+  private async assertQuota(all: ComputerInfo[]): Promise<void> {
+    const live = all.filter((c) => c.state === 'running' || c.state === 'creating');
     if (live.length >= this.maxComputers) {
       throw new HuskError('E_QUOTA', `already running ${live.length} computers (limit ${this.maxComputers})`, {
         hint: 'destroy one with `husk rm <name>`, or raise maxComputers in ~/.husk/config.json',
@@ -171,7 +172,17 @@ export class ComputerManager {
   }
 
   async create(spec: ComputerSpec = {}): Promise<Computer> {
-    await this.assertQuota();
+    const all = await this.list();
+    // One computer per name. A second one would be unreachable by name from the
+    // moment it existed, and `husk rm <name>` would destroy one of two (#112).
+    const clash = spec.name ? all.find((c) => c.name === spec.name && c.state !== 'destroyed') : undefined;
+    if (clash) {
+      throw new HuskError('E_SPEC_INVALID', `a computer named ${clash.name} already exists (${clash.id})`, {
+        hint: `use it as it is (\`husk exec ${clash.name} -- ...\`), or remove it first with \`husk rm ${clash.name}\``,
+        details: { id: clash.id },
+      });
+    }
+    await this.assertQuota(all);
     const provider = await this.resolveProvider(spec.provider ?? 'auto');
     const computer = await provider.create({ ...spec, provider: provider.name });
     this.log.debug(`created ${computer.id} on ${provider.name}`);
@@ -197,6 +208,22 @@ export class ComputerManager {
         await clearBinding(key);
       }
 
+      // A lost bindings file must not cost a chat its computer: the machine still
+      // carries its key, so adopt it rather than make a second one by that name.
+      const keyed = (await this.list()).find((c) => c.spec?.labels?.['husk.key'] === key && c.state !== 'destroyed');
+      const adopted = keyed ? await this.get(keyed.id) : null;
+      if (adopted && adopted.info.state !== 'destroyed') {
+        await writeBinding(key, adopted.id);
+        return ensureRunning(adopted);
+      }
+
+      // A husk's computer is named after the husk, and two paths reach it under
+      // different keys (`husk run` uses husk:<name>, the server the bare name).
+      // The name a person typed stays unique; a keyed computer whose preferred
+      // name is taken gets one derived from its key instead of failing.
+      const all = await this.list();
+      const taken = spec.name ? all.some((c) => c.name === spec.name && c.state !== 'destroyed') : false;
+      const name = taken ? `${spec.name}-${createHash('sha256').update(key).digest('hex').slice(0, 6)}` : spec.name;
       const computer = await this.create({
         // A computer reached by a stable key is somebody's bot -- one chat, one
         // session, one machine -- and it is expected to still be there
@@ -209,6 +236,7 @@ export class ComputerManager {
         // container. Persisting by key makes the sentence true.
         persist: true,
         ...spec,
+        ...(name ? { name } : {}),
         labels: { ...(spec.labels ?? {}), 'husk.key': key },
       });
       await writeBinding(key, computer.id);
@@ -313,7 +341,8 @@ export class ComputerManager {
 // ---------------------------------------------------------------------------
 
 function bindingsFile(): string {
-  return join(ensurePaths().computers, 'bindings.json');
+  // Reading must not create ~/.husk; writeBindings makes the directory itself.
+  return join(paths().computers, 'bindings.json');
 }
 
 async function readBindings(): Promise<Record<string, string>> {

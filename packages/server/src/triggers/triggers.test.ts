@@ -7,6 +7,8 @@ import { CronBindings } from './cron.js';
 import { extractInput, mountKey } from './http.js';
 import { hmacHex, safeCompareHex, verifyHmacSignature } from './webhook.js';
 import type { FastifyRequest } from 'fastify';
+import type { AdapterContext } from '@husk-ai/adapters';
+import type { AdapterFactory } from '../deps.js';
 
 let harness: TestApp;
 
@@ -331,5 +333,108 @@ describe('mounted triggers', { timeout: 30_000 }, () => {
     expect((await harness.app.inject({ method: 'POST', url: '/v1/t/triage/ask', payload: { input: 'x' } })).statusCode).toBe(
       200,
     );
+  });
+});
+
+describe('chat triggers', { timeout: 30_000 }, () => {
+  /** A stand-in adapter that records its lifecycle and lets a test send it a message. */
+  function fakeAdapters() {
+    const started: Array<{ kind: string; options: unknown; ctx: AdapterContext }> = [];
+    let stopped = 0;
+    const factory: AdapterFactory = (kind, options) => ({
+      id: kind,
+      async start(ctx) {
+        started.push({ kind, options, ctx });
+      },
+      async stop() {
+        stopped++;
+      },
+    });
+    return { factory, started, stopped: () => stopped };
+  }
+
+  async function addHusk(triggers: unknown[], name = 'triage') {
+    const res = await harness.app.inject({ method: 'POST', url: '/v1/husks', payload: { spec: { ...sampleSpec(name), triggers } } });
+    expect(res.statusCode, res.body).toBeLessThan(300);
+  }
+
+  it('starts a discord adapter, lists it, and routes its messages to a run', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await addHusk([{ type: 'discord', channels: ['123'], mentionOnly: true }]);
+
+    expect(fake.started).toHaveLength(1);
+    expect(fake.started[0]).toMatchObject({ kind: 'discord', options: { channels: ['123'], mentionOnly: true } });
+    const reply = await fake.started[0]!.ctx.run('why is main red?', { userId: 'u', channelId: '123' });
+    expect(reply).toBe('done');
+
+    const listed = (await harness.app.inject({ method: 'GET', url: '/v1/triggers' })).json().triggers;
+    expect(listed).toContainEqual(expect.objectContaining({ husk: 'triage', type: 'discord' }));
+  });
+
+  it('passes the telegram allowlist through', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await addHusk([{ type: 'telegram', allowlist: ['alice'] }]);
+    expect(fake.started[0]).toMatchObject({ kind: 'telegram', options: { allowlist: ['alice'] } });
+  });
+
+  it('keeps a running adapter across an unrelated sync, and stops it when the husk goes', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await addHusk([{ type: 'slack', channels: ['C1'] }]);
+    await addHusk([{ type: 'http', path: '/' }], 'other');
+    expect(fake.started).toHaveLength(1);
+    expect(fake.stopped()).toBe(0);
+
+    await harness.app.inject({ method: 'DELETE', url: '/v1/husks/triage' });
+    expect(fake.stopped()).toBe(1);
+  });
+
+  it('serves a route an adapter mounts without the server token, and nothing else under /v1/a', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ token: 'secret', triggers: true, createAdapter: fake.factory });
+    await harness.app.inject({
+      method: 'POST',
+      url: '/v1/husks',
+      headers: { authorization: 'Bearer secret' },
+      payload: { spec: { ...sampleSpec(), triggers: [{ type: 'slack', channels: ['C1'] }] } },
+    });
+    fake.started[0]!.ctx.mountHttp!('/slack/events', async (req) => ({
+      status: 200,
+      body: { echoed: req.rawBody.toString() },
+    }));
+
+    const hit = await harness.app.inject({ method: 'POST', url: '/v1/a/triage/slack/events', payload: 'ping' });
+    expect(hit.statusCode).toBe(200);
+    expect(hit.json()).toEqual({ echoed: 'ping' });
+
+    const miss = await harness.app.inject({ method: 'POST', url: '/v1/a/triage/nothing', payload: 'ping' });
+    expect(miss.statusCode).toBe(404);
+  });
+
+  it('refuses a bot that would answer anyone', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await addHusk([{ type: 'discord' }, { type: 'telegram' }]);
+    expect(fake.started).toHaveLength(0);
+    const listed = (await harness.app.inject({ method: 'GET', url: '/v1/triggers' })).json().triggers;
+    expect(listed).toContainEqual(expect.objectContaining({ type: 'discord', detail: expect.stringContaining('not started') }));
+  });
+
+  it('gives each platform to one husk, because one token cannot serve two', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await addHusk([{ type: 'discord', channels: ['1'] }], 'first');
+    await addHusk([{ type: 'discord', channels: ['2'] }], 'second');
+    expect(fake.started.map((s) => s.ctx.husk)).toEqual(['first']);
+  });
+
+  it('starts one adapter even when two syncs race', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await harness.app.inject({ method: 'POST', url: '/v1/husks', payload: { spec: { ...sampleSpec('bot'), triggers: [{ type: 'telegram', allowlist: ['a'] }] } } });
+    await Promise.all([harness.app.inject({ method: 'POST', url: '/v1/husks', payload: { spec: sampleSpec('x') } }), harness.app.inject({ method: 'POST', url: '/v1/husks', payload: { spec: sampleSpec('y') } })]);
+    expect(fake.started).toHaveLength(1);
   });
 });

@@ -174,8 +174,9 @@ dependency cannot silently regress it.
 ## Privacy
 
 No telemetry. Not "off by default" — absent. Nothing leaves your machine except
-calls to the model provider you configured. State lives in `~/.husk`; delete that
-directory to reset husk completely.
+calls to the model provider you configured. Settings and records live in `~/.husk`.
+Computers keep their files elsewhere (Docker volumes, or the WSL distro's own
+`~/.husk`), so `husk rm` each computer before deleting that directory.
 
 ## MCP
 

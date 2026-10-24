@@ -478,11 +478,8 @@ Topics: `computers`, `runs`, `providers`, `triggers`, `adapters`, `reaper`.
 
 Each frame is `{ type, at, topic, payload }`.
 
-<Note>
-The `adapters` topic exists and nothing ever emits on it, because the chat adapters are
-not wired into the server. See
-[Triggers](/chat-to-bot/triggers#what-is-actually-mounted).
-</Note>
+The `adapters` topic carries `adapter_started` and `adapter_stopped`, each with the husk
+and the trigger type. See [Triggers](/chat-to-bot/triggers#discord-slack-and-telegram).
 
 ---
 

@@ -53,7 +53,7 @@ export function orient(o: Orientation): void {
       : `  ${ui.dim('isolation ')} ${ui.yellow('none')} ${ui.dim('— guardrails, not a sandbox. A determined process can escape.')}`,
   );
   ui.note(`  ${ui.dim('privacy   ')} nothing leaves this machine except calls to a model provider you configure`);
-  ui.note(`  ${ui.dim('state     ')} ${home} ${ui.dim('(delete it to reset husk completely)')}`);
+  ui.note(`  ${ui.dim('state     ')} ${home} ${ui.dim("(settings and records; `husk rm` each computer before deleting it, or the computers' files stay behind)")}`);
   if (o.hint) ui.note(`  ${ui.dim('next      ')} ${o.hint}`);
   ui.note('');
 }

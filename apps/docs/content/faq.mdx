@@ -300,10 +300,11 @@ requests need the full `husk serve` control plane.
 
 ### Do the Discord, Slack and Telegram triggers work?
 
-The adapter APIs are available for custom integrations. The built-in trigger host
-supports `http`, `webhook`, and `cron`. A husk file with Discord, Slack, or Telegram
-triggers now fails validation with an actionable message instead of silently ignoring
-them. See [the Discord guide](/guides/discord-bot#step-6-the-glue) for a custom integration.
+Yes. Declare the trigger in the husk and set its token before `husk serve`, and the
+server starts the adapter. `GET /v1/triggers` shows each one, and says which variable it
+is waiting for when the token is missing. See
+[Triggers](/chat-to-bot/triggers#discord-slack-and-telegram) and
+[the Discord guide](/guides/discord-bot#step-6-turn-on-the-trigger).
 
 ---
 

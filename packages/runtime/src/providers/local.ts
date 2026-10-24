@@ -123,7 +123,7 @@ export function detectShell(force = false): ShellPlan {
       // still fail with "Catastrophic failure / Wsl/Service/E_UNEXPECTED", and
       // wsl.exe exits 0 while printing it -- so trust the marker, not the code.
       for (const distro of distros) {
-        if (wslWorks(distro)) {
+        if (wslWorks(distro, spawnSync, !force && !stale)) {
           downgradedAt = undefined;
           cachedShell = { kind: 'wsl', distro, label: `WSL2 (${distro})` };
           return cachedShell;
@@ -150,7 +150,7 @@ export function detectShell(force = false): ShellPlan {
 /**
  * Use this plan instead of probing, or `undefined` to probe again.
  *
- * Probing runs `wsl.exe` synchronously with 8s and 15s timeouts, so on a
+ * Probing runs `wsl.exe` synchronously with 8s and 15s timeouts (15s and 30s on the first run), so on a
  * Windows host with a slow or broken WSL anything that creates a local computer
  * takes as long as WSL takes to fail. Tests about something other than shell
  * detection pin a plan here rather than inheriting that.
@@ -162,16 +162,25 @@ export function setShellPlan(plan: ShellPlan | undefined): void {
 
 const WSL_MARKER = 'husk-wsl-ok';
 
-function wslWorks(distro: string): boolean {
-  try {
-    const probe = spawnSync('wsl.exe', ['-d', distro, '-e', 'echo', WSL_MARKER], {
-      timeout: 15_000,
-      windowsHide: true,
-    });
-    return (probe.stdout?.toString('utf8') ?? '').replace(/\0/g, '').includes(WSL_MARKER);
-  } catch {
-    return false;
+/**
+ * Whether a distro answers. A probe that times out is tried once more: the
+ * first WSL use after boot starts the service and the VM as well, and that can
+ * outlast 15s while the probe itself is what started it (#110). A distro that
+ * answers with an error is broken now, and is not retried.
+ */
+export function wslWorks(distro: string, run: typeof spawnSync = spawnSync, retry = true): boolean {
+  // Only the first detection retries. A re-check inside a running server is
+  // synchronous, and a hung distro must not freeze it for 45 seconds.
+  for (const timeout of retry ? [15_000, 30_000] : [15_000]) {
+    try {
+      const probe = run('wsl.exe', ['-d', distro, '-e', 'echo', WSL_MARKER], { timeout, windowsHide: true });
+      if ((probe.stdout?.toString('utf8') ?? '').replace(/\0/g, '').includes(WSL_MARKER)) return true;
+      if ((probe.error as NodeJS.ErrnoException | undefined)?.code !== 'ETIMEDOUT') return false;
+    } catch {
+      return false;
+    }
   }
+  return false;
 }
 
 /**
@@ -648,6 +657,31 @@ class LocalComputer implements Computer {
     return h;
   }
 
+  /**
+   * Run a host file operation, and when it fails, retry it once through any
+   * symlink the path crosses, resolved the way the computer sees it.
+   *
+   * A link made in the shell holds a guest target (`/work/real.txt`) that
+   * only exists inside the computer's own mount namespace, so the host cannot
+   * follow it -- and on Windows, a WSL link over `\wsl.localhost` cannot be
+   * followed at all (#113). Asking the computer for `realpath` gives the guest
+   * target, and mapping that back through `mapPath` and the jail refuses an
+   * escape with the same message as a plain path outside the workspace.
+   * Only the failure path pays for the extra exec.
+   */
+  private async viaGuestLinks<T>(path: string, op: (hostPath: string) => Promise<T>): Promise<T> {
+    const h = await this.host(path);
+    try {
+      return await op(h);
+    } catch (first) {
+      const guest = normaliseGuestPath(path, this.info.workdir);
+      const r = await this.execOnce({ cmd: ['realpath', '-e', '--', guest], timeoutSec: 10 }).catch(() => undefined);
+      const target = r?.exitCode === 0 ? r.stdout.trim() : '';
+      if (!target || target === guest) throw first;
+      return op(await this.host(target));
+    }
+  }
+
   async writeFile(path: string, content: string | Uint8Array, opts: WriteFileOptions = {}): Promise<void> {
     this.assertLive();
     const h = await this.host(path);
@@ -662,10 +696,10 @@ class LocalComputer implements Computer {
 
   async readFile(path: string): Promise<Uint8Array> {
     this.assertLive();
-    const h = await this.host(path);
     try {
-      return await readFile(h);
+      return await this.viaGuestLinks(path, (h) => readFile(h));
     } catch (e) {
+      if (e instanceof HuskError) throw e;
       throw new HuskError('E_FS_DENIED', `cannot read ${normaliseGuestPath(path, this.info.workdir)}`, {
         hint: 'check the path exists',
         cause: e,
@@ -680,11 +714,12 @@ class LocalComputer implements Computer {
 
   async listDir(path: string): Promise<DirEntry[]> {
     this.assertLive();
-    const h = await this.host(path);
+    let h = await this.host(path);
     let entries;
     try {
-      entries = await readdir(h, { withFileTypes: true });
+      [h, entries] = await this.viaGuestLinks(path, async (dir) => [dir, await readdir(dir, { withFileTypes: true })] as const);
     } catch (e) {
+      if (e instanceof HuskError) throw e;
       throw new HuskError('E_FS_DENIED', `cannot list ${normaliseGuestPath(path, this.info.workdir)}`, {
         hint: 'check the directory exists',
         cause: e,
@@ -717,18 +752,22 @@ class LocalComputer implements Computer {
 
   async stat(path: string): Promise<DirEntry | null> {
     this.assertLive();
-    const h = await this.host(path);
     try {
-      const st = await stat(h);
+      const st = await this.viaGuestLinks(path, (p) => stat(p));
+      // The path that was asked for, even when it is a link: a caller asking
+      // about /work/link.txt is told about /work/link.txt.
+      const guest = normaliseGuestPath(path, this.info.workdir);
       return {
-        name: h.split(/[\\/]/).pop() ?? '',
-        path: toGuestPath(h, this.jail),
+        name: guest.split('/').pop() ?? '',
+        path: guest,
         type: st.isDirectory() ? 'dir' : st.isFile() ? 'file' : 'other',
         size: st.size,
         modifiedAt: st.mtime.toISOString(),
         mode: (st.mode & 0o777).toString(8).padStart(3, '0'),
       };
-    } catch {
+    } catch (e) {
+      // A path outside the jail is an answer the caller needs; a missing file is not.
+      if (e instanceof HuskError) throw e;
       return null;
     }
   }
@@ -904,7 +943,7 @@ export async function localWorkspaceBytes(info: ComputerInfo): Promise<number | 
 }
 
 export async function findOrphanedWorkspaces(): Promise<string[]> {
-  const p = ensurePaths();
+  const p = paths(); // read-only: never creates ~/.husk
   const infos = await loadInfos();
   const known = new Set(
     infos.map((i: ComputerInfo) => i.spec.labels?.['husk.workspace'] ?? join(p.workspaces, i.id)),

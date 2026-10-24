@@ -107,7 +107,7 @@ function machine(report: DoctorReport): void {
     if (better?.hint) ui.print(`  ${ui.dim('stronger ')} ${better.hint}`);
   }
   ui.print(`  ${ui.dim('privacy  ')} nothing leaves this machine except calls to a model provider you configure`);
-  ui.print(`  ${ui.dim('state    ')} ${huskHome()} ${ui.dim('(delete it to reset husk completely)')}`);
+  ui.print(`  ${ui.dim('state    ')} ${huskHome()} ${ui.dim("(settings and records; `husk rm` each computer before deleting it, or the computers' files stay behind)")}`);
 }
 
 /**
