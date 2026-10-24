@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -58,6 +58,7 @@ describe('the reaper', () => {
 
 // A stand-in for the docker CLI: `exec` of the command sleeps, the reaper's own
 // exec is recorded, and every call is logged so the test can see the tag travel.
+// One call to a line: the reap script's own newlines would split it otherwise.
 const posix = process.platform !== 'win32';
 describe.runIf(posix)('a stopped docker exec', () => {
   let dir = '';
@@ -85,7 +86,8 @@ describe.runIf(posix)('a stopped docker exec', () => {
       bin,
       [
         '#!/bin/sh',
-        `printf '%s\\n' "$*" >> '${log}'`,
+        `printf '%s' "$*" | tr '\\n' ' ' >> '${log}'`,
+        `echo >> '${log}'`,
         'case "$*" in',
         `  *husk-reap*) exit ${reapExit} ;;`,
         '  *) exec sleep 30 ;;',
@@ -137,5 +139,13 @@ describe.runIf(posix)('a stopped docker exec', () => {
     const r = await computer(cfg).exec({ cmd: 'sleep 300', timeoutSec: 60, signal: ac.signal });
     expect(r.timedOut).toBe(true);
     expect(readFileSync(cfg.log, 'utf8')).toContain('husk-reap');
+  });
+
+  it('starts nothing when the stop came before the start', async () => {
+    const cfg = fakeEngine(0);
+    const r = await computer(cfg).exec({ cmd: 'sleep 300', timeoutSec: 60, signal: AbortSignal.abort() });
+    expect(r.timedOut).toBe(true);
+    // No call at all: started and killed at once, the command could outlive the reap.
+    expect(existsSync(cfg.log)).toBe(false);
   });
 });

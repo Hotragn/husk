@@ -408,6 +408,11 @@ export class OciComputer implements Computer {
 
   async exec(req: ExecRequest): Promise<ExecResult> {
     this.assertAllowed(req.cmd);
+    // A stop that arrived before the start runs nothing at all. Started and
+    // killed at once, the command could begin after the reap had looked for it.
+    if (req.signal?.aborted) {
+      return { exitCode: 124, stdout: '', stderr: '', durationMs: 0, truncated: false, timedOut: true };
+    }
 
     // Inherited by everything the command starts, so a stop can find all of it (reap.ts).
     const tag = newExecTag();

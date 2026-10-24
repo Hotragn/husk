@@ -696,6 +696,11 @@ class SshComputer implements Computer {
       });
     }
 
+    // A stop that arrived before the start runs nothing at all. Started and
+    // killed at once, the command could begin after the reap had looked for it.
+    if (req.signal?.aborted) {
+      return { exitCode: 124, stdout: '', stderr: '', durationMs: 0, truncated: false, timedOut: true };
+    }
     const cwd = toRemotePath(req.cwd ?? GUEST_ROOT, this.jail);
     const script = typeof req.cmd === 'string' ? req.cmd : shellQuote(req.cmd);
     // Only what the spec asked for. Nothing from this laptop's environment goes
