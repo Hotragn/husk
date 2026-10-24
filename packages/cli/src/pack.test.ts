@@ -32,6 +32,33 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
 let scratch: string | undefined;
 
+/**
+ * The CLI and every @husk-ai package it pulls in, optional ones too. Packed
+ * together, so the install resolves them from these tarballs: before a
+ * release none of this version is on npm, and after one this tests the code
+ * here rather than what was published.
+ */
+function packages(): string[] {
+  const byName = new Map<string, { dependencies?: Record<string, string>; optionalDependencies?: Record<string, string> }>();
+  for (const dir of readdirSync(join(repoRoot, 'packages'))) {
+    try {
+      const pkg = JSON.parse(readFileSync(join(repoRoot, 'packages', dir, 'package.json'), 'utf8')) as { name: string };
+      byName.set(pkg.name, pkg);
+    } catch {
+      // not a package
+    }
+  }
+  const found = new Set<string>();
+  const visit = (name: string): void => {
+    const pkg = byName.get(name);
+    if (!pkg || found.has(name)) return;
+    found.add(name);
+    for (const dep of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) visit(dep);
+  };
+  visit('@husk-ai/cli');
+  return [...found];
+}
+
 afterAll(() => {
   // `maxRetries` for the same reason as smoke.test.ts (#80): this directory has
   // just had `npm pack` and `npm install` running inside it, and Windows keeps a
@@ -45,16 +72,16 @@ describe.skipIf(!integration)('the published tarball', () => {
   it('runs, and says the version its own manifest claims', () => {
     scratch = mkdtempSync(join(tmpdir(), 'husk-pack-'));
 
-    execFileSync('npm', ['pack', '-w', '@husk-ai/cli', '--pack-destination', scratch], {
+    execFileSync('npm', ['pack', ...packages().flatMap((name) => ['-w', name]), '--pack-destination', scratch], {
       cwd: repoRoot,
       stdio: 'pipe',
       shell: true,
     });
-    const tarball = readdirSync(scratch).find((f) => f.endsWith('.tgz'));
-    expect(tarball, 'npm pack produced no tarball').toBeDefined();
+    const tarballs = readdirSync(scratch).filter((f) => f.endsWith('.tgz'));
+    expect(tarballs.some((f) => f.startsWith('husk-ai-cli-')), 'npm pack produced no CLI tarball').toBe(true);
 
     execFileSync('npm', ['init', '-y'], { cwd: scratch, stdio: 'pipe', shell: true });
-    execFileSync('npm', ['install', join(scratch, tarball as string)], {
+    execFileSync('npm', ['install', ...tarballs.map((f) => join(scratch as string, f))], {
       cwd: scratch,
       stdio: 'pipe',
       shell: true,

@@ -29,6 +29,9 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: docker version
-      - run: npx vitest run packages/mcp packages/cli
+      # Each package's own tests, from the package, so its vitest config applies:
+      # from the repo root mcp's HUSK_DAEMON=off is skipped, and every chat test
+      # then spends 20 s looking for a shared Husk that is not there.
+      - run: npm test -w @husk-ai/mcp -w @husk-ai/cli
         env:
           HUSK_INTEGRATION: "1"
