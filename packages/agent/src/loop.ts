@@ -27,6 +27,7 @@ import type {
   ToolSchema,
   Usage,
 } from '@husk-ai/core';
+import { withCallSignal } from '@husk-ai/browser';
 import { Budget, pricingOf } from './budget.js';
 import { renderForSummary, trimHistory } from './memory.js';
 import { EventQueue } from './queue.js';
@@ -563,10 +564,21 @@ class Run {
       }
     }
 
+    // A host that shares the computer with a person may refuse the call, or
+    // stop it part-way through the signal it runs under.
+    // The built-in computer tools say so; a host-supplied Tool may not touch the computer at all.
+    const touchesComputer = (tool as { needsComputer?: boolean }).needsComputer === true;
+    const admitted = touchesComputer && this.opts.admitTool ? await this.opts.admitTool(call, this.abort.signal) : undefined;
+    if (admitted && 'refused' in admitted) return finish(admitted.refused, true);
+    const signal = admitted?.signal ?? this.abort.signal;
     try {
-      const output = await tool.handler(call.args, this.toolContext(call));
-      return finish(tool.render ? tool.render(output) : stringify(output), false);
+      // Under the call's signal, so what it does in the browser stops with it.
+      const output = await withCallSignal(signal, () => tool.handler(call.args, this.toolContext(call, signal)));
+      const stopped = admitted?.stopped();
+      return stopped ? finish(stopped, true) : finish(tool.render ? tool.render(output) : stringify(output), false);
     } catch (err) {
+      const stopped = admitted?.stopped();
+      if (stopped) return finish(stopped, true);
       if (this.abort.signal.aborted) {
         return finish(this.timedOut ? 'Error: the run ran out of time.' : 'Error: the run was aborted.', true);
       }
@@ -574,6 +586,8 @@ class Run {
       const message = he ? `${he.message}${he.hint ? `\nHint: ${he.hint}` : ''}` : (err as Error).message;
       this.log.debug(`tool ${call.name} failed`, err);
       return finish(`Error: ${message}`, true);
+    } finally {
+      admitted?.done();
     }
   }
 
@@ -631,11 +645,11 @@ class Run {
     return this.spec.guardrails.redactSecrets ? redact(clamped.text) : clamped.text;
   }
 
-  private toolContext(call: ToolCallPart): AgentToolContext {
+  private toolContext(call: ToolCallPart, signal: AbortSignal = this.abort.signal): AgentToolContext {
     return {
       computer: this.computer,
       log: this.log.child(call.name),
-      signal: this.abort.signal,
+      signal,
       huskId: this.spec.name,
       runId: this.runId,
       state: this.state,

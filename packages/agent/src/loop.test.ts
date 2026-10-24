@@ -718,3 +718,53 @@ describe('model tool-capability guard', () => {
     expect((await agent.run({ input: 'hello' })).stopReason).toBe('complete');
   });
 });
+
+describe('Agent: a person sharing the computer', () => {
+  const turns = (): ScriptedTurn[] => [{ text: 'working', toolCalls: [toolCall('c1', 'shell', { value: 'x' })] }, { text: 'done' }];
+  const shell = (opts: { delayMs?: number; seen?: AbortSignal[] } = {}): AgentTool =>
+    defineTool<{ value?: string }, string>({
+      name: 'shell',
+      description: 'a computer tool',
+      needsComputer: true,
+      parameters: { type: 'object', properties: { value: { type: 'string' } } },
+      async handler(input, ctx) {
+        opts.seen?.push(ctx.signal as AbortSignal);
+        if (opts.delayMs) await abortableDelay(opts.delayMs, ctx.signal);
+        return `ran:${input.value ?? ''}`;
+      },
+    });
+
+  it('does not run a computer tool the host refuses, and tells the model why', async () => {
+    const ran: string[] = [];
+    const tool = shell();
+    const handler = tool.handler.bind(tool);
+    tool.handler = async (input, ctx) => (ran.push('shell'), handler(input, ctx));
+    const { agent } = agentWith(turns(), [tool]);
+    const result = await agent.run({ input: 'go', admitTool: async () => ({ refused: 'The user took over this computer.' }) });
+    expect(ran).toEqual([]);
+    expect(toolResults(result.messages)[0]).toMatchObject({ content: 'The user took over this computer.', isError: true });
+  });
+
+  it('runs it under the host’s signal, and says so when a take-over stopped it', async () => {
+    const seen: AbortSignal[] = [];
+    const stop = new AbortController();
+    let done = 0;
+    const { agent } = agentWith(turns(), [shell({ delayMs: 5_000, seen })]);
+    setTimeout(() => stop.abort(), 50);
+    const result = await agent.run({
+      input: 'go',
+      admitTool: async () => ({ signal: stop.signal, done: () => void done++, stopped: () => (stop.signal.aborted ? 'stopped part-way' : undefined) }),
+    });
+    expect(seen).toEqual([stop.signal]);
+    expect(done).toBe(1);
+    expect(toolResults(result.messages)[0]).toMatchObject({ content: 'stopped part-way', isError: true });
+  });
+
+  it('never asks about a tool that does not touch the computer', async () => {
+    const admitTool = vi.fn(async () => ({ refused: 'no' }));
+    const { agent } = agentWith([{ text: 'x', toolCalls: [toolCall('c1', 'echo', { value: 'y' })] }, { text: 'done' }], [echo('echo')]);
+    const result = await agent.run({ input: 'go', admitTool });
+    expect(admitTool).not.toHaveBeenCalled();
+    expect(toolResults(result.messages)[0]).toMatchObject({ content: 'echo:y', isError: false });
+  });
+});

@@ -12,6 +12,7 @@ import type {
   ToolCallPart,
 } from '@husk-ai/core';
 import { ApprovalRegistry } from './approvals.js';
+import { admitCall } from './control.js';
 import type { PendingApproval } from './approvals.js';
 import { HandoffRegistry } from './handoffs.js';
 import type { PendingHandoff } from './handoffs.js';
@@ -206,6 +207,13 @@ export class Runner {
       } finally {
         if (keepAlive) clearInterval(keepAlive);
       }
+    };
+    // The run's tools obey a person holding its computer, as a chat's do:
+    // refused while they hold it, stopped part-way when they take it.
+    opts.admitTool = (call, runSignal) => {
+      const computerId = this.active.get(runId)?.computerId;
+      if (!computerId) return Promise.resolve({ signal: runSignal, done: () => {}, stopped: () => undefined });
+      return admitCall(this.handoffs, computerId, call.name, runSignal);
     };
     if (approvalMode === 'ask') {
       opts.onApproval = (request: ApprovalRequest) => {

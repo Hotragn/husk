@@ -269,6 +269,8 @@ export interface FakeAgentScript {
   approvalFor?: { id: string; name: string; args: Record<string, unknown> };
   /** Hand off to a person before finishing, as the hand_off tool does. */
   handoffFor?: { reason: string; computerId?: string };
+  /** Call a computer tool on this computer before finishing, through `admitTool` as the loop does. */
+  toolOn?: { computerId: string; name: string };
   /** Block until this resolves, so a test can cancel mid-run. */
   hold?: Promise<void>;
   /** Emitted before `hold`, so a test can look at a run mid-flight. */
@@ -312,6 +314,15 @@ export function fakeAgentFactory(script: FakeAgentScript = {}): AgentFactory {
         yield approved
           ? { type: 'tool_start', call: { type: 'tool_call', ...script.approvalFor } }
           : { type: 'tool_denied', call: { type: 'tool_call', ...script.approvalFor }, reason: 'denied' };
+      }
+      if (script.toolOn) {
+        const never = new AbortController().signal;
+        yield { type: 'computer_ready', computerId: script.toolOn.computerId, provider: 'local' };
+        const call = { type: 'tool_call' as const, id: 'call_1', name: script.toolOn.name, args: {} };
+        const admitted = opts.admitTool ? await opts.admitTool(call, opts.signal ?? never) : undefined;
+        if (admitted && !('refused' in admitted)) admitted.done();
+        const output = admitted && 'refused' in admitted ? admitted.refused : 'ran';
+        yield { type: 'tool_end', call, output, isError: output !== 'ran', durationMs: 1 };
       }
       for (const e of script.progress ?? []) yield e;
       if (script.hold) await script.hold;
