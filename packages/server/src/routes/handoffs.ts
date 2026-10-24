@@ -6,8 +6,8 @@ import { z } from 'zod';
 import { ctxOf } from '../context.js';
 import { redact } from '@husk-ai/core';
 import { huskError, invalidSpec, notFound } from '../errors.js';
-import { PERSON_RUN } from '../handoffs.js';
-import type { HandoffRegistry, PendingHandoff } from '../handoffs.js';
+import { PERSON_RUN, heldText, stoppedText, takenText } from '../handoffs.js';
+import type { HandoffRegistry, PageMark, PendingHandoff } from '../handoffs.js';
 
 /** Viewport coordinates in CSS pixels. Bounded so nothing absurd reaches Chromium. */
 const coord = z.number().finite().min(0).max(20_000);
@@ -157,7 +157,7 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
   app.post('/v1/computers/:id/takeover', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
     if (!(await ctx.deps.manager.get(id))) throw notFound('computer', id);
-    const { handoff, created } = take(id);
+    const { handoff, created } = await take(id);
     return reply.code(created ? 201 : 200).send(handoff);
   });
 
@@ -191,13 +191,15 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
 /**
  * The person takes a computer: the handoff already waiting on it, which is
  * theirs to finish, or a new one that only their done (or `signal`) ends.
+ * A new one stops the AI's calls on the computer before it resolves, so the
+ * person never shares the screen with the AI's half-done work.
  */
-export function takeOver(
+export async function takeOver(
   registry: HandoffRegistry,
   computerId: string,
   signal: AbortSignal,
   on: { opened?: (handoff: PendingHandoff) => void; ended?: (outcome: string) => void } = {},
-): { handoff: PendingHandoff; created: boolean } {
+): Promise<{ handoff: PendingHandoff; created: boolean }> {
   const held = registry.list().find((h) => h.computerId === computerId);
   if (held) return { handoff: held, created: false };
   let opened: PendingHandoff | undefined;
@@ -207,7 +209,66 @@ export function takeOver(
     })
     .then((outcome) => on.ended?.(outcome));
   on.opened?.(opened!);
+  // Held from here, so no new call starts. A browser call stopped part-way
+  // leaves the page somewhere the AI has not seen: its next action there is
+  // refused until it looks again.
+  const stopped = await registry.control.stop(computerId);
+  registry.control.mark(computerId, await pageMark(computerId), stopped.some((t) => t.startsWith('browser_')));
   return { handoff: opened!, created: true };
+}
+
+/** The page in a computer's browser, read without starting one; undefined when there is none or it does not answer. */
+export async function pageMark(computerId: string): Promise<PageMark | undefined> {
+  const page = livePageFor(computerId);
+  if (!page) return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<undefined>((r) => (timer = setTimeout(() => r(undefined), 5_000)));
+  try {
+    const raw = await Promise.race([page.evaluate('JSON.stringify([location.href, document.title])'), late]);
+    if (typeof raw !== 'string') return undefined;
+    const [url, title] = JSON.parse(raw) as unknown[];
+    return { tab: page.targetId, url: String(url ?? ''), title: String(title ?? '') };
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+type TextResult = { isError: true; content: Array<{ type: 'text'; text: string }> };
+const refused = (text: string): TextResult => ({ isError: true, content: [{ type: 'text', text }] });
+
+/**
+ * One AI call on a computer, under the person's control: a take-over stops it
+ * part-way and says so, and after Give back a browser action meant for a page
+ * the person changed is refused with what changed. Both the shared Husk and a
+ * chat's own process run their calls through here.
+ */
+export async function underControl<R extends { content: Array<{ type: string }>; isError?: boolean }>(
+  registry: HandoffRegistry,
+  computerId: string,
+  tool: string,
+  signal: AbortSignal | undefined,
+  run: (signal: AbortSignal) => Promise<R>,
+): Promise<R | TextResult> {
+  const call = registry.control.start(computerId, tool, signal);
+  const stopped = (printed?: string) =>
+    refused(stoppedText(registry.list().find((h) => h.computerId === computerId)?.handoffId, printed));
+  try {
+    // Taken after the caller looked: a take-over that did not see this call yet.
+    const held = tool === 'computer_info' ? undefined : registry.list().find((h) => h.computerId === computerId);
+    if (held) return refused(held.runId === PERSON_RUN ? takenText(held.handoffId) : heldText(held.handoffId, held.reason));
+    const why = await registry.control.refusal(computerId, tool, () => pageMark(computerId));
+    if (call.takenOver()) return stopped();
+    if (why) return refused(why);
+    const result = await run(call.signal);
+    if (!call.takenOver()) return result;
+    // A command's output up to the stop is worth keeping; a browser call's error is not.
+    const text = tool === 'shell' ? (result.content.find((c) => c.type === 'text') as { text?: string } | undefined)?.text : undefined;
+    return stopped(text);
+  } finally {
+    call.done();
+  }
 }
 
 /** A chat's computer, as its card and its link see it. */
@@ -229,7 +290,7 @@ export function registerScopedComputerRoutes(
     scopeOf: (req: FastifyRequest) => string | undefined;
     describe: (id: string) => Promise<ScopedComputer | undefined>;
     registry: HandoffRegistry;
-    takeOver: (computerId: string) => { handoff: PendingHandoff; created: boolean };
+    takeOver: (computerId: string) => Promise<{ handoff: PendingHandoff; created: boolean }>;
   },
 ): void {
   const notYours = () =>
@@ -251,7 +312,7 @@ export function registerScopedComputerRoutes(
   app.post('/v1/scoped/computer/takeover', async (req, reply) => {
     const id = computerOf(req);
     if (!(await opts.describe(id))) throw notYours();
-    const { handoff, created } = opts.takeOver(id);
+    const { handoff, created } = await opts.takeOver(id);
     return reply.code(created ? 201 : 200).send(handoff);
   });
   app.get('/v1/scoped/computer/screen', async (req, reply) => {

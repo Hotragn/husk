@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { HuskError } from '@husk-ai/core';
 import type { Computer, ComputerProcess } from '@husk-ai/core';
 import { DRIVER_PATH, DRIVER_SOURCE } from './driver.js';
@@ -146,6 +147,32 @@ export interface CdpTransport {
 
 /** One question from the driver, answered on the host. */
 export type HostCall = (op: string, args: Record<string, unknown>) => unknown;
+
+/** The signal of the call each driver request belongs to. A person's own requests run outside any. */
+const callSignal = new AsyncLocalStorage<AbortSignal>();
+
+/**
+ * Run `fn` as one caller's call. When `signal` aborts -- the chat cancelled,
+ * or a person took the computer -- the request it has running in the driver
+ * stops where it runs, scripts included, and its later requests are refused.
+ * A person's screen and input never run inside one, so they carry on.
+ */
+export function withCallSignal<T>(signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> {
+  return signal ? callSignal.run(signal, fn) : fn();
+}
+
+/** Run `fn` as no caller's: shared work, like starting the browser, that one caller going must not stop. */
+export function forNoCall<T>(fn: () => T): T {
+  return callSignal.exit(fn);
+}
+
+function stopIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new HuskError('E_ABORTED', 'the call was stopped before it finished', {
+      hint: 'it was cancelled, or a person took the computer over; take a browser_snapshot before acting again',
+    });
+  }
+}
 
 export interface CdpOptions {
   /** Default ceiling for one driver invocation. Defaults to 60s. */
@@ -310,6 +337,8 @@ export class ComputerDriverTransport implements CdpTransport {
   private readonly castListeners = new Set<(e: ScreencastEvent) => void>();
   private inFlight = 0;
   private hostCall: HostCall | undefined;
+  /** Set while a stopped driver is cleared out of the computer: no new one starts until it is gone. */
+  private clearing: Promise<void> | undefined;
 
   constructor(
     private readonly computer: Computer,
@@ -322,10 +351,16 @@ export class ComputerDriverTransport implements CdpTransport {
 
   async run(req: DriverRequest): Promise<DriverResult> {
     const timeoutMs = req.timeoutMs ?? 60_000;
+    const signal = callSignal.getStore();
+    stopIfAborted(signal);
     this.inFlight++;
     try {
-      const served = await this.serve({ steps: req.steps, ...(req.targetId !== undefined ? { targetId: req.targetId } : {}) }, timeoutMs);
-      return served ? resultOf(served) : await this.runOneShot(req);
+      const served = await this.serve({ steps: req.steps, ...(req.targetId !== undefined ? { targetId: req.targetId } : {}) }, timeoutMs, signal);
+      return served ? resultOf(served) : await this.runOneShot(req, signal);
+    } catch (err) {
+      // Stopped part-way: say that, not what the stop looked like from here.
+      stopIfAborted(signal);
+      throw err;
     } finally {
       this.inFlight--;
     }
@@ -362,6 +397,22 @@ export class ComputerDriverTransport implements CdpTransport {
     await this.computer.exec({ cmd: ['python3', '-c', REAP_SOURCE, String(this.port)], timeoutSec: 15 }).catch(() => undefined);
   }
 
+  /**
+   * Stop the request a driver is running -- a script, a wait, a run of
+   * actions -- because its caller is gone or a person took the computer. The
+   * driver and every script are killed inside the computer; the page stays as
+   * it is. No driver starts until they are gone, or the reap would take the
+   * new one too.
+   */
+  private interrupt(server: DriverServer): void {
+    if (this.server === server) this.server = undefined;
+    const clearing: Promise<void> = this.reap().finally(() => {
+      if (this.clearing === clearing) this.clearing = undefined;
+    });
+    this.clearing = clearing;
+    server.kill();
+  }
+
   onScreencast(fn: (e: ScreencastEvent) => void): () => void {
     this.castListeners.add(fn);
     return () => this.castListeners.delete(fn);
@@ -371,8 +422,11 @@ export class ComputerDriverTransport implements CdpTransport {
    * One request to the long-lived driver, or `undefined` when there is not
    * going to be one here and the caller should exec instead.
    */
-  private serve(body: Record<string, unknown>, timeoutMs: number): Promise<Record<string, unknown> | undefined> {
+  private serve(body: Record<string, unknown>, timeoutMs: number, signal?: AbortSignal): Promise<Record<string, unknown> | undefined> {
     const next = this.queue.then(async () => {
+      await this.clearing;
+      // Waited behind another request, and its caller has gone since.
+      stopIfAborted(signal);
       if (!this.computer.spawn || this.oneShot) return undefined;
       let server = this.server;
       if (!server || server.exited) {
@@ -398,7 +452,12 @@ export class ComputerDriverTransport implements CdpTransport {
       // Only a script asks the host anything, so only its request opens the window.
       const steps = Array.isArray(body['steps']) ? (body['steps'] as Array<Record<string, unknown>>) : [];
       const hostCalls = steps.some((s) => s['op'] === 'action' && s['do'] === 'script');
+      const running = server;
+      const stop = () => this.interrupt(running);
+      signal?.addEventListener('abort', stop, { once: true });
       try {
+        // Gone while the driver started: nothing goes out.
+        stopIfAborted(signal);
         return await server.request(body, timeoutMs, { hostCalls });
       } catch (err) {
         // The backstop fired: the driver wedged, or something in the computer
@@ -415,6 +474,7 @@ export class ComputerDriverTransport implements CdpTransport {
         }
         throw err;
       } finally {
+        signal?.removeEventListener('abort', stop);
         clearInterval(beat);
       }
     });
@@ -432,21 +492,21 @@ export class ComputerDriverTransport implements CdpTransport {
     }
   }
 
-  private async runOneShot(req: DriverRequest): Promise<DriverResult> {
+  private async runOneShot(req: DriverRequest, signal?: AbortSignal): Promise<DriverResult> {
     const path = await this.install();
     try {
-      return await this.invoke(req, path);
+      return await this.invoke(req, path, signal);
     } catch (err) {
       // A wiped profile directory takes the driver with it, and a missing
       // script looks nothing like a browser failure. Reinstall once, then give
       // up -- a second miss is a real problem with the filesystem.
       if (!(err instanceof HuskError) || err.details?.['missingDriver'] !== true) throw err;
       this.installed = undefined;
-      return await this.invoke(req, await this.install());
+      return await this.invoke(req, await this.install(), signal);
     }
   }
 
-  private async invoke(req: DriverRequest, driverPath: string): Promise<DriverResult> {
+  private async invoke(req: DriverRequest, driverPath: string, signal?: AbortSignal): Promise<DriverResult> {
     const timeoutMs = req.timeoutMs ?? 60_000;
     const body = JSON.stringify({
       port: this.port,
@@ -464,6 +524,8 @@ export class ComputerDriverTransport implements CdpTransport {
         // to be the looser of the two or it would mask the useful error.
         timeoutSec: Math.min(Math.ceil(timeoutMs / 1000) + 15, Math.floor(MAX_TIMER_MS / 1000)),
         maxOutputBytes: this.maxOutputBytes,
+        // Its caller gone: the provider stops the driver, and its scripts, where they run.
+        ...(signal ? { signal } : {}),
       })
       .catch((err: unknown) => {
         if (err instanceof HuskError) throw err;

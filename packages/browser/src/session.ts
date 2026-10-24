@@ -1,6 +1,6 @@
 import { HuskError, assertUrlAllowed, onComputerDestroyed, ownsLoopback } from '@husk-ai/core';
 import type { Computer, NetworkPolicy } from '@husk-ai/core';
-import { CdpConnection, ComputerDriverTransport, createTarget } from './cdp.js';
+import { CdpConnection, ComputerDriverTransport, createTarget, forNoCall } from './cdp.js';
 import type { CdpTransport, ScreencastEvent, ScreenFrame } from './cdp.js';
 import { Page, compactAxTree } from './page.js';
 import type { ActionOutcome, AxNodeLike, PageAction, ScriptOutcome } from './page.js';
@@ -167,7 +167,9 @@ export class BrowserSession {
     this.touch();
     this.computer.markUsed?.();
     if (this.page && this.conn && !this.conn.closed) return this.page;
-    this.launching ??= this.launch().finally(() => {
+    // Every caller waits on the same launch, so the one whose call started it
+    // going away must not stop it for the rest.
+    this.launching ??= forNoCall(() => this.launch()).finally(() => {
       this.launching = undefined;
     });
     return await this.launching;

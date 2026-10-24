@@ -199,7 +199,7 @@ export async function callTool(
         return await browse(computer, args, signal);
       default:
         if (BROWSER_TOOL_NAMES.has(name)) {
-          return await callBrowserTool(computer, name, args, MAX_TOOL_OUTPUT);
+          return await callBrowserTool(computer, name, args, MAX_TOOL_OUTPUT, signal);
         }
         return fail(`unknown tool: ${name}`);
     }
@@ -232,9 +232,11 @@ async function shell(computer: Computer, args: Record<string, unknown>, signal?:
   if (r.stdout) parts.push(r.stdout.trimEnd());
   if (r.stderr) parts.push(`[stderr]\n${r.stderr.trimEnd()}`);
   // "stopped" only when the provider confirmed it; otherwise its own line in stderr says why not.
+  // Cancelled or taken over is not a timeout, and whoever stopped it says why.
   if (r.timedOut) {
-    const after = `timed out after ${Math.round(r.durationMs / 1000)}s`;
-    parts.push(r.stderr.includes(STOP_UNCONFIRMED) ? `[${after}]` : `[${after} and was stopped]`);
+    const secs = Math.round(r.durationMs / 1000);
+    if (signal?.aborted) parts.push(`[stopped after ${secs}s]`);
+    else parts.push(r.stderr.includes(STOP_UNCONFIRMED) ? `[timed out after ${secs}s]` : `[timed out after ${secs}s and was stopped]`);
   }
   if (r.exitCode !== 0 && !r.timedOut) parts.push(`[exit ${r.exitCode}]`);
 

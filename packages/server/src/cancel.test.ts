@@ -97,3 +97,46 @@ describe('a client leaving POST /v1/computers/:id/exec', { timeout: 30_000 }, ()
     expect(await abortedWithin(seen!, 2_000)).toBe(true);
   });
 });
+
+describe('a person taking over while the AI works', { timeout: 30_000 }, () => {
+  it('stops the call part-way and says so, and answers the take-over once it has stopped', async () => {
+    const order: string[] = [];
+    harness = await buildTestApp({
+      runTool: async (_c, _name, _args, signal) => {
+        if (signal) await abortedWithin(signal, 10_000);
+        // A stop takes a moment to land where the command runs.
+        await new Promise((r) => setTimeout(r, 100));
+        order.push('call ended');
+        return { content: [{ type: 'text', text: 'printed so far' }], isError: true };
+      },
+    });
+    const { id } = (await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: {} })).json() as { id: string };
+    const call = harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/tools/shell`, payload: { args: { command: 'sleep 99' } } });
+    await new Promise((r) => setTimeout(r, 200));
+    const taken = await harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/takeover` });
+    order.push('take-over answered');
+    expect(taken.statusCode).toBe(201);
+    const text = ((await call).json() as { content: Array<{ text: string }> }).content[0]?.text ?? '';
+    expect(text).toContain('stopped part-way');
+    expect(text).toContain('took over this computer');
+    expect(text).toContain('printed so far');
+    expect(order).toEqual(['call ended', 'take-over answered']);
+  });
+
+  it('leaves a call on another computer running', async () => {
+    let stopped = false;
+    harness = await buildTestApp({
+      runTool: async (_c, _name, _args, signal) => {
+        stopped = signal ? await abortedWithin(signal, 600) : false;
+        return { content: [{ type: 'text', text: 'done' }] };
+      },
+    });
+    const make = async () => ((await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: {} })).json() as { id: string }).id;
+    const [one, two] = [await make(), await make()];
+    const call = harness.app.inject({ method: 'POST', url: `/v1/computers/${two}/tools/shell`, payload: { args: {} } });
+    await new Promise((r) => setTimeout(r, 100));
+    await harness.app.inject({ method: 'POST', url: `/v1/computers/${one}/takeover` });
+    expect(((await call).json() as { content: Array<{ text: string }> }).content[0]?.text).toBe('done');
+    expect(stopped).toBe(false);
+  });
+});

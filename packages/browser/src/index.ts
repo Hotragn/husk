@@ -6,7 +6,7 @@
  * only exists after JavaScript runs, cannot log in, and cannot click. This can.
  */
 
-export { CdpConnection, ComputerDriverTransport, createTarget, waitResultOf } from './cdp.js';
+export { CdpConnection, ComputerDriverTransport, createTarget, waitResultOf, withCallSignal } from './cdp.js';
 export type {
   CdpOptions,
   CdpParams,

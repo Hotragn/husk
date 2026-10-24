@@ -5,6 +5,7 @@ import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
 import { PERSON_RUN, heldText, takenText } from '../handoffs.js';
 import { closedEarly } from '../sse.js';
+import { underControl } from './handoffs.js';
 
 /** How long a chat's call waits for a person to give back a computer they took. Tests shorten it. */
 export const takeover = { waitMs: 45_000 };
@@ -66,10 +67,13 @@ export async function toolRoutes(app: FastifyInstance): Promise<void> {
     if (signal.aborted) return { isError: true, content: [{ type: 'text', text: 'the call was cancelled before it ran' }] };
 
     const started = Date.now();
-    const result = await audited(
-      { computerId: id, via, tool: name, args },
-      () => runTool(found, name, args, signal),
-      (r) => (r.isError ? (r.content.find((c) => c.type === 'text') as { text?: string } | undefined)?.text : undefined),
+    // A take-over stops it part-way, and a stale page action is refused (handoffs.ts).
+    const result = await underControl(ctx.runner.handoffs, id, name, signal, (stop) =>
+      audited(
+        { computerId: id, via, tool: name, args },
+        () => runTool(found, name, args, stop),
+        (r) => (r.isError ? (r.content.find((c) => c.type === 'text') as { text?: string } | undefined)?.text : undefined),
+      ),
     );
     const summary = summarise(name, args);
     const entry = { at: new Date(started).toISOString(), tool: name, ok: !result.isError, ms: Date.now() - started, via, ...(summary ? { summary } : {}) };
