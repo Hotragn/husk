@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { HuskError } from '@husk-ai/core';
 import { FLY_API, FlyProvider, buildMachineConfig, declaredPorts, flyError } from './fly.js';
+import { STOP_UNCONFIRMED } from '../reap.js';
 
 /**
  * No token, no app, no network.
@@ -333,6 +334,37 @@ describe('exec', () => {
   it('turns a signal into the shell convention', async () => {
     const { computer } = await machine([{ body: { exit_signal: 9 } }]);
     await expect(computer.exec({ cmd: 'x' })).resolves.toMatchObject({ exitCode: 137 });
+  });
+
+  it('stops on an abort, and reaps the command on the machine', async () => {
+    const { computer } = await machine([{ body: {} }]);
+    const sent: Array<{ command: string[] }> = [];
+    // The exec request hangs until it is aborted; the reap that follows answers at once.
+    (computer as unknown as { cfg: { fetch: unknown } }).cfg.fetch = (async (_url: string, init: RequestInit = {}) => {
+      sent.push(JSON.parse(String(init.body)) as { command: string[] });
+      if (sent.length === 1) {
+        return await new Promise((_resolve, reject) =>
+          init.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))),
+        );
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({ exit_code: 0 }) } as Response;
+    }) as unknown as typeof globalThis.fetch;
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 50);
+    const r = await computer.exec({ cmd: 'sleep 300', timeoutSec: 60, signal: ac.signal });
+    expect(r.timedOut).toBe(true);
+    const tag = /HUSK_EXEC=([0-9a-f]{16})/.exec(sent[0]?.command[2] ?? '')?.[1];
+    expect(tag).toBeDefined();
+    expect(sent[1]?.command[2]).toContain(`set -- ${tag}`);
+    expect(r.stderr).not.toContain(STOP_UNCONFIRMED);
+  });
+
+  it('runs nothing when it was stopped before it started', async () => {
+    const { computer, calls } = await machine([{ body: { exit_code: 0 } }]);
+    const ac = new AbortController();
+    ac.abort();
+    await expect(computer.exec({ cmd: 'echo hi', signal: ac.signal })).resolves.toMatchObject({ timedOut: true });
+    expect(calls).toHaveLength(0);
   });
 
   it('applies the command policy before it spends a request', async () => {

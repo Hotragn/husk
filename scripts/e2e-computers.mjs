@@ -492,6 +492,21 @@ async function walkDesktop(id) {
 }
 
 /**
+ * A stopped command is gone from the computer, not only from this side: killing
+ * the `docker exec` client used to leave it running there while the chat was
+ * told it "was killed".
+ */
+async function checkStops(id) {
+  const timedOut = await tool(id, 'shell', { command: 'sleep 307', timeoutSec: 2 });
+  check('a timed-out command says it was stopped', /timed out after \d+s and was stopped/.test(textOf(timedOut)), textOf(timedOut).slice(0, 200));
+  // Counted from /proc, not with pgrep: the counting shell's own command line
+  // names the command too, and not every image ships pgrep.
+  const running = (what) => `for d in /proc/[0-9]*; do tr '\\0' ' ' < "$d/cmdline" 2>/dev/null; echo; done | grep -c '^${what}' || true`;
+  const left = textOf(await tool(id, 'shell', { command: running('sleep 307') })).trim();
+  check('a timed-out command is gone from the computer', left === '0', left);
+}
+
+/**
  * How fast the browser is, for a PR to quote: the median milliseconds of each
  * browser tool through the shared route, and the frames a second the live
  * screen actually delivers at ?fps=4. The page it watches animates, so a
@@ -736,6 +751,9 @@ try {
   check('the shared Husk saw the chat call', overview.activity?.[chatComputer?.id]?.via === 'mcp', JSON.stringify(overview.activity?.[chatComputer?.id]));
   mcp.child.stdin.end();
   await sleep(1000);
+
+  // 7b. Stopping a command stops it inside the computer.
+  await checkStops(id);
 
   // 8. How fast the browser is, for before-and-after numbers.
   await measureBrowser(id);

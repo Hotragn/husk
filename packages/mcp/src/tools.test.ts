@@ -16,6 +16,7 @@ import { TOOLS, callTool } from './tools.js';
 import { BROWSER_TOOLS, MAX_WAIT_SEC, secondsArg } from './browser-tools.js';
 import type { Computer } from '@husk-ai/core';
 import { PROBE_COMPUTER_INFO } from '@husk-ai/core';
+import { STOP_UNCONFIRMED } from '@husk-ai/runtime';
 
 /** Never reached: every assertion here stops at the dispatcher. */
 const noComputer = {} as Computer;
@@ -156,6 +157,37 @@ describe('computer_info', () => {
     const result = await callTool(computer, 'computer_info', {});
     expect(result.isError).toBe(true);
     expect(result.content[0]).toMatchObject({ text: expect.stringContaining('probe timed out') });
+  });
+});
+
+describe('shell', () => {
+  function stub(result: Partial<Awaited<ReturnType<Computer['exec']>>> = {}): { computer: Computer; seen: number[] } {
+    const seen: number[] = [];
+    const computer = {
+      info: { id: 'cmp_test', provider: 'docker', image: 'debian:bookworm-slim', spec: {} },
+      exec: async (req: { timeoutSec?: number }) => {
+        seen.push(req.timeoutSec as number);
+        return { exitCode: 0, stdout: 'ok', stderr: '', durationMs: 1, timedOut: false, truncated: false, ...result };
+      },
+    } as unknown as Computer;
+    return { computer, seen };
+  }
+
+  it('never runs without a limit, nor with one past an hour', async () => {
+    const { computer, seen } = stub();
+    for (const timeoutSec of [0, -1, 99_999_999, 30, undefined]) await callTool(computer, 'shell', { command: 'true', timeoutSec });
+    expect(seen).toEqual([120, 120, 3600, 30, 120]);
+  });
+
+  it('says a timed-out command was stopped only when the provider confirmed it', async () => {
+    const stopped = await callTool(stub({ timedOut: true, exitCode: 124, durationMs: 2000 }).computer, 'shell', { command: 'sleep 9' });
+    expect(stopped.content[0]).toMatchObject({ text: expect.stringContaining('[timed out after 2s and was stopped]') });
+
+    const unsure = await callTool(stub({ timedOut: true, exitCode: 124, durationMs: 2000, stderr: STOP_UNCONFIRMED }).computer, 'shell', { command: 'sleep 9' });
+    const text = (unsure.content[0] as { text: string }).text;
+    expect(text).toContain('[timed out after 2s]');
+    expect(text).not.toContain('was stopped');
+    expect(text).toContain(STOP_UNCONFIRMED);
   });
 });
 

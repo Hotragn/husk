@@ -25,6 +25,7 @@ import type {
 import { type ImagePlan, installScript, resolveImage } from '../images.js';
 import { OutputBuffer, evaluateCommand } from '../policy.js';
 import { expired, forgetInfo, lastUsedTimes, touchInfo } from '../registry.js';
+import { EXEC_TAG, STOP_UNCONFIRMED, newExecTag, reapArgv, timerMs } from '../reap.js';
 import { wireSpawned } from './spawned.js';
 
 /**
@@ -143,6 +144,12 @@ export function buildRunArgs(cfg: OciConfig, plan: OciRunPlan): string[] {
   // `egress` is enforced at the tool layer, not here: neither engine can
   // allow-list hostnames, and implying it did would be the dangerous kind of vague.
   if (spec.network?.mode === 'none') args.push('--network=none');
+
+  // An init as PID 1 reaps what a stopped command leaves behind. `sleep infinity`
+  // never waits on anything, so every orphan stayed a zombie and counted
+  // against the pid limit. Docker always ships its init; podman's needs an
+  // optional package (catatonit), so podman keeps `sleep` rather than fail to start.
+  if (cfg.provider === 'docker') args.push('--init');
 
   args.push(image, 'sleep', 'infinity');
   return args;
@@ -401,12 +408,19 @@ export class OciComputer implements Computer {
 
   async exec(req: ExecRequest): Promise<ExecResult> {
     this.assertAllowed(req.cmd);
+    // A stop that arrived before the start runs nothing at all. Started and
+    // killed at once, the command could begin after the reap had looked for it.
+    if (req.signal?.aborted) {
+      return { exitCode: 124, stdout: '', stderr: '', durationMs: 0, truncated: false, timedOut: true };
+    }
 
+    // Inherited by everything the command starts, so a stop can find all of it (reap.ts).
+    const tag = newExecTag();
     const args = buildExecArgs(this.cfg, {
       containerId: this.native,
       cmd: req.cmd,
       ...(req.cwd ? { cwd: req.cwd } : {}),
-      ...(req.env ? { env: req.env } : {}),
+      env: { ...(req.env ?? {}), [EXEC_TAG]: tag },
       ...(req.user ? { user: req.user } : {}),
       ...(req.tty ? { tty: true } : {}),
       ...(req.stdin !== undefined ? { stdin: true } : {}),
@@ -426,6 +440,8 @@ export class OciComputer implements Computer {
       let timedOut = false;
       let timer: NodeJS.Timeout | undefined;
       let done = false;
+      /** Set once a stop has started: whether the command is gone from the container. */
+      let reaping: Promise<boolean> | undefined;
 
       const child = spawn(this.cfg.binary, args, { windowsHide: true });
 
@@ -439,12 +455,15 @@ export class OciComputer implements Computer {
         settle(result);
       };
 
+      // Killing the `docker exec` client does not kill the command it started:
+      // the engine keeps it running. The reap kills it where it runs.
       const kill = () => {
         try {
           child.kill('SIGKILL');
         } catch {
           /* already gone */
         }
+        reaping ??= this.reap(tag, req.user);
       };
 
       function onAbort() {
@@ -455,11 +474,12 @@ export class OciComputer implements Computer {
       if (req.signal?.aborted) onAbort();
       else req.signal?.addEventListener('abort', onAbort, { once: true });
 
-      if (req.timeoutSec && req.timeoutSec > 0) {
+      const ms = timerMs(req.timeoutSec);
+      if (ms !== undefined) {
         timer = setTimeout(() => {
           timedOut = true;
           kill();
-        }, req.timeoutSec * 1000);
+        }, ms);
       }
 
       child.stdout?.on('data', (c: Buffer) => {
@@ -489,19 +509,46 @@ export class OciComputer implements Computer {
       // 'close' rather than 'exit', so stdio is flushed first -- otherwise the
       // last chunk of output is lost on fast-exiting commands.
       child.on('close', (code, signal) => {
-        finish({
-          // 124 is what `timeout(1)` uses; callers key off `timedOut` anyway.
-          exitCode: timedOut ? 124 : (code ?? (signal ? 137 : 1)),
-          stdout: out.toString(),
-          stderr: err.toString(),
-          durationMs: Date.now() - started,
-          truncated: out.truncated || err.truncated,
-          timedOut,
+        void (reaping ?? Promise.resolve(true)).then((stopped) => {
+          const stderr = err.toString();
+          finish({
+            // 124 is what `timeout(1)` uses; callers key off `timedOut` anyway.
+            exitCode: timedOut ? 124 : (code ?? (signal ? 137 : 1)),
+            stdout: out.toString(),
+            stderr: stopped ? stderr : `${stderr}${stderr ? '\n' : ''}${STOP_UNCONFIRMED}`,
+            durationMs: Date.now() - started,
+            truncated: out.truncated || err.truncated,
+            timedOut,
+          });
         });
       });
 
       if (req.stdin !== undefined && child.stdin) child.stdin.end(req.stdin);
       else child.stdin?.end();
+    });
+  }
+
+  /** Kill, inside the container, every process one exec started. Resolves true once that is done. */
+  private reap(tag: string, user?: string): Promise<boolean> {
+    return new Promise((settle) => {
+      const args = ['exec', ...(user ? ['-u', user] : []), this.native, ...reapArgv(tag)];
+      const p = spawn(this.cfg.binary, args, { windowsHide: true, stdio: 'ignore' });
+      const timer = setTimeout(() => {
+        try {
+          p.kill('SIGKILL');
+        } catch {
+          /* already gone */
+        }
+        settle(false);
+      }, 15_000);
+      p.on('error', () => {
+        clearTimeout(timer);
+        settle(false);
+      });
+      p.on('close', (code) => {
+        clearTimeout(timer);
+        settle(code === 0);
+      });
     });
   }
 

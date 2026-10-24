@@ -21,6 +21,7 @@ import type {
   WriteFileOptions,
 } from '@husk-ai/core';
 import { loadInfos, persistInfo as persist } from '../registry.js';
+import { EXEC_TAG, STOP_UNCONFIRMED, newExecTag, reapArgv, timerMs } from '../reap.js';
 import { wireSpawned } from './spawned.js';
 import {
   GUEST_ROOT,
@@ -454,6 +455,25 @@ class LocalComputer implements Computer {
     return wireSpawned(child, req, () => killProcessTree(child));
   }
 
+  /** Kill, inside the WSL distro, every process one exec started. Resolves true once that is done. */
+  private reapInWsl(tag: string): Promise<boolean> {
+    return new Promise((settle) => {
+      const p = spawn('wsl.exe', ['-d', this.shell.distro as string, '-e', ...reapArgv(tag)], { windowsHide: true, stdio: 'ignore' });
+      const timer = setTimeout(() => {
+        killProcessTree(p);
+        settle(false);
+      }, 15_000);
+      p.on('error', () => {
+        clearTimeout(timer);
+        settle(false);
+      });
+      p.on('close', (code) => {
+        clearTimeout(timer);
+        settle(code === 0);
+      });
+    });
+  }
+
   /** Policy, paths and environment for one command, shared by `exec` and `spawn`. */
   private invocationFor(req: { cmd: string | string[]; cwd?: string; env?: Record<string, string> }): {
     file: string;
@@ -487,7 +507,13 @@ class LocalComputer implements Computer {
 
   private async execOnce(req: ExecRequest): Promise<ExecResult> {
     const started = Date.now();
-    const { file, args, spawnEnv, hostCwd } = this.invocationFor(req);
+    // A stop that arrived before the start runs nothing at all.
+    if (req.signal?.aborted) {
+      return { exitCode: 124, stdout: '', stderr: '', durationMs: 0, truncated: false, timedOut: true };
+    }
+    // Inherited by everything the command starts, so a stop inside WSL can find all of it (reap.ts).
+    const tag = newExecTag();
+    const { file, args, spawnEnv, hostCwd } = this.invocationFor({ ...req, env: { ...(req.env ?? {}), [EXEC_TAG]: tag } });
     await mkdir(hostCwd, { recursive: true });
 
     const maxBytes = req.maxOutputBytes ?? 256 * 1024;
@@ -505,15 +531,22 @@ class LocalComputer implements Computer {
         detached: process.platform !== 'win32',
       });
 
-      const killTree = () => killProcessTree(child);
+      // On posix the process group dies with the shell. Under WSL, taskkill ends
+      // wsl.exe on the Windows side and not the Linux processes it started, so
+      // the reap kills those inside the distro.
+      let reaping: Promise<boolean> | undefined;
+      const killTree = () => {
+        killProcessTree(child);
+        if (this.shell.kind === 'wsl') reaping ??= this.reapInWsl(tag);
+      };
 
-      const timeoutSec = req.timeoutSec ?? 120;
+      const ms = timerMs(req.timeoutSec ?? 120);
       const timer =
-        timeoutSec > 0
+        ms !== undefined
           ? setTimeout(() => {
               timedOut = true;
               killTree();
-            }, timeoutSec * 1000)
+            }, ms)
           : undefined;
 
       const onAbort = () => killTree();
@@ -548,15 +581,18 @@ class LocalComputer implements Computer {
         if (timer) clearTimeout(timer);
         req.signal?.removeEventListener('abort', onAbort);
         this.touch();
-        resolvePromise({
-          // A killed process reports whatever the wrapper felt like; 124 is what
-          // `timeout(1)` uses, and callers key off `timedOut` anyway.
-          exitCode: timedOut ? 124 : (code ?? (signal ? 137 : 1)),
-          stdout: out.toString(),
-          stderr: err.toString(),
-          durationMs: Date.now() - started,
-          truncated: out.truncated || err.truncated,
-          timedOut,
+        void (reaping ?? Promise.resolve(true)).then((stopped) => {
+          const stderr = err.toString();
+          resolvePromise({
+            // A killed process reports whatever the wrapper felt like; 124 is what
+            // `timeout(1)` uses, and callers key off `timedOut` anyway.
+            exitCode: timedOut ? 124 : (code ?? (signal ? 137 : 1)),
+            stdout: out.toString(),
+            stderr: stopped ? stderr : `${stderr}${stderr ? '\n' : ''}${STOP_UNCONFIRMED}`,
+            durationMs: Date.now() - started,
+            truncated: out.truncated || err.truncated,
+            timedOut,
+          });
         });
       });
 

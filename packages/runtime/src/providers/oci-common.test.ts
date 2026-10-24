@@ -152,9 +152,18 @@ describe('buildRunArgs', () => {
   it('gives podman exactly the same hardening as docker', () => {
     const d = run({ cpus: 3, memoryMb: 777 }, docker);
     const p = run({ cpus: 3, memoryMb: 777 }, podman);
-    // The provider label is the only thing that may differ: the point of the
-    // shared layer is that podman is not a second, drifting implementation.
-    expect(p.map((a) => a.replace('husk.provider=podman', 'husk.provider=docker'))).toEqual(d);
+    // The provider label and docker's init are the only things that may differ:
+    // the point of the shared layer is that podman is not a second, drifting
+    // implementation.
+    expect(p.map((a) => a.replace('husk.provider=podman', 'husk.provider=docker'))).toEqual(d.filter((a) => a !== '--init'));
+  });
+
+  it('runs an init as PID 1 on docker, so a stopped command leaves no zombies', () => {
+    const args = run();
+    expect(args).toContain('--init');
+    expect(args.indexOf('--init')).toBeLessThan(args.indexOf('debian:bookworm-slim'));
+    // Podman's init needs an optional package; a container that fails to start is worse.
+    expect(run({}, podman)).not.toContain('--init');
   });
 });
 

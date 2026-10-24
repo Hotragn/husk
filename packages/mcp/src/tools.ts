@@ -1,8 +1,8 @@
 import type { Computer } from '@husk-ai/core';
 import { HuskError, PROBE_COMPUTER_INFO, clampText, explainShellFailure, formatBytes, redact } from '@husk-ai/core';
 import { browseInComputer } from '@husk-ai/core';
-import { ensureRunning } from '@husk-ai/runtime';
-import { BROWSER_TOOLS, BROWSER_TOOL_NAMES, callBrowserTool } from './browser-tools.js';
+import { STOP_UNCONFIRMED, ensureRunning } from '@husk-ai/runtime';
+import { BROWSER_TOOLS, BROWSER_TOOL_NAMES, callBrowserTool, secondsArg } from './browser-tools.js';
 import { workspaceNote } from './workspace.js';
 
 /**
@@ -33,7 +33,7 @@ export const TOOLS: ToolDef[] = [
       properties: {
         command: { type: 'string', description: 'The shell command, run with sh -c.' },
         cwd: { type: 'string', description: 'Working directory. Defaults to /work.' },
-        timeoutSec: { type: 'number', description: 'Kill the command after this long. Defaults to 120.' },
+        timeoutSec: { type: 'number', description: 'Stop the command after this many seconds: 120 by default, 3600 at most.' },
         stdin: { type: 'string', description: 'Text piped to the command on stdin.' },
       },
       required: ['command'],
@@ -158,6 +158,8 @@ function fail(text: string): ToolResult {
 }
 
 const MAX_TOOL_OUTPUT = 96 * 1024;
+/** The longest a `shell` call may run. */
+const SHELL_MAX_SEC = 3600;
 
 /**
  * A chat tool as the shared Husk runs it (`deps.runTool` in `husk serve`): the
@@ -215,14 +217,20 @@ async function shell(computer: Computer, args: Record<string, unknown>): Promise
     cmd: command,
     ...(args.cwd ? { cwd: String(args.cwd) } : {}),
     ...(args.stdin !== undefined ? { stdin: String(args.stdin) } : {}),
-    timeoutSec: typeof args.timeoutSec === 'number' ? args.timeoutSec : 120,
+    // 0, a negative number or one past what a timer can hold used to mean no
+    // limit at all, or an instant kill. An hour is the ceiling /v1/.../exec has.
+    timeoutSec: secondsArg(args.timeoutSec, 120, SHELL_MAX_SEC),
     maxOutputBytes: MAX_TOOL_OUTPUT,
   });
 
   const parts: string[] = [];
   if (r.stdout) parts.push(r.stdout.trimEnd());
   if (r.stderr) parts.push(`[stderr]\n${r.stderr.trimEnd()}`);
-  if (r.timedOut) parts.push(`[timed out after ${Math.round(r.durationMs / 1000)}s and was killed]`);
+  // "stopped" only when the provider confirmed it; otherwise its own line in stderr says why not.
+  if (r.timedOut) {
+    const after = `timed out after ${Math.round(r.durationMs / 1000)}s`;
+    parts.push(r.stderr.includes(STOP_UNCONFIRMED) ? `[${after}]` : `[${after} and was stopped]`);
+  }
   if (r.exitCode !== 0 && !r.timedOut) parts.push(`[exit ${r.exitCode}]`);
 
   // Attached per failure, not once per session. The note at the top of the
