@@ -18,7 +18,7 @@ invents endpoints the other does not know about.
   `code` is a `HuskErrorCode` from `@husk-ai/core`. Status mapping: `E_*_NOT_FOUND` → 404,
   `E_*_DENIED` → 403, `E_SPEC_INVALID` → 422, `E_QUOTA` / `E_BUDGET_EXCEEDED` → 429,
   `E_NO_CREDENTIALS` → 401, `E_PROVIDER_UNAVAILABLE` / `E_MODEL_UNAVAILABLE` → 503,
-  `E_NOT_IMPLEMENTED` → 501, `E_EXEC_TIMEOUT` → 504, everything else → 500.
+  `E_NOT_IMPLEMENTED` → 501, `E_EXEC_TIMEOUT` → 504, `E_COMPUTER_HELD` → 409, everything else → 500.
 
   The two suffix rules are applied as rules, not as a table, so a new
   `E_<thing>_NOT_FOUND` lands on 404 without anyone editing the server.
@@ -404,11 +404,23 @@ A run with nobody to take the handoff refuses it at once rather than waiting.
 POST   /v1/computers/:id/takeover  -> 201 PendingHandoff (runId "person"), or the handoff already open
 ```
 
-The person takes the computer from its chat without being asked. While it is held, a
+The person takes the computer from its chat without being asked. Taking it stops the
+AI's calls running on it first, browser scripts included, and answers once they have
+ended, so the person never shares the screen with half-done work. While it is held, a
 chat's call to `POST /v1/computers/:id/tools/:name` waits up to 45 seconds for it to
 come back, then runs; still held, it answers with an error telling the model it is
-paused. Only `POST /v1/handoffs/:handoffId/done` (Give back) ends it: there is no lease,
-and a chat's `hand_off_done` cannot, since the chat never opened it.
+paused. After Give back, a browser action is refused only if the page is not the one
+the AI left (another URL, title or tab, or a call of its own stopped part-way), with
+what changed; a `browser_snapshot` or `browser_goto` clears that. Only
+`POST /v1/handoffs/:handoffId/done` (Give back) ends it: there is no lease, and a
+chat's `hand_off_done` cannot, since the chat never opened it.
+
+Every other route that changes a held computer (`exec`, `exec/stream`, `fs`,
+`browser/*`, `ports`, `browse`, `stop`, `start`, `DELETE`) refuses a program with
+409 `E_COMPUTER_HELD` until Give back, and stops one that was running. The console's
+own buttons send `X-Husk-As: person` and go through, since they act as the person.
+This is cooperation, not a security boundary: a client that sends the header is
+believed.
 
 #### A chat's handoffs
 

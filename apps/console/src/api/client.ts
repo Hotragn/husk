@@ -79,6 +79,16 @@ export interface ExecRequest {
   maxOutputBytes?: number;
 }
 
+/**
+ * The console acts as the person: what they change on a computer goes through
+ * while they hold it, where a program's change is refused.
+ */
+function asPerson(init?: RequestInit): RequestInit {
+  const headers = new Headers(init?.headers);
+  headers.set('x-husk-as', 'person');
+  return { ...init, headers };
+}
+
 export class HuskApi {
   readonly baseUrl: string;
   private readonly client: HuskClient;
@@ -95,7 +105,7 @@ export class HuskApi {
       // which detaches it from `window`. In Node that is fine; in a browser it
       // is `TypeError: Illegal invocation` on the first request. Handing it a
       // closure keeps the receiver intact.
-      fetch: (input, init) => globalThis.fetch(input, init),
+      fetch: (input, init) => globalThis.fetch(input, asPerson(init)),
     });
   }
 
@@ -282,7 +292,7 @@ export class HuskApi {
    */
   async writeFileBytes(id: string, path: string, bytes: Uint8Array): Promise<void> {
     const url = this.client.http.url(`/v1/computers/${enc(id)}/fs/write`, { path });
-    const headers: Record<string, string> = { 'content-type': 'application/octet-stream' };
+    const headers: Record<string, string> = { 'content-type': 'application/octet-stream', 'x-husk-as': 'person' };
     if (this.token) headers.authorization = `Bearer ${this.token}`;
 
     let res: Response;

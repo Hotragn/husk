@@ -235,6 +235,45 @@ export async function pageMark(computerId: string): Promise<PageMark | undefined
   }
 }
 
+/** Who is asking: the console's own buttons act as the person; everything else is a program. */
+export function actorOf(req: FastifyRequest): 'person' | 'program' {
+  return req.headers['x-husk-as'] === 'person' ? 'person' : 'program';
+}
+
+/** The take-over's refusal, thrown at a program changing a computer someone holds. */
+export function refuseIfHeld(registry: HandoffRegistry, computerId: string, by: 'person' | 'program'): void {
+  const held = registry.admit(computerId, by);
+  if (!held) return;
+  const who = held.runId === PERSON_RUN ? 'the user took over this computer' : `the user has this computer right now: ${held.reason}`;
+  throw huskError('E_COMPUTER_HELD', who, {
+    hint: 'it takes no changes from programs until they give it back; try again then',
+    details: { handoffId: held.handoffId },
+  });
+}
+
+/**
+ * A program's long call on a computer -- an exec, a browser action -- let in
+ * and tracked in one step, so a take-over either refuses it or stops it. The
+ * person's own calls are neither refused nor stopped.
+ */
+export function programCall(
+  registry: HandoffRegistry,
+  computerId: string,
+  req: FastifyRequest,
+  what: string,
+  signal: AbortSignal,
+): { signal: AbortSignal; done(): void } {
+  if (actorOf(req) === 'person') return { signal, done: () => {} };
+  const call = registry.control.start(computerId, what, signal);
+  try {
+    refuseIfHeld(registry, computerId, 'program');
+  } catch (err) {
+    call.done();
+    throw err;
+  }
+  return call;
+}
+
 type TextResult = { isError: true; content: Array<{ type: 'text'; text: string }> };
 const refused = (text: string): TextResult => ({ isError: true, content: [{ type: 'text', text }] });
 

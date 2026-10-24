@@ -9,7 +9,7 @@ import { resolveDeps } from './deps.js';
 import type { ServerDeps } from './deps.js';
 import { huskError, installErrorHandling } from './errors.js';
 import { approvalRoutes } from './routes/approvals.js';
-import { handoffRoutes } from './routes/handoffs.js';
+import { actorOf, handoffRoutes, refuseIfHeld } from './routes/handoffs.js';
 import { archiveRoutes } from './routes/archive.js';
 import { browserRoutes } from './routes/browser.js';
 import { computerRoutes } from './routes/computers.js';
@@ -67,7 +67,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     await app.register(cors, {
       origin: config.corsOrigins === true ? true : (config.corsOrigins ?? false),
       credentials: false,
-      allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'X-Husk-Signature'],
+      allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'X-Husk-Signature', 'X-Husk-As'],
       exposedHeaders: ['X-Husk-Version'],
     });
   }
@@ -89,6 +89,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
 
   installBodyParsers(app);
   installIdempotency(app);
+  installAdmission(app);
 
   app.get('/health', async () => ({
     ok: true,
@@ -187,6 +188,39 @@ function installBodyParsers(app: FastifyInstance): void {
       done(null, body);
     },
   );
+}
+
+/**
+ * Routes under /v1/computers/:id that change nothing, or keep a rule of their own.
+ * Every other route there that changes a computer goes through the admission below.
+ */
+export const ADMISSION_EXEMPT: ReadonlySet<string> = new Set([
+  // Waits for the person to give the computer back, then runs under its control.
+  'POST /v1/computers/:id/tools/:name',
+  // The person taking it, a chat asking for them, a link to look: none acts on the computer.
+  'POST /v1/computers/:id/takeover',
+  'POST /v1/computers/:id/handoffs',
+  'POST /v1/computers/:id/link',
+  // Reads.
+  'POST /v1/computers/:id/browser/snapshot',
+  'POST /v1/computers/:id/bot',
+]);
+
+const CHANGES_A_COMPUTER = /^(POST|PUT|PATCH|DELETE) \/v1\/computers\/:id(\/|$)/;
+
+/**
+ * Take-over, on every route that changes a computer: while a person holds it,
+ * a program's change is refused here, in one place. The console's own buttons
+ * act as the person (`X-Husk-As: person`) and go through. Cooperation, not a
+ * boundary: a program that sends the header is believed.
+ */
+function installAdmission(app: FastifyInstance): void {
+  app.addHook('preHandler', async (req) => {
+    const route = `${req.method} ${req.routeOptions.url ?? ''}`;
+    if (!CHANGES_A_COMPUTER.test(route) || ADMISSION_EXEMPT.has(route)) return;
+    const { id } = req.params as { id?: string };
+    if (id) refuseIfHeld(app.husk.runner.handoffs, id, actorOf(req));
+  });
 }
 
 /**
