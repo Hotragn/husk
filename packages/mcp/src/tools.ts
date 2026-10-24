@@ -165,20 +165,24 @@ const SHELL_MAX_SEC = 3600;
  * A chat tool as the shared Husk runs it (`deps.runTool` in `husk serve`): the
  * same `callTool`, on a computer woken first if a chat's idle timer stopped it.
  */
-export async function runTool(computer: Computer, name: string, args: Record<string, unknown>): Promise<ToolResult> {
-  return callTool(await ensureRunning(computer), name, args);
+export async function runTool(computer: Computer, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+  return callTool(await ensureRunning(computer), name, args, signal);
 }
 
-/** Run one tool call against a live computer. Never throws; errors come back as results. */
+/**
+ * Run one tool call against a live computer. Never throws; errors come back as results.
+ * `signal` is the chat cancelling the call: a command it started is stopped.
+ */
 export async function callTool(
   computer: Computer,
   name: string,
   args: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<ToolResult> {
   try {
     switch (name) {
       case 'shell':
-        return await shell(computer, args);
+        return await shell(computer, args, signal);
       case 'read_file':
         return await readFile(computer, args);
       case 'write_file':
@@ -190,9 +194,9 @@ export async function callTool(
       case 'expose_port':
         return await exposePort(computer, args);
       case 'computer_info':
-        return await computerInfo(computer);
+        return await computerInfo(computer, signal);
       case 'browse':
-        return await browse(computer, args);
+        return await browse(computer, args, signal);
       default:
         if (BROWSER_TOOL_NAMES.has(name)) {
           return await callBrowserTool(computer, name, args, MAX_TOOL_OUTPUT);
@@ -209,7 +213,7 @@ export async function callTool(
   }
 }
 
-async function shell(computer: Computer, args: Record<string, unknown>): Promise<ToolResult> {
+async function shell(computer: Computer, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
   const command = String(args.command ?? '');
   if (!command.trim()) return fail('command is empty');
 
@@ -221,6 +225,7 @@ async function shell(computer: Computer, args: Record<string, unknown>): Promise
     // limit at all, or an instant kill. An hour is the ceiling /v1/.../exec has.
     timeoutSec: secondsArg(args.timeoutSec, 120, SHELL_MAX_SEC),
     maxOutputBytes: MAX_TOOL_OUTPUT,
+    ...(signal ? { signal } : {}),
   });
 
   const parts: string[] = [];
@@ -313,13 +318,14 @@ async function exposePort(computer: Computer, args: Record<string, unknown>): Pr
   return ok(`port ${port} is published at ${where}`);
 }
 
-async function computerInfo(computer: Computer): Promise<ToolResult> {
+async function computerInfo(computer: Computer, signal?: AbortSignal): Promise<ToolResult> {
   // huskinfo exists in the sandbox/ images; everywhere else, probe for the same
   // fields. Shared with the agent's copy so that one tool name cannot report two
   // different sets of facts depending on how the caller got here.
   const r = await computer.exec({
     cmd: `command -v huskinfo >/dev/null 2>&1 && huskinfo || { ${PROBE_COMPUTER_INFO}; }`,
     timeoutSec: 20,
+    ...(signal ? { signal } : {}),
   });
 
   const info = computer.info;
@@ -350,7 +356,7 @@ async function computerInfo(computer: Computer): Promise<ToolResult> {
  * agent reads is what this machine can actually reach, and the console Browser
  * panel shows the same page.
  */
-async function browse(computer: Computer, args: Record<string, unknown>): Promise<ToolResult> {
+async function browse(computer: Computer, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
   const url = String(args.url ?? '');
   if (!url) return fail('browse needs a url');
 
@@ -358,6 +364,7 @@ async function browse(computer: Computer, args: Record<string, unknown>): Promis
     url,
     ...(typeof args.maxBytes === 'number' ? { maxBytes: args.maxBytes } : {}),
     ...(typeof args.timeoutSec === 'number' ? { timeoutSec: args.timeoutSec } : {}),
+    ...(signal ? { signal } : {}),
   });
 
   const head = [

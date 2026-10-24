@@ -1,9 +1,10 @@
 import { audited } from '@husk-ai/core';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { summarise } from '../activity.js';
 import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
 import { PERSON_RUN, heldText, takenText } from '../handoffs.js';
+import { closedEarly } from '../sse.js';
 
 /** How long a chat's call waits for a person to give back a computer they took. Tests shorten it. */
 export const takeover = { waitMs: 45_000 };
@@ -30,8 +31,11 @@ function parseBody(body: unknown): { args: Record<string, unknown>; via: string 
 export async function toolRoutes(app: FastifyInstance): Promise<void> {
   const ctx = ctxOf(app);
 
-  app.post('/v1/computers/:id/tools/:name', async (req: FastifyRequest) => {
+  app.post('/v1/computers/:id/tools/:name', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id, name } = req.params as { id: string; name: string };
+    // The chat cancelling its call (MCP notifications/cancelled aborts the request)
+    // or going away. Taken before any await, so no disconnect is missed.
+    const signal = closedEarly(reply);
     const { args, via } = parseBody(req.body);
     const runTool = ctx.deps.runTool;
     if (!runTool) {
@@ -49,7 +53,7 @@ export async function toolRoutes(app: FastifyInstance): Promise<void> {
     // Taken from the console: the call waits a while for the person to give it
     // back, so a short look-in pauses the chat instead of ending its turn.
     const until = Date.now() + takeover.waitMs;
-    while (held?.runId === PERSON_RUN && Date.now() < until && !req.socket.destroyed) {
+    while (held?.runId === PERSON_RUN && Date.now() < until && !signal.aborted) {
       await new Promise((r) => setTimeout(r, 250));
       held = heldNow();
     }
@@ -58,10 +62,13 @@ export async function toolRoutes(app: FastifyInstance): Promise<void> {
       return { isError: true, content: [{ type: 'text', text }] };
     }
 
+    // Cancelled while it waited for the person: nothing runs that nobody asked for any more.
+    if (signal.aborted) return { isError: true, content: [{ type: 'text', text: 'the call was cancelled before it ran' }] };
+
     const started = Date.now();
     const result = await audited(
       { computerId: id, via, tool: name, args },
-      () => runTool(found, name, args),
+      () => runTool(found, name, args, signal),
       (r) => (r.isError ? (r.content.find((c) => c.type === 'text') as { text?: string } | undefined)?.text : undefined),
     );
     const summary = summarise(name, args);

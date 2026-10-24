@@ -471,6 +471,36 @@ async function checkStops(id) {
   const running = (what) => `for d in /proc/[0-9]*; do tr '\\0' ' ' < "$d/cmdline" 2>/dev/null; echo; done | grep -c '^${what}' || true`;
   const left = textOf(await tool(id, 'shell', { command: running('sleep 307') })).trim();
   check('a timed-out command is gone from the computer', left === '0', left);
+
+  // Cancelled by the caller: a chat's tool call (an MCP cancel aborts it), then a
+  // plain /exec. Seen running before the cancel, so one that never started cannot
+  // pass; the server stops it after the caller has gone, so the count may take a moment.
+  const until = async (what, done) => {
+    let n = '';
+    for (let i = 0; i < 20; i++) {
+      n = textOf(await tool(id, 'shell', { command: running(what) })).trim();
+      if (done(n)) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return n;
+  };
+  const cancelWhileRunning = async (path, body, what) => {
+    const caller = new AbortController();
+    const call = fetch(`${rec.url}${path}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${rec.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: caller.signal,
+    }).catch(() => undefined);
+    const ran = await until(what, (n) => n !== '0');
+    caller.abort();
+    await call;
+    return { ran, left: await until(what, (n) => n === '0') };
+  };
+  const viaTool = await cancelWhileRunning(`/v1/computers/${id}/tools/shell`, { args: { command: 'sleep 311', timeoutSec: 120 } }, 'sleep 311');
+  check('a command the chat cancelled is gone from the computer', viaTool.ran !== '0' && viaTool.left === '0', JSON.stringify(viaTool));
+  const viaExec = await cancelWhileRunning(`/v1/computers/${id}/exec`, { cmd: 'sleep 313', timeoutSec: 120 }, 'sleep 313');
+  check('a command whose caller left is gone from the computer', viaExec.ran !== '0' && viaExec.left === '0', JSON.stringify(viaExec));
 }
 
 /**

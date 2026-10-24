@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
-import { SseStream } from '../sse.js';
+import { SseStream, closedEarly } from '../sse.js';
 import { browseInComputer } from '@husk-ai/core';
 import { browserSessionFor, livePageFor } from '@husk-ai/browser';
 import type { BrowserSession } from '@husk-ai/browser';
@@ -213,13 +213,13 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
     return info;
   });
 
-  app.post('/v1/computers/:id/exec', async (req) => {
+  app.post('/v1/computers/:id/exec', async (req, reply) => {
     const { id } = req.params as { id: string };
+    // Before any await: a disconnect during the lookup still counts.
+    const signal = closedEarly(reply);
     const body = parseOr422(ExecSchema, req.body);
     const computer = await mustGet(app, id);
-    const abort = new AbortController();
-    req.raw.on('close', () => abort.abort(new HuskError('E_ABORTED', 'client disconnected')));
-    const result: ExecResult = await computer.exec({ ...body, signal: abort.signal } as ExecRequest);
+    const result: ExecResult = await computer.exec({ ...body, signal } as ExecRequest);
     return result;
   });
 

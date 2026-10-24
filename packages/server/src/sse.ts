@@ -162,3 +162,21 @@ export async function pipeSse<T>(
     stream.done();
   }
 }
+
+/**
+ * Aborts when the client goes away before this reply is finished.
+ *
+ * For the plain request/response routes that run something long: `/exec`, a
+ * husk run, a model call, a chat's tool call. `close` on the *request* is not
+ * the signal -- it fires once the body has been read, so attached after an
+ * `await` it never fires and attached at once it fires before any work starts
+ * (checked on Node 24 with Fastify 5). The response closing while unfinished
+ * is the disconnect, the same test SseStream makes above.
+ */
+export function closedEarly(reply: FastifyReply): AbortSignal {
+  const ac = new AbortController();
+  reply.raw.on('close', () => {
+    if (!reply.raw.writableFinished) ac.abort(new Error('client disconnected'));
+  });
+  return ac.signal;
+}
