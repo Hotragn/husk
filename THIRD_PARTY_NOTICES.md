@@ -47,3 +47,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## simple-icons
+
+The chat apps' marks in `apps/console/src/desktop/logos.ts` (Claude, Cursor, Google
+Gemini, Zed, Windsurf) are SVG paths from simple-icons 16.34.0, https://simpleicons.org,
+released under CC0 1.0 Universal (public domain dedication). The marks themselves remain
+trademarks of their owners; Husk shows them only to say which chat app a computer
+belongs to.

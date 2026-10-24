@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { HuskApi } from '../api/client';
 import type { Overview } from '../api/wire';
 import { OverviewPanel, sortRows } from './OverviewPanel';
@@ -114,7 +114,8 @@ describe('Overview panel', () => {
   it('shows the screen live, slowly, on every pushed-screen computer, and on ssh only while in use', async () => {
     render(<OverviewPanel onOpen={() => {}} />);
     await screen.findByText('Running triage · step 2 · shell');
-    expect(sockets.sort()).toEqual(['/v1/computers/cmp_busy/screen?fps=1', '/v1/computers/cmp_wait/screen?fps=1']);
+    // The screens open just after the cards render.
+    await waitFor(() => expect([...sockets].sort()).toEqual(['/v1/computers/cmp_busy/screen?fps=1', '/v1/computers/cmp_wait/screen?fps=1']));
   });
 
   it('takes an idle computer at any moment, and gives it back', async () => {

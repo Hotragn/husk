@@ -42,6 +42,21 @@ afterEach(() => {
 });
 
 describe('Connect panel', () => {
+  it('gives a prompt a chat can set Husk up with, for one app or every one', async () => {
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    render(<ConnectPanel />);
+    await screen.findByText('Claude Desktop', { selector: 'strong' });
+    const box = screen.getByRole('textbox', { name: 'Setup prompt' }) as HTMLTextAreaElement;
+    expect(box.value).toContain('npx -y @husk-ai/cli@latest setup --computer auto --apps all --yes');
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'claude-desktop' } });
+    expect(box.value).toContain('--apps claude-desktop --yes');
+    expect(box.value).toContain('Tell me to restart Claude Desktop');
+    fireEvent.click(screen.getByRole('button', { name: 'Copy prompt' }));
+    expect(writeText).toHaveBeenCalledWith(box.value);
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy();
+  });
+
   it('recommends the isolated computer, and explains the ones that are not available', async () => {
     render(<ConnectPanel />);
     const docker = (await screen.findByDisplayValue('docker')) as HTMLInputElement;
@@ -52,7 +67,7 @@ describe('Connect panel', () => {
 
   it('connects an app with the chosen computer and a browser, and shows the backup', async () => {
     render(<ConnectPanel />);
-    await screen.findByText('Claude Desktop');
+    await screen.findByText('Claude Desktop', { selector: 'strong' });
     fireEvent.click(screen.getByRole('button', { name: 'Connect Claude Desktop' }));
     expect(await screen.findByText(/Backup: C:\/x.husk-backup/)).toBeTruthy();
     expect(calls.find((c) => c.path === '/v1/setup/apps/claude-desktop')?.body).toEqual({ provider: 'docker', flavor: 'full' });
@@ -60,14 +75,14 @@ describe('Connect panel', () => {
 
   it('offers no Connect for an app that is not on this machine', async () => {
     render(<ConnectPanel />);
-    await screen.findByText('Windsurf');
+    await screen.findByText('Windsurf', { selector: 'strong' });
     expect(screen.queryByRole('button', { name: 'Connect Windsurf' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Connect again Cursor' })).toBeTruthy();
   });
 
   it('runs a test on the chosen computer', async () => {
     render(<ConnectPanel />);
-    await screen.findByText('Claude Desktop');
+    await screen.findByText('Claude Desktop', { selector: 'strong' });
     fireEvent.click(screen.getByRole('button', { name: 'Test this computer' }));
     expect(await screen.findByText(/docker answered in 2.4 s/)).toBeTruthy();
   });

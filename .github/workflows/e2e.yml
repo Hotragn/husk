@@ -7,9 +7,9 @@ name: e2e
 on:
   push:
     branches: [main]
-    paths: ['packages/**', 'apps/console/**', 'package.json', 'package-lock.json', 'scripts/e2e-computers.mjs', '.github/workflows/e2e.yml']
+    paths: ['packages/**', 'apps/console/**', 'apps/desktop/**', 'package.json', 'package-lock.json', 'scripts/e2e-computers.mjs', '.github/workflows/e2e.yml']
   pull_request:
-    paths: ['packages/**', 'apps/console/**', 'package.json', 'package-lock.json', 'scripts/e2e-computers.mjs', '.github/workflows/e2e.yml']
+    paths: ['packages/**', 'apps/console/**', 'apps/desktop/**', 'package.json', 'package-lock.json', 'scripts/e2e-computers.mjs', '.github/workflows/e2e.yml']
 
 permissions:
   contents: read
@@ -30,9 +30,29 @@ jobs:
       - run: docker version
       # Drives the runner's own Chrome through the console. Not a dependency of Husk.
       - run: npm i --no-save playwright-core@1.48.2
+      # The desktop app, run from the checkout on a virtual screen with a
+      # compositor, and ffmpeg to film that screen and the console as GIFs.
+      # This step stalled twice with nothing printed, even non-interactive and
+      # without recommended packages. Now it says what it is doing, a stalled
+      # download times out and is tried again, and the image's own package
+      # lists are tried before a fresh index from every configured repository.
+      - name: Install the virtual screen and ffmpeg
+        timeout-minutes: 15
+        run: |
+          get='-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30'
+          for attempt in 1 2 3; do
+            if [ "$attempt" -gt 1 ]; then timeout 120 sudo apt-get update $get || true; fi
+            timeout 180 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              -o DPkg::Lock::Timeout=60 $get xvfb xauth xcompmgr ffmpeg && exit 0
+            sudo dpkg --configure -a || true
+          done
+          exit 1
+      - run: npm ci
+        working-directory: apps/desktop
       - run: npm run e2e:computers
         env:
           E2E_CONSOLE: '1'
+          E2E_DESKTOP: '1'
           E2E_SHOTS: ${{ runner.temp }}/e2e-shots
       - uses: actions/upload-artifact@v4
         if: always()

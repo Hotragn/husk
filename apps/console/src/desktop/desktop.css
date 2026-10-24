@@ -1,0 +1,696 @@
+/*
+ * The desktop app's small windows: the Computers window, the corner row, and
+ * the notch. Built on tokens.css. The corner row and the notch are
+ * transparent windows, so their pages are too: only what is drawn shows.
+ */
+
+:root[data-view='dock'],
+:root[data-view='dock'] body,
+:root[data-view='pill'],
+:root[data-view='pill'] body {
+  background: transparent !important;
+  overflow: hidden;
+}
+
+:root[data-view] body {
+  margin: 0;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.desk-note {
+  margin: 0;
+  padding: 24px;
+  color: var(--color-text-subtle);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+/* ---- the Computers window ------------------------------------------------ */
+
+:root[data-view='computers'] body {
+  background: var(--color-bg);
+  overflow: hidden;
+}
+
+.cw {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  color: var(--color-text);
+  font-family: var(--font-ui);
+}
+
+/* The title bar holds the window's controls and the computers' tabs. */
+.cw-bar {
+  -webkit-app-region: drag;
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 0 0 10px;
+  background: color-mix(in srgb, var(--color-surface) 80%, transparent);
+  backdrop-filter: saturate(180%) blur(24px);
+  border-bottom: 1px solid var(--color-border);
+  flex: none;
+}
+
+.cw-bar-mac {
+  padding-right: 6px;
+}
+
+.cw-bar button {
+  -webkit-app-region: no-drag;
+}
+
+.cw-lights {
+  display: flex;
+  gap: 7px;
+  padding-right: 4px;
+  flex: none;
+}
+
+.cw-light {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 0.5px solid rgba(0, 0, 0, 0.18);
+  border-radius: 50%;
+  cursor: default;
+}
+
+.cw-light-close { background: #ff5f57; }
+.cw-light-min { background: #febc2e; }
+.cw-light-zoom { background: #28c840; }
+.cw-lights:hover .cw-light { filter: brightness(0.92); }
+.cw-light:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+
+.cw-tabs {
+  display: flex;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.cw-tab {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  max-width: 170px;
+  height: 24px;
+  padding: 0 9px 0 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-subtle);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: default;
+}
+
+.cw-tab:hover { background: var(--color-raised); color: var(--color-text); }
+
+.cw-tab-on {
+  background: var(--color-raised);
+  color: var(--color-text);
+  box-shadow: 0 1px 2px rgba(var(--color-shadow-rgb), 0.2), inset 0 0 0 0.5px var(--color-border);
+}
+
+.cw-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cw-tab:focus-visible,
+.cw-icon:focus-visible,
+.cw-control:focus-visible,
+.cw-pill:focus-visible,
+.cw-key:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+
+.cw-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.cw-icon,
+.cw-control {
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.cw-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+
+.cw-icon:hover { background: var(--color-raised); color: var(--color-text); }
+.cw-icon-on { color: var(--color-text-accent); }
+
+.cw-controls {
+  display: flex;
+  height: 34px;
+}
+
+.cw-control {
+  width: 40px;
+  height: 34px;
+}
+
+.cw-control:hover { background: var(--color-raised); color: var(--color-text); }
+.cw-control-close:hover { background: #e81123; color: #fff; }
+
+.cw-pill {
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-raised);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+  cursor: default;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+
+.cw-pill:active { transform: scale(0.97); }
+.cw-pill:disabled { opacity: 0.55; }
+.cw-pill-accent { border-color: transparent; background: var(--color-accent-fill); color: var(--color-accent-on-fill); }
+.cw-pill-light { border-color: transparent; background: var(--color-primary-fill); color: var(--color-primary-on-fill); }
+.cw-pill-warn { border-color: transparent; background: var(--color-warn); color: #1a1200; }
+.cw-pill:hover:not(:disabled) { filter: brightness(1.06); }
+
+.cw-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--color-warn-subtle);
+  border-bottom: 1px solid var(--color-warn-border);
+  font-size: var(--font-size-xs);
+  flex: none;
+}
+
+.cw-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.cw-banner-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* The screen: white, edge to edge; the page keeps its shape, so a click maps to it. */
+.cw-body {
+  position: relative;
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: #fff;
+}
+
+.cw-screen {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.cw-screen img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.cw-screen .screen-empty {
+  aspect-ratio: auto;
+  color: #71717a;
+}
+
+.cw-held .cw-screen {
+  box-shadow: inset 0 0 0 2px var(--color-accent-fill);
+}
+
+.cw-keys {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(20, 20, 24, 0.6);
+  backdrop-filter: blur(16px) saturate(160%);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  transform: translateX(-50%);
+}
+
+.cw-key {
+  height: 22px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #f4f4f5;
+  font: inherit;
+  font-size: var(--font-size-2xs);
+  cursor: default;
+}
+
+.cw-key:hover { background: rgba(255, 255, 255, 0.2); }
+
+.cw-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 6px 0 10px;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-2xs);
+  flex: none;
+}
+
+.cw-doing {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cw-ago {
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.cw-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-subtle);
+}
+
+.cw-dot-active { background: var(--color-success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 25%, transparent); }
+.cw-dot-idle { background: var(--color-success); }
+.cw-dot-waiting { background: var(--color-warn); animation: desk-pulse 1.4s ease-in-out infinite; }
+.cw-dot-held { background: var(--color-accent-fill); }
+.cw-dot-stopped { background: var(--color-text-subtle); }
+
+.cw-error {
+  position: absolute;
+  right: 10px;
+  bottom: 38px;
+  left: 10px;
+}
+
+/* ---- the chat app's mark ------------------------------------------------- */
+
+.glyph {
+  flex: none;
+  border-radius: 24%;
+}
+
+/* The husk: a nearly invisible computer around a mark, its lines in the colour of the text around it. */
+.glyph-husk {
+  flex: none;
+  display: block;
+  overflow: visible;
+}
+
+/* A mark on a small white tile, like an app icon. */
+.glyph-logo {
+  display: inline-grid;
+  place-items: center;
+  background: #fff;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+}
+
+.glyph-mono {
+  display: inline-grid;
+  place-items: center;
+  color: #fff;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.18);
+}
+
+/* ---- the corner row ---------------------------------------------------------- */
+
+.dock {
+  position: fixed;
+  inset: 0;
+  font-family: var(--font-ui);
+}
+
+/* Where the computers sit: a small frosted tray, as the macOS Dock has. */
+.dock-tray {
+  position: absolute;
+  right: 2px;
+  bottom: 3px;
+  height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.12));
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  transition: width 260ms cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
+.dock-canvas {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 46px;
+  pointer-events: none;
+}
+
+.dock-row {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: row-reverse;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dock-slot {
+  position: relative;
+  width: 44px;
+  height: 46px;
+}
+
+.dock-hit {
+  position: absolute;
+  inset: 6px 6px 4px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  cursor: default;
+}
+
+.dock-hit:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: -2px;
+}
+
+/* The hover label: a tiny pill with the app's name, as the macOS Dock shows. */
+.dock-tip {
+  position: absolute;
+  right: 3px;
+  bottom: calc(100% + 2px);
+  width: max-content;
+  max-width: 100px;
+  padding: 2px 7px;
+  overflow: hidden;
+  border: 0.5px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(24, 24, 28, 0.78);
+  backdrop-filter: blur(16px) saturate(180%);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  color: #f4f4f5;
+  font-size: 10.5px;
+  font-weight: var(--font-weight-medium);
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: desk-tip 140ms ease-out;
+  pointer-events: none;
+}
+
+/* On a light desktop the label is light frosted glass. */
+@media (prefers-color-scheme: light) {
+  .dock-tip {
+    border-color: rgba(0, 0, 0, 0.08);
+    background: rgba(255, 255, 255, 0.88);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    color: #27272a;
+  }
+}
+
+/* Flat computers, where WebGL is not available: the same small iMac, white screen, facing front. */
+.flat-mac {
+  --mac-back: #c9ccd2;
+  --mac-chin: #e3e5e8;
+  display: grid;
+  justify-items: center;
+  animation: desk-build 420ms cubic-bezier(0.2, 0.9, 0.3, 1.25);
+}
+
+.flat-mac-display {
+  display: grid;
+  grid-template-rows: 1fr 3px;
+  width: 27px;
+  height: 20px;
+  overflow: hidden;
+  border-radius: 4px 4px 2px 2px;
+  background: #f5f5f7;
+  box-shadow: 0 0 0 0.5px var(--mac-back), 0 3px 7px rgba(0, 0, 0, 0.18);
+}
+
+.flat-mac-screen {
+  display: block;
+  margin: 1px 1.5px 0.5px;
+  border-radius: 2px 2px 0.5px 0.5px;
+  background: linear-gradient(#fff, #eef1f5);
+}
+
+.flat-mac-chin {
+  display: block;
+  background: var(--mac-chin);
+}
+
+.flat-mac-neck {
+  display: block;
+  width: 5px;
+  height: 3px;
+  background: var(--mac-back);
+}
+
+.flat-mac-foot {
+  display: block;
+  width: 9px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: var(--mac-back);
+}
+
+.dock-waiting .flat-mac-display { box-shadow: 0 0 0 1.5px var(--color-warn), 0 0 10px rgba(251, 191, 36, 0.5); }
+.dock-held .flat-mac-display { box-shadow: 0 0 0 1.5px var(--color-accent-fill), 0 0 9px rgba(45, 212, 191, 0.4); }
+
+/* ---- the notch ---------------------------------------------------------------- */
+
+.pill-stage {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  font-family: var(--font-ui);
+}
+
+.pill {
+  --bar-h: 32px;
+  overflow: hidden;
+  min-width: 80px;
+  border-radius: 0 0 16px 16px;
+  background: #000;
+  color: #f4f4f5;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  transition: border-radius 240ms cubic-bezier(0.2, 0.9, 0.3, 1.15), width 240ms cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
+.pill-open {
+  width: 380px;
+  border-radius: 0 0 22px 22px;
+}
+
+.pill-bar {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  height: var(--bar-h);
+  padding: 0 12px;
+}
+
+.pill-notch .pill-bar {
+  justify-content: space-between;
+}
+
+.pill-side {
+  display: flex;
+  gap: 6px;
+}
+
+.pill-gap {
+  width: var(--notch-gap, 0px);
+  flex: none;
+}
+
+.pill-logo {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 24px;
+  color: #f4f4f5;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  cursor: default;
+  transition: transform 140ms cubic-bezier(0.2, 0.9, 0.3, 1.3);
+}
+
+.pill-logo:hover { transform: scale(1.12); }
+.pill-logo:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+
+.pill-dot {
+  position: absolute;
+  right: 0;
+  bottom: 1px;
+  width: 6px;
+  height: 6px;
+  border: 1.5px solid #000;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.pill-dot-active,
+.pill-dot-idle { background: #4ade80; }
+.pill-dot-waiting { background: #fbbf24; animation: desk-pulse 1.4s ease-in-out infinite; }
+.pill-dot-held { background: #2dd4bf; }
+.pill-dot-stopped { background: #71717a; }
+
+.pill-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 2px 8px 4px;
+  list-style: none;
+  animation: desk-rise 200ms cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
+.pill-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 6px;
+  border-radius: 12px;
+}
+
+.pill-row:hover { background: rgba(255, 255, 255, 0.07); }
+
+.pill-text {
+  display: grid;
+  min-width: 0;
+  font-size: var(--font-size-2xs);
+}
+
+.pill-text strong {
+  overflow: hidden;
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pill-text span {
+  overflow: hidden;
+  color: #a1a1aa;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pill-btn {
+  height: 22px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #f4f4f5;
+  font: inherit;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  cursor: default;
+}
+
+.pill-btn:hover { background: rgba(255, 255, 255, 0.2); }
+.pill-btn:focus-visible,
+.pill-dismiss:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+
+.pill-dismiss {
+  display: block;
+  margin: 0 auto 8px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #71717a;
+  font: inherit;
+  font-size: var(--font-size-2xs);
+  cursor: default;
+}
+
+.pill-dismiss:hover { color: #d4d4d8; }
+
+@keyframes desk-pulse {
+  50% { opacity: 0.45; }
+}
+
+@keyframes desk-rise {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+
+@keyframes desk-tip {
+  from { opacity: 0; transform: translateY(3px); }
+}
+
+@keyframes desk-build {
+  from { opacity: 0; transform: translateY(8px) scale(0.6); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flat-mac,
+  .dock-tip,
+  .pill-list,
+  .cw-dot-waiting,
+  .pill-dot-waiting { animation: none; }
+  .pill,
+  .pill-logo,
+  .cw-pill,
+  .dock-tray { transition: none; }
+}

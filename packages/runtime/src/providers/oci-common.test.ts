@@ -167,7 +167,16 @@ describe('buildExecArgs', () => {
   it('adds -t only when a pty was asked for', () => {
     expect(buildExecArgs(docker, { containerId: 'c', cmd: 'ls' })).not.toContain('-t');
     const tty = buildExecArgs(docker, { containerId: 'c', cmd: 'ls', tty: true });
-    expect(tty.slice(0, 3)).toEqual(['exec', '-i', '-t']);
+    expect(tty.slice(0, 2)).toEqual(['exec', '-t']);
+  });
+
+  it('never pairs -t with -i, which the engine refuses when its own stdin is not a terminal', () => {
+    // The console's Terminal asks for a tty and sends no input: -t alone runs.
+    expect(buildExecArgs(docker, { containerId: 'c', cmd: 'ls', tty: true })).not.toContain('-i');
+    // Input to write wins over the pty: a pipe cannot be a terminal.
+    const piped = buildExecArgs(docker, { containerId: 'c', cmd: 'cat', tty: true, stdin: true });
+    expect(piped.slice(0, 2)).toEqual(['exec', '-i']);
+    expect(piped).not.toContain('-t');
   });
 
   it('places cwd, env and user before the container id', () => {

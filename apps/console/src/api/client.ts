@@ -42,6 +42,7 @@ import type {
   RunRequestBody,
   RunStreamEvent,
   BrowserStatus,
+  BrowserTab,
   ValidateResult,
   ActivityEntry,
   BotDraft,
@@ -215,6 +216,14 @@ export class HuskApi {
   /** `GET /v1/computers/:id/thumbnail`: a frame of an already-open browser, or a 404. */
   async computerThumbnail(id: string, signal?: AbortSignal): Promise<Blob> {
     return (await this.frame(`/v1/computers/${enc(id)}/thumbnail`, signal)).image;
+  }
+
+  /** `GET /v1/computers/:id/browser/tabs`: the open tabs, or none. Never starts a browser, never counts as use. */
+  async browserTabs(id: string, signal?: AbortSignal): Promise<BrowserTab[]> {
+    const res = await this.client.http.request<{ tabs: BrowserTab[] }>('GET', `/v1/computers/${enc(id)}/browser/tabs`, {
+      ...(signal ? { signal } : {}),
+    });
+    return res.tabs;
   }
 
   /** `GET /v1/computers/:id/disk`, measured from the host. `bytes` is null where it is not measured. */

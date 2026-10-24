@@ -49,7 +49,8 @@ describe('Computers panel', () => {
 
   it("shows each computer's app, chat label, last used time and disk size", async () => {
     render(<ComputersPanel activeId={null} onSelect={() => {}} />);
-    expect(screen.getByText('Claude Desktop')).toBeTruthy();
+    // The app's mark in the husk, the same as the desktop window's tabs and the notch.
+    expect(screen.getByText('Claude Desktop').querySelector('svg.glyph-husk')).toBeTruthy();
     expect(screen.getByText('Claude Desktop · chat started 10:42')).toBeTruthy();
     expect(await screen.findByText('5.0 MiB')).toBeTruthy();
   });

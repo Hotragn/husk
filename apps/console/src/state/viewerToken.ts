@@ -9,15 +9,19 @@ export function readViewerToken(): { token: string; fromLink: boolean } {
     // A handoff or computer link keeps its (non-secret) id so the app knows what to open.
     const handoff = fragment.get('handoff');
     const computer = fragment.get('computer');
-    // The desktop app opens the console on a panel: `#token=...&panel=connect`.
+    // The desktop app opens the console on a panel: `#token=...&panel=connect`,
+    // or as one of its own small windows: `#token=...&view=computers`.
     const panel = fragment.get('panel');
+    const desk = desktopView();
     const keep = handoff
       ? `#handoff=${encodeURIComponent(handoff)}`
       : computer
         ? `#computer=${encodeURIComponent(computer)}`
-        : panel && /^[a-z]{1,20}$/.test(panel)
-          ? `#/${panel}`
-          : '';
+        : desk
+          ? `#view=${desk.view}`
+          : panel && /^[a-z]{1,20}$/.test(panel)
+            ? `#/${panel}`
+            : '';
     window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${keep}`);
     return { token: linked, fromLink: true };
   }
@@ -31,6 +35,15 @@ export function readViewerToken(): { token: string; fromLink: boolean } {
 /** The handoff a handoff link opened, if this tab came from one. */
 export function linkedHandoffId(): string | null {
   return new URLSearchParams(window.location.hash.slice(1)).get('handoff');
+}
+
+/** One of the desktop app's own windows: the Computers window, the corner row, or the notch. */
+export type DesktopView = { view: 'computers' } | { view: 'dock' } | { view: 'pill' };
+
+/** The desktop window this page is, if the desktop app opened it as one. */
+export function desktopView(): DesktopView | null {
+  const view = new URLSearchParams(window.location.hash.slice(1)).get('view');
+  return view === 'computers' || view === 'dock' || view === 'pill' ? { view } : null;
 }
 
 /** The computer a computer link (from a chat's card) opened, if this tab came from one. */

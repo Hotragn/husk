@@ -80,10 +80,29 @@ each app's config file before changing it and touches only its own `husk` entry.
 > published: npm has 0.1.4. Until the next release, run it from a checkout with
 > `npm ci && npm run build && node packages/cli/dist/bin.js setup`.
 
-A desktop app (`apps/desktop`) carries the same Husk with its own Node, opens the console
-on Connect, and sits in the tray to tell you when a chat is waiting for you. Its
-installers build and pass a smoke test in CI but are not released or signed yet; see
-[apps/desktop](apps/desktop/README.md).
+Or let the chat do it. Paste this into Claude Code, Codex, Gemini CLI, Cursor or any
+chat that can run a command (the Connect page makes one for a single app):
+
+```text
+Set up Husk for me, so you get a computer of your own for tasks: a terminal and a real browser, kept apart from my files.
+
+1. Run this in a terminal:
+   npx -y @husk-ai/cli@latest setup --computer auto --apps all --yes
+   It picks the safest computer this machine can run (a Docker container if Docker is installed) and adds Husk to my chat apps. If you can't run terminal commands, show me that line and I'll run it.
+2. Tell me to restart my chat apps so the Husk tools load.
+3. Suggest I install the Husk app from https://github.com/Hotragn/husk/releases/latest. It shows your computer in a small window, and I can take over any time.
+
+After the restart: call computer_info, open https://example.com in the browser, and tell me what you see.
+```
+
+A desktop app (`apps/desktop`) carries the same Husk with its own Node and keeps each
+chat's computer one click away: a very small 3D computer for each in the bottom-right
+corner, which names its chat app when you hover it. Click one and a compact Computers
+window opens, its tabs your computers (each with its chat app's logo), the browser
+live on a white screen, Take over a click away. Minimize it and it goes to a notch at
+the top of the screen (around the real notch on a Mac). It sits in the tray to tell you
+when a chat is waiting for you. Its installers build and pass a smoke test in CI but are
+not released or signed yet; see [apps/desktop](apps/desktop/README.md).
 
 To add Husk to one app by hand instead:
 

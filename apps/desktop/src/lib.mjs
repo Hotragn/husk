@@ -3,7 +3,7 @@
 
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, win32 } from 'node:path';
 
 /**
  * Where the bundled Husk lives. A packaged app carries it in its resources;
@@ -97,4 +97,112 @@ export function trayStatus(overview) {
 export function newlyWaiting(before, after) {
   const seen = new Set(before.map((h) => h.handoffId));
   return after.filter((h) => !seen.has(h.handoffId));
+}
+
+// -- computers on the screen ------------------------------------------------
+
+/** One computer's place in the corner row, in screen points: small, so it never distracts. Dock.tsx uses the same. */
+export const SLOT_W = 44;
+export const SLOT_H = 46;
+/** Room above the row for its small hover label, and to its left for a long one. */
+const TIP_H = 30;
+const TIP_W = 110;
+const EDGE = 12;
+
+/** A desktop window's page: one of the console's own small views, signed in like the console. */
+export function desktopUrl(rec, view) {
+  const token = rec.token ? `token=${encodeURIComponent(rec.token)}&` : '';
+  return `${rec.url}/#${token}view=${view}`;
+}
+
+/** The corner row: the bottom-right of the work area, one small slot per computer. */
+export function dockBounds(workArea, count) {
+  const width = Math.max(1, count) * SLOT_W + TIP_W;
+  const height = SLOT_H + TIP_H;
+  return { x: workArea.x + workArea.width - width - EDGE, y: workArea.y + workArea.height - height - EDGE / 2, width, height };
+}
+
+/** The Computers window: compact, bottom-right, just above the corner row. */
+export function computersWindowBounds(workArea, size = { width: 480, height: 330 }) {
+  const x = workArea.x + workArea.width - size.width - EDGE;
+  const y = workArea.y + workArea.height - size.height - SLOT_H - 2 * EDGE;
+  return { x: Math.max(workArea.x, x), y: Math.max(workArea.y, y), ...size };
+}
+
+/** The notch's window: centred on the display's top edge, tall enough to open into a list of `rows`. */
+export function pillBounds(display, rows) {
+  const width = 420;
+  const height = Math.min(360, 64 + Math.max(1, rows) * 46);
+  return { x: Math.round(display.bounds.x + (display.bounds.width - width) / 2), y: display.bounds.y, width, height };
+}
+
+/** A Mac whose menu bar is notch-tall has a notch: the pill wraps it. Elsewhere it hangs alone. */
+export function notchOf(platform, display) {
+  const bar = display.workArea.y - display.bounds.y;
+  return platform === 'darwin' && bar >= 30 ? { gap: 200, height: bar } : undefined;
+}
+
+/** Providers whose screen is a pushed screencast, which never counts as using the computer. */
+export const PUSHED_SCREEN = new Set(['docker', 'podman', 'local']);
+
+/**
+ * The computers on the screen, from GET /v1/overview: every running one (the
+ * corner row, and the Computers window's tabs), and the tab being shown even
+ * once it stops. Each says who holds it and what it last did.
+ */
+export function desktopComputers(overview, active, icons = {}) {
+  if (!overview) return [];
+  return overview.computers
+    .filter((c) => c.state === 'running' || (c.id === active && c.state !== 'destroyed'))
+    .map((c) => {
+      const handoff = (overview.handoffs ?? []).find((h) => h.computerId === c.id);
+      const last = overview.activity?.[c.id];
+      const platform = c.platform;
+      return {
+        id: c.id,
+        label: c.chatLabel ?? c.name ?? c.id,
+        ...(platform ? { platform } : {}),
+        state: c.state,
+        ...(handoff ? { handoffId: handoff.handoffId } : {}),
+        held: handoff?.runId === 'person',
+        ...(handoff && handoff.runId !== 'person' ? { waiting: handoff.reason } : {}),
+        ...(last ? { last: { tool: last.tool, ...(last.summary ? { summary: last.summary } : {}), at: last.at } } : {}),
+        live: PUSHED_SCREEN.has(c.provider),
+        ...(platform && icons[platform] ? { icon: icons[platform] } : {}),
+      };
+    });
+}
+
+/**
+ * With "open by itself" on (off unless chosen): a running computer a chat
+ * used since `since`, not shown yet this run. One the person closed stays closed.
+ */
+export function toOpen(overview, since, seen) {
+  if (!overview) return [];
+  return overview.computers
+    .filter((c) => {
+      const last = overview.activity?.[c.id];
+      return c.state === 'running' && !seen.has(c.id) && last !== undefined && Date.parse(last.at) > since;
+    })
+    .map((c) => c.id);
+}
+
+/** Where a chat app's own icon can be read on this machine, where it is installed in the usual place. */
+export function appIconPaths(platform, os, env = {}) {
+  const local = env.LOCALAPPDATA ?? '';
+  const places = {
+    darwin: {
+      'Claude Desktop': ['/Applications/Claude.app'],
+      Cursor: ['/Applications/Cursor.app'],
+      'VS Code': ['/Applications/Visual Studio Code.app'],
+      Windsurf: ['/Applications/Windsurf.app'],
+    },
+    win32: {
+      'Claude Desktop': [win32.join(local, 'AnthropicClaude', 'claude.exe')],
+      Cursor: [win32.join(local, 'Programs', 'cursor', 'Cursor.exe')],
+      'VS Code': [win32.join(local, 'Programs', 'Microsoft VS Code', 'Code.exe')],
+      Windsurf: [win32.join(local, 'Programs', 'Windsurf', 'Windsurf.exe')],
+    },
+  };
+  return places[os]?.[platform] ?? [];
 }
