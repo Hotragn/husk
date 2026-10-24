@@ -142,6 +142,12 @@ export class HuskMcpServer {
   /** Why the shared Husk could not reach a computer this chat now runs itself. */
   private readonly inChatReason = new Map<string, string>();
   /**
+   * Computers the shared Husk served this chat's last call on. It owns their
+   * lifecycle, so this process stops none of them: it cannot see a person
+   * holding one, and would stop Chromium in the middle of their login.
+   */
+  private readonly viaShared = new Set<string>();
+  /**
    * Handoffs this chat opened in the shared Husk, by the local id the model
    * sees. The local registry mirrors each one, so every check that asks "is a
    * person holding this computer?" keeps working unchanged.
@@ -298,6 +304,7 @@ export class HuskMcpServer {
         const result = await daemon.callTool(computer.id, name, args, signal);
         // Back on the shared Husk: a later fall-back is worth saying again.
         this.toldLocal.delete(computer.id);
+        this.viaShared.add(computer.id);
         return result;
       } catch (err) {
         if (err instanceof RunLocally) {
@@ -318,6 +325,7 @@ export class HuskMcpServer {
         }
       }
     }
+    this.viaShared.delete(computer.id);
     return this.toldOnce(computer.id, why, await this.runHere(computer, name, args, signal));
   }
 
@@ -435,7 +443,7 @@ export class HuskMcpServer {
     const timer = this.idleTimers.get(id);
     if (timer) clearTimeout(timer);
     this.idleTimers.delete(id);
-    if (n === 0) this.arm(id);
+    if (n === 0 && !this.viaShared.has(id)) this.arm(id);
   }
 
   private arm(id: string): void {
@@ -858,7 +866,7 @@ export class HuskMcpServer {
     this.idleTimers.clear();
     // Stopped, never destroyed: the chat may come back after a restart, and only
     // the user deletes a chat's computer.
-    if (this.ephemeral) for (const c of this.computers.values()) await quiet(() => c.stop());
+    if (this.ephemeral) for (const c of this.computers.values()) if (!this.viaShared.has(c.id)) await quiet(() => c.stop());
   }
 
   private async openViewer(): Promise<string> {

@@ -131,6 +131,11 @@ export class ComputerControl {
     };
   }
 
+  /** Whether the AI has a call running on this computer. */
+  busy(computerId: string): boolean {
+    return this.running.has(computerId);
+  }
+
   /** A person took the computer: stop every AI call on it, and wait up to `waitMs` for them to end. The tools stopped. */
   async stop(computerId: string, waitMs = 15_000): Promise<string[]> {
     const calls = [...(this.running.get(computerId) ?? [])];
