@@ -151,23 +151,15 @@ a token has reached the caller there is nothing honest to do with a mid-stream f
 except report it, so that case ends in an `error` event rather than a silent restart on
 a different model.
 
-<NotYet>
-`husk run` does not use `ModelRouter`, and therefore does not use `fallbackModels`.
+`husk run` follows the same chain. Before anything is created it resolves the requested
+model, then each `fallbackModels` entry in order, and starts on the first one that is
+reachable, printing `<model> is not reachable — falling back to <model>` when it had to
+step down. The run itself goes through `ModelRouter` with the same `fallbacks`, so a
+provider that fails mid-run is retried down the chain with a warning, as on `husk serve`.
 
-The CLI resolves the model once through its own `resolveModel()` in
-`packages/cli/src/lib/models.ts`, wraps the result in a `pinned()` provider, and hands
-the agent a two-method adapter. One model, no candidate list, no fallback, no
-cross-provider retry. A `fallbackModels:` block in a `husk.yaml` validates, is stored,
-and is never read on this path.
-
-The CLI keeps its own alias table too, with legacy candidates the canonical one does not
-have — `sonnet` there tries `anthropic/claude-sonnet-5`, then
-`anthropic/claude-3-7-sonnet-20250219`, then `anthropic/claude-3-5-sonnet-20241022`. The
-two tables agree on every alias that matters, but they are two tables.
-
-`husk serve` is the path that does use the router: `POST /v1/husks/:name/run` constructs
-a real `ModelRouter`.
-</NotYet>
+The CLI resolves that first model through its own alias table in
+`packages/cli/src/lib/models.ts`, which keeps legacy candidates the canonical one does
+not have. The two tables agree on every alias that matters, but they are two tables.
 
 ## Cost
 

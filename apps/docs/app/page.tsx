@@ -162,21 +162,10 @@ hint:  add a pattern to guardrails.allowCommands in husk.yaml if this is intenti
           </p>
           <p>
             The current set of those, so you can find them quickly:{' '}
-            <LinkPreview {...preview('/mcp#transports')}>MCP is stdio only</LinkPreview>,{' '}
-            <LinkPreview {...preview('/computers/lifetimes')}>
-              the reaper does not sweep containers
-            </LinkPreview>
-            ,{' '}
+            <LinkPreview {...preview('/mcp#transports')}>MCP is stdio only</LinkPreview>{' '}
+            and{' '}
             <LinkPreview {...preview('/chat-to-bot/triggers')}>
               Discord, Slack and Telegram triggers are not wired up
-            </LinkPreview>
-            ,{' '}
-            <LinkPreview {...preview('/models#fallback')}>
-              husk run ignores fallbackModels
-            </LinkPreview>
-            , and{' '}
-            <LinkPreview {...preview('/reference/sdk')}>
-              the SDK targets a different API than the one the server serves
             </LinkPreview>
             .
           </p>

@@ -139,28 +139,47 @@ husk run triage.yaml "check the build"
 
 Importers read Claude Code JSONL, ChatGPT, Cursor, Gemini and markdown into one
 `Transcript`. Branched threads are rebuilt by walking `parentUuid` back from the last
-leaf. The distiller runs with no API key at all, and the model-backed mode falls back to
-that free path rather than failing. Secrets are stripped before the file is written,
-not after.
+leaf. Secrets are stripped before the file is written, not after.
 
-What comes out is YAML you can read and diff:
+The distiller runs with no API key at all, and the model-backed mode falls back to that
+free path rather than failing. Here is the free path on a five-message CI-triage chat,
+trimmed to fit, with nothing reworded:
 
-```yaml
-name: triage
-model: sonnet
-persona: |
-  You triage CI failures for a TypeScript monorepo.
-  Always read the failing job log before guessing.
-tools: [computer, files]
-computer:
-  flavor: node
-  network: { mode: egress, allow: ['*.github.com'] }
-limits: { maxSteps: 24, maxCostUsd: 0.25 }
+```text
+$ husk distill ./triage-chat.md --no-model --out triage.yaml
+source CI triage · 5 messages · markdown
+using  heuristics only · --no-model, free heuristic path
+✓ wrote triage.yaml
+
+EXTRACTED
+  name         ci-triage
+  persona      4 lines, 194 chars
+  examples     2 pair(s)
+  tools        files
+  computer     no
+  confidence   ██░░░░░░░░ 16%
+
+THE DISTILLER COULD NOT DETERMINE
+  · No role instruction found -- nothing matching "you are a...", "act as", or "think like a..." -- so the persona opens with the topic instead.
+  · No tool use observed; the husk is configured with the default files toolkit.
+  · Heuristic distillation: no model was used. Review the persona before shipping.
+
+warning low confidence — 3 user turns is thin signal. Read the persona before serving this, and consider distilling a longer conversation.
 ```
 
-`husk distill` prints its confidence and everything it could not work out, so a thin
-transcript announces itself instead of producing a plausible-looking persona nobody
-checks. Five worked examples live in [`examples/`](examples/).
+And the persona it wrote:
+
+```yaml
+persona: |-
+  You are an assistant distilled from a real working session about CI triage.
+
+  How you work:
+  - From now on, always read the failing log before guessing, keep answers short, and never push to main.
+```
+
+That is a draft, and it says so. A short chat gives the free path little to work with;
+a longer one, or a model (`--model`), gives it more. The file is YAML you read, edit and
+diff before you serve it. Five hand-finished examples live in [`examples/`](examples/).
 
 ## What is in it
 

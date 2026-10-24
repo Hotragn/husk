@@ -173,37 +173,44 @@ export const TRANSCRIPT: TermLine[] = [
 export const TRANSCRIPT_TEXT = TRANSCRIPT.map((l) => l.text).join("\n");
 
 /**
- * An illustrative provider report. The bad news sits in the same table as
- * the good news, in the same type, at the same weight. Do not present this as
- * literal current CLI output: providers and installed versions vary by device.
+ * Real `husk doctor` output, trimmed: a Windows laptop with Docker installed
+ * but stopped, Ubuntu in WSL, no keys and no Ollama (husk 0.1.3, captured in
+ * #116). Lines are cut, never reworded; "…" marks each cut. Re-capture it
+ * rather than editing it when the output changes.
  */
 export const DOCTOR: TermLine[] = [
-  { kind: "prompt", text: "$ husk doctor" },
+  { kind: "prompt", text: "$ npx -y @husk-ai/cli doctor" },
+  { kind: "dim", text: "husk 0.1.3  node 24.14.0 · win32-arm64" },
   { kind: "blank", text: "" },
-  { kind: "out", text: "example report · your providers may differ" },
-  { kind: "blank", text: "" },
-  { kind: "out", text: "computer providers" },
+  { kind: "out", text: "COMPUTERS" },
+  { kind: "err", text: "  ✗ docker   isolated" },
+  { kind: "dim", text: "      docker is installed but the daemon is not reachable" },
   {
     kind: "dim",
-    text: "  docker      unavailable   the daemon is not reachable",
+    text: "      fix: start Docker Desktop (or `sudo systemctl start docker`), then re-run `husk doctor`",
   },
-  { kind: "dim", text: "  podman      not found" },
-  { kind: "out", text: "  local       ready         guarded working directory" },
+  { kind: "dim", text: "  … podman, ssh and fly, each with a reason and a fix" },
+  { kind: "ok", text: "  ✓ local    not isolated" },
+  { kind: "dim", text: "      via WSL2 (Ubuntu)" },
+  { kind: "blank", text: "" },
+  { kind: "out", text: "MODELS" },
+  { kind: "dim", text: "  … eleven providers, none reachable on this machine" },
+  { kind: "blank", text: "" },
+  { kind: "out", text: "SELECTION  what husk would use right now" },
+  { kind: "key", text: "  computer   local  highest-priority available provider (10)" },
+  { kind: "key", text: "  isolation  guardrails only" },
+  { kind: "key", text: "  model      none — computers still work" },
+  { kind: "blank", text: "" },
+  { kind: "out", text: "WARNINGS" },
   {
     kind: "dim",
-    text: "                          ~/.husk/workspaces -- guardrails, not a sandbox",
+    text: "  ! Docker is installed but its daemon is not running, so husk is falling back to weaker isolation.",
   },
-  { kind: "blank", text: "" },
-  { kind: "out", text: "model providers" },
-  { kind: "out", text: "  ollama      ready         gemma3, qwen2.5-coder" },
-  { kind: "dim", text: "  anthropic   no key        set ANTHROPIC_API_KEY" },
   { kind: "blank", text: "" },
   {
-    kind: "key",
-    text: "selected      local + ollama/gemma3       free, on this machine, no account",
+    kind: "dim",
+    text: "husk sends nothing anywhere except the model provider you configure. There is no telemetry.",
   },
-  { kind: "blank", text: "" },
-  { kind: "dim", text: "no product telemetry; tasks may contact the services they use." },
 ];
 
 /** README.md, "Turn a chat into a bot". */
@@ -219,7 +226,7 @@ export const DISTILL: TermLine[] = [
   { kind: "prompt", text: '$ husk run triage.yaml "check the build"' },
   {
     kind: "prompt",
-    text: "$ husk serve                             # http, discord, cron, cli",
+    text: "$ husk serve                             # http, webhook, cron",
   },
 ];
 

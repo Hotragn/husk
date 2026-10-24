@@ -62,10 +62,12 @@ The map lives in `~/.husk/computers/bindings.json`, written with write-then-rena
 a binding points at a machine that no longer exists, it is cleared and a new machine is
 created.
 
-MCP uses this: the session key defaults to `$HUSK_SESSION`, then to the literal `mcp`,
-and the machine is named `mcp-<key>`. It is created with `idleTimeoutSec: 3600` — an hour,
-because a conversation has long pauses in it — and destroyed when the client disconnects
-unless you pass `--keep`.
+MCP uses this differently, because a chat may come back days later. In Claude Code each
+session gets its own machine; elsewhere the chat's first call creates one and later calls
+pass its id back. That machine has no idle or lifetime limit, so the reaper never touches
+it. Husk stops it after ten idle minutes and when the client disconnects, and starts it
+again on the chat's next call with its `/work` intact. Only you delete it, from the
+console. `--session <key>` pins a client to one named machine:
 
 ```bash
 claude mcp add husk-api -- npx -y @husk-ai/mcp --session api --flavor python
@@ -79,10 +81,10 @@ Two keys, two machines, two filesystems, one client.
 | Trigger | What happens |
 | --- | --- |
 | `husk rm` | The machine and its filesystem are destroyed; the binding is cleared |
-| MCP client disconnects (stdin closes) | The machine is destroyed unless `--keep` |
+| MCP client disconnects (stdin closes) | The chat's machine is stopped, not destroyed (`--keep` leaves it running) |
 | SIGINT / SIGTERM to `husk mcp` | Same |
 | Ctrl-C during `husk run` | The run aborts between steps. **The machine is left alone** |
-| Reaper | Only on `local`, `ssh` and `fly` |
+| Reaper | Every provider, for machines with an idle or lifetime limit; never a chat's machine |
 
 Ctrl-C during a run is deliberately non-destructive. You interrupted the agent, not the
 machine, and destroying the filesystem you were about to inspect would be the wrong

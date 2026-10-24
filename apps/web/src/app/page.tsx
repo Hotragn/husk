@@ -158,9 +158,9 @@ export default function Home() {
             </div>
             <div className="col-7">
               <StaticTerminal
-                title="husk doctor · example report"
+                title="husk doctor · real output, trimmed"
                 lines={DOCTOR}
-                label="Illustrative provider report showing what husk doctor checks"
+                label="Trimmed output of husk doctor on a Windows laptop with Docker stopped"
               />
             </div>
           </div>
@@ -447,7 +447,7 @@ export default function Home() {
               </p>
               <p>
               <Link href="/#chat-to-bot">Make one</Link>, edit it, then run it
-              from the terminal or as a bot on Discord, Slack, a web endpoint or
+              from the terminal, or as a bot behind a web endpoint, a webhook or
               a schedule. Switching it from Claude Opus to a free model on your
               own machine means changing one word.
               </p>
@@ -457,7 +457,7 @@ export default function Home() {
             {/* The frame is unchanged -- same title bar, same copy button, same
                 highlighted source. The wrapper only tilts it. */}
             <ContainerScroll>
-              <CodeBlock title="triage.yaml" source={HUSK_YAML} what="husk.yaml" />
+              <CodeBlock title="triage.yaml · a distilled draft, finished by hand" source={HUSK_YAML} what="husk.yaml" />
             </ContainerScroll>
           </div>
         </div>
