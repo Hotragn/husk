@@ -457,6 +457,9 @@ export class HuskMcpServer {
         [IDENTITY_LABELS.platform]: platform,
         [IDENTITY_LABELS.chat]: chatLabel(platform, this.identity),
         [IDENTITY_LABELS.identity]: this.identity,
+        // Claude Code names its transcript after this id, so "Make this a bot"
+        // can read the chat back. An id, never the chat's content.
+        ...(this.identity === 'session' && this.hostSessionId ? { 'husk.session': this.hostSessionId } : {}),
       },
     };
     // Every chat's computer is bound, so a later process can wake it by id.

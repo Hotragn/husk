@@ -24,12 +24,14 @@ import { EventsPanel } from './panels/EventsPanel';
 import { DisconnectedScreen } from './panels/DisconnectedScreen';
 import { HomePanel } from './panels/HomePanel';
 import { OverviewPanel } from './panels/OverviewPanel';
+import { ChatPanel } from './panels/ChatPanel';
 
-const PANELS = ['home', 'handoffs', 'computers', 'terminal', 'files', 'browser', 'husks', 'doctor', 'events'] as const;
+const PANELS = ['home', 'chat', 'handoffs', 'computers', 'terminal', 'files', 'browser', 'husks', 'doctor', 'events'] as const;
 type PanelId = (typeof PANELS)[number];
 
 const PANEL_LABELS: Record<PanelId, string> = {
   home: 'Home',
+  chat: 'Chat',
   handoffs: 'Handoffs',
   computers: 'Computers',
   terminal: 'Terminal',
@@ -142,7 +144,7 @@ function Shell() {
             <details className="nav-advanced" open={panel !== 'home' || undefined}>
               <summary>Advanced</summary>
             <ul className="nav-list" aria-label="Advanced console sections">
-              {PANELS.filter((id) => id !== 'home').map((id) => (
+              {PANELS.filter((id) => id !== 'home' && id !== 'chat').map((id) => (
                 <li key={id}>
                   <button
                     type="button"
@@ -169,6 +171,15 @@ function Shell() {
           <main id="main" className="app-main" tabIndex={-1}>
             {panel === 'home' ? (
               <OverviewPanel
+                onOpen={(target, id) => {
+                  setActiveComputer(id);
+                  go(target);
+                }}
+              />
+            ) : null}
+            {panel === 'chat' ? (
+              <ChatPanel
+                computerId={activeComputer}
                 onOpen={(target, id) => {
                   setActiveComputer(id);
                   go(target);
