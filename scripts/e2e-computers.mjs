@@ -28,6 +28,14 @@ function check(name, ok, detail = '') {
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? ` -- ${detail}` : ''}`);
   if (!ok) throw new Error(`failed: ${name}${detail ? ` -- ${detail}` : ''}`);
 }
+
+/**
+ * For a step that needs a third-party site, which is there for the pictures:
+ * said, never failing the run. A site being slow or down is not a Husk bug.
+ */
+function note(name, ok, detail = '') {
+  console.log(`${ok ? 'ok  ' : 'warn'} ${name}${detail ? ` -- ${detail}` : ''}`);
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let daemon;
@@ -131,6 +139,24 @@ test('keeps digits', () => {
 });
 `,
 };
+/**
+ * A page served from inside the computer, for every check that asserts on what
+ * a page says. Four e2e failures on 10-21 and one on 10-22 were example.com
+ * rewriting its own text, not Husk. Third-party sites stay only where they make
+ * the pictures real, and a failure there is a note, not a FAIL.
+ */
+const FIXTURE_PORT = 8766;
+const FIXTURE = `http://127.0.0.1:${FIXTURE_PORT}/`;
+const FIXTURE_HTML = '<!doctype html><html><head><title>Husk fixture</title></head><body>' +
+  '<h1>Husk fixture page</h1><p>Served from inside the computer, so its words never change.</p>' +
+  '<a href="/a">First link</a> <a href="/b">Second link</a> <button>Press</button></body></html>';
+
+/** Start the fixture server inside the computer. A second start finds the port taken and the first one serving. */
+async function serveFixture(id) {
+  await tool(id, 'write_file', { path: '/work/fixture/index.html', content: FIXTURE_HTML });
+  await tool(id, 'shell', { command: `cd /work/fixture && (setsid python3 -m http.server ${FIXTURE_PORT} --bind 127.0.0.1 >/dev/null 2>&1 &) ; sleep 1` });
+}
+
 const REPO_PAGE = 'https://github.com/Hotragn/husk';
 const WIKI_PAGE = 'https://en.wikipedia.org/wiki/Personal_computer';
 
@@ -141,7 +167,7 @@ async function stageProject(id) {
   const run = textOf(await tool(id, 'shell', { command: 'cd /work/slugify-demo && npm test 2>&1 | tail -12' }));
   check('the chat’s project tests pass on the computer', /pass 4/.test(run) && /fail 0/.test(run), run.replace(/\s+/g, ' ').slice(-120));
   const repo = await tool(id, 'browser_goto', { url: REPO_PAGE });
-  check('the computer’s browser opens a real site', !repo.isError, REPO_PAGE);
+  note('the computer’s browser opens a real site', !repo.isError, REPO_PAGE);
 }
 
 /**
@@ -289,12 +315,19 @@ async function walkConsole(id, name) {
     await nav.getByRole('button', { name: 'Home', exact: true }).click();
     await card.getByRole('button', { name: 'Browser', exact: true }).click();
     await page.getByRole('tab', { name: /Rendered/ }).click();
-    await page.locator('#browse-url').fill('github.com/Hotragn/husk');
-    await page.getByRole('button', { name: 'Open', exact: true }).click();
-    await page.locator('#browser-view img').first().waitFor({ timeout: 90_000 });
+    // GitHub for the picture; the fixture inside the computer if GitHub is slow or down, so
+    // the check is about the panel, not about a third-party site.
+    const openInPanel = async (url, timeout) => {
+      await page.locator('#browse-url').fill(url);
+      await page.getByRole('button', { name: 'Open', exact: true }).click();
+      return page.locator('#browser-view img').first().waitFor({ timeout }).then(() => true, () => false);
+    };
+    let rendered = await openInPanel('github.com/Hotragn/husk', 90_000);
+    note('the Browser panel opens a real site', rendered, 'github.com/Hotragn/husk');
+    if (!rendered) rendered = await openInPanel(FIXTURE, 60_000);
     await sleep(2500);
     await shot('07-browser.png');
-    check('the Browser panel shows the computer’s page, rendered in its Chromium', true);
+    check('the Browser panel shows the computer’s page, rendered in its Chromium', rendered);
 
     await nav.getByRole('button', { name: 'Home', exact: true }).click();
     await card.getByRole('button', { name: 'Files', exact: true }).click();
@@ -558,17 +591,16 @@ print(n)"`;
 }
 
 /**
- * A browser_script that decides from what the page shows, against
- * example.com, timed like the tools above. It also tries a file:// goto,
+ * A browser_script that decides from what the page shows, against the
+ * fixture page, timed like the tools above. It also tries a file:// goto,
  * which the host's policy must refuse and the script must survive.
  */
 async function measureScript(id) {
-  // Both ways through the same `if`: once for words the page has (its title;
-  // example.com rewrites its body text now and then), once for words it lacks.
+  // Both ways through the same `if`: once for words the fixture has, once for words it lacks.
   const source = [
-    'page.goto("https://example.com")',
+    `page.goto("${FIXTURE}")`,
     'seen = []',
-    'for want in ["Example Domain", "No such words on this page"]:',
+    'for want in ["Husk fixture", "No such words on this page"]:',
     '    if want in page.title() or page.has_text(want):',
     '        seen.append("has " + want)',
     '    else:',
@@ -603,9 +635,9 @@ async function measureScript(id) {
     result = undefined;
   }
   check(
-    'a browser_script branches on what example.com shows',
+    'a browser_script branches on what the fixture page shows',
     !last.isError &&
-      JSON.stringify(result?.seen) === JSON.stringify(['has Example Domain', 'lacks No such words on this page']) &&
+      JSON.stringify(result?.seen) === JSON.stringify(['has Husk fixture', 'lacks No such words on this page']) &&
       result?.links?.length > 0,
     body.slice(0, 400),
   );
@@ -642,12 +674,12 @@ try {
   check('shell runs in Linux', /Linux/.test(uname), uname.trim());
   await tool(id, 'write_file', { path: '/work/hello.txt', content: 'from the e2e\n' });
   check('write_file then read_file', textOf(await tool(id, 'read_file', { path: '/work/hello.txt' })).includes('from the e2e'));
-  const goto = await tool(id, 'browser_goto', { url: 'https://example.com' });
-  check('the browser renders a page', !goto.isError && /Example Domain/i.test(textOf(goto)), JSON.stringify(textOf(goto).slice(0, 200)));
+  await serveFixture(id);
+  const goto = await tool(id, 'browser_goto', { url: FIXTURE });
+  check('the browser renders a page', !goto.isError && /Husk fixture/i.test(textOf(goto)), JSON.stringify(textOf(goto).slice(0, 200)));
   const snap = await tool(id, 'browser_snapshot');
-  // Elements with refs a model can click, e.g. `e24  link "Learn more"`, indented
-  // by depth in the compact tree. Not a page heading: example.com changes its
-  // text, and the title is not in the tree.
+  // Elements with refs a model can click, e.g. `e24  link "First link"`, indented
+  // by depth in the compact tree.
   const refs = textOf(snap).match(/^ *e\d+ {2}\w+/gm) ?? [];
   check('a snapshot lists elements with refs', !snap.isError && refs.length > 0, `${refs.length} elements; ${JSON.stringify(textOf(snap).slice(0, 200))}`);
 
@@ -673,7 +705,7 @@ try {
   // 5. The timeline saw every call, and kept the URL but not typed text.
   const activity = (await api('GET', `/v1/computers/${id}/activity`)).body.entries;
   const gotoEntry = activity.find((e) => e.tool === 'browser_goto');
-  check('the activity timeline has the calls', activity.length >= 5 && gotoEntry?.summary === 'https://example.com', `${activity.length} entries`);
+  check('the activity timeline has the calls', activity.length >= 5 && gotoEntry?.summary === FIXTURE, `${activity.length} entries`);
 
   // 6. A handoff, opened and finished with a scoped link.
   const opened = await api('POST', `/v1/computers/${id}/handoffs`, { reason: 'e2e: press done' });
