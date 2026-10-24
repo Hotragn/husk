@@ -359,6 +359,7 @@ export async function buildTestApp(
     createAdapter?: AdapterFactory;
     modelProviders?: ModelProvider[];
     runTool?: ToolRunner;
+    chatAppsHome?: string;
   } = {},
 ): Promise<TestApp> {
   const { store, root, cleanup } = await tempStore();
@@ -384,6 +385,7 @@ export async function buildTestApp(
     ...(overrides.approvalTimeoutMs !== undefined ? { approvalTimeoutMs: overrides.approvalTimeoutMs } : {}),
     ...(overrides.createAdapter ? { createAdapter: overrides.createAdapter } : {}),
     ...(overrides.runTool ? { runTool: overrides.runTool } : {}),
+    ...(overrides.chatAppsHome ? { chatAppsHome: overrides.chatAppsHome } : {}),
   });
 
   return {

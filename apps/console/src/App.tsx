@@ -25,13 +25,15 @@ import { DisconnectedScreen } from './panels/DisconnectedScreen';
 import { HomePanel } from './panels/HomePanel';
 import { OverviewPanel } from './panels/OverviewPanel';
 import { ChatPanel } from './panels/ChatPanel';
+import { ConnectPanel } from './panels/ConnectPanel';
 
-const PANELS = ['home', 'chat', 'handoffs', 'computers', 'terminal', 'files', 'browser', 'husks', 'doctor', 'events'] as const;
+const PANELS = ['home', 'connect', 'chat', 'handoffs', 'computers', 'terminal', 'files', 'browser', 'husks', 'doctor', 'events'] as const;
 type PanelId = (typeof PANELS)[number];
 
 const PANEL_LABELS: Record<PanelId, string> = {
   home: 'Home',
   chat: 'Chat',
+  connect: 'Connect',
   handoffs: 'Handoffs',
   computers: 'Computers',
   terminal: 'Terminal',
@@ -141,10 +143,11 @@ function Shell() {
               Workspace
             </p>
             <button type="button" className="nav-item" aria-current={panel === 'home' ? 'page' : undefined} onClick={() => go('home')}>Home</button>
+            <button type="button" className="nav-item" aria-current={panel === 'connect' ? 'page' : undefined} onClick={() => go('connect')}>Connect</button>
             <details className="nav-advanced" open={panel !== 'home' || undefined}>
               <summary>Advanced</summary>
             <ul className="nav-list" aria-label="Advanced console sections">
-              {PANELS.filter((id) => id !== 'home' && id !== 'chat').map((id) => (
+              {PANELS.filter((id) => id !== 'home' && id !== 'chat' && id !== 'connect').map((id) => (
                 <li key={id}>
                   <button
                     type="button"
@@ -177,6 +180,7 @@ function Shell() {
                 }}
               />
             ) : null}
+            {panel === 'connect' ? <ConnectPanel /> : null}
             {panel === 'chat' ? (
               <ChatPanel
                 computerId={activeComputer}

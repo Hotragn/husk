@@ -361,6 +361,43 @@ export interface BotDraft {
   distilled: { confidence?: number; notes?: string[] };
 }
 
+/** A chat app Husk can connect, as `GET /v1/setup` reports it. */
+export interface ChatApp {
+  id: string;
+  name: string;
+  found: boolean;
+  connected: boolean;
+  where: string;
+  after: string;
+}
+
+/** A computer provider and whether this machine can run it. */
+export interface ComputerOption {
+  name: string;
+  description: string;
+  available: boolean;
+  isolated?: boolean | null;
+  reason?: string;
+  hint?: string;
+}
+
+export interface SetupState {
+  apps: ChatApp[];
+  computers: ComputerOption[];
+}
+
+export interface ConnectResult {
+  id: string;
+  ok: boolean;
+  message: string;
+  backup?: string;
+}
+
+export interface ComputerChoice {
+  provider?: string;
+  flavor?: 'base' | 'python' | 'node' | 'full';
+}
+
 /** One message on `WS /v1/computers/:id/screen`. */
 export type ScreenMessage =
   | { type: 'frame'; data: string; width: number; height: number }

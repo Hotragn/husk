@@ -35,6 +35,7 @@ function isFirstRun(): boolean {
 const ROUTES: Record<string, () => Promise<{ run: (argv: string[]) => Promise<number> }>> = {
   doctor: () => import('./commands/doctor.js'),
   onboard: () => import('./commands/onboard.js'),
+  setup: () => import('./commands/setup.js'),
   up: () => import('./commands/up.js'),
   ps: () => import('./commands/ps.js'),
   rm: () => import('./commands/rm.js'),
@@ -63,7 +64,6 @@ const ALIASES: Record<string, string> = {
   run_: 'run',
   sh: 'shell',
   check: 'doctor',
-  setup: 'onboard',
   quickstart: 'onboard',
 };
 
