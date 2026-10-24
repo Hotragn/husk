@@ -172,6 +172,14 @@ describe('an explicit policy overrides the computer’s', () => {
     const s = new BrowserSession(c, { network: { mode: 'egress', allow: ['example.com'] } });
     expect(await codeOf(() => s.goto('https://evil.test/'))).toBe('E_EXEC_DENIED');
   });
+
+  it('checks every goto in a browser_run before anything runs', async () => {
+    const c = fakeComputer('docker', { mode: 'full' });
+    const s = new BrowserSession(c, { network: { mode: 'egress', allow: ['example.com'] } });
+    const run = () => s.run([{ do: 'goto', url: 'https://example.com/' }, { do: 'snapshot' }, { do: 'goto', url: 'https://evil.test/' }]);
+    expect(await codeOf(run)).toBe('E_EXEC_DENIED');
+    expect(c.execs).toBe(0);
+  });
 });
 
 describe('warnIfDebugPortIsExposed', () => {

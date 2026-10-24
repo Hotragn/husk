@@ -137,6 +137,31 @@ export interface ExecResult {
   timedOut: boolean;
 }
 
+/**
+ * A long-lived process whose stdin stays open, for a helper that answers many
+ * requests over one start -- the browser driver is the one that exists.
+ *
+ * Starting one does not count as using the computer, and nor does anything
+ * written to it: whoever drives the process calls `markUsed` when the work is
+ * a real tool call, so that watching a screen does not keep a computer awake.
+ */
+export interface SpawnRequest {
+  cmd: string | string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  user?: string;
+  /** Raw chunks. A caller that needs lines splits them itself. */
+  onStdout: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
+  /** Fires once, after stdout has been flushed. */
+  onExit: (exitCode: number) => void;
+}
+
+export interface ComputerProcess {
+  write(data: string): void;
+  kill(): void;
+}
+
 export interface DirEntry {
   name: string;
   path: string;
@@ -182,6 +207,10 @@ export interface Computer {
   destroy(): Promise<void>;
 
   /** Optional capabilities -- callers must feature-detect. */
+  /** Start a process with stdin held open. Absent where the provider cannot keep one. */
+  spawn?(req: SpawnRequest): ComputerProcess;
+  /** Record use that did not go through `exec`, such as a tool call answered by a spawned helper. */
+  markUsed?(): void;
   snapshot?(name?: string): Promise<{ id: string; sizeBytes?: number }>;
   /** Live CPU and memory, where the provider can measure them. Only while running. */
   usage?(): Promise<ComputerUsage>;

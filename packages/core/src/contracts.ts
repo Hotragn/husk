@@ -29,6 +29,8 @@ export type {
   PortBinding,
   ExecRequest,
   ExecResult,
+  SpawnRequest,
+  ComputerProcess,
   DirEntry,
   WriteFileOptions,
   Computer,

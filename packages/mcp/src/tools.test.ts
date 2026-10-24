@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { TOOLS, callTool } from './tools.js';
-import { BROWSER_TOOLS } from './browser-tools.js';
+import { BROWSER_TOOLS, MAX_WAIT_SEC, secondsArg } from './browser-tools.js';
 import type { Computer } from '@husk-ai/core';
 import { PROBE_COMPUTER_INFO } from '@husk-ai/core';
 
@@ -26,6 +26,22 @@ describe('the MCP tool list', () => {
     for (const tool of ['browser_goto', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_screenshot', 'browser_status']) {
       expect(names).toContain(tool);
     }
+  });
+
+  it('turns a bad browser_run into a message before any browser is touched', async () => {
+    const say = async (args: Record<string, unknown>) =>
+      (await callTool(noComputer, 'browser_run', args)).content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
+    expect(await say({})).toMatch(/non-empty list/);
+    expect(await say({ actions: [{ do: 'eval', code: 'alert(1)' }] })).toMatch(/action 1: do must be one of/);
+    expect(await say({ actions: [{ do: 'snapshot' }, { do: 'click' }] })).toMatch(/action 2: say which element/);
+    expect(await say({ actions: [{ do: 'wait' }] })).toMatch(/wait needs text, url or selector/);
+  });
+
+  it('turns an empty or oversized browser_script into a message before any browser is touched', async () => {
+    const say = async (args: Record<string, unknown>) =>
+      (await callTool(noComputer, 'browser_script', args)).content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
+    expect(await say({})).toMatch(/script is empty/);
+    expect(await say({ script: 'x'.repeat(100_001) })).toMatch(/over 100 KB/);
   });
 
   it('advertises the whole browser module, not a subset someone remembered', () => {
@@ -140,5 +156,16 @@ describe('computer_info', () => {
     const result = await callTool(computer, 'computer_info', {});
     expect(result.isError).toBe(true);
     expect(result.content[0]).toMatchObject({ text: expect.stringContaining('probe timed out') });
+  });
+});
+
+describe('model timeouts', () => {
+  it('are finite, positive and at most ten minutes, whatever the model sends', () => {
+    expect(secondsArg(3_000_000, 15)).toBe(MAX_WAIT_SEC);
+    expect(secondsArg(Infinity, 15)).toBe(15);
+    expect(secondsArg(Number.NaN, 15)).toBe(15);
+    expect(secondsArg(-5, 15)).toBe(15);
+    expect(secondsArg('30', 15)).toBe(15);
+    expect(secondsArg(20, 15)).toBe(20);
   });
 });

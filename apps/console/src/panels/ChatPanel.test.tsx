@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { HuskApi } from '../api/client';
 import type { Overview } from '../api/wire';
 import { ChatPanel } from './ChatPanel';
@@ -56,6 +56,10 @@ beforeEach(() => {
       if (path === '/v1/husks/ci-triage' && (init?.method ?? 'GET') === 'GET')
         return existing ? Response.json({ spec: { name: 'ci-triage' }, yaml: '' }) : Response.json({ error: { code: 'E_HUSK_NOT_FOUND', message: 'no' } }, { status: 404 });
       if (path === '/v1/husks' && init?.method === 'POST') return Response.json({ name: 'ci-triage', displayName: 'x', description: '', model: 'auto' }, { status: 201 });
+      if (path === '/v1/computers/cmp_chat/takeover')
+        return Response.json({ handoffId: 'hnd_me', runId: 'person', husk: 'you', reason: 'x', computerId: 'cmp_chat', createdAt: '' }, { status: 201 });
+      if (path === '/v1/handoffs/hnd_me/input') return new Response(null, { status: 204 });
+      if (path === '/v1/handoffs/hnd_me/done') return Response.json({ handoffId: 'hnd_me', outcome: 'done' });
       return Response.json({ error: { code: 'E_ROUTE_NOT_FOUND', message: 'no' } }, { status: 404 });
     }),
   );
@@ -79,9 +83,76 @@ describe('Chat panel', () => {
     const ws = FakeSocket.last!;
     expect(ws.url).toBe('ws://localhost:7377/v1/computers/cmp_chat/screen?token=test-token');
     act(() => ws.say({ type: 'idle', message: 'x' }));
-    expect(screen.getByText(/No browser is open on this computer yet/)).toBeTruthy();
+    expect(screen.getByText(/No browser open yet/)).toBeTruthy();
     act(() => ws.say({ type: 'frame', data: 'AAAA', width: 800, height: 600 }));
     expect((screen.getByAltText('The browser on cmp_chat, live') as HTMLImageElement).src).toContain('data:image/jpeg;base64,AAAA');
+  });
+
+  /** The page at 1280x800, drawn at half size. */
+  async function frameShown() {
+    await screen.findByText('Claude Code · chat started 10:42');
+    await waitFor(() => expect(FakeSocket.last).toBeDefined());
+    act(() => FakeSocket.last!.say({ type: 'frame', data: 'AAAA', width: 1280, height: 800 }));
+    const img = screen.getByAltText('The browser on cmp_chat, live');
+    img.getBoundingClientRect = () => ({ left: 10, top: 20, width: 640, height: 400, right: 650, bottom: 420, x: 10, y: 20, toJSON: () => ({}) });
+    return img;
+  }
+  const inputs = () => calls.filter((c) => c.path === '/v1/handoffs/hnd_me/input').map((c) => JSON.parse(c.body!));
+
+  it('offers Take over when the screen is clicked, and takes the computer', async () => {
+    render(<ChatPanel computerId="cmp_chat" onOpen={() => {}} />);
+    await frameShown();
+    expect(screen.queryByLabelText('Type into the page')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Take over this computer' }));
+    const offer = screen.getByRole('group', { name: 'Take over' });
+    fireEvent.click(within(offer).getByRole('button', { name: 'Take over' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/v1/computers/cmp_chat/takeover')).toBe(true));
+  });
+
+  it('keeps keyboard focus on the screen when the offer closes, whichever way', async () => {
+    render(<ChatPanel computerId="cmp_chat" onOpen={() => {}} />);
+    await frameShown();
+    const hit = () => screen.getByRole('button', { name: 'Take over this computer' });
+    fireEvent.click(hit());
+    fireEvent.click(screen.getByRole('button', { name: 'Not now' }));
+    await waitFor(() => expect(document.activeElement).toBe(hit()));
+    fireEvent.click(hit());
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Not now' }), { key: 'Escape' });
+    await waitFor(() => expect(document.activeElement).toBe(hit()));
+    fireEvent.click(hit());
+    fireEvent.click(within(screen.getByRole('group', { name: 'Take over' })).getByRole('button', { name: 'Take over' }));
+    await waitFor(() => expect(calls.some((c) => c.path === '/v1/computers/cmp_chat/takeover')).toBe(true));
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it('sends clicks, typing and keys straight to the page while held, in order, and gives back', async () => {
+    overview.handoffs = [{ handoffId: 'hnd_me', runId: 'person', husk: 'you', reason: 'You took over this computer', computerId: 'cmp_chat', createdAt: '' }];
+    try {
+      render(<ChatPanel computerId="cmp_chat" onOpen={() => {}} />);
+      const img = await frameShown();
+      expect(screen.getByText('You’re in control')).toBeTruthy();
+
+      fireEvent.click(img, { clientX: 330, clientY: 120 });
+      const keys = screen.getByLabelText('Type into the page') as HTMLInputElement;
+      expect(keys.type).toBe('password');
+      expect(document.activeElement).toBe(keys);
+      fireEvent.change(keys, { target: { value: 'hunter2' } });
+      expect(keys.value).toBe('');
+      fireEvent.keyDown(keys, { key: 'Enter' });
+      fireEvent.keyDown(keys, { key: 'Tab' }); // left to the browser, so the keyboard can leave
+      await waitFor(() => expect(inputs()).toHaveLength(3));
+      expect(inputs()).toEqual([
+        { type: 'click', x: 640, y: 200 },
+        { type: 'text', text: 'hunter2' },
+        { type: 'key', key: 'Enter' },
+      ]);
+      expect(JSON.stringify({ ...window.localStorage, ...window.sessionStorage })).not.toContain('hunter2');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Give back' }));
+      await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/v1/handoffs/hnd_me/done')).toBe(true));
+    } finally {
+      overview.handoffs = [];
+    }
   });
 
   it('closes the screen when the panel goes away', async () => {

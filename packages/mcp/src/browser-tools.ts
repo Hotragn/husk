@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { browserFor, inspectBrowserCapability } from '@husk-ai/browser';
-import type { SnapshotNode } from '@husk-ai/browser';
+import type { ActionOutcome, PageAction, SnapshotNode } from '@husk-ai/browser';
 import type { Computer } from '@husk-ai/core';
 import { redact } from '@husk-ai/core';
 import type { ToolDef, ToolResult } from './tools.js';
@@ -43,6 +43,70 @@ export const BROWSER_TOOLS: ToolDef[] = [
         timeoutSec: { type: 'number', description: 'Give up waiting for load. Defaults to 30.' },
       },
       required: ['url'],
+    },
+  },
+  {
+    name: 'browser_run',
+    description:
+      'Do several page actions in ONE call, in order, stopping at the first that fails -- far ' +
+      'faster than one tool call per action, so use it whenever you already know the next few ' +
+      'steps. Each action is an object with "do": goto {url}; click {ref, or role and name}; ' +
+      'fill {ref or role and name, text, submit}; wait {text, url or selector, gone, timeoutSec}; ' +
+      'snapshot {limit}; screenshot {fullPage}. role and name match the accessibility tree, e.g. ' +
+      '{"do":"click","role":"button","name":"Sign in"}. End with a snapshot to see where you ' +
+      'landed. Never fill the user\'s passwords or codes yourself: call hand_off.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        actions: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 50,
+          items: {
+            type: 'object',
+            properties: {
+              do: { type: 'string', enum: ['goto', 'click', 'fill', 'wait', 'snapshot', 'screenshot'] },
+              url: { type: 'string', description: 'goto: the URL. wait: text the URL must contain.' },
+              ref: { type: 'string', description: 'click, fill: a ref from a snapshot, e.g. e42.' },
+              role: { type: 'string', description: 'click, fill: an accessibility role, e.g. button, link, textbox.' },
+              name: { type: 'string', description: 'click, fill: the accessible name, exactly.' },
+              text: { type: 'string', description: 'fill: what to type. wait: visible text to wait for.' },
+              submit: { type: 'boolean', description: 'fill: press Enter afterwards.' },
+              selector: { type: 'string', description: 'wait: a CSS selector to wait for.' },
+              gone: { type: 'boolean', description: 'wait: wait for it to go away instead.' },
+              timeoutSec: { type: 'number', description: 'goto, wait: give up after this long.' },
+              limit: { type: 'number', description: 'snapshot: cap the number of elements. Defaults to 400.' },
+              fullPage: { type: 'boolean', description: 'screenshot: the whole document, not just the viewport.' },
+            },
+            required: ['do'],
+          },
+        },
+      },
+      required: ['actions'],
+    },
+  },
+  {
+    name: 'browser_script',
+    description:
+      'Run a short Python script against the current page when the next steps depend on what ' +
+      'the page shows -- branch, loop over results, retry -- all in ONE call. It runs in its own ' +
+      'process inside your computer, not on the host, and is stopped at timeoutSec. `page` has: ' +
+      'goto(url), click(ref= or role=, name=), fill(text, ref= or role=, name=, submit=), ' +
+      'wait_for_text(text, timeout=) / wait_for_url(part) / wait_for_selector(css) -> True or False, ' +
+      'has_text(text), snapshot() -> list of {ref, role, name}, text(ref= or selector=), url(), title(); ' +
+      'also sleep(seconds). A refused call raises PageError. Whatever you print comes back, and ' +
+      'so does a JSON-able value you assign to `result`. Example:\n' +
+      'if page.has_text("Accept cookies"):\n    page.click(role="button", name="Accept")\n' +
+      'result = [n["name"] for n in page.snapshot() if n["role"] == "link"]\n' +
+      'For steps that do not depend on the page, browser_run is simpler. Never type the ' +
+      "user's passwords or codes from a script: call hand_off.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        script: { type: 'string', description: 'Python 3 source. `page`, `sleep` and `PageError` are already defined.' },
+        timeoutSec: { type: 'number', description: 'Stop the script after this long. Defaults to 60, at most 600.' },
+      },
+      required: ['script'],
     },
   },
   {
@@ -217,8 +281,83 @@ function bad(message: string): ToolResult {
 function renderSnapshot(nodes: SnapshotNode[]): string {
   if (nodes.length === 0) return 'the page exposes no accessible elements';
   return nodes
-    .map((n) => `${n.ref}  ${n.role}${n.name ? ` "${n.name}"` : ''}${n.value ? ` = "${n.value}"` : ''}`)
+    .map((n) => `${'  '.repeat(n.depth ?? 0)}${n.ref}  ${n.role}${n.name ? ` "${n.name}"` : ''}${n.value ? ` = "${n.value}"` : ''}`)
     .join('\n');
+}
+
+/** Long text cut in the middle, so the start and the end both survive. */
+function clampLength(body: string, max: number): string {
+  if (body.length <= max) return body;
+  const half = Math.floor(max / 2);
+  return `${body.slice(0, half)}\n[... ${body.length - max} characters cut ...]\n${body.slice(-half)}`;
+}
+
+/** The longest any one wait may be. */
+export const MAX_WAIT_SEC = 600;
+
+/**
+ * A model's timeout in seconds, made safe: a finite positive number, at most
+ * MAX_WAIT_SEC, else the default. Unchecked, `3000000` overflowed the host's
+ * timer, which then fired at once and killed the driver.
+ */
+export function secondsArg(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.min(value, MAX_WAIT_SEC) : fallback;
+}
+
+const ACTION_NAMES: ReadonlySet<string> = new Set(['goto', 'click', 'fill', 'wait', 'snapshot', 'screenshot']);
+
+/** The model's actions as `PageAction`s, or the reason one is not an action. */
+function parseActions(raw: unknown): PageAction[] | string {
+  if (!Array.isArray(raw) || raw.length === 0) return 'actions must be a non-empty list';
+  if (raw.length > 50) return 'at most 50 actions in one run';
+  const out: PageAction[] = [];
+  for (const [i, item] of raw.entries()) {
+    const a = (item ?? {}) as Record<string, unknown>;
+    const kind = String(a['do'] ?? '');
+    const at = `action ${i + 1}`;
+    if (!ACTION_NAMES.has(kind)) return `${at}: do must be one of ${[...ACTION_NAMES].join(', ')}`;
+    const s = (k: string): string | undefined => (typeof a[k] === 'string' ? (a[k] as string) : undefined);
+    // Left out when absent or unusable, so each action keeps its own default.
+    const sec = secondsArg(a['timeoutSec'], 0);
+    const ms = sec > 0 ? { timeoutMs: sec * 1000 } : {};
+    const el = { ...(s('ref') ? { ref: s('ref') } : {}), ...(s('role') ? { role: s('role') } : {}), ...(s('name') ? { name: s('name') } : {}) };
+    if ((kind === 'click' || kind === 'fill') && !el.ref && !el.role && !el.name) return `${at}: say which element, with ref or role and name`;
+    if (kind === 'goto') {
+      if (!s('url')?.trim()) return `${at}: goto needs a url`;
+      out.push({ do: 'goto', url: s('url')!, ...ms });
+    } else if (kind === 'click') out.push({ do: 'click', ...el });
+    else if (kind === 'fill') out.push({ do: 'fill', ...el, text: s('text') ?? '', ...(a['submit'] === true ? { submit: true } : {}) });
+    else if (kind === 'wait') {
+      if (s('text') === undefined && s('url') === undefined && s('selector') === undefined) return `${at}: wait needs text, url or selector`;
+      out.push({
+        do: 'wait',
+        ...(s('selector') !== undefined ? { selector: s('selector') } : s('url') !== undefined ? { url: s('url') } : { text: s('text') }),
+        ...(a['gone'] === true ? { gone: true } : {}),
+        ...ms,
+      });
+    } else if (kind === 'snapshot') out.push({ do: 'snapshot', limit: typeof a['limit'] === 'number' ? a['limit'] : 400 });
+    else out.push({ do: 'screenshot', ...(a['fullPage'] === true ? { fullPage: true } : {}) });
+  }
+  return out;
+}
+
+/** One line per action, what it did; a snapshot's tree under its line. */
+function describeOutcome(a: PageAction, o: ActionOutcome, n: number): string {
+  const what =
+    a.do === 'goto' ? `goto ${a.url}`
+    : a.do === 'click' || a.do === 'fill' ? `${a.do} ${a.ref ?? `${a.role ?? ''} ${a.name ? JSON.stringify(a.name) : ''}`.trim()}`
+    : a.do === 'wait' ? `wait for ${a.selector ?? (a.url !== undefined ? `url ${JSON.stringify(a.url)}` : JSON.stringify(a.text))}${a.gone ? ' to go' : ''}`
+    : a.do;
+  if (o.skipped) return `${n}. ${what} -- skipped`;
+  if (o.error) return `${n}. ${what} -- FAILED: ${o.error}`;
+  const how =
+    a.do === 'goto' ? `${o.loaded ? 'loaded' : 'load did not finish'}, now at ${o.url}`
+    : a.do === 'click' ? `${o.ref}${o.navigated ? ', navigated' : ''}`
+    : a.do === 'fill' ? `${o.ref}`
+    : a.do === 'wait' ? `after ${o.waitedMs} ms`
+    : a.do === 'snapshot' ? `at ${o.url}\n${renderSnapshot(o.nodes ?? [])}`
+    : 'see the image';
+  return `${n}. ${what} -- ${how}`;
 }
 
 /** url + snapshot as plain text, for replies that also say something else. */
@@ -246,7 +385,7 @@ export async function callBrowserTool(
     case 'browser_goto': {
       const url = String(args.url ?? '');
       if (!url.trim()) return bad('url is empty');
-      const timeoutSec = typeof args.timeoutSec === 'number' ? args.timeoutSec : 30;
+      const timeoutSec = secondsArg(args.timeoutSec, 30);
       const result = await session.goto(url, { timeoutMs: timeoutSec * 1000 });
       const page = await session.activePage();
       const head = [
@@ -257,6 +396,37 @@ export async function callBrowserTool(
         .filter(Boolean)
         .join('\n');
       return text(redact(`${head}\n\n${await page.text(Math.min(maxTextBytes, 120_000))}`));
+    }
+
+    case 'browser_run': {
+      const actions = parseActions(args.actions);
+      if (typeof actions === 'string') return bad(actions);
+      const outcomes = await session.run(actions);
+      const lines = outcomes.map((o, i) => describeOutcome(actions[i]!, o, i + 1));
+      const images = outcomes
+        .filter((o) => o.data && Buffer.byteLength(o.data, 'base64') <= INLINE_IMAGE_LIMIT)
+        .map((o) => ({ type: 'image' as const, data: o.data!, mimeType: 'image/png' }));
+      if (outcomes.some((o) => o.data) && images.length < outcomes.filter((o) => o.data).length) {
+        lines.push('(a screenshot was too large to return inline; use browser_screenshot to save it to a file)');
+      }
+      const failed = outcomes.some((o) => o.error);
+      return { content: [{ type: 'text', text: redact(lines.join('\n')) }, ...images], ...(failed ? { isError: true } : {}) };
+    }
+
+    case 'browser_script': {
+      const script = typeof args.script === 'string' ? args.script : '';
+      if (!script.trim()) return bad('script is empty');
+      if (script.length > 100_000) return bad('script is over 100 KB; keep it to the steps that need deciding');
+      const out = await session.script(script, secondsArg(args.timeoutSec, 60));
+      const parts = [`${out.error ? 'failed' : 'finished'} in ${out.ms} ms`];
+      if (out.output) parts.push(`printed:\n${out.output.trimEnd()}${out.truncated ? '\n[output past 64 KB was dropped]' : ''}`);
+      if (out.result !== null && out.result !== undefined) {
+        parts.push(`result: ${JSON.stringify(out.result, null, 2)}${out.resultTruncated ? '\n[the result was over 64 KB; this is its JSON, cut]' : ''}`);
+      }
+      if (out.error) parts.push(out.error.trimEnd());
+      // Cut before redacting: redact scans the whole string, so it gets the bounded one.
+      const body = redact(clampLength(parts.join('\n\n'), maxTextBytes));
+      return out.error ? bad(body) : text(body);
     }
 
     case 'browser_snapshot': {
@@ -311,7 +481,7 @@ export async function callBrowserTool(
     }
 
     case 'browser_wait_for': {
-      const timeoutMs = (typeof args.timeoutSec === 'number' ? args.timeoutSec : 15) * 1000;
+      const timeoutMs = secondsArg(args.timeoutSec, 15) * 1000;
       if (!args.text && !args.selector) return bad('pass text or selector');
       const page = await session.activePage();
       const res = await page.waitFor(

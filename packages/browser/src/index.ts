@@ -14,7 +14,11 @@ export type {
   ComputerTransportOptions,
   DriverRequest,
   DriverResult,
+  ActionStep,
   DriverStep,
+  HostCall,
+  ScreencastEvent,
+  ScreenFrame,
   SendStep,
   SkipIf,
   WaitResult,
@@ -23,8 +27,8 @@ export type {
 
 export { DRIVER_PATH, DRIVER_SOURCE } from './driver.js';
 
-export { Page, backendNodeIdOf, flattenAxTree, keyDescriptor } from './page.js';
-export type { AxNodeLike, GotoResult, ScreenshotOptions, SnapshotNode } from './page.js';
+export { Page, backendNodeIdOf, compactAxTree, flattenAxTree, keyDescriptor, waitExpression } from './page.js';
+export type { ActionOutcome, AxNodeLike, ElementTarget, GotoResult, PageAction, ScreenshotOptions, ScriptOutcome, SnapshotNode } from './page.js';
 
 export {
   CACHE_ROOT,
@@ -43,9 +47,11 @@ export type { BrowserArch, BrowserCapability, DownloadPlan, ProvisionOptions, Pr
 export {
   BrowserSession,
   browserFor,
+  browserSessionFor,
   closeAllBrowsers,
   closeBrowserFor,
   livePageFor,
+  markUsedFor,
   warnIfDebugPortIsExposed,
 } from './session.js';
 export type { SessionOptions } from './session.js';

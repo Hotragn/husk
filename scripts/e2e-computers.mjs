@@ -103,7 +103,8 @@ async function walkConsole(id, name) {
   try {
     const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
     page.on('pageerror', (err) => errors.push(err.message));
-    const shot = (file) => page.screenshot({ path: join(shots, file), fullPage: true });
+    const shot = (file, on = page) => on.screenshot({ path: join(shots, file), fullPage: true });
+    const screen = page.locator(`img[alt="The browser on ${id}, live"]`);
 
     // In use a moment ago, with its browser open: Home shows it live.
     await tool(id, 'browser_goto', { url: 'https://example.com' });
@@ -113,13 +114,31 @@ async function walkConsole(id, name) {
     await live.waitFor({ timeout: 60_000 });
     check('Home shows the browser live on a computer in use', (await live.evaluate((img) => img.naturalWidth)) > 0);
     await shot('01-home-live.png');
+    // Live means current: move the computer to a different page while Home is
+    // open, and the card's picture must change with it. A kept frame of an
+    // earlier page once passed the check above.
+    const before = await live.getAttribute('src');
+    await tool(id, 'browser_goto', { url: 'http://127.0.0.1:8765/' });
+    const moved = await page
+      .waitForFunction(([sel, was]) => document.querySelector(sel)?.getAttribute('src') !== was, [`img[alt="The browser on ${id}, live"]`, before], { timeout: 30_000 })
+      .then(() => true, () => false);
+    check('Home’s live picture follows the page', moved);
+    await tool(id, 'browser_goto', { url: 'https://example.com' });
 
-    // Take over without being asked, and the chat's next call waits.
-    await card.getByRole('button', { name: 'Take over' }).click();
-    await page.getByRole('heading', { name: 'You have this computer' }).waitFor({ timeout: 30_000 });
-    await page.locator('.handoff-screen img').waitFor({ timeout: 30_000 });
-    check('Take over opens the computer for the person', true);
+    // Take over without being asked: the chat page, its screen now the person's.
+    await card.getByRole('button', { name: 'Take over', exact: true }).click();
+    await page.getByText('You’re in control').waitFor({ timeout: 30_000 });
+    await page.locator('.screen-held img').waitFor({ timeout: 30_000 });
+    check('Take over opens the chat page with the screen held', true);
+
+    // A click on the screen goes to the page, mapped from the frame, and focuses the keyboard.
+    const box = await screen.boundingBox();
+    const clicked = page.waitForResponse((r) => r.url().endsWith('/input') && r.request().method() === 'POST');
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height * 0.9);
+    check('a click on the held screen reaches the page', (await clicked).status() === 204);
+    check('the click focuses the keyboard on the page', (await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))) === 'Type into the page');
     await shot('02-taken-over.png');
+
     let settled = false;
     const started = Date.now();
     const call = tool(id, 'shell', { command: 'echo after-give-back' }).finally(() => {
@@ -128,33 +147,219 @@ async function walkConsole(id, name) {
     await sleep(3000);
     check('the chat’s call waits while the person holds the computer', !settled);
 
-    // Give back, and the waiting call runs.
+    // Give back, beside the screen, and the waiting call runs.
     await page.getByRole('button', { name: 'Give back' }).click();
-    await page.getByRole('button', { name: 'Yes, hand back to the agent' }).click();
     const result = await call;
     check('Give back lets the waiting call run', !result.isError && /after-give-back/.test(textOf(result)), `${Date.now() - started} ms`);
 
-    // The chat's page: live screen and what the chat did.
-    const nav = page.getByRole('navigation', { name: 'Console sections' });
-    await nav.getByRole('button', { name: 'Home', exact: true }).click();
-    await card.getByRole('button', { name: `Open ${name}` }).click();
-    await page.locator(`.chat-screen img[alt="The browser on ${id}, live"]`).waitFor({ timeout: 60_000 });
-    await page.locator('.activity-list').getByText('browser_goto').first().waitFor({ timeout: 30_000 });
+    // The chat's page, free again: the live screen, what the chat did, and Take over on a click.
+    await page.getByText('The chat is in control').waitFor({ timeout: 30_000 });
+    await page.locator('.activity-list').getByText('after-give-back').first().waitFor({ timeout: 30_000 });
+    await screen.waitFor({ timeout: 60_000 });
     check('the Chat page shows the live screen and the activity', true);
+    const gaps = await page.$$eval('.activity-list li', (rows) =>
+      rows.map((li) => li.querySelector('.activity-meta').getBoundingClientRect().left - li.querySelector('strong').getBoundingClientRect().right),
+    );
+    check('no tool name runs into its timing', gaps.length > 0 && gaps.every((g) => g >= 8), gaps.map(Math.round).join(','));
     await shot('03-chat.png');
+    await page.getByRole('button', { name: 'Take over this computer' }).click();
+    await page.getByRole('group', { name: 'Take over' }).waitFor({ timeout: 10_000 });
+    check('clicking the free screen offers Take over', true);
+    await page.keyboard.press('Escape');
 
+    const nav = page.getByRole('navigation', { name: 'Console sections' });
     await nav.getByRole('button', { name: 'Connect', exact: true }).click();
     await page.getByRole('heading', { name: 'Connect', exact: true }).waitFor({ timeout: 30_000 });
     await sleep(3000);
     await shot('04-connect.png');
     check('the Connect page loads', true);
+
+    await page.getByRole('button', { name: 'Switch to light theme' }).click();
+    await nav.getByRole('button', { name: 'Home', exact: true }).click();
+    await live.waitFor({ timeout: 60_000 });
+    await shot('05-home-light.png');
+    check('the light theme applies', (await page.evaluate(() => document.documentElement.dataset.theme)) === 'light');
+
+    // What a chat app without cards links to (Claude Code): its own computer, and Take over.
+    const { body } = await api('POST', `/v1/computers/${id}/link`);
+    const linked = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+    linked.on('pageerror', (err) => errors.push(err.message));
+    await linked.goto(`${rec.url}/#computer=${encodeURIComponent(id)}&token=${body.token}`);
+    await linked.getByRole('button', { name: 'Take over', exact: true }).click();
+    await linked.getByText('You have this computer').waitFor({ timeout: 30_000 });
+    await linked.locator('.screen-held img').waitFor({ timeout: 30_000 });
+    check('a chat’s link takes the computer over', true);
+    await shot('06-link-taken-over.png', linked);
+    await linked.getByRole('button', { name: 'Give back' }).click();
+    await linked.getByText('Handed back to the chat').waitFor({ timeout: 30_000 });
+    await linked.getByText('Computer running').waitFor({ timeout: 10_000 });
+    check('the link gives the computer back and keeps working', true);
+    const after = await tool(id, 'shell', { command: 'echo after-link' });
+    check('the chat has its computer again after the link gives it back', !after.isError && /after-link/.test(textOf(after)));
+
     check('the console threw no errors', errors.length === 0, errors.join(' | '));
   } catch (err) {
-    await browser.contexts()[0]?.pages()[0]?.screenshot({ path: join(shots, 'failed.png'), fullPage: true }).catch(() => undefined);
+    for (const [i, p] of browser.contexts().flatMap((c) => c.pages()).entries()) {
+      await p.screenshot({ path: join(shots, `failed-${i}.png`), fullPage: true }).catch(() => undefined);
+    }
     throw err;
   } finally {
     await browser.close();
   }
+}
+
+/**
+ * How fast the browser is, for a PR to quote: the median milliseconds of each
+ * browser tool through the shared route, and the frames a second the live
+ * screen actually delivers at ?fps=4. The page it watches animates, so a
+ * pushed screencast has something to push.
+ */
+async function measureBrowser(id) {
+  const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+  const timed = async (name, args, n) => {
+    const ms = [];
+    for (let i = 0; i < n; i++) {
+      const started = performance.now();
+      const r = await tool(id, name, args);
+      ms.push(performance.now() - started);
+      if (r.isError) throw new Error(`${name} failed while measuring: ${textOf(r).slice(0, 300)}`);
+    }
+    return Math.round(median(ms));
+  };
+
+  await tool(id, 'write_file', {
+    path: '/work/anim/index.html',
+    content:
+      '<!doctype html><title>anim</title><h1 id="n">0</h1><button>Go</button>' +
+      '<script>let i=0;(function f(){document.getElementById("n").textContent=i++;requestAnimationFrame(f)})()</script>\n',
+  });
+  await tool(id, 'shell', { command: 'cd /work/anim && (setsid python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null 2>&1 &) ; sleep 1' });
+  const url = 'http://127.0.0.1:8765/';
+
+  const rows = [
+    ['browser_goto', await timed('browser_goto', { url }, 3)],
+    ['browser_snapshot', await timed('browser_snapshot', {}, 5)],
+    ['browser_wait_for', await timed('browser_wait_for', { text: 'Go' }, 5)],
+    ['browser_screenshot', await timed('browser_screenshot', {}, 3)],
+  ];
+  // The same three steps as one browser_run, where the tool exists.
+  const three = [{ do: 'goto', url }, { do: 'wait', text: 'Go' }, { do: 'snapshot' }];
+  const probe = await tool(id, 'browser_run', { actions: [{ do: 'snapshot' }] });
+  if (!/unknown/.test(textOf(probe))) {
+    rows.push(['goto+wait+snapshot', rows[0][1] + rows[2][1] + rows[1][1]]);
+    rows.push(['  as one browser_run', await timed('browser_run', { actions: three }, 3)]);
+    const run = await tool(id, 'browser_run', { actions: [{ do: 'goto', url }, { do: 'click', role: 'button', name: 'Go' }, { do: 'snapshot' }] });
+    check('browser_run clicks by role and name and snapshots, in one call', !run.isError && /button "Go"/.test(textOf(run)), textOf(run).slice(0, 300));
+  }
+
+  // Watching is not using: the computer's last-used time must not move while
+  // only the screen is open.
+  const usedAt = async () => (await api('GET', `/v1/computers/${id}`)).body.lastUsedAt;
+  const usedBefore = await usedAt();
+  const seconds = 10;
+  const frames = await new Promise((resolveCount, reject) => {
+    let count = 0;
+    let first;
+    const give = setTimeout(() => reject(new Error('no frame in 60s')), 60_000 + seconds * 1000);
+    const ws = new WebSocket(`${rec.url.replace('http', 'ws')}/v1/computers/${id}/screen?fps=4&token=${rec.token}`);
+    ws.onmessage = (ev) => {
+      if (JSON.parse(String(ev.data)).type !== 'frame') return;
+      // Counted from the first frame, so start-up is not mistaken for frame rate.
+      if (first === undefined) {
+        first = performance.now();
+        setTimeout(() => {
+          ws.close();
+          clearTimeout(give);
+          resolveCount(count);
+        }, seconds * 1000);
+      } else count++;
+    };
+    ws.onerror = () => reject(new Error('screen socket failed'));
+  });
+  const fps = (frames / seconds).toFixed(1);
+  const usedAfter = await usedAt();
+
+  const lines = [
+    ...rows.map(([name, ms]) => `${name.padEnd(20)} ${String(ms).padStart(6)} ms (median)`),
+    `${'screen at ?fps=4'.padEnd(20)} ${fps.padStart(6)} frames/s`,
+    `${'watching moved lastUsedAt'.padEnd(20)} ${usedBefore === usedAfter ? 'no' : `yes (${usedBefore} -> ${usedAfter})`}`,
+  ];
+  console.log(`\n== browser speed ==\n${lines.join('\n')}\n`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const { appendFileSync } = await import('node:fs');
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Browser speed\n\n\`\`\`\n${lines.join('\n')}\n\`\`\`\n`);
+  }
+  check('the browser speed was measured', rows.every(([, ms]) => ms > 0) && frames > 0, `${fps} frames/s`);
+  check('watching the screen does not count as using the computer', usedBefore === usedAfter, `${usedBefore} -> ${usedAfter}`);
+
+  // Fast because it is one long-lived driver, not because it quietly fell back.
+  // Its own command line holds a backslash and a zero, not a NUL, so it does not count itself.
+  const count = String.raw`python3 -c "
+import glob
+n = 0
+for f in glob.glob('/proc/[0-9]*/cmdline'):
+    try:
+        n += b'driver.py\0--serve' in open(f, 'rb').read()
+    except OSError:
+        pass
+print(n)"`;
+  const drivers = textOf(await tool(id, 'shell', { command: count })).trim();
+  check('one long-lived driver serves the computer', drivers === '1', `${drivers} running`);
+}
+
+/**
+ * A browser_script that decides from what the page shows, against
+ * example.com, timed like the tools above. It also tries a file:// goto,
+ * which the host's policy must refuse and the script must survive.
+ */
+async function measureScript(id) {
+  // Both ways through the same `if`: once for words the page has (its title;
+  // example.com rewrites its body text now and then), once for words it lacks.
+  const source = [
+    'page.goto("https://example.com")',
+    'seen = []',
+    'for want in ["Example Domain", "No such words on this page"]:',
+    '    if want in page.title() or page.has_text(want):',
+    '        seen.append("has " + want)',
+    '    else:',
+    '        seen.append("lacks " + want)',
+    'links = [n["name"] for n in page.snapshot() if n["role"] == "link"]',
+    'result = {"seen": seen, "links": links}',
+    'try:',
+    '    page.goto("file:///etc/passwd")',
+    '    print("policy let file:// through")',
+    'except PageError as e:',
+    '    print("refused file://")',
+  ].join('\n');
+  const ms = [];
+  let last;
+  for (let i = 0; i < 3; i++) {
+    const started = performance.now();
+    last = await tool(id, 'browser_script', { script: source, timeoutSec: 60 });
+    ms.push(performance.now() - started);
+  }
+  const body = textOf(last);
+  const median = Math.round([...ms].sort((a, b) => a - b)[1]);
+  const line = `${'browser_script'.padEnd(20)} ${String(median).padStart(6)} ms (median; goto + branch + snapshot)`;
+  console.log(`${line}\n`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const { appendFileSync } = await import('node:fs');
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\`\`\`\n${line}\n\`\`\`\n`);
+  }
+  let result;
+  try {
+    result = JSON.parse(body.slice(body.indexOf('result: ') + 'result: '.length));
+  } catch {
+    result = undefined;
+  }
+  check(
+    'a browser_script branches on what example.com shows',
+    !last.isError &&
+      JSON.stringify(result?.seen) === JSON.stringify(['has Example Domain', 'lacks No such words on this page']) &&
+      result?.links?.length > 0,
+    body.slice(0, 400),
+  );
+  check('a browser_script goto obeys the network policy', /refused file:\/\//.test(body) && !/let file:\/\/ through/.test(body), body.slice(0, 300));
 }
 
 try {
@@ -184,9 +389,10 @@ try {
   const goto = await tool(id, 'browser_goto', { url: 'https://example.com' });
   check('the browser renders a page', !goto.isError && /Example Domain/i.test(textOf(goto)), JSON.stringify(textOf(goto).slice(0, 200)));
   const snap = await tool(id, 'browser_snapshot');
-  // Elements with refs a model can click, e.g. `e24  link "Learn more"`. Not a
-  // page heading: example.com changes its text, and the title is not in the tree.
-  const refs = textOf(snap).match(/^e\d+ {2}\w+/gm) ?? [];
+  // Elements with refs a model can click, e.g. `e24  link "Learn more"`, indented
+  // by depth in the compact tree. Not a page heading: example.com changes its
+  // text, and the title is not in the tree.
+  const refs = textOf(snap).match(/^ *e\d+ {2}\w+/gm) ?? [];
   check('a snapshot lists elements with refs', !snap.isError && refs.length > 0, `${refs.length} elements; ${JSON.stringify(textOf(snap).slice(0, 200))}`);
 
   // 4. The live screen sends real frames.
@@ -243,7 +449,13 @@ try {
   mcp.child.stdin.end();
   await sleep(1000);
 
-  // 8. The console in a real browser: Home's live screen, take over at any
+  // 8. How fast the browser is, for before-and-after numbers.
+  await measureBrowser(id);
+
+  // 8b. A script that makes its own decisions, run inside the computer.
+  await measureScript(id);
+
+  // 9. The console in a real browser: Home's live screen, take over at any
   // moment, the chat's call waiting for Give back, the Chat and Connect pages.
   // CI sets E2E_CONSOLE=1 and installs playwright-core (not a dependency) to
   // drive the runner's own Chrome. Screenshots land in E2E_SHOTS.

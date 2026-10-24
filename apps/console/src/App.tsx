@@ -11,7 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ConnectionProvider, useConnection } from './state/connection';
 import { ComputersProvider, useComputers } from './state/computers';
 import { useTheme } from './state/theme';
-import { Button, StatusDot } from './components/primitives';
+import { Button, Icon, StatusDot } from './components/primitives';
 import { ComputersPanel } from './panels/ComputersPanel';
 import { TerminalPanel } from './panels/TerminalPanel';
 import { FilesPanel } from './panels/FilesPanel';
@@ -66,16 +66,26 @@ function ConnectionShell() {
   return <>
     <a className="skip-link" href="#main">Skip to content</a>
     <div className="starter-app">
-      <header className="starter-header"><a className="starter-brand" href="#main">Husk <span>workspace</span></a><div className="btn-row"><StatusDot tone={status === 'connected' ? 'success' : status === 'disconnected' ? 'danger' : 'info'} label={status === 'connected' ? 'Connected' : status === 'disconnected' ? 'Disconnected' : 'Connecting'} /><Button onClick={toggle}>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</Button></div></header>
+      <header className="starter-header"><a className="starter-brand" href="#main"><img src="/favicon.svg" alt="" width="22" height="22" /> Husk</a><div className="btn-row"><StatusDot pill tone={status === 'connected' ? 'success' : status === 'disconnected' ? 'danger' : 'info'} label={status === 'connected' ? 'Connected' : status === 'disconnected' ? 'Disconnected' : 'Connecting'} /><ThemeToggle theme={theme} toggle={toggle} /></div></header>
       {status === 'disconnected' && !token ? <DisconnectedScreen /> : <main id="main" className="starter-main" tabIndex={-1}>{status === 'disconnected' ? <section className="workspace-welcome"><h1>Reconnect to your workspace</h1><p>{error?.message ?? 'Husk is not responding.'} Open the workspace again from your AI app to reconnect. Your saved files stay on this device.</p><Button onClick={retryNow}>Try again</Button></section> : health ? (handoffId ? <LinkedHandoff handoffId={handoffId} /> : computerId ? <LinkedComputer /> : <HomePanel />) : <p role="status">Opening your workspace…</p>}</main>}
     </div>
   </>;
 }
 
+function ThemeToggle({ theme, toggle }: { theme: 'dark' | 'light'; toggle: () => void }) {
+  const next = theme === 'dark' ? 'light' : 'dark';
+  return (
+    <Button variant="ghost" className="btn-icon" onClick={toggle} aria-label={`Switch to ${next} theme`} title={`Switch to ${next} theme`}>
+      <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
+    </Button>
+  );
+}
+
 function Shell() {
   const { status, health, baseUrl } = useConnection();
   const { list: rows } = useComputers();
-  const { list: waiting } = useHandoffs();
+  // A computer the person took themselves is not waiting on them.
+  const waiting = useHandoffs().list.filter((h) => h.runId !== 'person');
   const { theme, toggle } = useTheme();
 
   const [panel, setPanel] = useState<PanelId>(() => panelFromHash());
@@ -106,10 +116,10 @@ function Shell() {
   const connTone = status === 'connected' ? 'success' : status === 'connecting' ? 'info' : 'danger';
   const connLabel =
     status === 'connected'
-      ? `connected · v${health?.version ?? '?'}`
+      ? `Connected · v${health?.version ?? '?'}`
       : status === 'connecting'
-        ? 'connecting'
-        : 'not connected';
+        ? 'Connecting'
+        : 'Not connected';
 
   return (
     <>
@@ -119,22 +129,15 @@ function Shell() {
 
       <div className="app">
         <div className="app-brand">
+          <img src="/favicon.svg" alt="" />
           <strong>Husk</strong>
-          <span>console</span>
         </div>
 
         <header className="app-header">
-          <span className="conn">
-            <StatusDot tone={connTone} label={connLabel} />
-            <code className="mono field-note">{baseUrl}</code>
+          <span className="conn" title={baseUrl}>
+            <StatusDot pill tone={connTone} label={connLabel} />
           </span>
-          <Button
-            onClick={toggle}
-            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
-            aria-pressed={theme === 'light'}
-          >
-            {theme === 'dark' ? 'Light theme' : 'Dark theme'}
-          </Button>
+          <ThemeToggle theme={theme} toggle={toggle} />
         </header>
 
         <nav className="app-nav" aria-label="Console sections">
@@ -158,7 +161,7 @@ function Shell() {
                     <span>{PANEL_LABELS[id]}</span>
                     {id === 'computers' && rows.length > 0 ? <span className="count">{rows.length}</span> : null}
                     {id === 'handoffs' && waiting.length > 0 ? (
-                      <span className="count" aria-label={`${waiting.length} waiting on you`}>{waiting.length}</span>
+                      <span className="count count-alert" aria-label={`${waiting.length} waiting on you`}>{waiting.length}</span>
                     ) : null}
                   </button>
                 </li>

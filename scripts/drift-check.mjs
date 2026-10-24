@@ -71,11 +71,12 @@ function identical(source, copy) {
 }
 
 /* -----------------------------------------------------------------------------
-   The design system. `brand/tokens.css` is the source; each app ships a copy
-   because a Next app cannot import a stylesheet from outside its own tree.
+   The design system. `brand/tokens.css` is the source; each site ships a copy
+   because a Next app cannot import a stylesheet from outside its own tree. The
+   console is not a copy: it has its own tuning under the same token names,
+   checked for contrast by its own contrast.test.ts.
 -------------------------------------------------------------------------------- */
 for (const copy of [
-  'apps/console/src/styles/tokens.css',
   'apps/docs/src/styles/tokens.css',
   'apps/web/src/styles/tokens.css',
 ]) {

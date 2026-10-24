@@ -35,11 +35,16 @@ export function heldText(handoffId: string, reason: string): string {
 /** The `runId` of a handoff the person started from the console, rather than one a chat asked for. */
 export const PERSON_RUN = 'person';
 
-/** For a chat whose computer the person took from the console. It did not ask, so it has no done to call. */
+/**
+ * For a chat whose computer the person took, from the console or a link. It did
+ * not ask, so it has no done to call. A link may have expired, and with no
+ * shared Husk there is no console: computer_open_ui is the way back either way.
+ */
 export function takenText(handoffId: string): string {
   return (
-    `The user took over this computer from the Husk console (handoff ${handoffId}). Stop using it: tell the user ` +
-    'you are paused until they press Give back in Husk, then try again. Do not call hand_off_done for this handoff.'
+    `The user took over this computer (handoff ${handoffId}). Stop using it: tell the user you are paused until ` +
+    'they press Give back where they took it. If they need to get back to it, call computer_open_ui and give them ' +
+    'the fresh link. Then try again. Do not call hand_off_done for this handoff.'
   );
 }
 
