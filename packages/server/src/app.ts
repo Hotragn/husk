@@ -1,13 +1,13 @@
 import { HUSK_VERSION } from '@husk-ai/core';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
-import { assertBindIsSafe, installAuth } from './auth.js';
+import { assertBindIsSafe, installAuth, isLoopbackHost } from './auth.js';
 import { installConsole } from './console.js';
 import { createContext } from './context.js';
 import type { ServerContext } from './context.js';
 import { resolveDeps } from './deps.js';
 import type { ServerDeps } from './deps.js';
-import { installErrorHandling } from './errors.js';
+import { huskError, installErrorHandling } from './errors.js';
 import { approvalRoutes } from './routes/approvals.js';
 import { handoffRoutes } from './routes/handoffs.js';
 import { archiveRoutes } from './routes/archive.js';
@@ -20,6 +20,7 @@ import { modelRoutes } from './routes/models.js';
 import { runRoutes } from './routes/runs.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { createTriggerHost } from './triggers/index.js';
+import { toolRoutes } from './routes/tools.js';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 
@@ -73,7 +74,12 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   const websocket = (await import('@fastify/websocket')).default;
   await app.register(websocket, { options: { maxPayload: 4 * 1024 * 1024 } });
 
-  installAuth(app, { token: config.token, publicPrefixes: ['/assets/', '/favicon', '/v1/a/'] });
+  installAuth(app, {
+    token: config.token,
+    publicPrefixes: ['/assets/', '/favicon', '/v1/a/'],
+    scopeOf: (t) => ctx.scoped.verify(t),
+    loopbackOnly: isLoopbackHost(config.host),
+  });
 
   app.addHook('onSend', async (_req, reply, payload) => {
     void reply.header('X-Husk-Version', HUSK_VERSION);
@@ -102,6 +108,22 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   await app.register(modelRoutes);
   await app.register(approvalRoutes);
   await app.register(handoffRoutes);
+  await app.register(toolRoutes);
+
+  // A newer Husk asks an older one to step aside, and the desktop app's "Quit
+  // and stop Husk" uses it. Only when nobody is mid-run or mid-handoff: an
+  // upgrade must not cut off a person signing in.
+  app.post('/v1/shutdown', async (_req, reply) => {
+    if (!ctx.shutdown) throw huskError('E_NOT_IMPLEMENTED', 'this server cannot stop itself');
+    const busy = ctx.runner.listActive().length + ctx.runner.handoffs.list().length;
+    if (busy) {
+      throw huskError('E_EXEC_DENIED', `not stopping: ${busy} run(s) or handoff(s) are in progress`, {
+        hint: 'try again when they finish',
+      });
+    }
+    setTimeout(() => void ctx.shutdown?.(), 50).unref();
+    return reply.code(202).send({ stopping: true });
+  });
   await app.register(eventRoutes);
   await registerWorkspaceRoutes(app, options.workspaceStore);
 

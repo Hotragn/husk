@@ -24,8 +24,23 @@ interface Waiter extends PendingHandoff {
  * entering a 2FA code must leave the run paused, not hand the machine back to
  * the agent. The only exits are `done` from the person, or the run ending.
  */
+/** Who is holding the computer, for a tool call made while a handoff is open. */
+export function heldText(handoffId: string, reason: string): string {
+  return (
+    `The user has the computer right now (handoff ${handoffId}: ${reason}). Wait for them to tell you they are ` +
+    `done, then call hand_off_done with handoff "${handoffId}". Do not use the computer until then.`
+  );
+}
+
 export class HandoffRegistry {
   private readonly pending = new Map<string, Waiter>();
+  /** How recent handoffs ended, so a chat polling for one is told done or not, never left to guess. */
+  private readonly settled = new Map<string, HandoffOutcome>();
+
+  /** `open`, or how it ended (`done`, `aborted`), or undefined if this server never had it. */
+  state(handoffId: string): 'open' | HandoffOutcome | undefined {
+    return this.pending.has(handoffId) ? 'open' : this.settled.get(handoffId);
+  }
 
   list(): PendingHandoff[] {
     return [...this.pending.values()].map(({ settle: _s, ...rest }) => rest);
@@ -51,6 +66,8 @@ export class HandoffRegistry {
       const onAbort = (): void => settle('aborted');
       const settle = (outcome: HandoffOutcome): void => {
         if (!this.pending.delete(handoffId)) return;
+        this.settled.set(handoffId, outcome);
+        if (this.settled.size > 500) this.settled.delete(this.settled.keys().next().value as string);
         args.signal.removeEventListener('abort', onAbort);
         resolve(outcome);
       };
@@ -78,6 +95,16 @@ export class HandoffRegistry {
   complete(handoffId: string): PendingHandoff {
     const snapshot = this.get(handoffId);
     this.pending.get(handoffId)?.settle('done');
+    return snapshot;
+  }
+
+  /**
+   * End one wait without a person's "done": the chat that asked has gone, so
+   * nobody is left to hand the computer back to. The computer is free again.
+   */
+  cancel(handoffId: string): PendingHandoff {
+    const snapshot = this.get(handoffId);
+    this.pending.get(handoffId)?.settle('aborted');
     return snapshot;
   }
 

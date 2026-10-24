@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { HuskError, clampText } from '@husk-ai/core';
 import type { Computer, ComputerInfo, ComputerSpec, ExecRequest, ExecResult } from '@husk-ai/core';
+import type { ActivityEntry } from '../activity.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ctxOf } from '../context.js';
@@ -83,6 +84,9 @@ function requirePath(query: unknown): string {
   return p;
 }
 
+/** How often the live screen asks for a frame, at most. */
+const SCREEN_FPS = 4;
+
 export async function computerRoutes(app: FastifyInstance): Promise<void> {
   const ctx = ctxOf(app);
   const { manager, log } = ctx.deps;
@@ -91,11 +95,23 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
 
   // Everything the console's overview needs, in one call: every computer, what
   // each run is doing and which computer it is on, and who is waiting on a person.
-  app.get('/v1/overview', async () => ({
-    computers: await manager.list(),
-    activeRuns: ctx.runner.listActive(),
-    handoffs: ctx.runner.handoffs.list(),
-  }));
+  app.get('/v1/overview', async () => {
+    const computers = await manager.list();
+    // The last tool call on each computer, so a chat's computer shows what it is
+    // doing even though no husk run is driving it.
+    const activity: Record<string, ActivityEntry> = {};
+    for (const c of computers) {
+      const last = ctx.activity.latest(c.id);
+      if (last) activity[c.id] = last;
+    }
+    return { computers, activeRuns: ctx.runner.listActive(), handoffs: ctx.runner.handoffs.list(), activity };
+  });
+
+  app.get('/v1/computers/:id/activity', async (req) => {
+    const { id } = req.params as { id: string };
+    await mustGet(app, id);
+    return { entries: ctx.activity.list(id) };
+  });
 
   app.post('/v1/computers', async (req: FastifyRequest, reply: FastifyReply) => {
     const spec = parseOr422(ComputerSpecSchema, req.body) as ComputerSpec;
@@ -301,6 +317,60 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
     const page = await browseInComputer(computer, body);
     ctx.bus.emit('computers', 'browsed', { id, url: page.url, status: page.status });
     return page;
+  });
+
+  // -- live screen ---------------------------------------------------------
+
+  /**
+   * The computer's browser, live, for as long as somebody watches.
+   *
+   * The driver answers one request at a time from inside the computer, so this
+   * cannot subscribe to Chrome's own screencast. It asks for the next frame as
+   * soon as the last one is sent, capped at SCREEN_FPS -- a few frames a second,
+   * which is enough to watch a page being driven. It never launches a browser:
+   * with none open it says so once a second until one appears. It stops the
+   * moment the socket closes, so nothing is spent on a screen nobody is looking at.
+   */
+  app.get('/v1/computers/:id/screen', { websocket: true }, (socket, req) => {
+    const { id } = req.params as { id: string };
+    let open = true;
+    socket.on('close', () => {
+      open = false;
+    });
+    const send = (obj: unknown) => {
+      if (open && socket.readyState === socket.OPEN) socket.send(JSON.stringify(obj));
+    };
+    const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    void (async () => {
+      if (!(await manager.get(id))) {
+        send({ type: 'error', code: 'E_COMPUTER_NOT_FOUND', message: `no computer ${id}` });
+        socket.close();
+        return;
+      }
+      let idle = false;
+      while (open) {
+        const started = Date.now();
+        const page = livePageFor(id);
+        if (!page) {
+          if (!idle) send({ type: 'idle', message: 'no browser is open on this computer yet' });
+          idle = true;
+          await pause(1000);
+          continue;
+        }
+        idle = false;
+        let wait = 1000 / SCREEN_FPS;
+        try {
+          const frame = await page.frame(60);
+          send({ type: 'frame', ...frame });
+        } catch {
+          // Mid-navigation frames fail and the next one usually lands. A stopped
+          // computer fails every time, so slow down rather than spin on it.
+          wait = 1000;
+        }
+        await pause(Math.max(0, wait - (Date.now() - started)));
+      }
+    })();
   });
 
   // -- terminal ------------------------------------------------------------

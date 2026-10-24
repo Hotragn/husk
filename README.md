@@ -90,6 +90,11 @@ only when you say you're done.
 The first tool result says what kind of machine it got. A model that thinks it is
 sandboxed when it is not makes worse decisions than one that knows.
 
+Every chat on the machine goes through one shared Husk, started on the first tool call,
+so `husk serve`'s console shows each chat's computer, its live browser and what it did
+last, and takes over a handoff from any of them. `HUSK_DAEMON=off` keeps a chat's tools
+in its own process.
+
 ## The CLI
 
 ```bash

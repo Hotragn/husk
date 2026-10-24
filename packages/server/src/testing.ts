@@ -20,7 +20,7 @@ import type {
 } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
-import type { AdapterFactory, AgentFactory, AgentLike, ManagerLike, RouterLike, ServerRunOptions } from './deps.js';
+import type { AdapterFactory, AgentFactory, ToolRunner, AgentLike, ManagerLike, RouterLike, ServerRunOptions } from './deps.js';
 import { Store } from './store.js';
 
 /**
@@ -358,6 +358,7 @@ export async function buildTestApp(
     approvalTimeoutMs?: number;
     createAdapter?: AdapterFactory;
     modelProviders?: ModelProvider[];
+    runTool?: ToolRunner;
   } = {},
 ): Promise<TestApp> {
   const { store, root, cleanup } = await tempStore();
@@ -382,6 +383,7 @@ export async function buildTestApp(
     },
     ...(overrides.approvalTimeoutMs !== undefined ? { approvalTimeoutMs: overrides.approvalTimeoutMs } : {}),
     ...(overrides.createAdapter ? { createAdapter: overrides.createAdapter } : {}),
+    ...(overrides.runTool ? { runTool: overrides.runTool } : {}),
   });
 
   return {

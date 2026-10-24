@@ -19,7 +19,7 @@ interface RunningServer {
 }
 
 interface ServerModule {
-  serve(opts: { host: string; port: number }): Promise<RunningServer>;
+  serve(opts: { host: string; port: number; daemon?: boolean; deps?: { runTool?: unknown } }): Promise<RunningServer>;
 }
 
 export async function run(argv: string[]): Promise<number> {
@@ -44,7 +44,11 @@ export async function run(argv: string[]): Promise<number> {
 
   let server: RunningServer;
   try {
-    server = await mod.serve({ host, port });
+    // The machine's one Husk: chats' MCP processes find it through
+    // ~/.husk/daemon.json and run their computer tools here, so the console
+    // sees every chat as well as every husk run.
+    const { runTool } = await import('@husk-ai/mcp/tools');
+    server = await mod.serve({ host, port, daemon: true, deps: { runTool } });
   } catch (err) {
     spin.stop();
     if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
@@ -60,6 +64,8 @@ export async function run(argv: string[]): Promise<number> {
   }
 
   ui.print(`${ui.green('✓')} control plane on ${ui.bold(server.url)}`);
+  // Never the token itself: terminals keep scrollback and logs get shared.
+  ui.print(`  console  ${server.url}/${process.env.HUSK_TOKEN ? ui.dim('  (sign in with your HUSK_TOKEN)') : ''}`);
   ui.print(ui.dim(`  health   ${server.url}/health`));
   ui.print(ui.dim(`  doctor   ${server.url}/v1/doctor`));
   ui.print(ui.dim(`  clients  new HuskClient({ baseUrl: "${server.url}" })  // @husk-ai/sdk`));

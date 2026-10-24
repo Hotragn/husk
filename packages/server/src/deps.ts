@@ -141,7 +141,17 @@ export interface ServerDeps {
   now?: () => number;
   /** Builds the chat adapters behind discord, slack and telegram triggers. Injected in tests. */
   createAdapter?: AdapterFactory;
+  /** Runs one chat tool on a computer: `@husk-ai/mcp`'s tools. Without it, the tool route answers 501. */
+  runTool?: ToolRunner;
 }
+
+/** The MCP result shape: content parts, and whether the tool failed. */
+export interface ToolRunResult {
+  content: Array<{ type: string; [k: string]: unknown }>;
+  isError?: boolean;
+}
+export type ToolRunner = (computer: Computer, name: string, args: Record<string, unknown>) => Promise<ToolRunResult>;
+
 
 export type AdapterFactory = (kind: string, options?: TelegramAdapterOptions & SlackAdapterOptions) => Adapter | undefined;
 
@@ -153,6 +163,7 @@ export interface ResolvedDeps extends Required<Pick<ServerDeps, 'manager' | 'rou
   now: () => number;
   startedAt: number;
   createAdapter: AdapterFactory;
+  runTool?: ToolRunner;
 }
 
 export function resolveConfig(partial: Partial<ServerConfig> = {}): ServerConfig {
@@ -184,6 +195,7 @@ export function resolveDeps(deps: ServerDeps): ResolvedDeps {
     now: deps.now ?? Date.now,
     startedAt: (deps.now ?? Date.now)(),
     createAdapter: deps.createAdapter ?? createAdapter,
+    ...(deps.runTool ? { runTool: deps.runTool } : {}),
   };
 }
 

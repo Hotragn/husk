@@ -108,6 +108,19 @@ A chat's computer is never removed by Husk:
 - **Delete:** only from the console's Computers table, after a confirmation. The table
   shows each computer's app, chat label, last-used time and disk size.
 
+## One Husk for every chat
+
+Every chat's computer tools run in one shared Husk on this machine, the same process as
+`husk serve`. It holds each chat's browser, so its console shows every chat's computer,
+the live browser and the last thing each one did, and a handoff from any chat is taken
+over there. The first computer tool call starts it if nothing is running
+(`husk-mcp --daemon`, detached, logging to `~/.husk/daemon.log`) and finds it through
+`~/.husk/daemon.json`, which holds its address and token and is readable only by you.
+
+A chat falls back to running its tools in its own process, as before, when
+`HUSK_DAEMON=off` is set, when the shared Husk is a different version, or when one
+cannot be started. Its tools still work then; the console just cannot see that chat.
+
 ## What kind of machine you get
 
 Husk picks the best provider available and **tells the model which one it got**, in the

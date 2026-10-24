@@ -31,9 +31,12 @@ invents endpoints the other does not know about.
   sensible `HuskError`.
 - Auth: when `HUSK_TOKEN` is set, every request needs `Authorization: Bearer <token>`.
   When it is not set the server binds loopback only, and **refuses to start on a
-  non-loopback host without a token**. Without a token it also answers only requests
-  whose `Host` is `localhost`, `127.x` or `[::1]`, so a web page cannot reach it through
-  DNS rebinding. `/health` is always unauthenticated.
+  non-loopback host without a token**. On a loopback bind, token or not, it answers
+  only requests whose `Host` is `localhost`, `127.x` or `[::1]`, so a web page cannot
+  reach it through DNS rebinding. A request carrying an `Origin` that is not one of
+  those names is refused (403), WebSockets included: a web page cannot drive it. The
+  console's own page and assets (`GET` outside `/v1`) load without the token; every
+  API route is under `/v1`. `/health` is always unauthenticated.
 - Streaming endpoints are Server-Sent Events: `Content-Type: text/event-stream`, one
   `data:` line per event carrying a JSON object, a heartbeat comment every 15 s, and a
   terminating `event: done`.
@@ -110,7 +113,8 @@ DELETE /v1/computers/:id        -> 204   (a chat's computer needs ?confirm=<id>)
 GET    /v1/computers/:id/disk   -> { "bytes": number | null, "note"?: string }
 GET    /v1/computers/:id/stats  -> { cpuPercent, memoryBytes, memoryLimitBytes, diskBytes, notes? }
 GET    /v1/computers/:id/thumbnail -> image/jpeg of an already-open browser, else 404
-GET    /v1/overview             -> { computers: ComputerInfo[], activeRuns: ActiveRun[], handoffs: PendingHandoff[] }
+GET    /v1/overview             -> { computers: ComputerInfo[], activeRuns: ActiveRun[], handoffs: PendingHandoff[], activity: { [id]: ActivityEntry } }
+GET    /v1/computers/:id/activity -> { "entries": ActivityEntry[] }   (oldest first, the last 200)
 POST   /v1/computers/:id/stop   -> ComputerInfo
 POST   /v1/computers/:id/start  -> ComputerInfo
 ```
@@ -132,7 +136,38 @@ null and `note` says why.
 computer runs, and disk as `disk` does. Anything not measured is `null`, with a note;
 nothing is estimated. `thumbnail` never launches a browser: with none open it answers
 `E_BROWSER_NOT_FOUND`. `overview` is what the console's Home shows: every computer, each
-active run with its `computerId`, `step` and current `tool`, and the open handoffs.
+active run with its `computerId`, `step` and current `tool`, the open handoffs, and the
+last tool call on each computer.
+
+An `ActivityEntry` is `{ at, tool, ok, ms, via, summary? }`: one tool call, from a husk
+run or a chat (`via: "mcp"`). `summary` is a short, redacted look at the call's target,
+taken from an allowlist of arguments (a shell command, a path, a URL, an element ref).
+Tools that carry typed text, such as `browser_type`, never have one. The log is in
+memory and starts empty when the server restarts.
+
+### Chat tools
+
+```
+POST /v1/computers/:id/tools/:name   body: { "args": {...}, "via"?: "mcp" } -> ToolResult
+```
+
+Runs one of the MCP server's computer tools (`shell`, `read_file`, `browser_click`, …)
+in this process, with the same code a chat's MCP process would run. `husk serve` is
+the machine's one Husk: it writes `~/.husk/daemon.json` (`url`, a minted `token`,
+`pid`, `version`; owner-only), and a chat's MCP process forwards its computer tools
+here, starting `husk-mcp --daemon` if nothing answers. The Husk a chat starts mints a
+token, since nobody is there to configure one; `husk serve` uses `HUSK_TOKEN` if set,
+and is otherwise tokenless on loopback, as before.
+
+```
+POST /v1/shutdown   -> 202 { stopping: true }
+```
+
+Stops the process cleanly. It refuses (403) while a run or a handoff is in progress. A
+newer Husk uses it to replace an older one after an upgrade. That is what lets the console
+show a chat's browser and what it is doing. The result has the MCP shape,
+`{ content: [...], isError? }`; a tool failure is a 200 with `isError: true`. While a
+person holds the computer in a handoff, every tool but `computer_info` is refused.
 
 ### Exec
 
@@ -220,6 +255,15 @@ WS   /v1/computers/:id/terminal?cols=120&rows=32
 
 The terminal socket carries raw bytes as stdin/stdout, with one JSON control frame for
 resize: `{"type":"resize","cols":n,"rows":n}`.
+
+```
+WS   /v1/computers/:id/screen
+```
+
+The computer's browser, live, while the socket is open: `{"type":"frame","data":<base64 jpeg>,"width":n,"height":n}`
+up to four times a second, or `{"type":"idle"}` once while no browser is open. It never
+launches one. The driver answers one request at a time from inside the computer, so this
+asks for each frame rather than subscribing to Chrome's own screencast.
 
 ## Husks
 
@@ -317,20 +361,35 @@ does not count, so a tunnel that falls over mid-login leaves the run waiting. Th
 `timeoutSec` stops counting while the person holds it. Cancelling the run ends the wait.
 A run with nobody to take the handoff refuses it at once rather than waiting.
 
-The MCP server (`@husk-ai/mcp`) serves the same per-handoff routes, minus the list, on
-its loopback viewer, for chats whose own model calls `hand_off`, plus two routes for the
-computer a chat's card opens. These are served by the MCP viewer only, not by `husk serve`:
+#### A chat's handoffs
 
-- `GET /v1/scoped/computer` returns `{ computerId, label?, state, handoff: PendingHandoff | null }`.
-- `GET /v1/scoped/computer/screen` returns a read-only `image/jpeg` of its browser.
+When a chat's own model calls `hand_off`, its MCP process opens the handoff here, so
+the person takes over in the console that holds the chat's browser:
 
-There a request carries a short-lived token, scoped to one computer (`computer:<id>`,
-which also opens that computer's handoffs) or to one computer-less handoff
-(`handoff:<id>`). It rides in the link's `#fragment` and is sent back as a bearer
-token. It dies after 10 minutes unused, stays alive while a viewer uses it, and never
-outlives 8 hours; a computer-less handoff's token ends with the handoff. Neither the
-viewer's own token nor the server token opens these routes, and a scoped token does not
-open the workspace API.
+```
+POST   /v1/computers/:id/handoffs  body: { "reason": "...", "label"?: "..." } -> 201 PendingHandoff & { token }
+DELETE /v1/handoffs/:handoffId     -> PendingHandoff   (the chat went away; the computer is freed)
+GET    /v1/handoffs/:handoffId/state -> { handoffId, state: "open"|"done"|"aborted"|"unknown" }
+POST   /v1/computers/:id/link      -> { token }        (for a chat's card or plain link)
+GET    /v1/scoped/computer         -> { computerId, label?, state, handoff: PendingHandoff | null }
+GET    /v1/scoped/computer/screen  -> image/jpeg, read-only
+```
+
+One handoff per computer at a time. The chat polls `state`, which also keeps the
+handoff alive: a chat that stops polling for a minute has gone, and its handoff is
+cancelled (never marked done), so the computer is free again. `state` says how a
+handoff ended, so a chat is never told "done" for one that was cancelled. `token` is short-lived and scoped to that computer
+(`computer:<id>`): it opens the two `/v1/scoped/` routes and that computer's
+`/v1/handoffs/:handoffId` routes, and nothing else. Not the handoff list, not the
+computers, not the routes that mint tokens. It rides in the link's `#fragment` and is
+sent back as a bearer token. It dies after 10 minutes unused, stays alive while the
+console uses it, and never outlives 8 hours.
+
+With no shared Husk (`HUSK_DAEMON=off`, or none could be started), the MCP server
+serves the same per-handoff and `/v1/scoped/` routes on its own loopback viewer, as it
+did before, with the same token rules, plus `handoff:<id>` tokens for a computer-less
+handoff. Neither the viewer's own token nor the server token opens them there, and a
+scoped token does not open the workspace API.
 
 ### Runs
 
