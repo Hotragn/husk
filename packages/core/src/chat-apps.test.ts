@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { chatAppDefs, connectChatApp, detectChatApps, disconnectChatApp, huskLaunch } from './chat-apps.js';
+import { baseLaunch, chatAppDefs, connectChatApp, detectChatApps, disconnectChatApp, huskLaunch } from './chat-apps.js';
 
 let home = '';
 afterEach(() => {
@@ -75,6 +75,47 @@ describe('chat apps', () => {
     await connectChatApp('gemini', huskLaunch(), { home });
     expect((await disconnectChatApp('gemini', { home })).ok).toBe(true);
     expect(JSON.parse(readFileSync(fileOf('gemini'), 'utf8'))).toEqual({ mcpServers: { other: { command: 'x' } } });
+  });
+});
+
+describe('the launch line', () => {
+  it('uses the desktop app’s own Husk when HUSK_LAUNCH names it, env included', () => {
+    const env = { HUSK_LAUNCH: JSON.stringify({ command: 'C:/Program Files/Husk/Husk.exe', args: ['C:/Program Files/Husk/resources/runtime/bin.js'], env: { ELECTRON_RUN_AS_NODE: '1' } }) };
+    const l = huskLaunch({ provider: 'docker' }, baseLaunch(env as NodeJS.ProcessEnv));
+    expect(l).toEqual({
+      command: 'C:/Program Files/Husk/Husk.exe',
+      args: ['C:/Program Files/Husk/resources/runtime/bin.js', '--provider', 'docker'],
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+    });
+  });
+
+  it('keeps chat apps on the desktop app when a chat, not the app, started this Husk', () => {
+    const self = { electron: '44.6.0', execPath: 'C:/Program Files/Husk/Husk.exe', script: 'C:/Program Files/Husk/resources/runtime/bin.js' };
+    expect(baseLaunch({ ELECTRON_RUN_AS_NODE: '1' } as NodeJS.ProcessEnv, self)).toEqual({
+      command: self.execPath, args: [self.script], env: { ELECTRON_RUN_AS_NODE: '1' },
+    });
+    expect(baseLaunch({ APPIMAGE: '/home/me/Husk.AppImage' } as NodeJS.ProcessEnv, self)).toEqual({ command: '/home/me/Husk.AppImage', args: ['--husk-mcp'] });
+    expect(baseLaunch({} as NodeJS.ProcessEnv, { execPath: 'node' }).command).toBe('npx');
+  });
+
+  it('falls back to npx when HUSK_LAUNCH is missing or malformed', () => {
+    expect(baseLaunch({} as NodeJS.ProcessEnv).command).toBe('npx');
+    expect(baseLaunch({ HUSK_LAUNCH: '{nope' } as NodeJS.ProcessEnv).command).toBe('npx');
+    expect(baseLaunch({ HUSK_LAUNCH: JSON.stringify({ command: 1 }) } as NodeJS.ProcessEnv).command).toBe('npx');
+  });
+
+  it('writes the env into a JSON config', async () => {
+    fresh();
+    mkdirSync(dirOf('cursor'), { recursive: true });
+    await connectChatApp('cursor', { command: 'Husk.exe', args: ['bin.js'], env: { ELECTRON_RUN_AS_NODE: '1' } }, { home });
+    expect(JSON.parse(readFileSync(fileOf('cursor'), 'utf8')).mcpServers.husk).toEqual({ command: 'Husk.exe', args: ['bin.js'], env: { ELECTRON_RUN_AS_NODE: '1' } });
+  });
+
+  it('puts Claude Code’s -e after the server name, because -e takes several values', () => {
+    const def = chatAppDefs(home || undefined).find((d) => d.id === 'claude-code') as { add: (l: unknown) => string[] };
+    expect(def.add({ command: 'Husk.exe', args: ['bin.js'], env: { ELECTRON_RUN_AS_NODE: '1' } })).toEqual([
+      'mcp', 'add', '--scope', 'user', 'husk', '-e', 'ELECTRON_RUN_AS_NODE=1', '--', 'Husk.exe', 'bin.js',
+    ]);
   });
 });
 

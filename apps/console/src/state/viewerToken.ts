@@ -9,11 +9,15 @@ export function readViewerToken(): { token: string; fromLink: boolean } {
     // A handoff or computer link keeps its (non-secret) id so the app knows what to open.
     const handoff = fragment.get('handoff');
     const computer = fragment.get('computer');
+    // The desktop app opens the console on a panel: `#token=...&panel=connect`.
+    const panel = fragment.get('panel');
     const keep = handoff
       ? `#handoff=${encodeURIComponent(handoff)}`
       : computer
         ? `#computer=${encodeURIComponent(computer)}`
-        : '';
+        : panel && /^[a-z]{1,20}$/.test(panel)
+          ? `#/${panel}`
+          : '';
     window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${keep}`);
     return { token: linked, fromLink: true };
   }

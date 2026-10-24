@@ -218,8 +218,12 @@ function launchDaemon(): void {
   const logPath = join(ensurePaths().root, 'daemon.log');
   const fd = openSync(logPath, 'a', 0o600);
   try {
+    // Inside the desktop app's Linux AppImage (run with --husk-mcp, not as
+    // Node), the daemon is the AppImage again: the current mount goes away.
+    const appImage = process.versions.electron && !process.env.ELECTRON_RUN_AS_NODE ? process.env.APPIMAGE : undefined;
+    const [command, args] = appImage ? [appImage, ['--husk-mcp', '--daemon']] : [process.execPath, [bin, '--daemon']];
     // From the home folder: not the chat's project, which may hold anything.
-    spawn(process.execPath, [bin, '--daemon'], { cwd: homedir(), detached: true, stdio: ['ignore', fd, fd], windowsHide: true }).unref();
+    spawn(command, args, { cwd: homedir(), detached: true, stdio: ['ignore', fd, fd], windowsHide: true }).unref();
   } finally {
     closeSync(fd);
   }

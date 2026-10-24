@@ -46,3 +46,18 @@ describe('a computer link from an in-chat card', () => {
     expect(linkedComputerId()).toBe('cmp_1');
   });
 });
+
+describe('a link from the desktop app', () => {
+  it('opens the named panel and drops the token from the address bar', () => {
+    window.history.replaceState(null, '', '/#token=ghi789&panel=connect');
+    expect(readViewerToken()).toEqual({ token: 'ghi789', fromLink: true });
+    expect(window.location.hash).toBe('#/connect');
+    expect(window.location.href).not.toContain('ghi789');
+  });
+
+  it('ignores a panel name that is not a plain word', () => {
+    window.history.replaceState(null, '', '/#token=x&panel=%2F%2Fevil.example');
+    readViewerToken();
+    expect(window.location.hash).toBe('');
+  });
+});

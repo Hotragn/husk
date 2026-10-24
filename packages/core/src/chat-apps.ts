@@ -32,14 +32,45 @@ export interface ChatApp {
 export interface HuskLaunch {
   command: string;
   args: string[];
+  env?: Record<string, string>;
 }
 
-/** `npx -y @husk-ai/mcp`, plus the computer the person chose. */
-export function huskLaunch(choice: { provider?: string; flavor?: string } = {}): HuskLaunch {
-  const args = ['-y', '@husk-ai/mcp'];
+/**
+ * How this install of Husk is started. `npx -y @husk-ai/mcp` by default. The
+ * Husk desktop app sets HUSK_LAUNCH on the Husk it runs, naming its own
+ * bundled copy, so the apps it connects need no Node install of their own.
+ */
+export function baseLaunch(
+  env: NodeJS.ProcessEnv = process.env,
+  self: { electron?: string; execPath: string; script?: string } = { electron: process.versions.electron, execPath: process.execPath, script: process.argv[1] },
+): HuskLaunch {
+  const npx: HuskLaunch = { command: 'npx', args: ['-y', '@husk-ai/mcp'] };
+  if (!env.HUSK_LAUNCH) {
+    // A Husk the desktop app's own launch line started (a chat started it,
+    // not the app) is still the app's copy: keep chat apps on it, not npx.
+    if (self.electron && env.APPIMAGE) return { command: env.APPIMAGE, args: ['--husk-mcp'] };
+    if (self.electron && env.ELECTRON_RUN_AS_NODE && self.script) {
+      return { command: self.execPath, args: [self.script], env: { ELECTRON_RUN_AS_NODE: '1' } };
+    }
+    return npx;
+  }
+  try {
+    const l = JSON.parse(env.HUSK_LAUNCH) as Partial<HuskLaunch>;
+    const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
+    if (typeof l.command !== 'string' || !strings(l.args)) return npx;
+    const vars = l.env && typeof l.env === 'object' ? Object.fromEntries(Object.entries(l.env).filter(([, v]) => typeof v === 'string')) : undefined;
+    return { command: l.command, args: l.args, ...(vars && Object.keys(vars).length ? { env: vars as Record<string, string> } : {}) };
+  } catch {
+    return npx;
+  }
+}
+
+/** This install's launch line, plus the computer the person chose. */
+export function huskLaunch(choice: { provider?: string; flavor?: string } = {}, base: HuskLaunch = baseLaunch()): HuskLaunch {
+  const args = [...base.args];
   if (choice.provider && choice.provider !== 'auto') args.push('--provider', choice.provider);
   if (choice.flavor) args.push('--flavor', choice.flavor);
-  return { command: 'npx', args };
+  return { ...base, args };
 }
 
 interface FileApp {
@@ -117,6 +148,10 @@ function writeAtomic(file: string, text: string): void {
   renameSync(tmp, file);
 }
 
+function envFlags(flag: string, l: HuskLaunch): string[] {
+  return Object.entries(l.env ?? {}).flatMap(([k, v]) => [flag, `${k}=${v}`]);
+}
+
 export function chatAppDefs(home = homedir()): AppDef[] {
   const data = appData(home);
   return [
@@ -127,7 +162,8 @@ export function chatAppDefs(home = homedir()): AppDef[] {
     },
     {
       kind: 'cli', id: 'claude-code', name: 'Claude Code', bin: 'claude', dir: join(home, '.claude'),
-      add: (l) => ['mcp', 'add', '--scope', 'user', 'husk', '--', l.command, ...l.args],
+      // `-e` takes several values, so it goes after the name or it swallows it.
+      add: (l) => ['mcp', 'add', '--scope', 'user', 'husk', ...envFlags('-e', l), '--', l.command, ...l.args],
       remove: ['mcp', 'remove', '--scope', 'user', 'husk'],
       isConnected: () => {
         try {
@@ -155,7 +191,7 @@ export function chatAppDefs(home = homedir()): AppDef[] {
     },
     {
       kind: 'cli', id: 'codex', name: 'Codex CLI', bin: 'codex', dir: join(home, '.codex'),
-      add: (l) => ['mcp', 'add', 'husk', '--', l.command, ...l.args],
+      add: (l) => ['mcp', 'add', 'husk', ...envFlags('--env', l), '--', l.command, ...l.args],
       remove: ['mcp', 'remove', 'husk'],
       isConnected: () => /^\[mcp_servers\.husk\]/m.test(readText(join(home, '.codex', 'config.toml')) ?? ''),
       after: 'Start a new Codex session.',
@@ -239,7 +275,9 @@ function cliRefused(def: CliApp, home: string | undefined): ConnectResult | unde
   return { id: def.id, ok: false, message: `${def.name} keeps its settings in the real home folder, so Husk changes it only for the real user` };
 }
 
-const SAFE_TOKEN = /^[A-Za-z0-9@/._=-]+$/;
+// Letters and digits in any script (a profile folder such as C:\Users\José), and
+// the punctuation a path needs. Every character cmd.exe treats specially stays out.
+const SAFE_TOKEN = /^[\p{L}\p{N}@/\\._=:() '-]+$/u;
 
 /** Add Husk to one app, or update its entry, keeping any fields the person added to it. */
 export async function connectChatApp(id: ChatAppId, launch: HuskLaunch, opts: { home?: string; now?: Date } = {}): Promise<ConnectResult> {
@@ -263,7 +301,14 @@ export async function connectChatApp(id: ChatAppId, launch: HuskLaunch, opts: { 
     const config = parseConfig(def);
     const servers = { ...((config[def.key] as Record<string, unknown> | undefined) ?? {}) };
     const prev = servers.husk && typeof servers.husk === 'object' ? (servers.husk as Record<string, unknown>) : {};
-    servers.husk = { ...prev, ...(def.extra ?? {}), command: launch.command, args: launch.args };
+    const prevEnv = prev.env && typeof prev.env === 'object' ? (prev.env as Record<string, string>) : {};
+    servers.husk = {
+      ...prev,
+      ...(def.extra ?? {}),
+      command: launch.command,
+      args: launch.args,
+      ...(launch.env ? { env: { ...prevEnv, ...launch.env } } : {}),
+    };
     const backup = backupOf(def.file, opts.now ?? new Date());
     writeAtomic(def.file, `${JSON.stringify({ ...config, [def.key]: servers }, null, 2)}\n`);
     return { id, ok: true, message: `added to ${def.name}. ${def.after}`, ...(backup ? { backup } : {}) };
