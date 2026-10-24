@@ -19,6 +19,8 @@ export interface ServerContext {
   scoped: ScopedTokens;
   /** Set by `serve()`: close cleanly and exit. Absent for an embedded app. */
   shutdown?: () => Promise<void>;
+  /** Computers a chat runs in its own process, which this Husk cannot reach: no take-over here. */
+  inChat: Set<string>;
 }
 
 export function createContext(deps: ResolvedDeps, opts: { approvalTimeoutMs?: number } = {}): ServerContext {
@@ -27,7 +29,7 @@ export function createContext(deps: ResolvedDeps, opts: { approvalTimeoutMs?: nu
   const scheduler = new CronScheduler({
     onError: (err, job) => deps.log.error(`cron job ${job.id} failed`, err),
   });
-  return { deps, bus, runner, scheduler, activity: new ActivityLog(), scoped: new ScopedTokens() };
+  return { deps, bus, runner, scheduler, activity: new ActivityLog(), scoped: new ScopedTokens(), inChat: new Set() };
 }
 
 export function ctxOf(app: FastifyInstance): ServerContext {

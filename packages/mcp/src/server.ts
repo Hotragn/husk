@@ -45,6 +45,8 @@ export interface HuskMcpOptions {
   daemon?: boolean;
   /** Use this client for the shared Husk instead of finding one. For tests. */
   shared?: DaemonClient;
+  /** How the shared Husk is found, or started again once it is lost. For tests. */
+  connect?: () => Promise<DaemonClient | undefined>;
   /** Stop a computer after this long with no tool call. Default 10 minutes. */
   idleStopMs?: number;
   logger?: Logger;
@@ -133,6 +135,12 @@ export class HuskMcpServer {
   private viewer?: Promise<{ url: string; origin: string; close: () => Promise<void> }>;
   /** The shared Husk, found on the first computer tool call. */
   private daemon?: Promise<DaemonClient | undefined>;
+  /** Why this chat's calls run here rather than in the shared Husk, when connecting left them here. */
+  private localReason: string | undefined;
+  /** Computers this chat has told the model it runs itself, so it is said once. */
+  private readonly toldLocal = new Set<string>();
+  /** Why the shared Husk could not reach a computer this chat now runs itself. */
+  private readonly inChatReason = new Map<string, string>();
   /**
    * Handoffs this chat opened in the shared Husk, by the local id the model
    * sees. The local registry mirrors each one, so every check that asks "is a
@@ -142,6 +150,7 @@ export class HuskMcpServer {
   /** Computers the shared Husk cannot see, so their tools -- and browser -- stay in this process. */
   private readonly localComputers = new Set<string>();
   private readonly useDaemon: boolean;
+  private readonly connect: () => Promise<DaemonClient | undefined>;
   /** Handoffs open in this session. A person ends one; closing the session ends them all. */
   private readonly handoffs = new HandoffRegistry();
   private readonly closing = new AbortController();
@@ -164,6 +173,7 @@ export class HuskMcpServer {
     this.ephemeral = opts.ephemeral ?? true;
     this.useDaemon = opts.daemon ?? true;
     if (opts.shared) this.daemon = Promise.resolve(opts.shared);
+    this.connect = opts.connect ?? (() => connectDaemon({ log: this.log, onLocal: (why) => (this.localReason = why) }));
     this.idleStopMs = opts.idleStopMs ?? 10 * 60 * 1000;
     this.profile = opts.profile ?? 'computer';
     this.workspaceStore = opts.workspaceStore ?? new WorkspaceStore();
@@ -281,24 +291,51 @@ export class HuskMcpServer {
    * The shared Husk audits the calls it runs, so they are audited once either way.
    */
   private async runTool(computer: Computer, name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<ToolResult> {
-    const daemon = this.localComputers.has(computer.id) ? undefined : await this.shared();
-    if (daemon) {
+    let daemon = this.localComputers.has(computer.id) ? undefined : await this.shared();
+    let why = this.localComputers.has(computer.id) ? this.inChatReason.get(computer.id) : daemon ? undefined : this.localReason;
+    for (let tries = 0; daemon; tries++) {
       try {
-        return await daemon.callTool(computer.id, name, args, signal);
+        const result = await daemon.callTool(computer.id, name, args, signal);
+        // Back on the shared Husk: a later fall-back is worth saying again.
+        this.toldLocal.delete(computer.id);
+        return result;
       } catch (err) {
         if (err instanceof RunLocally) {
           this.log.info(`${err.message}; its tools run in this process`);
           this.localComputers.add(computer.id);
+          this.inChatReason.set(computer.id, (why = err.message));
+          void daemon.markInChat(computer.id).catch(() => undefined);
+          daemon = undefined;
         } else if (err instanceof DaemonUnreachable) {
-          // Nothing ran there. This call runs here, and the next one looks for
-          // the shared Husk again, starting one if it is gone.
-          this.log.warn(`${err.message}; running this call in this process`);
+          // Nothing ran there. Start it again and retry once: only then does the
+          // call run here, where the console cannot see or take over the computer.
           this.daemon = undefined;
+          daemon = tries === 0 ? await this.shared() : undefined;
+          this.log.warn(`${err.message}; ${daemon ? 'started it again, retrying there' : 'running this call in this process'}`);
+          if (!daemon) why = this.localReason ?? err.message;
         } else {
           return { isError: true, content: [{ type: 'text', text: redact(`the shared husk did not answer: ${(err as Error).message}`) }] };
         }
       }
     }
+    return this.toldOnce(computer.id, why, await this.runHere(computer, name, args, signal));
+  }
+
+  /**
+   * The first call this chat runs itself, while a shared Husk was expected,
+   * says so: the model passes it on, and nobody wonders why the console
+   * shows nothing.
+   */
+  private toldOnce(computerId: string, why: string | undefined, result: ToolResult): ToolResult {
+    if (!why || this.toldLocal.has(computerId)) return result;
+    this.toldLocal.add(computerId);
+    const note =
+      `[husk] This computer is running in this chat's own process (${why}), so the Husk console cannot show it ` +
+      'or take it over; its link from computer_open_ui still can. Tell the user.';
+    return { ...result, content: [{ type: 'text', text: note }, ...result.content] };
+  }
+
+  private runHere(computer: Computer, name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<ToolResult> {
     // Its own computer: the take-over from this chat's viewer stops it, as the shared Husk's does.
     return underControl(this.handoffs, computer.id, name, signal, (stop) =>
       audited(
@@ -313,7 +350,7 @@ export class HuskMcpServer {
 
   /** The shared Husk, found (or started) once per process. */
   private shared(): Promise<DaemonClient | undefined> {
-    return (this.daemon ??= this.useDaemon ? connectDaemon({ log: this.log }) : Promise.resolve(undefined));
+    return (this.daemon ??= this.useDaemon ? this.connect() : Promise.resolve(undefined));
   }
 
   /** One honest line about what this machine actually is. */

@@ -75,7 +75,13 @@ export function ChatPanel({ computerId, onOpen }: { computerId: string | null; o
           taking={hold.busy}
         />
         <div className="chat-side">
-          <Control key={handoff?.handoffId ?? 'free'} handoff={handoff} hold={hold} running={computer.state === 'running'} />
+          <Control
+            key={handoff?.handoffId ?? 'free'}
+            handoff={handoff}
+            hold={hold}
+            running={computer.state === 'running'}
+            inChat={overview.data?.inChat?.includes(computer.id) === true}
+          />
           <Activity id={computer.id} />
         </div>
       </div>
@@ -139,11 +145,26 @@ export const SIDE_KEYS: Array<[HandoffKey, string]> = [
   ['Escape', 'Esc'],
 ];
 
+/** Where a take-over cannot work: the chat runs this computer in its own process. */
+export function InChatNote() {
+  return <p className="field-note">It runs in its chat’s own process. Ask the chat for its link to watch it or take it over.</p>;
+}
+
 /** Who has the computer, and the one action that changes it. */
-function Control({ handoff, hold, running }: { handoff: PendingHandoff | undefined; hold: Hold; running: boolean }) {
+function Control({ handoff, hold, running, inChat }: { handoff: PendingHandoff | undefined; hold: Hold; running: boolean; inChat: boolean }) {
   const [confirming, setConfirming] = useState(false);
   const failed = hold.error ? <ErrorBlock error={hold.error} /> : null;
 
+  if (!handoff && inChat) {
+    return (
+      <div className="card control-card">
+        <div role="status">
+          <StatusDot tone="muted" label="The chat runs this computer itself" />
+        </div>
+        <InChatNote />
+      </div>
+    );
+  }
   if (!handoff) {
     return (
       <div className="card control-card">
@@ -201,14 +222,18 @@ export function TakeOver({
   handoff,
   onOpen,
   onChange,
+  inChat = false,
 }: {
   computerId: string;
   handoff: PendingHandoff | undefined;
   onOpen: (target: OverviewTarget, id: string) => void;
   onChange: () => void;
+  inChat?: boolean;
 }) {
   const hold = useHold(computerId, handoff, onChange);
   const failed = hold.error ? <ErrorBlock error={hold.error} /> : null;
+
+  if (!handoff && inChat) return <InChatNote />;
 
   if (!handoff) {
     return (

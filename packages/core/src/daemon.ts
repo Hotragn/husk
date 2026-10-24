@@ -15,6 +15,8 @@ export interface DaemonRecord {
   token: string | null;
   pid: number;
   version: string;
+  /** HUSK_PROTOCOL of the Husk that wrote it. Absent from records written before it existed. */
+  protocol?: number;
   startedAt: string;
 }
 
@@ -32,6 +34,7 @@ export function readDaemonRecord(): DaemonRecord | undefined {
       token: typeof parsed.token === 'string' ? parsed.token : null,
       pid: parsed.pid,
       version: parsed.version,
+      ...(typeof parsed.protocol === 'number' ? { protocol: parsed.protocol } : {}),
       startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : '',
     };
   } catch {

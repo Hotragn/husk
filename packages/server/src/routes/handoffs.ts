@@ -157,6 +157,7 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
     });
   app.post('/v1/computers/:id/takeover', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
+    refuseInChat(ctx.inChat, id);
     if (!(await ctx.deps.manager.get(id))) throw notFound('computer', id);
     const { handoff, created } = await take(id);
     return reply.code(created ? 201 : 200).send(handoff);
@@ -166,6 +167,16 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
     const { handoffId } = req.params as { handoffId: string };
     if (req.huskScope !== undefined) throw huskError('E_HANDOFF_NOT_FOUND', 'no open handoff with that link');
     return ctx.runner.handoffs.cancel(handoffId);
+  });
+
+  // A chat runs this computer in its own process (this Husk cannot reach it):
+  // the console says so instead of offering a take-over that cannot work.
+  app.post('/v1/computers/:id/in-chat', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    if (req.huskScope !== undefined) throw notFound('computer', id);
+    ctx.inChat.add(id);
+    ctx.bus.emit('computers', 'computer_in_chat', { computerId: id });
+    return reply.code(204).send();
   });
 
   // A fresh link to look at one computer, for a chat's card or plain link.
@@ -216,6 +227,14 @@ export async function takeOver(
   const stopped = await registry.control.stop(computerId);
   registry.control.mark(computerId, await pageMark(computerId), stopped.some((t) => t.startsWith('browser_')));
   return { handoff: opened!, created: true };
+}
+
+/** A take-over this Husk cannot honour: the chat runs the computer in its own process. */
+function refuseInChat(inChat: ReadonlySet<string>, computerId: string): void {
+  if (!inChat.has(computerId)) return;
+  throw huskError('E_COMPUTER_IN_CHAT', 'this computer runs in its chat’s own process, which the Husk console cannot reach', {
+    hint: 'ask the chat to call computer_open_ui, and take it over from that link',
+  });
 }
 
 /** Who is asking: the console's own buttons act as the person; everything else is a program. */

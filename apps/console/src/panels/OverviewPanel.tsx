@@ -28,6 +28,8 @@ interface Row {
   run?: ActiveRunInfo;
   handoff?: PendingHandoff;
   last?: ActivityEntry;
+  /** The chat runs it in its own process, so there is nothing here to take over. */
+  inChat?: boolean;
 }
 
 /** Waiting on you first, then busy, then idle; most recently used first within each. */
@@ -36,7 +38,8 @@ export function sortRows(overview: Overview): Row[] {
     const run = overview.activeRuns.find((r) => r.computerId === computer.id);
     const handoff = overview.handoffs.find((h) => h.computerId === computer.id);
     const last = overview.activity?.[computer.id];
-    return { computer, ...(run ? { run } : {}), ...(handoff ? { handoff } : {}), ...(last ? { last } : {}) };
+    const inChat = overview.inChat?.includes(computer.id) === true;
+    return { computer, ...(run ? { run } : {}), ...(handoff ? { handoff } : {}), ...(last ? { last } : {}), ...(inChat ? { inChat } : {}) };
   });
   const rank = (r: Row) => (r.handoff ? 0 : r.run ? 1 : 2);
   return rows.sort(
@@ -158,7 +161,7 @@ function ComputerCard({
   onStop: () => void;
   onChange: () => void;
 }) {
-  const { computer, run, handoff, last } = row;
+  const { computer, run, handoff, last, inChat } = row;
   const name = computer.chatLabel ?? (computer.name && computer.name !== computer.id ? computer.name : computer.id);
   const activity = run
     ? `Running ${run.husk}${run.step !== undefined ? ` · step ${run.step}` : ''}${run.tool ? ` · ${run.tool}` : ''}`
@@ -201,7 +204,7 @@ function ComputerCard({
             Open
           </Button>
           {!handoff && computer.state === 'running' ? (
-            <TakeOver computerId={computer.id} handoff={undefined} onOpen={onOpen} onChange={onChange} />
+            <TakeOver computerId={computer.id} handoff={undefined} onOpen={onOpen} onChange={onChange} inChat={inChat === true} />
           ) : null}
         </div>
         <div className="btn-row">

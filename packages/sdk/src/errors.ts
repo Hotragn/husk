@@ -34,6 +34,7 @@ export const SERVER_ERROR_CODES = [
   'E_TRANSCRIPT_NOT_FOUND',
   'E_ROUTE_NOT_FOUND',
   'E_COMPUTER_HELD',
+  'E_COMPUTER_IN_CHAT',
 ] as const;
 
 export type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number];

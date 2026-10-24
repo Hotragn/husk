@@ -282,3 +282,15 @@ describe('a chat’s own viewer taking over', () => {
     }
   });
 });
+
+describe('a computer a chat runs in its own process', { timeout: 30_000 }, () => {
+  it('is listed as such, and a take-over says where to go instead', async () => {
+    harness = await buildTestApp();
+    const { id } = (await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: {} })).json() as { id: string };
+    expect((await harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/in-chat` })).statusCode).toBe(204);
+    expect((await harness.app.inject({ method: 'GET', url: '/v1/overview' })).json().inChat).toEqual([id]);
+    const taken = await harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/takeover` });
+    expect(taken.statusCode).toBe(409);
+    expect(taken.json().error).toMatchObject({ code: 'E_COMPUTER_IN_CHAT', hint: expect.stringContaining('computer_open_ui') });
+  });
+});

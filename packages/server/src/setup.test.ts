@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { HUSK_RANGE } from '@husk-ai/core';
 import { buildTestApp } from './testing.js';
 import type { TestApp } from './testing.js';
 
@@ -31,7 +32,7 @@ describe('the Connect page routes', { timeout: 30_000 }, () => {
     const r = (await harness.app.inject({ method: 'POST', url: '/v1/setup/apps/cursor', payload: { provider: 'docker', flavor: 'full' } })).json();
     expect(r.ok).toBe(true);
     expect(JSON.parse(readFileSync(join(home, '.cursor', 'mcp.json'), 'utf8')).mcpServers.husk.args).toEqual([
-      '-y', '@husk-ai/mcp', '--provider', 'docker', '--flavor', 'full',
+      '-y', `@husk-ai/mcp@${HUSK_RANGE}`, '--provider', 'docker', '--flavor', 'full',
     ]);
     expect((await harness.app.inject({ method: 'DELETE', url: '/v1/setup/apps/cursor' })).json().ok).toBe(true);
     expect(JSON.parse(readFileSync(join(home, '.cursor', 'mcp.json'), 'utf8')).mcpServers).toEqual({});

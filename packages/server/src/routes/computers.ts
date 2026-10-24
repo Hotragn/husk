@@ -106,7 +106,14 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
       const last = ctx.activity.latest(c.id);
       if (last) activity[c.id] = last;
     }
-    return { computers, activeRuns: ctx.runner.listActive(), handoffs: ctx.runner.handoffs.list(), activity };
+    return {
+      computers,
+      activeRuns: ctx.runner.listActive(),
+      handoffs: ctx.runner.handoffs.list(),
+      activity,
+      // Run by a chat in its own process: watched and taken over from the chat's own link.
+      inChat: [...ctx.inChat],
+    };
   });
 
   app.get('/v1/computers/:id/activity', async (req) => {

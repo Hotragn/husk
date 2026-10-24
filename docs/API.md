@@ -18,7 +18,7 @@ invents endpoints the other does not know about.
   `code` is a `HuskErrorCode` from `@husk-ai/core`. Status mapping: `E_*_NOT_FOUND` → 404,
   `E_*_DENIED` → 403, `E_SPEC_INVALID` → 422, `E_QUOTA` / `E_BUDGET_EXCEEDED` → 429,
   `E_NO_CREDENTIALS` → 401, `E_PROVIDER_UNAVAILABLE` / `E_MODEL_UNAVAILABLE` → 503,
-  `E_NOT_IMPLEMENTED` → 501, `E_EXEC_TIMEOUT` → 504, `E_COMPUTER_HELD` → 409, everything else → 500.
+  `E_NOT_IMPLEMENTED` → 501, `E_EXEC_TIMEOUT` → 504, `E_COMPUTER_HELD` / `E_COMPUTER_IN_CHAT` → 409, everything else → 500.
 
   The two suffix rules are applied as rules, not as a table, so a new
   `E_<thing>_NOT_FOUND` lands on 404 without anyone editing the server.
@@ -45,9 +45,13 @@ invents endpoints the other does not know about.
 ## Health and capability
 
 ```
-GET /health     -> 200 { "ok": true, "version": "0.2.0", "uptimeSec": 812 }
+GET /health     -> 200 { "ok": true, "version": "0.2.0", "protocol": 1, "uptimeSec": 812 }
 GET /v1/doctor  -> 200 DoctorReport
 ```
+
+`protocol` is what a chat's MCP process and the shared Husk must agree on. Releases
+that speak the same one share a Husk, so a patch apart never splits a chat from the
+console; `~/.husk/daemon.json` carries it too.
 
 `DoctorReport` is what `husk doctor` prints — the honest state of the machine:
 
@@ -113,7 +117,7 @@ DELETE /v1/computers/:id        -> 204   (a chat's computer needs ?confirm=<id>)
 GET    /v1/computers/:id/disk   -> { "bytes": number | null, "note"?: string }
 GET    /v1/computers/:id/stats  -> { cpuPercent, memoryBytes, memoryLimitBytes, diskBytes, notes? }
 GET    /v1/computers/:id/thumbnail -> image/jpeg of an already-open browser, else 404
-GET    /v1/overview             -> { computers: ComputerInfo[], activeRuns: ActiveRun[], handoffs: PendingHandoff[], activity: { [id]: ActivityEntry } }
+GET    /v1/overview             -> { computers: ComputerInfo[], activeRuns: ActiveRun[], handoffs: PendingHandoff[], activity: { [id]: ActivityEntry }, inChat: string[] }
 GET    /v1/computers/:id/activity -> { "entries": ActivityEntry[] }   (oldest first, the last 200)
 POST   /v1/computers/:id/bot    body: { "useModel"?: boolean } -> { transcriptId, spec, yaml, distilled }
 POST   /v1/computers/:id/stop   -> ComputerInfo
@@ -432,10 +436,16 @@ POST   /v1/computers/:id/handoffs  body: { "reason": "...", "label"?: "..." } ->
 DELETE /v1/handoffs/:handoffId     -> PendingHandoff   (the chat went away; the computer is freed)
 GET    /v1/handoffs/:handoffId/state -> { handoffId, state: "open"|"done"|"aborted"|"unknown" }
 POST   /v1/computers/:id/link      -> { token }        (for a chat's card or plain link)
+POST   /v1/computers/:id/in-chat   -> 204              (the chat runs this computer in its own process)
 GET    /v1/scoped/computer         -> { computerId, label?, state, handoff: PendingHandoff | null }
 GET    /v1/scoped/computer/screen  -> image/jpeg, read-only
 POST   /v1/scoped/computer/takeover -> 201 PendingHandoff (runId "person"), or the handoff already open
 ```
+
+A chat whose computer this Husk cannot reach (a provider that needs the chat's own
+environment, such as `FLY_API_TOKEN`) runs it in its own process and says so with
+`in-chat`. The overview lists it in `inChat`, and `/v1/computers/:id/takeover` refuses
+it with 409 `E_COMPUTER_IN_CHAT`, pointing at the chat's own link instead.
 
 One handoff per computer at a time. The chat polls `state`, which also keeps the
 handoff alive: a chat that stops polling for a minute has gone, and its handoff is

@@ -1,4 +1,4 @@
-import { HUSK_VERSION, createLogger } from '@husk-ai/core';
+import { HUSK_PROTOCOL, HUSK_VERSION, createLogger } from '@husk-ai/core';
 import type { DaemonRecord } from '@husk-ai/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DaemonUnreachable, RunLocally, connectDaemon, newer } from './daemon.js';
@@ -62,6 +62,27 @@ describe('connectDaemon', () => {
     const d = await connectDaemon({ log, read: () => record('0.0.1'), fetchImpl: fakeFetch('0.0.1'), launch: () => { launched = true; } });
     expect(d).toBeUndefined();
     expect(launched).toBe(false);
+  });
+
+  it('uses another release that speaks the same protocol, rather than split from it', async () => {
+    const older = { ...record('0.1.9'), protocol: HUSK_PROTOCOL };
+    expect(await connectDaemon({ log, read: () => older, fetchImpl: fakeFetch('0.1.9'), launch: () => {} })).toBeDefined();
+  });
+
+  it('says why when it leaves the chat to run its own tools', async () => {
+    const said: string[] = [];
+    const onLocal = (why: string) => said.push(why);
+    const other = { ...record('9.0.0'), protocol: HUSK_PROTOCOL + 1 };
+    await connectDaemon({ log, read: () => other, fetchImpl: fakeFetch('9.0.0'), onLocal });
+    await connectDaemon({ log, read: () => undefined, launch: () => {}, fetchImpl: fakeFetch(HUSK_VERSION), waitMs: 300, onLocal });
+    expect(said).toEqual([expect.stringContaining('9.0.0'), 'no shared Husk could be started']);
+  });
+
+  it('says nothing for HUSK_DAEMON=off, which is a choice', async () => {
+    process.env.HUSK_DAEMON = 'off';
+    const said: string[] = [];
+    await connectDaemon({ log, read: () => record(), fetchImpl: fakeFetch(HUSK_VERSION), onLocal: (why) => said.push(why) });
+    expect(said).toEqual([]);
   });
 
   it('gives up and runs in-process when a started daemon never answers', async () => {

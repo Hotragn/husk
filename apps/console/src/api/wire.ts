@@ -341,6 +341,8 @@ export interface Overview {
   handoffs: PendingHandoff[];
   /** The last tool call on each computer, chats included. Absent from older servers. */
   activity?: Record<string, ActivityEntry>;
+  /** Computers a chat runs in its own process: watched and taken over from the chat's link. Absent from older servers. */
+  inChat?: string[];
 }
 
 /** One tool call on a computer. `summary` never carries typed text. */
