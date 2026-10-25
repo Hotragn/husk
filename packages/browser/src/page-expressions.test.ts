@@ -1,29 +1,20 @@
 // @vitest-environment jsdom
 /**
- * The two page-side expressions, run against a real DOM.
+ * The page-side expression, run against a real DOM.
  *
- * `select` (the driver's CHOOSE_OPTION, called on the <select>) and the
- * cross-origin iframe report do their actual work *inside the page*, as script
- * text handed to Chromium. The CDP plumbing around them
- * is shared with `type`, which is covered; what is not covered by anything else
- * is the JavaScript itself -- and a typo in a template literal is invisible
- * until a real page is in front of it.
+ * `select` (the driver's CHOOSE_OPTION, called on the <select>) does its actual
+ * work *inside the page*, as script text handed to Chromium. The CDP plumbing
+ * around it is shared with `type`, which is covered; what is not covered by
+ * anything else is the JavaScript itself -- and a typo in a template literal is
+ * invisible until a real page is in front of it.
  *
- * So the expressions are exported and evaluated here. This is not a substitute
- * for driving Chromium: jsdom enforces no same-origin policy, so the iframe
- * tests below simulate an unreadable frame rather than producing one. What it
- * does prove is the logic -- matching order, the error text a model has to
- * recover from, which events fire, and which frames are reported.
+ * So it is evaluated here. This is not a substitute for driving Chromium. What
+ * it does prove is the logic -- matching order, the error text a model has to
+ * recover from, and which events fire.
  */
 
 import { describe, expect, it } from 'vitest';
 import { DRIVER_SOURCE } from './driver.js';
-import { unreachableFramesExpression } from './page.js';
-
-/** Run a page expression the way `Runtime.evaluate` would. */
-function evaluate<T>(expression: string): T {
-  return new Function(`return ${expression}`)() as T;
-}
 
 /**
  * The driver's CHOOSE_OPTION, called on a node the way `Runtime.callFunctionOn`
@@ -124,72 +115,5 @@ describe('choosing an option (the driver’s CHOOSE_OPTION)', () => {
     // And a quote-and-parenthesis payload is data, not code.
     form([['x', 'x']]);
     expect(() => choose(`'); throw new Error('injected'); ('`)).toThrow(/no option matching/);
-  });
-});
-
-describe('unreachableFramesExpression', () => {
-  /**
-   * jsdom gives every iframe a readable `contentDocument`, so an unreadable one
-   * is simulated by replacing the getter -- which is exactly the state the
-   * browser puts a cross-origin frame in.
-   */
-  function frames(specs: Array<{ src: string; readable: boolean }>) {
-    document.body.innerHTML = '';
-    for (const spec of specs) {
-      const el = document.createElement('iframe');
-      el.setAttribute('src', spec.src);
-      document.body.appendChild(el);
-      if (!spec.readable) {
-        Object.defineProperty(el, 'contentDocument', { get: () => null, configurable: true });
-      }
-    }
-  }
-
-  it('reports only the frames that cannot be read', () => {
-    frames([
-      { src: 'https://example.com', readable: false },
-      { src: '/same-origin.html', readable: true },
-      { src: 'https://www.iana.org', readable: false },
-    ]);
-    expect(evaluate<string[]>(unreachableFramesExpression())).toEqual([
-      'https://example.com/',
-      'https://www.iana.org/',
-    ]);
-  });
-
-  it('says nothing when every frame is readable', () => {
-    // A warning that fires on same-origin frames would train the reader to
-    // ignore it, which is worse than not warning at all.
-    frames([{ src: '/a.html', readable: true }]);
-    expect(evaluate<string[]>(unreachableFramesExpression())).toEqual([]);
-  });
-
-  it('treats a throwing contentDocument as unreachable', () => {
-    // Some engines throw rather than returning null. Either way we cannot see in.
-    document.body.innerHTML = '<iframe src="https://x.test"></iframe>';
-    const el = document.querySelector('iframe')!;
-    Object.defineProperty(el, 'contentDocument', {
-      get() {
-        throw new Error('blocked a frame with origin');
-      },
-      configurable: true,
-    });
-    expect(evaluate<string[]>(unreachableFramesExpression())).toEqual(['https://x.test/']);
-  });
-
-  it('has something to say about a frame with no src', () => {
-    frames([{ src: '', readable: false }]);
-    expect(evaluate<string[]>(unreachableFramesExpression())).toEqual(['(no src)']);
-  });
-
-  it('caps the list, so a page of ad frames cannot flood the snapshot', () => {
-    frames(Array.from({ length: 25 }, (_, i) => ({ src: `https://ad${i}.test`, readable: false })));
-    expect(evaluate<string[]>(unreachableFramesExpression()).length).toBe(10);
-    expect(evaluate<string[]>(unreachableFramesExpression(3)).length).toBe(3);
-  });
-
-  it('finds no frames on a page that has none', () => {
-    document.body.innerHTML = '<p>nothing here</p>';
-    expect(evaluate<string[]>(unreachableFramesExpression())).toEqual([]);
   });
 });

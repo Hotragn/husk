@@ -68,6 +68,7 @@ import glob
 import json
 import os
 import queue
+import re
 import select
 import signal
 import socket
@@ -324,6 +325,10 @@ class Conn(object):
         self.dialogs = []
         self.downloads = {}
         self.popups = []
+        # A cross-site frame runs in its own process, reached only through its
+        # own session: child session -> {'parent': session, 'frame': frame id}.
+        self.frame_sessions = {}
+        self.auto_attached = set()
 
     def _pump(self, deadline):
         # A screencast frame waits for its ack, and Chromium sends no other until
@@ -394,6 +399,10 @@ class Conn(object):
             info = params.get('targetInfo') or {}
             if info.get('type') == 'page':
                 self.popups.append({'targetId': info.get('targetId') or '', 'url': info.get('url') or ''})
+        elif method == 'Target.attachedToTarget':
+            info = params.get('targetInfo') or {}
+            if info.get('type') == 'iframe' and params.get('sessionId'):
+                self.frame_sessions[params['sessionId']] = {'parent': msg.get('sessionId'), 'frame': info.get('targetId')}
         elif method == 'Target.targetInfoChanged':
             info = params.get('targetInfo') or {}
             for popup in self.popups:
@@ -403,8 +412,11 @@ class Conn(object):
         # tab means the caller waits out the whole budget for nothing.
         if msg.get('method') == 'Target.detachedFromTarget':
             gone = (msg.get('params') or {}).get('sessionId')
+            frame = gone in self.frame_sessions
             self.forget(gone)
             if gone and gone == session_id:
+                if frame:
+                    raise DriverError(ACTION, 'the frame went away while the command was in flight; take a fresh snapshot')
                 raise DriverError(BAD_TARGET, 'the page was closed while the command was in flight')
         self.events.append(msg)
 
@@ -421,6 +433,8 @@ class Conn(object):
         self.dialogs.append({'type': kind, 'message': (params.get('message') or '')[:300], 'answer': 'accepted' if accept else 'dismissed'})
 
     def forget(self, session_id):
+        self.frame_sessions.pop(session_id, None)
+        self.auto_attached.discard(session_id)
         for target, sid in list(self.sessions.items()):
             if sid == session_id:
                 del self.sessions[target]
@@ -516,7 +530,7 @@ CHOOSE_OPTION = r'''function (want) {
   this.dispatchEvent(new Event('change', { bubbles: true }));
   return match.text.trim();
 }'''
-STALE = 'e%d is from an earlier page: this one has loaded since the snapshot that showed it; take a fresh snapshot and use its refs'
+STALE = '%s is from an earlier page: this one has loaded since the snapshot that showed it; take a fresh snapshot and use its refs'
 
 # What an honest click asks of its element before it presses. A disabled form
 # control (one in a disabled fieldset too) or aria-disabled means a click would
@@ -544,7 +558,7 @@ DESCRIBE = r'''function () {
   const text = (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40);
   return '<' + el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + cls + '>' + (text ? ' "' + text + '"' : '');
 }'''
-GONE = 'e%d is no longer on the page; take a snapshot and use the new ref'
+GONE = '%s is no longer on the page; take a snapshot and use the new ref'
 
 
 def evaluate(conn, session_id, expression, deadline):
@@ -574,15 +588,10 @@ def maybe_event(conn, event, session_id, seconds, deadline):
 
 def resolve(conn, session_id, step, deadline, unique=False):
     """
-    The DOM node an action means: a ref from a snapshot, or a role and an
-    accessible name. With `unique`, a role and name that match more than one
-    element is refused rather than quietly taking the first.
+    The DOM node a role and an accessible name mean, in the page's own frame.
+    With `unique`, a role and name that match more than one element is refused
+    rather than quietly taking the first.
     """
-    ref = step.get('ref')
-    if ref:
-        if not (isinstance(ref, str) and ref[:1] == 'e' and ref[1:].isdigit()):
-            raise DriverError(ACTION, '%r is not an element ref; refs look like e42' % (ref,))
-        return int(ref[1:])
     role, name = step.get('role'), step.get('name')
     if not role and not name:
         raise DriverError(ACTION, 'say which element: a ref, or a role and a name')
@@ -630,12 +639,13 @@ def prepare(conn, deadline, downloads):
             raise
 
 
-def listen_for(conn, session_id, events, seconds, deadline):
-    """The first of `events` to arrive within `seconds`, or None; every event on the way is noted."""
+def listen_for(conn, session_id, events, seconds, deadline, on=None):
+    """The first of `events` to arrive within `seconds`, on `on`'s session if given, or None; every event on the way is noted."""
     end = min(deadline, _now() + seconds)
+    on = on or session_id
     while True:
         for i, buffered in enumerate(conn.events):
-            if buffered.get('method') in events and buffered.get('sessionId') in (None, session_id):
+            if buffered.get('method') in events and buffered.get('sessionId') in (None, on):
                 del conn.events[i]
                 return buffered.get('method')
         try:
@@ -687,7 +697,7 @@ def current_document(conn, session_id, deadline):
 
 
 def ref_documents(conn, session_id):
-    """Which document each ref handed out on this connection came from, by backend node id."""
+    """Which frame and document each ref handed out on this connection came from: ref -> (frame id or None, loader id)."""
     known = conn.__dict__.setdefault('ref_documents', {}).setdefault(session_id, {})
     # ponytail: forgotten wholesale past a bound, so a long session's map stays small; a
     # forgotten ref is checked against the host's own record, or not at all.
@@ -696,72 +706,225 @@ def ref_documents(conn, session_id):
     return known
 
 
-def check_fresh(conn, session_id, step, backend, deadline):
+# A ref: e<n> in the page's own frame, f<k>e<n> in frame k. A frame in another
+# process numbers its nodes afresh, so its refs have to say which frame.
+REF = re.compile(r'^(?:f(\d+))?e(\d+)$')
+
+
+def frame_keys(conn, session_id, seen=None):
     """
-    A ref acts only on the document whose snapshot showed it. After the page
-    loads another, the same id can name a different element, so an earlier
-    page's ref is refused rather than resolved to whatever has its id now.
+    Each frame's number on this page, by frame id. A frame keeps its number for
+    as long as the page is open, so f2e7 never comes to mean another frame's
+    node. `seen` is the host's record, for a driver that keeps nothing between
+    requests; a number this connection already gave a frame stays that frame's.
+    """
+    keys = conn.__dict__.setdefault('frame_keys', {}).setdefault(session_id, {})
+    # ponytail: forgotten wholesale past a bound; frames are numbered afresh from then on.
+    if len(keys) > 10000:
+        keys.clear()
+    for frame_id, k in (seen or {}).items():
+        if isinstance(k, int) and frame_id not in keys and k not in keys.values():
+            keys[frame_id] = k
+    return keys
+
+
+def frame_tree(conn, session_id, deadline):
+    try:
+        return conn.call('Page.getFrameTree', {}, session_id, deadline).get('frameTree') or {}
+    except DriverError as exc:
+        if exc.kind != PROTOCOL:
+            raise
+        return {}
+
+
+def frames_of(tree):
+    """Every frame in a frame tree, parents first, in document order."""
+    out, todo = [], [tree]
+    while todo:
+        t = todo.pop(0)
+        if t.get('frame'):
+            out.append(t['frame'])
+        todo[0:0] = t.get('childFrames') or []
+    return out
+
+
+def auto_attach(conn, session_id, page, deadline):
+    """
+    Once per session: attach to its cross-site frames, which Chromium reports
+    before it answers, so every one is known when this returns. A frame's own
+    session gets DOM, and Page for its loads; its dialogs still come once, to
+    the page's session.
+    """
+    if session_id in conn.auto_attached:
+        return
+    if not page:
+        for domain in ('Page', 'DOM'):
+            conn.call(domain + '.enable', {}, session_id, deadline)
+    conn.call(
+        'Target.setAutoAttach',
+        {'autoAttach': True, 'waitForDebuggerOnStart': False, 'flatten': True, 'filter': [{'type': 'iframe'}]},
+        session_id,
+        deadline,
+    )
+    conn.auto_attached.add(session_id)
+
+
+def sessions_under(conn, session_id, deadline):
+    """The page's session, then the session of every cross-site frame under it, parents first."""
+    out = [session_id]
+    for s in out:  # grows as it goes: each session's frames join the end
+        auto_attach(conn, s, s == session_id, deadline)
+        out.extend(c for c, info in list(conn.frame_sessions.items()) if info['parent'] == s and c not in out)
+    return out
+
+
+def owner_of(conn, session_id, frame_id, deadline):
+    """The backend id of a frame's <iframe>, in the session of the frame's parent; None once it is gone."""
+    try:
+        return conn.call('DOM.getFrameOwner', {'frameId': frame_id}, session_id, deadline).get('backendNodeId')
+    except DriverError as exc:
+        if exc.kind != PROTOCOL:
+            raise
+        return None
+
+
+def parent_session(conn, page, session_id, frame_id):
+    """The session that has a frame's <iframe>: the parent's, for the frame a session was attached to."""
+    info = conn.frame_sessions.get(session_id)
+    return info['parent'] if session_id != page and info and info['frame'] == frame_id else session_id
+
+
+def outer_levels(conn, page, session_id, deadline):
+    """The <iframe>s a click passes through, from the page down to this session's frame: (session, backend id) each."""
+    levels = []
+    while session_id != page:
+        info = conn.frame_sessions.get(session_id)
+        owner = owner_of(conn, info['parent'], info['frame'], deadline) if info else None
+        if owner is None:
+            return None
+        levels.insert(0, (info['parent'], owner))
+        session_id = info['parent']
+    return levels
+
+
+def find_frame(conn, page, frame_id, deadline):
+    """Where a frame is now: the session that reaches it, the frame (its loaderId names its document), and the <iframe>s on the way down. None once it is gone."""
+    for s in sessions_under(conn, page, deadline):
+        frame = next((f for f in frames_of(frame_tree(conn, s, deadline)) if f.get('id') == frame_id), None)
+        if frame:
+            outer = outer_levels(conn, page, s, deadline)
+            return (s, frame, outer) if outer is not None else None
+    return None
+
+
+def locate(conn, session_id, step, deadline, unique=False):
+    """
+    The element an action means and where it is: `sid`, the session that
+    reaches it (the page's, or a cross-site frame's own), and `outer`, the
+    <iframe>s on the way down to it. A ref acts only on the document whose
+    snapshot showed it, the page's or its frame's: once that has loaded
+    another, the same id can name a different element, so an earlier
+    document's ref is refused rather than resolved to whatever has its id now.
     Checked against this connection's own snapshots first, then the host's.
     """
-    expected = ref_documents(conn, session_id).get(backend) or step.get('document')
-    if not expected:
-        return
-    now = current_document(conn, session_id, deadline)
-    if now and now != expected:
-        raise DriverError(ACTION, STALE % backend)
+    ref = step.get('ref')
+    if not ref:
+        backend = resolve(conn, session_id, step, deadline, unique=unique)
+        return {'ref': 'e%d' % backend, 'sid': session_id, 'backend': backend, 'frame': None, 'outer': []}
+    m = REF.match(ref) if isinstance(ref, str) else None
+    if not m:
+        raise DriverError(ACTION, '%r is not an element ref; refs look like e42, or f1e42 inside a frame' % (ref,))
+    backend = int(m.group(2))
+    known = ref_documents(conn, session_id).get(ref) or (None, None)
+    expected = known[1] or step.get('document')
+    if not m.group(1):
+        if expected:
+            now = current_document(conn, session_id, deadline)
+            if now and now != expected:
+                raise DriverError(ACTION, STALE % ref)
+        return {'ref': ref, 'sid': session_id, 'backend': backend, 'frame': None, 'outer': []}
+    k = int(m.group(1))
+    frame_id = known[0] or step.get('frame') or next((f for f, n in frame_keys(conn, session_id).items() if n == k), None)
+    found = find_frame(conn, session_id, frame_id, deadline) if frame_id else None
+    if not found:
+        raise DriverError(ACTION, '%s is in a frame that is no longer on the page; take a fresh snapshot and use its refs' % ref)
+    host, frame, outer = found
+    if expected and frame.get('loaderId') and frame['loaderId'] != expected:
+        raise DriverError(ACTION, STALE % ref)
+    return {'ref': ref, 'sid': host, 'backend': backend, 'frame': frame_id, 'outer': outer}
 
 
-def target_of(conn, session_id, step, deadline, unique=False):
-    """The node an action means, refused if it is a ref from an earlier page."""
-    backend = resolve(conn, session_id, step, deadline, unique=unique)
-    if step.get('ref'):
-        check_fresh(conn, session_id, step, backend, deadline)
-    return backend
+def scroll_into_view(conn, session_id, backend, deadline):
+    try:
+        conn.call('DOM.scrollIntoViewIfNeeded', {'backendNodeId': backend}, session_id, deadline)
+    except DriverError as exc:
+        if exc.kind != PROTOCOL:
+            raise
 
 
-def box_centre(conn, session_id, backend, deadline):
-    """The centre of the element's box as it is now, or None when it has none."""
+def content_quad(conn, session_id, backend, deadline):
     try:
         quad = conn.call('DOM.getBoxModel', {'backendNodeId': backend}, session_id, deadline)['model']['content']
     except (DriverError, KeyError, TypeError) as exc:
         if isinstance(exc, DriverError) and exc.kind != PROTOCOL:
             raise
         return None
-    if not quad or len(quad) < 8:
+    return quad if quad and len(quad) >= 8 else None
+
+
+def box_centre(conn, el, deadline):
+    """The centre of the element's box where the page sees it now, or None when it has none."""
+    quad = content_quad(conn, el['sid'], el['backend'], deadline)
+    if quad is None:
         return None
+    dx, dy = el.get('offset') or (0.0, 0.0)
     xs, ys = quad[0::2], quad[1::2]
-    return (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+    return (min(xs) + max(xs)) / 2.0 + dx, (min(ys) + max(ys)) / 2.0 + dy
 
 
-def centre(conn, session_id, backend, deadline):
-    try:
-        conn.call('DOM.scrollIntoViewIfNeeded', {'backendNodeId': backend}, session_id, deadline)
-    except DriverError as exc:
-        if exc.kind != PROTOCOL:
-            raise
-    point = box_centre(conn, session_id, backend, deadline)
+def centre(conn, el, deadline):
+    """
+    The element's centre where the page sees it, once in view: each <iframe> on
+    the way down scrolled into view in its parent, then the element in its frame.
+    A cross-site frame's boxes are in its own viewport, so the place of each
+    <iframe> on the way down is added on.
+    """
+    for sid, owner in el['outer']:
+        scroll_into_view(conn, sid, owner, deadline)
+    scroll_into_view(conn, el['sid'], el['backend'], deadline)
+    # ponytail: an <iframe> that is scaled or rotated is taken as plain, by its box's top-left.
+    origins = [(0.0, 0.0)]
+    for sid, owner in el['outer']:
+        quad = content_quad(conn, sid, owner, deadline)
+        if quad is None:
+            raise DriverError(ACTION, GONE % el['ref'])
+        x, y = origins[-1]
+        origins.append((x + min(quad[0::2]), y + min(quad[1::2])))
+    el['origins'] = origins
+    el['offset'] = origins[-1]
+    point = box_centre(conn, el, deadline)
     if point is None:
-        raise DriverError(ACTION, GONE % backend)
+        raise DriverError(ACTION, GONE % el['ref'])
     return point
 
 
-def steady_centre(conn, session_id, backend, deadline):
+def steady_centre(conn, el, deadline):
     """
     The element's centre once it has stopped moving: a click aimed at a box
     still sliding into place lands beside it. Two readings 50 ms apart must
     agree to the pixel; a box still moving after half a second is refused.
     """
-    x, y = centre(conn, session_id, backend, deadline)
+    x, y = centre(conn, el, deadline)
     for _ in range(10):
         time.sleep(0.05)
-        point = box_centre(conn, session_id, backend, deadline)
+        point = box_centre(conn, el, deadline)
         if point is None:
-            raise DriverError(ACTION, GONE % backend)
+            raise DriverError(ACTION, GONE % el['ref'])
         if abs(point[0] - x) < 1 and abs(point[1] - y) < 1:
             return point
         x, y = point
     raise DriverError(
-        ACTION, 'e%d is still moving, so a click could land beside it; try again once the page settles, or pass force to click anyway' % backend
+        ACTION, '%s is still moving, so a click could land beside it; try again once the page settles, or pass force to click anyway' % el['ref']
     )
 
 
@@ -790,36 +953,40 @@ def call_on(conn, session_id, object_id, fn, deadline, args=None):
     return (res.get('result') or {}).get('value')
 
 
-def covering(conn, session_id, backend, target, x, y, deadline):
+def covering(conn, el, target, x, y, deadline):
     """
-    What a click at (x, y) would land on instead of the element, in a few
-    words; None when it reaches the element, or Chromium cannot say.
+    What a click at (x, y) on the page would land on instead of the element, in
+    a few words; None when it reaches it, or Chromium cannot say. On the way
+    down, each frame's <iframe> must be what the click meets in its parent's
+    process, and in the element's own frame, the element or something in it.
     """
-    try:
-        hit = conn.call(
-            'DOM.getNodeForLocation', {'x': int(round(x)), 'y': int(round(y)), 'includeUserAgentShadowDOM': True}, session_id, deadline
-        )
-    except DriverError as exc:
-        if exc.kind != PROTOCOL:
-            raise
-        return None
-    other = hit.get('backendNodeId')
-    if not other or other == backend:
-        return None
-    hit_object = page_object(conn, session_id, other, deadline)
-    if not hit_object:
-        return None
-    try:
-        if call_on(conn, session_id, target, WITHIN, deadline, [{'objectId': hit_object}]) is True:
+    levels = list(el['outer']) + [(el['sid'], el['backend'])]
+    for i, ((sid, want), (ox, oy)) in enumerate(zip(levels, el.get('origins') or [(0.0, 0.0)])):
+        try:
+            hit = conn.call(
+                'DOM.getNodeForLocation', {'x': int(round(x - ox)), 'y': int(round(y - oy)), 'includeUserAgentShadowDOM': True}, sid, deadline
+            )
+        except DriverError as exc:
+            if exc.kind != PROTOCOL:
+                raise
             return None
-    except DriverError as exc:
-        # ponytail: a node in another frame cannot be handed to this frame's
-        # script, so the click goes ahead as it always did; frames get their own
-        # refs with J3-c.
-        if exc.kind != PROTOCOL:
-            raise
-        return None
-    return call_on(conn, session_id, hit_object, DESCRIBE, deadline) or 'something else'
+        other = hit.get('backendNodeId')
+        if not other or other == want:
+            continue
+        hit_object = page_object(conn, sid, other, deadline)
+        if not hit_object:
+            return None
+        if i == len(levels) - 1:
+            try:
+                if call_on(conn, sid, target, WITHIN, deadline, [{'objectId': hit_object}]) is True:
+                    continue
+            except DriverError as exc:
+                # A node in another frame of this process cannot be handed to the
+                # element's frame: it is not in the element, so it covers it.
+                if exc.kind != PROTOCOL:
+                    raise
+        return call_on(conn, sid, hit_object, DESCRIBE, deadline) or 'something else'
+    return None
 
 
 def act_goto(conn, sid, step, deadline):
@@ -848,61 +1015,102 @@ def act_click(conn, sid, step, deadline):
     """
     force = bool(step.get('force'))
     # Even forced, a ref from an earlier page is refused: force is about the element's state, not which element.
-    backend = target_of(conn, sid, step, deadline, unique=not force)
+    el = locate(conn, sid, step, deadline, unique=not force)
     if force:
-        x, y = centre(conn, sid, backend, deadline)
+        x, y = centre(conn, el, deadline)
     else:
-        target = page_object(conn, sid, backend, deadline)
-        state = call_on(conn, sid, target, CLICK_STATE, deadline) if target else None
+        target = page_object(conn, el['sid'], el['backend'], deadline)
+        state = call_on(conn, el['sid'], target, CLICK_STATE, deadline) if target else None
         if not isinstance(state, dict) or state.get('gone'):
-            raise DriverError(ACTION, GONE % backend)
+            raise DriverError(ACTION, GONE % el['ref'])
         if state.get('disabled'):
-            raise DriverError(ACTION, 'e%d is disabled, so a click would do nothing; wait until it is enabled, or pass force to click anyway' % backend)
+            raise DriverError(ACTION, '%s is disabled, so a click would do nothing; wait until it is enabled, or pass force to click anyway' % el['ref'])
         if state.get('hidden'):
-            raise DriverError(ACTION, 'e%d is not visible (hidden, or of no size); open or scroll to what shows it, or pass force to click anyway' % backend)
-        x, y = steady_centre(conn, sid, backend, deadline)
-        over = covering(conn, sid, backend, target, x, y, deadline)
+            raise DriverError(ACTION, '%s is not visible (hidden, or of no size); open or scroll to what shows it, or pass force to click anyway' % el['ref'])
+        x, y = steady_centre(conn, el, deadline)
+        over = covering(conn, el, target, x, y, deadline)
         if over:
-            raise DriverError(ACTION, 'e%d is covered: a click on it would land on %s instead; close or move that first, or pass force to click anyway' % (backend, over))
+            raise DriverError(ACTION, '%s is covered: a click on it would land on %s instead; close or move that first, or pass force to click anyway' % (el['ref'], over))
     started = set(conn.downloads)
+    # The page's session takes the click wherever it lands, a cross-site frame included.
     base = {'x': x, 'y': y, 'button': 'left', 'clickCount': 1, 'buttons': 1}
     conn.call('Input.dispatchMouseEvent', dict(base, type='mousePressed'), sid, deadline)
     conn.call('Input.dispatchMouseEvent', dict(base, type='mouseReleased', buttons=0), sid, deadline)
-    # Most clicks navigate nothing, so wait for a load only once one has started;
-    # a download starts as a navigation and never loads, so it ends the wait too.
-    navigated = maybe_event(conn, 'Page.frameStartedLoading', sid, 0.25, deadline)
-    if navigated:
-        listen_for(conn, sid, ('Page.loadEventFired', 'Browser.downloadWillBegin'), float(step.get('loadTimeoutMs', 5000)) / 1000.0, deadline)
+    navigated = loads(conn, sid, el, float(step.get('loadTimeoutMs', 5000)) / 1000.0, deadline)
     finish_downloads(conn, sid, started, deadline)
-    return {'ref': 'e%d' % backend, 'navigated': navigated, 'checked': not force}
+    return {'ref': el['ref'], 'navigated': navigated, 'checked': not force}
+
+
+def loads(conn, sid, el, seconds, deadline):
+    """
+    Whether an action started a load, waiting for it to finish if so. Most
+    actions load nothing, so the wait starts only once a load has; a download
+    starts as a navigation and never loads, so it ends the wait too. For an
+    element in a frame, it is the frame's load.
+    """
+    if el['frame'] is None:
+        navigated = maybe_event(conn, 'Page.frameStartedLoading', sid, 0.25, deadline)
+        if navigated:
+            listen_for(conn, sid, ('Page.loadEventFired', 'Browser.downloadWillBegin'), seconds, deadline)
+        return navigated
+    started = listen_for(conn, sid, ('Page.frameStartedLoading',), 0.25, deadline, on=el['sid'])
+    if started:
+        listen_for(conn, sid, ('Page.frameStoppedLoading', 'Browser.downloadWillBegin'), seconds, deadline, on=el['sid'])
+    return started is not None
 
 
 def act_fill(conn, sid, step, deadline):
-    backend = target_of(conn, sid, step, deadline)
-    field = page_object(conn, sid, backend, deadline)
+    el = locate(conn, sid, step, deadline)
+    field = page_object(conn, el['sid'], el['backend'], deadline)
     if not field:
-        raise DriverError(ACTION, GONE % backend)
-    conn.call('DOM.focus', {'backendNodeId': backend}, sid, deadline)
+        raise DriverError(ACTION, GONE % el['ref'])
+    conn.call('DOM.focus', {'backendNodeId': el['backend']}, el['sid'], deadline)
     if step.get('clear', True):
-        call_on(conn, sid, field, SELECT_NODE, deadline)
-    conn.call('Input.insertText', {'text': str(step.get('text', ''))}, sid, deadline)
-    call_on(conn, sid, field, CHANGE_NODE, deadline)
+        call_on(conn, el['sid'], field, SELECT_NODE, deadline)
+    # The element's own session: a cross-site frame's text and keys go to its own process.
+    conn.call('Input.insertText', {'text': str(step.get('text', ''))}, el['sid'], deadline)
+    call_on(conn, el['sid'], field, CHANGE_NODE, deadline)
     if step.get('submit'):
         enter = {'key': 'Enter', 'code': 'Enter', 'windowsVirtualKeyCode': 13, 'nativeVirtualKeyCode': 13}
-        conn.call('Input.dispatchKeyEvent', dict(enter, type='keyDown', text='\r'), sid, deadline)
-        conn.call('Input.dispatchKeyEvent', dict(enter, type='keyUp'), sid, deadline)
-        maybe_event(conn, 'Page.loadEventFired', sid, 10.0, deadline)
-    return {'ref': 'e%d' % backend}
+        conn.call('Input.dispatchKeyEvent', dict(enter, type='keyDown', text='\r'), el['sid'], deadline)
+        conn.call('Input.dispatchKeyEvent', dict(enter, type='keyUp'), el['sid'], deadline)
+        if el['frame'] is None:
+            maybe_event(conn, 'Page.loadEventFired', sid, 10.0, deadline)
+        else:
+            loads(conn, sid, el, 10.0, deadline)
+    return {'ref': el['ref']}
 
 
 def act_select(conn, sid, step, deadline):
-    backend = target_of(conn, sid, step, deadline)
-    field = page_object(conn, sid, backend, deadline)
+    el = locate(conn, sid, step, deadline)
+    field = page_object(conn, el['sid'], el['backend'], deadline)
     if not field:
-        raise DriverError(ACTION, GONE % backend)
-    conn.call('DOM.focus', {'backendNodeId': backend}, sid, deadline)
-    chosen = call_on(conn, sid, field, CHOOSE_OPTION, deadline, [{'value': str(step.get('value', ''))}])
-    return {'ref': 'e%d' % backend, 'selected': chosen if isinstance(chosen, str) else ''}
+        raise DriverError(ACTION, GONE % el['ref'])
+    conn.call('DOM.focus', {'backendNodeId': el['backend']}, el['sid'], deadline)
+    chosen = call_on(conn, el['sid'], field, CHOOSE_OPTION, deadline, [{'value': str(step.get('value', ''))}])
+    return {'ref': el['ref'], 'selected': chosen if isinstance(chosen, str) else ''}
+
+
+def act_hover(conn, sid, step, deadline):
+    """The pointer over the element, for the menus that only exist under it."""
+    el = locate(conn, sid, step, deadline)
+    x, y = centre(conn, el, deadline)
+    conn.call('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': x, 'y': y, 'button': 'none', 'buttons': 0}, sid, deadline)
+    return {'ref': el['ref']}
+
+
+def act_scroll(conn, sid, step, deadline):
+    """The element scrolled into view, its frames' <iframe>s first."""
+    el = locate(conn, sid, step, deadline)
+    centre(conn, el, deadline)
+    return {'ref': el['ref']}
+
+
+def act_upload(conn, sid, step, deadline):
+    """Files from the computer on a file input."""
+    el = locate(conn, sid, step, deadline)
+    conn.call('DOM.setFileInputFiles', {'backendNodeId': el['backend'], 'files': [str(f) for f in step.get('files') or []]}, el['sid'], deadline)
+    return {'ref': el['ref']}
 
 
 def act_wait(conn, sid, step, deadline):
@@ -915,27 +1123,75 @@ def act_wait(conn, sid, step, deadline):
 
 def act_snapshot(conn, sid, step, deadline):
     conn.call('Accessibility.enable', {}, sid, deadline)
-    tree = conn.call('Accessibility.getFullAXTree', {}, sid, deadline)
-    # Every ref this snapshot hands out belongs to this document, and only to it.
+    nodes = conn.call('Accessibility.getFullAXTree', {}, sid, deadline).get('nodes') or []
+    # Every ref this snapshot hands out belongs to its document, and only to it.
     document = current_document(conn, sid, deadline)
+    known = ref_documents(conn, sid)
     if document:
-        known = ref_documents(conn, sid)
-        for node in tree.get('nodes') or []:
+        for node in nodes:
             if node.get('backendDOMNodeId'):
-                known[node['backendDOMNodeId']] = document
-    unreachable = []
-    if step.get('framesExpression'):
-        try:
-            unreachable = evaluate(conn, sid, step['framesExpression'], deadline) or []
-        except DriverError as exc:
-            if exc.kind not in (PROTOCOL, ACTION):
-                raise
+                known['e%d' % node['backendDOMNodeId']] = (None, document)
+    frames, unreachable = splice_frames(conn, sid, nodes, step.get('frames') or {}, deadline)
     return {
-        'nodes': tree.get('nodes') or [],
+        'nodes': nodes,
+        'frames': frames,
         'unreachable': unreachable,
         'url': evaluate(conn, sid, 'location.href', deadline),
         'document': document,
     }
+
+
+def splice_frames(conn, sid, nodes, seen, deadline):
+    """
+    Each frame's tree, added to `nodes` under its <iframe>: a same-site frame's
+    from the page's session, a cross-site one's from its own, since Chromium
+    runs it in another process that the page's session cannot see into. Its
+    nodes carry their frame's number, so their refs are f<k>e<n>. Returns
+    {f<k>: {id, document}} for the frames read, and the address of each frame
+    that could not be read.
+    """
+    keys = frame_keys(conn, sid, seen)
+    known = ref_documents(conn, sid)
+    # Each frame's own nodes, to find its child frames' <iframe>s in: the page's before any frame's are added.
+    by_frame = {}
+    frames, unreachable = {}, []
+    for host in sessions_under(conn, sid, deadline):
+        for frame in frames_of(frame_tree(conn, host, deadline)):
+            fid = frame.get('id')
+            if host == sid and not frame.get('parentId'):
+                by_frame[fid] = list(nodes)
+                continue
+            parent_nodes = by_frame.get(frame.get('parentId'))
+            owner = owner_of(conn, parent_session(conn, sid, host, fid), fid, deadline)
+            iframe = next((n for n in parent_nodes or [] if owner and n.get('backendDOMNodeId') == owner), None)
+            if iframe is None:
+                continue  # its <iframe> is hidden, or in a frame that is: nothing there to read or click
+            try:
+                tree = conn.call('Accessibility.getFullAXTree', {'frameId': fid}, host, deadline).get('nodes') or []
+            except DriverError as exc:
+                if exc.kind != PROTOCOL:
+                    raise
+                unreachable.append(frame.get('url') or '(no address)')
+                continue
+            if fid not in keys:
+                keys[fid] = max(list(keys.values()) or [0]) + 1
+            tag = 'f%d' % keys[fid]
+            for n in tree:
+                n['nodeId'] = '%s:%s' % (tag, n.get('nodeId'))
+                if n.get('parentId'):
+                    n['parentId'] = '%s:%s' % (tag, n['parentId'])
+                n['childIds'] = ['%s:%s' % (tag, c) for c in n.get('childIds') or []]
+                n['frame'] = tag
+                if n.get('backendDOMNodeId') and frame.get('loaderId'):
+                    known['%se%d' % (tag, n['backendDOMNodeId'])] = (fid, frame['loaderId'])
+            root = next((n for n in tree if not n.get('parentId')), None)
+            if root is not None:
+                root['parentId'] = iframe.get('nodeId')
+                iframe['childIds'] = [root['nodeId']]
+            by_frame[fid] = tree
+            nodes.extend(tree)
+            frames[tag] = {'id': fid, 'document': frame.get('loaderId')}
+    return frames, unreachable
 
 
 def act_screenshot(conn, sid, step, deadline):
@@ -1130,12 +1386,12 @@ def script_call(conn, sid, op, args, deadline):
         return BRIDGE.host_call(conn, 'compact', {'nodes': raw['nodes'], 'limit': args.get('limit', 400)}, deadline)
     if op == 'text':
         if args.get('ref') or args.get('role') or args.get('name'):
-            backend = target_of(conn, sid, args, deadline)
-            obj = conn.call('DOM.resolveNode', {'backendNodeId': backend}, sid, deadline).get('object') or {}
+            el = locate(conn, sid, args, deadline)
+            obj = conn.call('DOM.resolveNode', {'backendNodeId': el['backend']}, el['sid'], deadline).get('object') or {}
             res = conn.call(
                 'Runtime.callFunctionOn',
                 {'objectId': obj.get('objectId'), 'functionDeclaration': 'function () { return this.innerText ?? this.textContent ?? ""; }', 'returnByValue': True},
-                sid,
+                el['sid'],
                 deadline,
             )
             return (res.get('result') or {}).get('value')
@@ -1357,6 +1613,9 @@ ACTIONS = {
     'click': act_click,
     'fill': act_fill,
     'select': act_select,
+    'hover': act_hover,
+    'scroll': act_scroll,
+    'upload': act_upload,
     'wait': act_wait,
     'snapshot': act_snapshot,
     'screenshot': act_screenshot,

@@ -122,6 +122,24 @@ A role and a name are found afresh on the page as it is. `type` and `select` act
 on the field itself, never on `document.activeElement`, which inside a frame is
 the frame.
 
+## Frames
+
+A snapshot reads every frame on the page and puts its tree under its `<iframe>`.
+Chromium runs a cross-site frame in a process of its own, which the page's own
+session cannot see into, so the driver attaches to each such frame and reads it
+through its own session. That matters: consent banners, card fields and embedded
+sign-ins are routinely cross-origin.
+
+A frame's refs name the frame: `f2e7` is node 7 of frame 2. A frame in another
+process numbers its nodes afresh, so `e7` alone could be the page's node 7. A frame
+keeps its number for as long as the page is open, and its refs act only on the
+document the snapshot saw in it, so a frame that loads another page on its own takes
+its refs with it. Clicks go to the page at the element's place on it, through each
+`<iframe>` on the way, and an honest click checks each of those too. Typing goes to
+the frame's own process. A role and a name are looked for in the page's own frame;
+inside a frame, use its refs. A frame that cannot be read is listed at the end of
+the snapshot, by address.
+
 ## Honest clicks
 
 A click is refused, saying why, before anything is pressed:

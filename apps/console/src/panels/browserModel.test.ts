@@ -26,6 +26,8 @@ describe('ref selection', () => {
   it('accepts the e<backendDOMNodeId> refs click can resolve', () => {
     expect(isActionableRef('e1')).toBe(true);
     expect(isActionableRef('e40219')).toBe(true);
+    // A node inside a frame: frame 2's node 7.
+    expect(isActionableRef('f2e7')).toBe(true);
   });
 
   it('rejects the informational a-prefixed refs', () => {
@@ -40,7 +42,7 @@ describe('ref selection', () => {
   it('agrees with @husk-ai/browser about which refs resolve', () => {
     // The contract, not our restatement of it: whatever `backendNodeIdOf`
     // resolves is exactly what this panel is allowed to offer.
-    for (const ref of ['e1', 'e999', 'a1', 'a', 'e', 'exyz', '']) {
+    for (const ref of ['e1', 'e999', 'f1e7', 'f1', 'fe7', 'a1', 'a', 'e', 'exyz', '']) {
       expect(isActionableRef(ref)).toBe(backendNodeIdOf(ref) !== null);
     }
   });
