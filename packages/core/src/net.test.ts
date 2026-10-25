@@ -5,6 +5,7 @@ import {
   isHostAllowed,
   isInternalHost,
   isLoopbackHost,
+  networkEnforcement,
   urlHost,
 } from './net.js';
 
@@ -116,6 +117,28 @@ describe('isHostAllowed', () => {
   it('an absent policy allows the internet but not the LAN', () => {
     expect(isHostAllowed('example.com', undefined)).toBe(true);
     expect(isHostAllowed('169.254.169.254', undefined)).toBe(false);
+  });
+});
+
+describe('networkEnforcement', () => {
+  it('has nothing to say when there is no policy, or the provider enforces it', () => {
+    expect(networkEnforcement('local', undefined)).toBeUndefined();
+    expect(networkEnforcement('docker', { mode: 'none' })).toBeUndefined();
+    expect(networkEnforcement('podman', { mode: 'none' })).toBeUndefined();
+    expect(networkEnforcement('local', { mode: 'full' })).toBeUndefined();
+  });
+
+  it('says "none" holds only for Husk\'s tools and the browser where the kernel does not stop processes', () => {
+    for (const provider of ['local', 'ssh', 'fly']) {
+      expect(networkEnforcement(provider, { mode: 'none' })).toMatch(new RegExp(`not enforced on ${provider}.*a process in the computer can still reach the network`));
+    }
+  });
+
+  it('says no provider firewalls egress or a deny list for processes', () => {
+    for (const provider of ['docker', 'podman', 'local', 'ssh', 'fly']) {
+      expect(networkEnforcement(provider, { mode: 'egress', allow: ['pypi.org'] })).toMatch(/no provider firewalls it yet/);
+      expect(networkEnforcement(provider, { mode: 'full', deny: ['example.com'] })).toMatch(/deny list/);
+    }
   });
 });
 

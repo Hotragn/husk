@@ -107,11 +107,22 @@ computer:
   safe reading of an under-specified policy.
 - `full` — unrestricted, minus explicit denies.
 
-On `docker` and `podman`, `none` is enforced by the kernel (`--network none`). On
-`local`, `ssh` and `fly` it is not applied at all yet. On `egress`, hostname
-allow-listing is applied at the tool layer, not by a firewall — a process that opens a
-raw socket is not stopped. That is a real limitation and it is why `none` and `full` are
-the honest choices when the distinction matters.
+What enforces the policy depends on what is reaching out:
+
+| What reaches out | `docker`, `podman` | `local` | `ssh` | `fly` |
+| --- | --- | --- | --- | --- |
+| Husk's own tools (`browse`, `browser_goto`, `browser_tabs`, `browser_run`, `browser_script`) | every mode | every mode | every mode | every mode |
+| The browser's page loads (redirects, links, frames, pop-ups) | every mode | every mode | every mode | no browser on fly yet |
+| Processes (shell, scripts, servers): `none` | enforced by the kernel (`--network none`) | not enforced | not enforced | not enforced |
+| Processes: `egress`, a deny list, internal addresses | not enforced | not enforced | not enforced | not enforced |
+
+Nothing firewalls a process yet: on `egress`, a process that opens a raw socket is not
+stopped. That is a real limitation, and it is why `none` on docker or podman, or `full`,
+are the honest choices when the distinction matters. Where a provider cannot enforce
+what a policy declares, Husk says so: as a warning when the computer is made, and in the
+note the chat reads first. Ask for strict enforcement (`strict: true` under
+`computer.network`, or `husk-mcp --network-strict`) and Husk refuses to make the computer
+instead.
 
 The tool layer checks the URLs Husk itself opens: `browse` (every redirect hop, not
 just the first URL), `browser_goto`, a new tab from `browser_tabs`, the `goto` steps of

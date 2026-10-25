@@ -10,7 +10,7 @@ import {
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { HUSK_VERSION, IDENTITY_LABELS, chatLabel, createLogger, platformName, quiet, redact } from '@husk-ai/core';
+import { HUSK_VERSION, IDENTITY_LABELS, chatLabel, createLogger, networkEnforcement, platformName, quiet, redact } from '@husk-ai/core';
 import type { IdentitySource } from '@husk-ai/core';
 import type { Computer, ComputerInfo, ComputerSpec, Logger } from '@husk-ai/core';
 import { ComputerManager, ensureRunning } from '@husk-ai/runtime';
@@ -974,6 +974,13 @@ export class HuskMcpServer {
  * and deserves a test that is not a subprocess.
  */
 export function isolationNote(info: ComputerInfo): string {
+  // What the provider cannot enforce of the network policy, said where the model reads first.
+  const network = networkEnforcement(info.provider, info.spec.network);
+  const note = computerNote(info);
+  return network ? `${note} Note: ${network}.` : note;
+}
+
+function computerNote(info: ComputerInfo): string {
   const p = info.provider;
   if (p === 'docker' || p === 'podman') {
     return `[husk] ${p} container ${info.id}, isolated from the host. /work persists for this session.`;

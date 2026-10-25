@@ -22,6 +22,7 @@ options
   --provider <name>   docker | podman | local | ssh | fly  (default: best available)
   --flavor <name>     base | python | node | full          (default: full, which runs the browser)
   --network <mode>    none | egress | full                 (default: full, minus internal addresses)
+  --network-strict    refuse a provider that cannot enforce --network for every process
   --memory <mb>       memory ceiling
   --cpus <n>          cpu ceiling
   --keep              leave the machine running after the client disconnects
@@ -46,6 +47,7 @@ async function main(): Promise<void> {
         provider: { type: 'string' },
         flavor: { type: 'string' },
         network: { type: 'string' },
+        'network-strict': { type: 'boolean', default: false },
         memory: { type: 'string' },
         cpus: { type: 'string' },
         keep: { type: 'boolean', default: false },
@@ -76,7 +78,9 @@ async function main(): Promise<void> {
   // Every chat is offered the browser tools, and only `full` runs the browser
   // (images.ts). Providers without flavours (local, ssh) ignore it.
   spec.flavor = (values.flavor ?? 'full') as Flavor;
-  if (values.network) spec.network = { mode: values.network as 'none' | 'egress' | 'full' };
+  if (values.network) {
+    spec.network = { mode: values.network as 'none' | 'egress' | 'full', ...(values['network-strict'] ? { strict: true } : {}) };
+  }
   if (values.memory) spec.memoryMb = Number(values.memory);
   if (values.cpus) spec.cpus = Number(values.cpus);
 
