@@ -124,7 +124,7 @@ describe('a person taking a computer from the console', { timeout: 30_000 }, () 
     const call = shell(id);
     await new Promise((r) => setTimeout(r, 600));
     expect(ran).toEqual([]);
-    await harness.app.inject({ method: 'POST', url: `/v1/handoffs/${handoffId}/done` });
+    await harness.app.inject({ method: 'POST', url: `/v1/handoffs/${handoffId}/done`, headers: { 'x-husk-as': 'person' } });
     expect((await call).json().content[0].text).toBe('ran');
   });
 

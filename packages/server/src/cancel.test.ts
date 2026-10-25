@@ -77,7 +77,7 @@ describe('a chat cancelling a tool call', { timeout: 30_000 }, () => {
     });
     const { handoffId } = (await harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/takeover` })).json() as { handoffId: string };
     await cancelledAfter(300, `${base}/v1/computers/${id}/tools/shell`, { args: {} });
-    await harness.app.inject({ method: 'POST', url: `/v1/handoffs/${handoffId}/done` });
+    await harness.app.inject({ method: 'POST', url: `/v1/handoffs/${handoffId}/done`, headers: { 'x-husk-as': 'person' } });
     await new Promise((r) => setTimeout(r, 600));
     expect(ran).toEqual([]);
   });

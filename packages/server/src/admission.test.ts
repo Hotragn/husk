@@ -89,7 +89,7 @@ describe('a computer a person holds', { timeout: 30_000 }, () => {
     harness = await buildTestApp();
     const { id } = (await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: {} })).json() as { id: string };
     const { handoffId } = (await harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/takeover` })).json() as { handoffId: string };
-    await harness.app.inject({ method: 'POST', url: `/v1/handoffs/${handoffId}/done` });
+    await harness.app.inject({ method: 'POST', url: `/v1/handoffs/${handoffId}/done`, headers: { 'x-husk-as': 'person' } });
     expect((await harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/exec`, payload: { cmd: 'echo hi' } })).statusCode).toBe(200);
   });
 });

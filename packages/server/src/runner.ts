@@ -108,7 +108,7 @@ export interface RunnerOptions {
  */
 export class Runner {
   readonly approvals: ApprovalRegistry;
-  readonly handoffs = new HandoffRegistry();
+  readonly handoffs: HandoffRegistry;
   private readonly active = new Map<string, ActiveRun>();
 
   constructor(
@@ -119,6 +119,7 @@ export class Runner {
     this.approvals = new ApprovalRegistry(
       opts.approvalTimeoutMs === undefined ? {} : { timeoutMs: opts.approvalTimeoutMs },
     );
+    this.handoffs = new HandoffRegistry(deps.holdsFile);
   }
 
   get activeCount(): number {

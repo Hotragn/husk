@@ -417,9 +417,20 @@ waits up to 45 seconds for it to
 come back, then runs; still held, it answers with an error telling the model it is
 paused. After Give back, a browser action is refused only if the page is not the one
 the AI left (another URL, title or tab, or a call of its own stopped part-way), with
-what changed; a `browser_snapshot` or `browser_goto` clears that. Only
-`POST /v1/handoffs/:handoffId/done` (Give back) ends it: there is no lease, and a
-chat's `hand_off_done` cannot, since the chat never opened it.
+what changed; a `browser_snapshot` or `browser_goto` clears that.
+
+Only the person's Give back, `POST /v1/handoffs/:handoffId/done`, ends a take-over,
+from the console or the desktop app (`X-Husk-As: person`), or from the link it was
+taken with. There is no lease. A program's `done` (a chat's `hand_off_done`), the
+model's own link and `DELETE /v1/handoffs/:handoffId` are refused with 409
+`E_COMPUTER_HELD`. Taking over a computer whose chat or run asked for a person makes
+that handoff the person's, on the same terms. A handoff the chat asked for, and nobody
+took, still ends with the chat's `hand_off_done`.
+
+The shared Husk keeps its take-overs and its chats' handoffs in `~/.husk/holds.json`
+and holds them again when it restarts, before it serves anything. A chat's handoff gets
+a fresh lease, which its chat's polling keeps. A file it cannot read fails closed: every
+computer is held for the person until they give it back.
 
 Every other route that changes a held computer (`exec`, `exec/stream`, `fs`,
 `browser/*`, `ports`, `browse`, `stop`, `start`, `DELETE`) refuses a program with
