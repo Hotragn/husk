@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { HuskError } from '@husk-ai/core';
-import type { Computer, ComputerProcess } from '@husk-ai/core';
+import type { Computer, ComputerProcess, NetworkPolicy } from '@husk-ai/core';
 import { DRIVER_PATH, DRIVER_SOURCE } from './driver.js';
 import { DOWNLOADS_DIR } from './provision.js';
 
@@ -325,6 +325,18 @@ export interface ComputerTransportOptions {
    * megabytes, so the cap has to sit well clear of them.
    */
   maxOutputBytes?: number;
+  /**
+   * The network policy for what a page loads by itself: a redirect's next hop,
+   * a link, a frame, a pop-up. The driver stops a document load it refuses and
+   * says so in the action's result. Husk checks the URLs it sends itself.
+   */
+  policy?: DriverPolicy;
+}
+
+/** The computer's network policy, and whether its loopback is its own (see `ownsLoopback`). */
+export interface DriverPolicy {
+  network?: NetworkPolicy | undefined;
+  loopbackIsOwn: boolean;
 }
 
 /**
@@ -335,6 +347,7 @@ export interface ComputerTransportOptions {
 export class ComputerDriverTransport implements CdpTransport {
   private readonly pinnedPath: string | undefined;
   private readonly maxOutputBytes: number;
+  private readonly policy: DriverPolicy | undefined;
   /** Resolves to the path the driver actually landed on. */
   private installed: Promise<string> | undefined;
   /** Cached so the common call skips a /json/version round trip. The driver rediscovers if it is stale. */
@@ -358,6 +371,7 @@ export class ComputerDriverTransport implements CdpTransport {
   ) {
     this.pinnedPath = opts.driverPath;
     this.maxOutputBytes = opts.maxOutputBytes ?? 96 * 1024 * 1024;
+    this.policy = opts.policy;
   }
 
   async run(req: DriverRequest): Promise<DriverResult> {
@@ -366,7 +380,16 @@ export class ComputerDriverTransport implements CdpTransport {
     stopIfAborted(signal);
     this.inFlight++;
     try {
-      const served = await this.serve({ steps: req.steps, downloads: DOWNLOADS_DIR, ...(req.targetId !== undefined ? { targetId: req.targetId } : {}) }, timeoutMs, signal);
+      const served = await this.serve(
+        {
+          steps: req.steps,
+          downloads: DOWNLOADS_DIR,
+          ...(this.policy ? { policy: this.policy } : {}),
+          ...(req.targetId !== undefined ? { targetId: req.targetId } : {}),
+        },
+        timeoutMs,
+        signal,
+      );
       return served ? resultOf(served) : await this.runOneShot(req, signal);
     } catch (err) {
       // Stopped part-way: say that, not what the stop looked like from here.
@@ -524,6 +547,7 @@ export class ComputerDriverTransport implements CdpTransport {
       ...(this.ws ? { ws: this.ws } : {}),
       ...req,
       downloads: DOWNLOADS_DIR,
+      ...(this.policy ? { policy: this.policy } : {}),
       timeoutMs,
     });
 

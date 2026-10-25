@@ -329,6 +329,10 @@ class Conn(object):
         # own session: child session -> {'parent': session, 'frame': frame id}.
         self.frame_sessions = {}
         self.auto_attached = set()
+        # The network policy the host sends ({'network', 'loopbackIsOwn'}), and the
+        # loads it stopped since the action began. None: nothing is intercepted.
+        self.policy = None
+        self.blocked = []
 
     def _pump(self, deadline):
         # A screencast frame waits for its ack, and Chromium sends no other until
@@ -387,6 +391,9 @@ class Conn(object):
         if method == 'Page.javascriptDialogOpening':
             self.answer_dialog(msg.get('sessionId'), params)
             return
+        if method == 'Fetch.requestPaused':
+            self.decide(msg.get('sessionId'), params)
+            return
         if method == 'Browser.downloadWillBegin':
             self.downloads[params.get('guid')] = {'name': params.get('suggestedFilename') or '', 'state': 'inProgress'}
         elif method == 'Browser.downloadProgress':
@@ -401,8 +408,14 @@ class Conn(object):
                 self.popups.append({'targetId': info.get('targetId') or '', 'url': info.get('url') or ''})
         elif method == 'Target.attachedToTarget':
             info = params.get('targetInfo') or {}
-            if info.get('type') == 'iframe' and params.get('sessionId'):
-                self.frame_sessions[params['sessionId']] = {'parent': msg.get('sessionId'), 'frame': info.get('targetId')}
+            child = params.get('sessionId')
+            if child and info.get('type') == 'iframe':
+                self.frame_sessions[child] = {'parent': msg.get('sessionId'), 'frame': info.get('targetId')}
+                self.guard(child, 'iframe', params.get('waitingForDebugger'))
+            elif child and info.get('type') == 'page':
+                # One session per tab, so a load is decided once and a dialog answered once.
+                self.sessions.setdefault(info.get('targetId'), child)
+                self.guard(child, 'page', params.get('waitingForDebugger'))
         elif method == 'Target.targetInfoChanged':
             info = params.get('targetInfo') or {}
             for popup in self.popups:
@@ -431,6 +444,40 @@ class Conn(object):
         accept = kind in ('alert', 'beforeunload') or self.dialog_answer == 'accept'
         self.send_only('Page.handleJavaScriptDialog', {'accept': accept}, session_id)
         self.dialogs.append({'type': kind, 'message': (params.get('message') or '')[:300], 'answer': 'accepted' if accept else 'dismissed'})
+
+    def guard(self, session_id, kind, waiting):
+        """
+        A tab or a cross-site frame, before it runs: its document loads go by the
+        network policy, its dialogs are answered (a pop-up can alert as it opens),
+        and a frame's own cross-site frames are guarded the same way as they
+        attach. Sent without waiting for the answers, since this runs while
+        events are read; Chromium does a session's commands in order, so all of
+        it is in place before the target is let go.
+        """
+        if self.policy is not None:
+            self.send_only('Fetch.enable', DOCUMENTS, session_id)
+        if kind == 'iframe':
+            for domain in ('Page', 'DOM'):
+                self.send_only(domain + '.enable', {}, session_id)
+            self.send_only('Target.setAutoAttach', FRAMES, session_id)
+            self.auto_attached.add(session_id)
+        else:
+            self.send_only('Page.enable', {}, session_id)
+        if waiting:
+            self.send_only('Runtime.runIfWaitingForDebugger', {}, session_id)
+
+    def decide(self, session_id, params):
+        """A document load the policy stopped is said in the action's result; the rest go on."""
+        request_id = params.get('requestId')
+        url = (params.get('request') or {}).get('url') or ''
+        reason = policy_refuses(url, self.policy)
+        if reason is None:
+            self.send_only('Fetch.continueRequest', {'requestId': request_id}, session_id)
+            return
+        self.send_only('Fetch.failRequest', {'requestId': request_id, 'errorReason': 'BlockedByClient'}, session_id)
+        self.blocked.append({'url': url[:300], 'reason': reason})
+        # ponytail: the last 50 kept, for a page that keeps trying while nobody is acting on it.
+        del self.blocked[:-50]
 
     def forget(self, session_id):
         self.frame_sessions.pop(session_id, None)
@@ -463,6 +510,204 @@ class Conn(object):
             return msg.get('params', {})
 
 
+# -- the network policy, for what a page loads by itself ------------------------
+#
+# The host checks the URLs it sends the browser to; these check the documents a
+# page loads on its own -- a redirect's next hop, a link, a frame, a pop-up -- so
+# the policy holds below the tool. net.ts is the one answer, ported here line for
+# line, and driver-policy.test.ts holds the two to one table: a security check
+# with two answers is not a security check. Subresources (images, scripts,
+# fetches) are not documents and are not checked.
+
+# Every document request, paused before it is sent.
+DOCUMENTS = {'patterns': [{'urlPattern': '*', 'resourceType': 'Document', 'requestStage': 'Request'}]}
+# A session's cross-site frames, each attached and held until it is guarded.
+FRAMES = {'autoAttach': True, 'waitForDebuggerOnStart': True, 'flatten': True, 'filter': [{'type': 'iframe'}]}
+
+
+def _one_dot(s):
+    s = s.lower()
+    return s[:-1] if s.endswith('.') else s
+
+
+def host_matches(host, pattern):
+    h, p = _one_dot(host), _one_dot(pattern)
+    if p == '*':
+        return True
+    if p.startswith('*.'):
+        suffix = p[1:]
+        return h.endswith(suffix) and len(h) > len(suffix)
+    return h == p
+
+
+def ipv4_octets(host):
+    """The four octets of an IPv4 literal in any spelling inet_aton takes (127.1, 0x7f000001), or None."""
+    parts = host.split('.')
+    if len(parts) > 4 or any(part == '' for part in parts):
+        return None
+    nums = []
+    for part in parts:
+        if re.fullmatch(r'0[xX][0-9a-fA-F]+', part):
+            nums.append(int(part, 16))
+        elif re.fullmatch(r'0[0-7]+', part):
+            nums.append(int(part, 8))
+        elif re.fullmatch(r'[0-9]+', part):
+            nums.append(int(part))
+        else:
+            return None
+    last = nums.pop()
+    width = 4 - len(nums)
+    if last >= 256 ** width or any(n > 255 for n in nums):
+        return None
+    octets = nums + [(last >> (8 * i)) & 0xff for i in range(width - 1, -1, -1)]
+    return octets if len(octets) == 4 else None
+
+
+def ipv6_groups(host):
+    """An IPv6 literal as its eight 16-bit groups, or None."""
+    if ':' not in host:
+        return None
+    h = host
+    tail = re.fullmatch(r'(.*:)([^:]*\.[^:]*)', h)
+    if tail:
+        v4 = ipv4_octets(tail.group(2))
+        if not v4:
+            return None
+        h = '%s%x:%x' % (tail.group(1), (v4[0] << 8) | v4[1], (v4[2] << 8) | v4[3])
+    halves = h.split('::')
+    if len(halves) > 2:
+        return None
+
+    def groups(part):
+        if part == '':
+            return []
+        out = []
+        for g in part.split(':'):
+            if not re.fullmatch(r'[0-9a-f]{1,4}', g):
+                return None
+            out.append(int(g, 16))
+        return out
+
+    head = groups(halves[0])
+    rest = groups(halves[1]) if len(halves) == 2 else []
+    if head is None or rest is None:
+        return None
+    missing = 8 - len(head) - len(rest)
+    if (missing != 0) if len(halves) == 1 else (missing < 1):
+        return None
+    return head + [0] * (missing if len(halves) == 2 else 0) + rest
+
+
+def embedded_v4(g):
+    """The IPv4 address an IPv6 one carries -- mapped, compatible, or NAT64 -- or None."""
+    v4 = [g[6] >> 8, g[6] & 0xff, g[7] >> 8, g[7] & 0xff]
+    zeros = lambda a, b: all(x == 0 for x in g[a:b])  # noqa: E731
+    if zeros(0, 5) and g[5] == 0xffff:
+        return v4
+    if zeros(0, 6):
+        return v4
+    if g[0] == 0x64 and g[1] == 0xff9b and zeros(2, 6):
+        return v4
+    return None
+
+
+def internal_v4(o):
+    a, b = o[0], o[1]
+    return (
+        a in (127, 0, 10)
+        or (a == 169 and b == 254)
+        or (a == 172 and 16 <= b <= 31)
+        or (a == 192 and b == 168)
+        or (a == 100 and 64 <= b <= 127)
+    )
+
+
+def _bare(host):
+    return re.sub(r'^\[|\]\Z', '', _one_dot(host))
+
+
+def loopback_groups(g):
+    v4 = embedded_v4(g)
+    return v4 is not None and v4[0] in (127, 0)
+
+
+def is_internal_host(host):
+    h = _bare(host)
+    if h == 'localhost' or h.endswith('.localhost') or h.endswith('.local'):
+        return True
+    if h.endswith('.internal') or h == 'metadata.google.internal':
+        return True
+    g = ipv6_groups(h)
+    if g:
+        if loopback_groups(g):
+            return True
+        if (g[0] & 0xfe00) == 0xfc00 or (g[0] & 0xffc0) in (0xfe80, 0xfec0):
+            return True
+        v4 = embedded_v4(g)
+        return v4 is not None and internal_v4(v4)
+    v4 = ipv4_octets(h)
+    return v4 is not None and internal_v4(v4)
+
+
+def is_loopback_host(host):
+    h = _bare(host)
+    if h == 'localhost' or h.endswith('.localhost'):
+        return True
+    g = ipv6_groups(h)
+    if g:
+        return loopback_groups(g)
+    v4 = ipv4_octets(h)
+    return v4 is not None and v4[0] in (127, 0)
+
+
+def host_allowed(host, network, loopback_is_own):
+    """net.ts's isHostAllowed: the floor first, so `full` cannot reach the metadata address, then the mode."""
+    explicitly = any(host_matches(host, pattern) for pattern in ((network or {}).get('allow') or []))
+    if not explicitly:
+        if is_loopback_host(host):
+            if not loopback_is_own:
+                return False
+        elif is_internal_host(host):
+            return False
+    if network is None:
+        return True
+    if any(host_matches(host, pattern) for pattern in (network.get('deny') or [])):
+        return False
+    mode = network.get('mode')
+    if mode == 'full':
+        return True
+    if mode == 'egress':
+        return explicitly
+    return False
+
+
+def policy_refuses(url, policy):
+    """
+    Why the network policy refuses a document a page asked for, or None when it
+    may load. Only http and https leave the browser: about:, data: and blob: are
+    the page's own.
+    """
+    if policy is None:
+        return None
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+    except ValueError:
+        return 'an address it cannot read'
+    if parsed.scheme not in ('http', 'https'):
+        return None
+    if not host:
+        return 'an address with no host'
+    own = bool(policy.get('loopbackIsOwn'))
+    if host_allowed(host, policy.get('network'), own):
+        return None
+    if is_loopback_host(host) and not own:
+        return 'loopback here is the host machine'
+    if is_internal_host(host):
+        return 'an internal address'
+    return 'not allowed by the policy'
+
+
 def attach(conn, target_id, deadline):
     try:
         res = conn.call('Target.attachToTarget', {'targetId': target_id, 'flatten': True}, None, deadline)
@@ -481,11 +726,16 @@ def attach(conn, target_id, deadline):
 
 
 def session_for(conn, target_id, deadline):
-    """The session for a tab. A one-shot connection always attaches; a served one attaches once."""
+    """
+    The session for a tab: the one auto-attach gave it, or one attached now and
+    guarded the same way. A one-shot connection attaches anew; a served one, once.
+    """
     session_id = conn.sessions.get(target_id)
     if not session_id:
         session_id = attach(conn, target_id, deadline)
         conn.sessions[target_id] = session_id
+        conn.guard(session_id, 'page', False)
+    auto_attach(conn, session_id, deadline)
     return session_id
 
 
@@ -617,19 +867,24 @@ def resolve(conn, session_id, step, deadline, unique=False):
     return elements[0]['backendDOMNodeId']
 
 
-def prepare(conn, deadline, downloads):
+def prepare(conn, deadline, downloads, policy=None):
     """
-    Once per connection: hear about the tabs pages open, and, when the host names
-    a folder for downloads (in a computer, /work/downloads), keep them there and
+    Once per connection: hear about the tabs pages open; attach to every tab,
+    a new one held until it is guarded, so its first load goes by the network
+    policy and a dialog it opens at once is answered; and, when the host names a
+    folder for downloads (in a computer, /work/downloads), keep them there and
     follow their progress. The host names it because only the host knows where
     the computer keeps things: the driver itself runs from a tmpfs.
     """
+    if policy is not None:
+        conn.policy = policy
     if conn.prepared:
         return
     conn.prepared = True
     try:
         conn.call('Target.setDiscoverTargets', {'discover': True}, None, deadline)
         conn.discovering = True
+        conn.call('Target.setAutoAttach', {'autoAttach': True, 'waitForDebuggerOnStart': True, 'flatten': True, 'filter': [{'type': 'page'}]}, None, deadline)
         if downloads:
             if not os.path.isdir(downloads):
                 os.makedirs(downloads)
@@ -673,8 +928,13 @@ def settle_popups(conn, session_id, popped, deadline, seconds=2.0):
 
 
 def happened(conn, started, popped):
-    """What a page did during an action besides its own result: dialogs it showed, files it downloaded, tabs it opened."""
+    """
+    What a page did during an action besides its own result: dialogs it showed,
+    files it downloaded, tabs it opened, and loads the network policy stopped.
+    """
     out = {}
+    if conn.blocked:
+        out['blocked'] = list(conn.blocked)
     if conn.dialogs:
         out['dialogs'] = list(conn.dialogs)
     new = [d for g, d in conn.downloads.items() if g not in started]
@@ -748,32 +1008,23 @@ def frames_of(tree):
     return out
 
 
-def auto_attach(conn, session_id, page, deadline):
+def auto_attach(conn, session_id, deadline):
     """
-    Once per session: attach to its cross-site frames, which Chromium reports
-    before it answers, so every one is known when this returns. A frame's own
-    session gets DOM, and Page for its loads; its dialogs still come once, to
-    the page's session.
+    Once per tab's session: attach to its cross-site frames, each held until it
+    is guarded (see Conn.guard, which does the same for a frame's own frames).
+    Chromium reports the frames already there before it answers, so every one is
+    known when this returns.
     """
     if session_id in conn.auto_attached:
         return
-    if not page:
-        for domain in ('Page', 'DOM'):
-            conn.call(domain + '.enable', {}, session_id, deadline)
-    conn.call(
-        'Target.setAutoAttach',
-        {'autoAttach': True, 'waitForDebuggerOnStart': False, 'flatten': True, 'filter': [{'type': 'iframe'}]},
-        session_id,
-        deadline,
-    )
+    conn.call('Target.setAutoAttach', FRAMES, session_id, deadline)
     conn.auto_attached.add(session_id)
 
 
-def sessions_under(conn, session_id, deadline):
+def sessions_under(conn, session_id):
     """The page's session, then the session of every cross-site frame under it, parents first."""
     out = [session_id]
     for s in out:  # grows as it goes: each session's frames join the end
-        auto_attach(conn, s, s == session_id, deadline)
         out.extend(c for c, info in list(conn.frame_sessions.items()) if info['parent'] == s and c not in out)
     return out
 
@@ -809,7 +1060,7 @@ def outer_levels(conn, page, session_id, deadline):
 
 def find_frame(conn, page, frame_id, deadline):
     """Where a frame is now: the session that reaches it, the frame (its loaderId names its document), and the <iframe>s on the way down. None once it is gone."""
-    for s in sessions_under(conn, page, deadline):
+    for s in sessions_under(conn, page):
         frame = next((f for f in frames_of(frame_tree(conn, s, deadline)) if f.get('id') == frame_id), None)
         if frame:
             outer = outer_levels(conn, page, s, deadline)
@@ -993,6 +1244,11 @@ def act_goto(conn, sid, step, deadline):
     url = step.get('url')
     started = set(conn.downloads)
     nav = conn.call('Page.navigate', {'url': url}, sid, deadline)
+    if nav.get('errorText') and conn.blocked:
+        # The host checked this URL; a redirect from it went somewhere the policy refuses.
+        b = conn.blocked[-1]
+        led = '' if b['url'] == url else ', where %s led' % url
+        raise DriverError(ACTION, 'the network policy refused %s (%s)%s' % (b['url'], b['reason'], led))
     if nav.get('errorText'):
         # A URL that is a file to download aborts the navigation and starts the
         # download: that is the goto doing what it was asked, not failing.
@@ -1033,12 +1289,26 @@ def act_click(conn, sid, step, deadline):
             raise DriverError(ACTION, '%s is covered: a click on it would land on %s instead; close or move that first, or pass force to click anyway' % (el['ref'], over))
     started = set(conn.downloads)
     # The page's session takes the click wherever it lands, a cross-site frame included.
+    to_front(conn, sid, deadline)
     base = {'x': x, 'y': y, 'button': 'left', 'clickCount': 1, 'buttons': 1}
     conn.call('Input.dispatchMouseEvent', dict(base, type='mousePressed'), sid, deadline)
     conn.call('Input.dispatchMouseEvent', dict(base, type='mouseReleased', buttons=0), sid, deadline)
     navigated = loads(conn, sid, el, float(step.get('loadTimeoutMs', 5000)) / 1000.0, deadline)
     finish_downloads(conn, sid, started, deadline)
     return {'ref': el['ref'], 'navigated': navigated, 'checked': not force}
+
+
+def to_front(conn, sid, deadline):
+    """
+    The tab to the front before the pointer moves in it. A pop-up the page opens
+    takes the front, and a tab behind it does not pass the pointer on to a frame
+    in another process: the click is sent, and nothing in the frame hears it.
+    """
+    try:
+        conn.call('Page.bringToFront', {}, sid, deadline)
+    except DriverError as exc:
+        if exc.kind != PROTOCOL:
+            raise
 
 
 def loads(conn, sid, el, seconds, deadline):
@@ -1095,6 +1365,7 @@ def act_hover(conn, sid, step, deadline):
     """The pointer over the element, for the menus that only exist under it."""
     el = locate(conn, sid, step, deadline)
     x, y = centre(conn, el, deadline)
+    to_front(conn, sid, deadline)
     conn.call('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': x, 'y': y, 'button': 'none', 'buttons': 0}, sid, deadline)
     return {'ref': el['ref']}
 
@@ -1155,7 +1426,7 @@ def splice_frames(conn, sid, nodes, seen, deadline):
     # Each frame's own nodes, to find its child frames' <iframe>s in: the page's before any frame's are added.
     by_frame = {}
     frames, unreachable = {}, []
-    for host in sessions_under(conn, sid, deadline):
+    for host in sessions_under(conn, sid):
         for frame in frames_of(frame_tree(conn, host, deadline)):
             fid = frame.get('id')
             if host == sid and not frame.get('parentId'):
@@ -1623,8 +1894,7 @@ ACTIONS = {
 }
 
 
-def execute(conn, session_id, steps, deadline, downloads=None):
-    prepare(conn, deadline, downloads)
+def execute(conn, session_id, steps, deadline):
     results = []
     halted = False
     for step in steps:
@@ -1694,6 +1964,7 @@ def execute(conn, session_id, steps, deadline, downloads=None):
             # previous goto saw must not read as this click navigating.
             conn.events = []
             conn.dialogs = []
+            conn.blocked = []
             conn.dialog_answer = step.get('dialog')
             started = set(conn.downloads)
             popped = len(conn.popups)
@@ -1723,6 +1994,7 @@ def run(req):
     deadline = _now() + float(req.get('timeoutMs', 60000)) / 1000.0
     conn, ws_url, browser = connect(req.get('port'), req.get('ws'), deadline)
     try:
+        prepare(conn, deadline, req.get('downloads'), req.get('policy'))
         session_id = None
         target_id = req.get('targetId')
         # A session belongs to a connection, so it cannot be cached across
@@ -1730,7 +2002,7 @@ def run(req):
         # of statelessness, and it is one round trip on a loopback socket.
         if target_id:
             session_id = session_for(conn, target_id, deadline)
-        out = {'ok': True, 'results': execute(conn, session_id, req.get('steps') or [], deadline, req.get('downloads')), 'ws': ws_url}
+        out = {'ok': True, 'results': execute(conn, session_id, req.get('steps') or [], deadline), 'ws': ws_url}
         if browser:
             out['browser'] = browser
         if session_id:
@@ -1942,6 +2214,7 @@ def serve(port):
         conn = state['conn']
         # Events are only ever waited for within the request that caused them.
         conn.events = []
+        prepare(conn, deadline, req.get('downloads'), req.get('policy'))
         op = req.get('op')
         target_id = req.get('targetId')
         if op == 'screencastStop':
@@ -1952,7 +2225,7 @@ def serve(port):
             fps = min(30, max(1, int(req.get('fps', 4))))
             casts.start(conn, target_id, session_id, fps, int(req.get('quality', 60)), deadline)
             return {'ok': True}
-        return {'ok': True, 'results': execute(conn, session_id, req.get('steps') or [], deadline, req.get('downloads'))}
+        return {'ok': True, 'results': execute(conn, session_id, req.get('steps') or [], deadline)}
 
     def handle(raw):
         try:

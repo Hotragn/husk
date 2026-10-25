@@ -187,8 +187,8 @@ export class BrowserSession {
    * from a caller, and a script's `page.goto` comes back through `answerHost`.
    * The check happens against the parsed URL that is then handed on, so there is
    * no window in which the checked string and the fetched string could differ.
-   * What a page does by itself -- a link, a redirect, a pop-up -- is not seen
-   * here; that needs enforcement below the tool layer (#187, J3-e).
+   * What a page loads by itself -- a redirect's next hop, a link, a frame, a
+   * pop-up -- the driver checks against the same policy (DriverPolicy).
    */
   async goto(url: string, opts: { timeoutMs?: number } = {}): Promise<GotoResult> {
     // Checked before the browser starts: a refused URL must not cost a launch.
@@ -506,7 +506,10 @@ export class BrowserSession {
     try {
       const transport = this.opts.transport
         ? this.opts.transport(this.computer, this.port)
-        : new ComputerDriverTransport(this.computer, this.port);
+        : new ComputerDriverTransport(this.computer, this.port, {
+            // What a page loads by itself goes by the policy too, checked by the driver.
+            policy: { network: this.opts.network ?? this.computer.info.spec.network, loopbackIsOwn: ownsLoopback(this.computer.info.provider) },
+          });
       const conn = new CdpConnection(transport);
       this.conn = conn;
       this.transport = transport;

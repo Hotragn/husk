@@ -14,12 +14,14 @@ describe('describeHappened', () => {
         ],
         downloads: [{ name: 'report.pdf', state: 'completed', bytes: 1234 }],
         popups: [{ targetId: 'T2', url: 'https://example.com/' }],
+        blocked: [{ url: 'http://169.254.169.254/', reason: 'an internal address' }],
       }),
     ).toEqual([
       'The page showed a confirm dialog: "Delete?". Husk dismissed it. To accept it instead, do this again with dialog: "accept".',
       'The page showed an alert dialog: "Saved". Husk accepted it.',
       'It downloaded report.pdf (1234 bytes) to /work/downloads/report.pdf.',
       'It opened a new tab: https://example.com/ (browser_tabs lists it, to switch to it).',
+      'The network policy stopped the page from loading http://169.254.169.254/: an internal address.',
     ]);
     expect(describeHappened({})).toEqual([]);
   });

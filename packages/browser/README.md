@@ -181,9 +181,19 @@ and the `page.goto` calls of a script — goes through `assertUrlAllowed` from
 `@husk-ai/core`, with the same `loopbackIsOwn` rule `browseInComputer` uses: `docker`,
 `podman` and `fly` own their loopback, `local` and `ssh` do not. `mode: 'full'` still
 refuses `169.254.169.254`, in its IPv6 spellings too. A real browser — which will follow
-a redirect chain a prompt-injected page hands it — makes this matter more, not less,
-and the check still does not see a page navigating itself (links, scripts, pop-ups).
-Closing that gap is tracked in [#187](https://github.com/Hotragn/husk/issues/187).
+a redirect chain a prompt-injected page hands it — makes this matter more, not less.
+
+So the policy also holds below the tool. The host sends it to the driver with every
+request, and the driver pauses every document request a page makes by itself (CDP's
+`Fetch` domain, documents only) and checks it with a line-for-line port of `net.ts`.
+`driver-policy.test.ts` holds the two to one table of answers. That covers a
+redirect's every hop, a link, a script that sends the page somewhere, a frame (a
+cross-site one through its own session), and a pop-up's first load: every new tab and
+every cross-site frame is held until it is guarded. A refused load is stopped before
+anything is sent, and the action's result says so. Not covered: subresources (images,
+scripts, a page's own `fetch` calls), which are not documents; names that resolve to
+an internal address, since names are not resolved; and the one-process-per-call
+fallback, which checks only while a call is running.
 
 ## Chromium's own sandbox
 
