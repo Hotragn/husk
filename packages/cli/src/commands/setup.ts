@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { connectChatApp, detectChatApps, disconnectChatApp, huskLaunch, readDaemonRecord } from '@husk-ai/core';
 import type { ChatApp, ChatAppId, ConnectResult, Flavor } from '@husk-ai/core';
+import { leftOutOfAuto } from '@husk-ai/runtime';
 import { collect, type DoctorProbes, type DoctorReport, type ProviderRow } from './doctor.js';
 import { ask, confirm, interactive } from '../lib/prompt.js';
 import { UsageError, parse } from '../args.js';
@@ -24,9 +25,14 @@ export interface SetupPlan {
   apps: ChatAppId[];
 }
 
-/** The computer to suggest: the first available one with a real boundary, else the first available. */
+/**
+ * The computer to suggest: the first available one with a real boundary, else
+ * the first available, and never a paid one unless opted in (it can still be
+ * picked by name).
+ */
 export function recommended(providers: ProviderRow[]): ProviderRow | undefined {
-  return providers.find((p) => p.available && p.isolated) ?? providers.find((p) => p.available);
+  const free = providers.filter((p) => p.available && !leftOutOfAuto(String(p.name)));
+  return free.find((p) => p.isolated) ?? free[0];
 }
 
 /** `all` means every app found on this machine; otherwise a comma list of ids. */

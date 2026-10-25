@@ -15,6 +15,8 @@ describe('husk setup choices', () => {
     expect(recommended([row('local', true, false), row('docker', true, true)])?.name).toBe('docker');
     expect(recommended([row('docker', false, true), row('local', true, false)])?.name).toBe('local');
     expect(recommended([row('docker', false, true)])).toBeUndefined();
+    // Paid per machine: never suggested unless opted in, though it can still be picked by name.
+    expect(recommended([row('fly', true, true), row('local', true, false)])?.name).toBe('local');
   });
 
   it('takes "all" to mean the apps found here, and refuses an app it does not know', () => {

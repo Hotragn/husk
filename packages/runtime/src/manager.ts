@@ -45,6 +45,19 @@ export interface ComputerManagerOptions {
  * always there -- so an empty machine still gets a computer, and a machine with
  * options never silently settles for the weakest one.
  */
+/**
+ * Why `auto` leaves this provider out, or undefined when it may pick it.
+ *
+ * Fly bills per machine. With FLY_API_TOKEN and FLY_APP_NAME set, which is
+ * ordinary for anyone who uses Fly, `auto` used to create paid machines
+ * whenever Docker happened to be down. Fly stays one flag away
+ * (`--provider fly`), and HUSK_AUTO_FLY=1 lets `auto` pick it.
+ */
+export function leftOutOfAuto(provider: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (provider !== 'fly' || env.HUSK_AUTO_FLY === '1') return undefined;
+  return 'paid per machine, so auto leaves it out: pick it with --provider fly, or set HUSK_AUTO_FLY=1';
+}
+
 export function defaultProviders(): ComputerProvider[] {
   return [new DockerProvider(), new PodmanProvider(), new SshProvider(), new FlyProvider(), new LocalProvider()];
 }
@@ -146,6 +159,11 @@ export class ComputerManager {
 
     const rejected: string[] = [];
     for (const p of this.getProviders()) {
+      const skipped = leftOutOfAuto(p.name);
+      if (skipped) {
+        rejected.push(`${p.name}: ${skipped}`);
+        continue;
+      }
       const a = await this.probe(p.name);
       if (a.available) {
         if (a.isolated === false) {
@@ -160,6 +178,19 @@ export class ComputerManager {
       hint: 'run `husk doctor` for the full picture',
       details: { rejected },
     });
+  }
+
+  /**
+   * A kept computer is kept even when it is not on the provider asked for --
+   * made on `local` while Docker was down, say: a chat never loses its
+   * computer. That is said, not silent.
+   */
+  private asAsked(computer: Computer, spec: ComputerSpec): Computer {
+    const asked = spec.provider;
+    if (asked && computer.info.provider !== asked) {
+      this.log.warn(`computer ${computer.id} is on ${computer.info.provider}, not the ${asked} asked for; it was kept so its work is not lost`);
+    }
+    return computer;
   }
 
   private async assertQuota(all: ComputerInfo[]): Promise<void> {
@@ -204,7 +235,7 @@ export class ComputerManager {
       const existingId = await readBinding(key);
       if (existingId) {
         const found = await this.get(existingId);
-        if (found && found.info.state !== 'destroyed') return ensureRunning(found);
+        if (found && found.info.state !== 'destroyed') return ensureRunning(this.asAsked(found, spec));
         await clearBinding(key);
       }
 
@@ -214,7 +245,7 @@ export class ComputerManager {
       const adopted = keyed ? await this.get(keyed.id) : null;
       if (adopted && adopted.info.state !== 'destroyed') {
         await writeBinding(key, adopted.id);
-        return ensureRunning(adopted);
+        return ensureRunning(this.asAsked(adopted, spec));
       }
 
       // A husk's computer is named after the husk, and two paths reach it under

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createLogger } from '@husk-ai/core';
-import type { Availability, Computer, ComputerInfo, ComputerProvider, ComputerSpec } from '@husk-ai/core';
+import type { Availability, Computer, ComputerInfo, ComputerProvider, ComputerSpec, Logger } from '@husk-ai/core';
 import { ComputerManager, defaultProviders } from './manager.js';
 
 /**
@@ -104,7 +104,8 @@ describe('resolveProvider', () => {
     const local = new FakeProvider('local', 10, { available: true, isolated: false });
 
     expect((await manager([local, fly, ssh, podman, docker]).resolveProvider('auto')).name).toBe('local');
-    expect([docker.probes, podman.probes, ssh.probes, fly.probes]).toEqual([1, 1, 1, 1]);
+    // Fly is paid, so auto never asks it at all (J1-i).
+    expect([docker.probes, podman.probes, ssh.probes, fly.probes]).toEqual([1, 1, 1, 0]);
   });
 
   it('prefers real isolation over the guardrail floor whenever it can', async () => {
@@ -141,7 +142,7 @@ describe('resolveProvider', () => {
     ]);
     await expect(m.resolveProvider('auto')).rejects.toMatchObject({
       code: 'E_PROVIDER_UNAVAILABLE',
-      details: { rejected: ['docker: daemon is not running', 'fly: no token'] },
+      details: { rejected: ['docker: daemon is not running', expect.stringMatching(/^fly: paid per machine/)] },
     });
   });
 });
@@ -267,11 +268,51 @@ describe('one computer per name (#112)', () => {
     }
   });
 
+  it('keeps a chat computer made on another provider than asked, and says so', async () => {
+    const home = process.env.HUSK_HOME;
+    process.env.HUSK_HOME = mkdtempSync(join(tmpdir(), 'husk-ensure-'));
+    try {
+      const warns: string[] = [];
+      const log = { warn: (m: string) => void warns.push(m), info() {}, debug() {}, error() {}, child: () => log } as unknown as Logger;
+      const p = new FakeProvider('local', 1, up(false));
+      const kept = { id: 'cmp_1', info: info({ state: 'running', provider: 'local', spec: { labels: { 'husk.key': 'chat:a' } } } as Partial<ComputerInfo>) } as Computer;
+      (kept as { refresh: () => Promise<ComputerInfo> }).refresh = async () => kept.info;
+      p.list = async () => [kept.info];
+      p.get = async () => kept;
+      expect(await new ComputerManager({ providers: [p], logger: log }).ensure('chat:a', { provider: 'docker' })).toBe(kept);
+      expect(warns.join('\n')).toContain('not the docker asked for');
+    } finally {
+      if (home === undefined) delete process.env.HUSK_HOME;
+      else process.env.HUSK_HOME = home;
+    }
+  });
+
   it('lets a destroyed computer give its name back', async () => {
     const p = new FakeProvider('docker', 1, up(true));
     p.list = async () => [info({ state: 'destroyed' })];
     const made = { info: info({ id: 'cmp_2' }) } as Computer;
     p.create = async () => made;
     await expect(manager([p]).create({ name: 'dev' })).resolves.toBe(made);
+  });
+});
+
+describe('auto and paid providers', () => {
+  it('never picks Fly by itself, and never even asks it', async () => {
+    const fly = new FakeProvider('fly', 14, up(true));
+    const local = new FakeProvider('local', 10, { available: true, isolated: false });
+    expect((await manager([local, fly]).resolveProvider('auto')).name).toBe('local');
+    expect(fly.probes).toBe(0);
+  });
+
+  it('picks it when asked by name, or when HUSK_AUTO_FLY=1 opts in', async () => {
+    const fly = new FakeProvider('fly', 14, up(true));
+    const local = new FakeProvider('local', 10, { available: true, isolated: false });
+    expect((await manager([local, fly]).resolveProvider('fly')).name).toBe('fly');
+    process.env.HUSK_AUTO_FLY = '1';
+    try {
+      expect((await manager([local, fly]).resolveProvider('auto')).name).toBe('fly');
+    } finally {
+      delete process.env.HUSK_AUTO_FLY;
+    }
   });
 });
