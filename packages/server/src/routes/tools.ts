@@ -67,6 +67,8 @@ export async function toolRoutes(app: FastifyInstance): Promise<void> {
     if (signal.aborted) return { isError: true, content: [{ type: 'text', text: 'the call was cancelled before it ran' }] };
 
     const started = Date.now();
+    // As it starts, not as it ends: the desktop app opens the computer's window on this.
+    ctx.bus.emit('computers', 'tool_started', { computerId: id, tool: name, via, at: new Date(started).toISOString() });
     // A take-over stops it part-way, and a stale page action is refused (handoffs.ts).
     const result = await underControl(ctx.runner.handoffs, id, name, signal, (stop) =>
       audited(

@@ -541,8 +541,9 @@ POST /v1/models/chat/stream  body: ChatRequest -> SSE of StreamEvent
 WS /v1/events
 ```
 
-A firehose of `{ type, at, payload }` for the console: computer state changes, run
-lifecycle, reaper actions, provider availability flips. Send
+A firehose of `{ type, at, payload }` for the console: computer state changes, each AI
+call as it starts and once it ends (`tool_started`, `tool_called`), run lifecycle,
+reaper actions, provider availability flips. Send
 `{"type":"subscribe","topics":["computers","runs"]}` to filter.
 
 ## Limits

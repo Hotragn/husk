@@ -75,6 +75,9 @@ let rec;
 let waiting = [];
 let recovering;
 let computers;
+/** The latest call the shared Husk said had started, and whether its events are coming in. */
+let lastCall;
+let eventsReady = false;
 
 /** Version of the Husk this app carries. */
 function bundledVersion() {
@@ -300,6 +303,35 @@ async function poll() {
   refreshTray(status);
 }
 
+/**
+ * The shared Husk's events, so with "open by itself" on a chat's computer opens
+ * as its first call starts, not at the next reading. The readings stay the
+ * source of truth: an event only asks for one now.
+ */
+function watchCalls() {
+  if (!rec) return void setTimeout(watchCalls, POLL_MS);
+  const ws = new WebSocket(`${rec.url.replace(/^http/, 'ws')}/v1/events${rec.token ? `?token=${encodeURIComponent(rec.token)}` : ''}`);
+  ws.onopen = () => ws.send(JSON.stringify({ type: 'subscribe', topics: ['computers'] }));
+  ws.onmessage = (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(String(event.data));
+    } catch {
+      return;
+    }
+    if (msg.type === 'subscribed') eventsReady = true;
+    if (msg.type !== 'tool_started') return;
+    lastCall = msg.payload;
+    // Only a call that could open a window: the first on a computer not shown yet.
+    if (computers?.settings.onScreen && computers.settings.autoOpen && !computers.seen.has(msg.payload?.computerId)) void poll();
+  };
+  // A Husk that restarted has a new token; `rec` names it again by the time this reconnects.
+  ws.onclose = () => {
+    eventsReady = false;
+    setTimeout(watchCalls, POLL_MS);
+  };
+}
+
 // -- smoke runs ---------------------------------------------------------------
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -475,7 +507,26 @@ function filmScreen(dir) {
 async function liveSmoke() {
   const { check, passed } = checker();
   setInterval(() => void poll(), 1000);
+  // Someone who said yes at first run: the chat's next call opens its computer's window by itself.
+  computers.settings.autoOpen = true;
+  computers.since = Date.now();
+  // The call that opened it, taken as it opens: a later call must not stand in for it.
+  let opened;
+  const open = computers.open.bind(computers);
+  computers.open = (id, how) => {
+    opened ??= { at: Date.now(), call: lastCall };
+    return open(id, how);
+  };
+  check('the desktop app hears the shared Husk’s calls', await until(() => eventsReady, 10_000));
   log('SMOKE live ready');
+  const shown = await until(() => computers.win?.isVisible(), 90_000);
+  const late = opened?.call ? opened.at - Date.parse(opened.call.at) : undefined;
+  check('a chat’s call opens its computer’s window by itself, within 1 s of starting', shown && late !== undefined && late <= 1000, `${late} ms after ${opened?.call?.tool} started`);
+  check('the window it opens does not take focus', shown && !computers.win.isFocused());
+  // The rest of the walk is someone who opens it themselves.
+  delete computers.open;
+  computers.settings.autoOpen = false;
+  computers.close();
   const id = await until(() => computers.computers().find((c) => c.state === 'running')?.id, 90_000);
   check('a chat’s running computer stands in the corner', id, id);
   if (id) {
@@ -538,6 +589,7 @@ async function startApp() {
     return;
   }
   computers = new Computers({ rec: () => rec, icon: ICON, onConsole: () => openWindow(), onRefresh: () => void poll() });
+  watchCalls();
   if (LIVE) {
     void liveSmoke();
     return;
