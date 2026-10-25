@@ -1768,7 +1768,7 @@ def act_script(conn, sid, step, deadline):
     if BRIDGE is None:
         raise DriverError(ACTION, 'scripts need the long-lived driver, which this provider cannot keep running; use browser_run')
     started = _now()
-    tag = base64.b16encode(os.urandom(8)).decode('ascii')
+    tag = '%s-%s' % (SERVE_PORT, base64.b16encode(os.urandom(8)).decode('ascii'))
     options = {
         'stdin': subprocess.PIPE,
         'stdout': subprocess.PIPE,
@@ -2221,11 +2221,16 @@ class Bridge(object):
 
 # Set by `serve`. A one-shot driver has no host to ask, so it runs no scripts.
 BRIDGE = None
+# Set by `serve`: the browser's port, which starts every tag this driver gives
+# its scripts, so stopping a wedged driver from outside (cdp.ts, REAP_SOURCE)
+# stops only its own scripts, never another computer's on the same host.
+SERVE_PORT = None
 
 
 def serve(port):
     """Answer requests on stdin until it closes, holding one connection to Chromium throughout."""
-    global BRIDGE
+    global BRIDGE, SERVE_PORT
+    SERVE_PORT = port
 
     def emit(obj):
         sys.stdout.write(json.dumps(obj) + '\n')

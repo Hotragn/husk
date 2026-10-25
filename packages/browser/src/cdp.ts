@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import { HuskError } from '@husk-ai/core';
-import type { Computer, ComputerProcess, NetworkPolicy } from '@husk-ai/core';
+import type { Computer, ComputerProcess, ExecRequest, ExecResult, NetworkPolicy } from '@husk-ai/core';
 import { DRIVER_PATH, DRIVER_SOURCE } from './driver.js';
 import { DOWNLOADS_DIR } from './provision.js';
 
@@ -540,6 +541,29 @@ export class ComputerDriverTransport implements CdpTransport {
     }
   }
 
+  /** The computer refuses stdin to an exec (Fly's exec endpoint does): requests go through a file instead. */
+  private stdinless = false;
+
+  /**
+   * One driver run, the request on its stdin, or, where the computer refuses
+   * stdin, in a file beside the driver that the run reads and then removes.
+   * Found out on the first refusal and remembered, so it costs one try.
+   */
+  private async execDriver(driverPath: string, body: string, opts: Omit<ExecRequest, 'cmd' | 'stdin'>): Promise<ExecResult> {
+    if (!this.stdinless) {
+      try {
+        return await this.computer.exec({ ...opts, cmd: ['python3', driverPath], stdin: body });
+      } catch (err) {
+        if (!(err instanceof HuskError) || err.details?.['stdin'] !== 'unsupported') throw err;
+        this.stdinless = true;
+      }
+    }
+    const file = `${driverPath.slice(0, driverPath.lastIndexOf('/'))}/request-${randomUUID()}.json`;
+    await this.computer.writeFile(file, body, { mkdirp: true });
+    const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+    return await this.computer.exec({ ...opts, cmd: `python3 ${q(driverPath)} < ${q(file)}; status=$?; rm -f ${q(file)}; exit $status` });
+  }
+
   private async invoke(req: DriverRequest, driverPath: string, signal?: AbortSignal): Promise<DriverResult> {
     const timeoutMs = req.timeoutMs ?? 60_000;
     const body = JSON.stringify({
@@ -551,18 +575,15 @@ export class ComputerDriverTransport implements CdpTransport {
       timeoutMs,
     });
 
-    const res = await this.computer
-      .exec({
-        cmd: ['python3', driverPath],
-        stdin: body,
-        // The driver enforces its own deadline and reports a structured
-        // timeout. This one is the backstop for a driver that wedged, so it has
-        // to be the looser of the two or it would mask the useful error.
-        timeoutSec: Math.min(Math.ceil(timeoutMs / 1000) + 15, Math.floor(MAX_TIMER_MS / 1000)),
-        maxOutputBytes: this.maxOutputBytes,
-        // Its caller gone: the provider stops the driver, and its scripts, where they run.
-        ...(signal ? { signal } : {}),
-      })
+    const res = await this.execDriver(driverPath, body, {
+      // The driver enforces its own deadline and reports a structured
+      // timeout. This one is the backstop for a driver that wedged, so it has
+      // to be the looser of the two or it would mask the useful error.
+      timeoutSec: Math.min(Math.ceil(timeoutMs / 1000) + 15, Math.floor(MAX_TIMER_MS / 1000)),
+      maxOutputBytes: this.maxOutputBytes,
+      // Its caller gone: the provider stops the driver, and its scripts, where they run.
+      ...(signal ? { signal } : {}),
+    })
       .catch((err: unknown) => {
         if (err instanceof HuskError) throw err;
         throw new HuskError('E_COMPUTER_FAILED', 'could not run the browser driver in the computer', {
@@ -700,21 +721,30 @@ const MAX_HOST_URL = 8192;
  * and every process carrying a script's HUSK_SCRIPT tag. Its own command line
  * has no element ending in driver.py, and its environment no tag.
  */
-const REAP_SOURCE = [
+export const REAP_SOURCE = [
   'import glob, os, signal, sys',
-  'port = sys.argv[1].encode()',
-  "for d in glob.glob('/proc/[0-9]*'):",
-  '    try:',
-  "        argv = open(d + '/cmdline', 'rb').read().split(b'\\0')",
-  "        env = open(d + '/environ', 'rb').read().split(b'\\0')",
-  '    except OSError:',
-  '        continue',
+  '',
+  '',
+  'def doomed(argv, env, port):',
   "    served = any(a.endswith(b'driver.py') and argv[i + 1:i + 3] == [b'--serve', port] for i, a in enumerate(argv))",
-  "    if served or any(e.startswith(b'HUSK_SCRIPT=') for e in env):",
+  // This driver's scripts only: their tag starts with its port. On local, every
+  // computer's processes share the host's /proc, and any tag would be any computer's.
+  "    return served or any(e.startswith(b'HUSK_SCRIPT=' + port + b'-') for e in env)",
+  '',
+  '',
+  "if __name__ == '__main__':",
+  '    port = sys.argv[1].encode()',
+  "    for d in glob.glob('/proc/[0-9]*'):",
   '        try:',
-  "            os.kill(int(d.rsplit('/', 1)[1]), signal.SIGKILL)",
+  "            argv = open(d + '/cmdline', 'rb').read().split(b'\\0')",
+  "            env = open(d + '/environ', 'rb').read().split(b'\\0')",
   '        except OSError:',
-  '            pass',
+  '            continue',
+  '        if doomed(argv, env, port):',
+  '            try:',
+  "                os.kill(int(d.rsplit('/', 1)[1]), signal.SIGKILL)",
+  '            except OSError:',
+  '                pass',
 ].join('\n');
 
 /** How often a long-running served request records use. Well inside any idle timeout worth setting. */
