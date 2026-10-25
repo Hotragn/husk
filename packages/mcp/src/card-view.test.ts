@@ -74,7 +74,7 @@ describe('the computer card view', () => {
       method: 'ui/notifications/tool-result',
       params: { structuredContent: { computerId: 'cmp_1', state: 'running', held: { handoffId: 'hnd_2' } } },
     });
-    expect(m.$('.card').getAttribute('data-state')).toBe('held');
+    expect((m.$('.card') as unknown as { getAttribute(name: string): string | null }).getAttribute('data-state')).toBe('held');
     expect(m.$('.title').textContent).toBe('You have this computer');
     expect(m.$('.sub').textContent).toBe('The chat is paused until you give it back.');
     expect(m.$('button').textContent).toBe('Open');
