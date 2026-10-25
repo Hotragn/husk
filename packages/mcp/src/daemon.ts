@@ -35,6 +35,8 @@ export interface DaemonClient {
   linkToken(computerId: string): Promise<string>;
   /** This chat runs that computer in its own process: the console says so rather than offer a take-over. */
   markInChat(computerId: string): Promise<void>;
+  /** The chat is closing: stop its computer. Refused (409) while a person holds it, which leaves it running. */
+  stop(computerId: string): Promise<void>;
 }
 
 export interface ConnectOptions {
@@ -218,6 +220,9 @@ function client(first: DaemonRecord, doFetch: typeof fetch, read: () => DaemonRe
     },
     async markInChat(computerId) {
       await call('POST', `/v1/computers/${id(computerId)}/in-chat`);
+    },
+    async stop(computerId) {
+      await call('POST', `/v1/computers/${id(computerId)}/stop`);
     },
     async callTool(computerId, name, args, signal) {
       const res = await send('POST', `/v1/computers/${id(computerId)}/tools/${id(name)}`, { args, via: 'mcp' }, signal);

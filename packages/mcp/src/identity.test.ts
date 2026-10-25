@@ -289,6 +289,7 @@ describe('hand_off from a chat with no computer yet', () => {
 });
 
 describe('a chat computer the shared Husk serves', () => {
+  const stopsAsked: string[] = [];
   const shared = (): DaemonClient => ({
     url: 'http://127.0.0.1:7377',
     async callTool(_id, name) {
@@ -306,6 +307,9 @@ describe('a chat computer the shared Husk serves', () => {
       return 'token';
     },
     async markInChat() {},
+    async stop(id) {
+      stopsAsked.push(id);
+    },
   });
 
   it('is never stopped by the chat when idle: the shared Husk owns it, and sees a person holding it', async () => {
@@ -316,11 +320,13 @@ describe('a chat computer the shared Husk serves', () => {
     expect(fake.activity.stops).toBe(0);
   });
 
-  it('is left running when the chat closes', async () => {
+  it('is stopped by the shared Husk when the chat closes, which refuses while a person holds it', async () => {
+    stopsAsked.length = 0;
     const fake = fakeManager();
     const { shell, server } = await connect('claude-ai', { fake, ephemeral: true, shared: shared() });
     await shell('new');
     await server.close();
     expect(fake.made[0]?.info.state).toBe('running');
+    expect(stopsAsked).toEqual(['cmp_1']);
   });
 });

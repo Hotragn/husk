@@ -865,8 +865,17 @@ export class HuskMcpServer {
     for (const t of this.idleTimers.values()) clearTimeout(t);
     this.idleTimers.clear();
     // Stopped, never destroyed: the chat may come back after a restart, and only
-    // the user deletes a chat's computer.
-    if (this.ephemeral) for (const c of this.computers.values()) if (!this.viaShared.has(c.id)) await quiet(() => c.stop());
+    // the user deletes a chat's computer. One the shared Husk served is its to
+    // stop: it refuses while a person holds it, and finishes after this exits.
+    if (!this.ephemeral) return;
+    for (const c of this.computers.values()) if (!this.viaShared.has(c.id)) await quiet(() => c.stop());
+    const shared = this.viaShared.size && this.daemon ? await this.daemon : undefined;
+    if (shared) {
+      await Promise.race([
+        Promise.allSettled([...this.viaShared].map((id) => shared.stop(id))),
+        new Promise((r) => setTimeout(r, 2000)),
+      ]);
+    }
   }
 
   private async openViewer(): Promise<string> {

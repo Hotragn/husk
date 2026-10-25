@@ -43,6 +43,7 @@ function fakeShared() {
     async cancel(h) { log.push(`cancel ${h}`); open.delete(h); ended.set(h, 'aborted'); },
     async linkToken() { return 'cardtoken'; },
     async markInChat(id) { log.push(`in-chat ${id}`); },
+    async stop(id) { log.push(`stop ${id}`); },
   };
   return { shared, open, ended, log };
 }
