@@ -96,6 +96,9 @@ interface Viewer {
   stopped?: () => void;
 }
 
+/** What Chromium logs when its sandbox cannot run here: no user namespaces, or running as root. */
+const SANDBOX_UNUSABLE = 'No usable sandbox|without --no-sandbox is not supported';
+
 export class BrowserSession {
   private conn: CdpConnection | undefined;
   private page: Page | undefined;
@@ -178,10 +181,12 @@ export class BrowserSession {
   /**
    * Navigate, after the policy check.
    *
-   * This and `run` are the only doors into the browser that take a URL from a
-   * caller, so they are the only places the check has to happen -- and it
-   * happens against the parsed URL that is then handed on, so there is no
-   * window in which the checked string and the fetched string could differ.
+   * This, `run` and `newTab` are the doors into the browser that take a URL
+   * from a caller, and a script's `page.goto` comes back through `answerHost`.
+   * The check happens against the parsed URL that is then handed on, so there is
+   * no window in which the checked string and the fetched string could differ.
+   * What a page does by itself -- a link, a redirect, a pop-up -- is not seen
+   * here; that needs enforcement below the tool layer (#187, J3-e).
    */
   async goto(url: string, opts: { timeoutMs?: number } = {}): Promise<{ url: string; loaded: boolean }> {
     // Checked before the browser starts: a refused URL must not cost a launch.
@@ -474,13 +479,16 @@ export class BrowserSession {
 
   /** Open a new tab and switch to it. */
   async newTab(url = 'about:blank'): Promise<{ targetId: string; url: string }> {
+    // Checked like goto, and before the browser starts: a new tab is a navigation
+    // too, and a refused one must not cost a launch. about:blank is no address.
+    const checked = url === 'about:blank' ? url : this.allowed(url);
     await this.activePage();
     const conn = this.conn;
     if (!conn) throw new HuskError('E_TOOL_ERROR', 'the browser is not running', { hint: 'call goto first' });
 
-    const targetId = await createTarget(conn, url);
+    const targetId = await createTarget(conn, checked);
     await this.switchTab(targetId);
-    return { targetId, url };
+    return { targetId, url: checked };
   }
 
   private async launch(): Promise<Page> {
@@ -511,8 +519,31 @@ export class BrowserSession {
     return page;
   }
 
-  /** Start the browser detached, and wait until its debugger answers -- from inside. */
+  /**
+   * Start the browser with its own sandbox wherever the computer is not one.
+   *
+   * A container (docker, podman) or a fly machine is the sandbox, and Chromium's
+   * namespace sandbox cannot nest inside it. On this machine, in WSL or on an ssh
+   * box, Chromium's sandbox is the only thing between a hostile page and the
+   * person's account, so it stays on, and goes only where it cannot run at all
+   * -- no unprivileged user namespaces, or running as root -- with a warning.
+   */
   private async startChromium(binary: string, say: (m: string) => void): Promise<number> {
+    if (ownsLoopback(this.computer.info.provider)) return this.launchChromium(binary, say, false);
+    try {
+      return await this.launchChromium(binary, say, true);
+    } catch (err) {
+      if (!(err instanceof HuskError) || err.details?.['sandbox'] !== 'unusable') throw err;
+      say(
+        'warning: Chromium cannot use its own sandbox on this machine (no unprivileged user namespaces, or ' +
+          'running as root), so it runs without one. Open pages you do not trust in a docker or podman computer.',
+      );
+      return this.launchChromium(binary, say, false);
+    }
+  }
+
+  /** Start the browser detached, and wait until its debugger answers -- from inside. */
+  private async launchChromium(binary: string, say: (m: string) => void, sandboxed: boolean): Promise<number> {
     const port = await this.freePort();
     const size = this.opts.viewport ?? { width: 1280, height: 800 };
 
@@ -525,9 +556,7 @@ export class BrowserSession {
     //
     // stdio goes to a file rather than being inherited, because `exec` resolves
     // when the pipes close and a background child holding stdout open would hang
-    // the call forever. `--no-sandbox` is not carelessness: the computer *is* the
-    // sandbox, and Chromium's namespace sandbox cannot nest inside an
-    // unprivileged container.
+    // the call forever. `--no-sandbox` only where startChromium says so.
     //
     // The poll runs inside the machine because that is where the port is. It is
     // also the only place it ever will be -- there is no bind address flag here,
@@ -537,12 +566,14 @@ export class BrowserSession {
     // emulation is per-session and every driver invocation is a new session.
     const cmd =
       `mkdir -p ${PROFILE_DIR}; ` +
-      `(setsid ${binary} --headless --disable-gpu --no-sandbox ` +
+      `(setsid ${binary} --headless --disable-gpu ${sandboxed ? '' : '--no-sandbox '}` +
       `--remote-debugging-port=${port} --user-data-dir=${PROFILE_DIR} ` +
       `--window-size=${size.width},${size.height} ` +
       `about:blank >${LOG_PATH} 2>&1 </dev/null &) ; ` +
       `for i in $(seq 1 80); do ` +
       `curl -sf --max-time 2 -o /dev/null http://127.0.0.1:${port}/json/version && exit 0; ` +
+      // A sandbox that cannot run says so at once: stop polling a browser that has already gone.
+      `grep -qE '${SANDBOX_UNUSABLE}' ${LOG_PATH} 2>/dev/null && exit 3; ` +
       `sleep 0.5; done; exit 1`;
 
     // The poll is 80 x (0.5s sleep + an instantly-refused connect), about 40s on
@@ -550,6 +581,13 @@ export class BrowserSession {
     // accepts and wedges (each curl paying its full --max-time) with the exec
     // kill as the hard backstop, so a failed launch is always bounded.
     const ready = await this.computer.exec({ cmd, timeoutSec: 90 });
+
+    if (ready.exitCode === 3 && sandboxed) {
+      throw new HuskError('E_COMPUTER_FAILED', 'Chromium cannot use its sandbox on this machine', {
+        hint: 'it is started again without one, with a warning',
+        details: { port, sandbox: 'unusable' },
+      });
+    }
 
     if (ready.exitCode !== 0) {
       // The end of the log, where Chromium says why it stopped.

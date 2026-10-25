@@ -113,13 +113,16 @@ allow-listing is applied at the tool layer, not by a firewall — a process that
 raw socket is not stopped. That is a real limitation and it is why `none` and `full` are
 the honest choices when the distinction matters.
 
-The tool layer checks the URLs Husk itself opens: `browse`, `browser_goto`, the `goto`
-steps of `browser_run` and the `page.goto` calls of `browser_script`. A page can still
-navigate itself — a link, a redirect, a pop-up — so for the rendered browser it is a
-guardrail, not a boundary. Making it cover every navigation is tracked in
+The tool layer checks the URLs Husk itself opens: `browse` (every redirect hop, not
+just the first URL), `browser_goto`, a new tab from `browser_tabs`, the `goto` steps of
+`browser_run` and the `page.goto` calls of `browser_script`. A page can still navigate
+itself — a link, a script, a pop-up — so for the rendered browser it is a guardrail, not
+a boundary. Making it cover every navigation is tracked in
 [#187](https://github.com/Hotragn/husk/issues/187). With no policy set, which is the
 MCP server's default, public addresses are allowed and Husk refuses internal ones
-(loopback it does not own, private ranges, link-local, the cloud metadata address).
+(loopback it does not own, private ranges, link-local, the cloud metadata address), in
+IPv6 spellings too, such as `[::ffff:169.254.169.254]`. Names are not resolved, so a
+public name that points at an internal address is not caught.
 
 ## Secrets
 
