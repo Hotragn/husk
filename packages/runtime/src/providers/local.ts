@@ -724,6 +724,8 @@ class LocalComputer implements Computer {
     try {
       return await op(h);
     } catch (first) {
+      // A refusal is an answer, not a link the host could not follow: never retried elsewhere.
+      if (first instanceof HuskError) throw first;
       const guest = normaliseGuestPath(path, this.info.workdir);
       const r = await this.execOnce({ cmd: ['realpath', '-e', '--', guest], timeoutSec: 10 }).catch(() => undefined);
       const target = r?.exitCode === 0 ? r.stdout.trim() : '';
