@@ -54,9 +54,55 @@ not here.
   ([#181](https://github.com/Hotragn/husk/pull/181)), and `browser_script` runs a short
   Python script with control flow inside the computer
   ([#184](https://github.com/Hotragn/husk/pull/184)).
+- **Take-over stops the AI where it is.** Taking a computer stops the AI's calls running
+  on it, browser scripts included, and every route that changes the computer refuses a
+  program while you hold it; a husk run obeys it too. After Give back, a browser action
+  on a page you changed is refused until the AI looks again
+  ([#192](https://github.com/Hotragn/husk/pull/192), [#194](https://github.com/Hotragn/husk/pull/194), [#195](https://github.com/Hotragn/husk/pull/195)).
+- **Holds only you end.** A take-over survives a restart of the shared Husk, and only your
+  Give back ends it: from the console, the desktop app, the tray or the link you took it
+  with. A sign-in handoff a chat asked for still ends with its "done". While you hold a
+  computer its browser stays open, the tray says so, and quitting asks first
+  ([#207](https://github.com/Hotragn/husk/pull/207), [#208](https://github.com/Hotragn/husk/pull/208), [#209](https://github.com/Hotragn/husk/pull/209)).
+- **The window opens as a chat starts working**, without taking focus, if you said yes
+  when the desktop app first asked; a take-over says which call it is waiting for
+  ([#204](https://github.com/Hotragn/husk/pull/204)).
+- **Honest clicks.** A click on something covered, disabled, hidden or still moving, or a
+  role and name that match two elements, is refused, saying why; `force` clicks anyway
+  ([#211](https://github.com/Hotragn/husk/pull/211)).
+
+### Changed
+
+- **Chats get the image with the browser by default**, and setup pulls it with its
+  progress, so a chat's first page does not wait on a 2 GB download mid-call
+  ([#201](https://github.com/Hotragn/husk/pull/201)).
+- **`auto` leaves paid Fly out** unless `HUSK_AUTO_FLY=1`; `--provider fly` always works.
+  A chat's computer on another provider than the one asked for is kept, and the chat is
+  told ([#203](https://github.com/Hotragn/husk/pull/203)).
+- **Setup pins a version range** (`@husk-ai/mcp@~0.2`), and the shared Husk speaks a
+  protocol version, so a later release that speaks another cannot start under it
+  ([#196](https://github.com/Hotragn/husk/pull/196)).
+- **Coming from 0.1.4**, setup and the Connect page move each chat app's `husk` entry to
+  this release, keeping the flags and env you gave it, Claude Code's per-project entries
+  included. Computers, named sessions, their files and your bots carry over as they are
+  ([#205](https://github.com/Hotragn/husk/pull/205)).
+- **Only the shared Husk stops a chat's computer**, after ten idle minutes, and never one
+  you hold ([#197](https://github.com/Hotragn/husk/pull/197)).
 
 ### Fixed
 
+- **Stopping a command stopped only the client.** On Docker, Podman and SSH the command
+  ran on inside the computer while the chat was told it "was killed". It is now ended
+  where it runs, on every provider, and a chat's cancel reaches it
+  ([#190](https://github.com/Hotragn/husk/pull/190), [#191](https://github.com/Hotragn/husk/pull/191)).
+- **A chat could quietly switch to running its computer in its own process** when the
+  shared Husk was briefly gone. It now starts the shared Husk again and retries, and says
+  so when it cannot ([#196](https://github.com/Hotragn/husk/pull/196)).
+- **One `read_file` of a huge or endless file could knock over the shared Husk**, and a
+  slow viewer could grow it without bound. Reads are bounded, and a viewer that falls
+  behind drops frames ([#199](https://github.com/Hotragn/husk/pull/199), [#200](https://github.com/Hotragn/husk/pull/200)).
+- **Connecting Claude Code or Codex was refused** once the launch line pinned a version
+  range ([#205](https://github.com/Hotragn/husk/pull/205)).
 - **Open bugs from the first users:** chat triggers, symlinks, duplicate names, `~/.husk`,
   a cold WSL and the model choice
   ([#174](https://github.com/Hotragn/husk/pull/174)).
@@ -91,6 +137,12 @@ not here.
   decoded into a guess
   ([#129](https://github.com/Hotragn/husk/pull/129), thanks
   [@Audgui-Byte](https://github.com/Audgui-Byte))
+
+### Security
+
+- **Chromium keeps its own sandbox outside containers**, falling back with a warning only
+  where it cannot start. Every new tab and every redirect hop is checked against the
+  address filter, which reads IPv6 addresses whole ([#202](https://github.com/Hotragn/husk/pull/202)).
 
 ## [0.1.4] - 2026-09-22
 
