@@ -37,6 +37,8 @@ interface FakeChromium {
   shifts: number[];
   /** The page's document now: a new loader id is a page load. */
   loader: string;
+  /** Events the page sends when a click's button is released: a dialog, a download, a new tab. */
+  onRelease: unknown[];
   close(): Promise<void>;
 }
 
@@ -62,6 +64,7 @@ async function fakeChromium(frames = 4): Promise<FakeChromium> {
     matches: [{ backendDOMNodeId: 7, role: { value: 'button' } }],
     shifts: [],
     loader: 'L1',
+    onRelease: [],
   } as unknown as FakeChromium;
   const sockets = new Set<Socket>();
   const server: Server = createServer((req, res) => {
@@ -135,6 +138,11 @@ async function fakeChromium(frames = 4): Promise<FakeChromium> {
           }
           case 'DOM.getNodeForLocation':
             reply({ backendNodeId: fake.hit });
+            break;
+          case 'Input.dispatchMouseEvent':
+            // What the page does on a click, before the click's own answer, as Chromium does.
+            if (msg.params?.['type'] === 'mouseReleased') for (const e of fake.onRelease) send(e);
+            reply({});
             break;
           case 'Page.getFrameTree':
             reply({ frameTree: { frame: { id: 'F', loaderId: fake.loader } } });
@@ -349,6 +357,37 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
     expect(onField.some((f) => f.includes("new Event('change'"))).toBe(true);
     expect(fake.received.some((m) => m.method === 'Runtime.evaluate' && String(m.params?.['expression']).includes('activeElement'))).toBe(false);
     expect(fake.received.find((m) => m.method === 'Input.insertText')?.params).toEqual({ text: 'hello' });
+  });
+
+  it('answers a dialog a click opens, says how, and accepts a confirm only when asked', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    fake.onRelease = [{ method: 'Page.javascriptDialogOpening', sessionId: 'S1', params: { type: 'confirm', message: 'Delete?' } }];
+    expect(await clicking({ ref: 'e7' })).toMatchObject({ dialogs: [{ type: 'confirm', message: 'Delete?', answer: 'dismissed' }] });
+    expect(await clicking({ ref: 'e7', dialog: 'accept' })).toMatchObject({ dialogs: [{ type: 'confirm', answer: 'accepted' }] });
+    // An alert has only OK.
+    fake.onRelease = [{ method: 'Page.javascriptDialogOpening', sessionId: 'S1', params: { type: 'alert', message: 'Saved' } }];
+    expect(await clicking({ ref: 'e7' })).toMatchObject({ dialogs: [{ type: 'alert', answer: 'accepted' }] });
+    const answers = fake.received.filter((m) => m.method === 'Page.handleJavaScriptDialog').map((m) => m.params?.['accept']);
+    expect(answers).toEqual([false, true, true]);
+  });
+
+  it('follows a download a click starts to its end', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    fake.onRelease = [
+      { method: 'Browser.downloadWillBegin', params: { guid: 'g1', url: 'https://fake.test/report.pdf', suggestedFilename: 'report.pdf' } },
+      { method: 'Browser.downloadProgress', params: { guid: 'g1', state: 'completed', totalBytes: 1234, receivedBytes: 1234 } },
+    ];
+    expect(await clicking({ ref: 'e7' })).toMatchObject({ downloads: [{ name: 'report.pdf', state: 'completed', bytes: 1234 }] });
+  });
+
+  it('says which tab a click opened', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    fake.onRelease = [{ method: 'Target.targetCreated', params: { targetInfo: { targetId: 'T2', type: 'page', url: 'https://fake.test/new', openerId: 'T1' } } }];
+    expect(await clicking({ ref: 'e7' })).toMatchObject({ popups: [{ targetId: 'T2', url: 'https://fake.test/new' }] });
+    expect(fake.received.some((m) => m.method === 'Target.setDiscoverTargets')).toBe(true);
   });
 
   it('pushes screencast frames, acked no faster than the rate asked for', async () => {

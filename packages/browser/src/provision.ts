@@ -52,6 +52,8 @@ export const CHROME_FOR_TESTING_MANIFEST =
 
 /** Where installs live inside the computer. Under /work so `persist: true` keeps them. */
 export const CACHE_ROOT = '/work/.husk-browser';
+/** Where a page's downloads land: beside the browser cache, in /work, so they stay with the computer. */
+export const DOWNLOADS_DIR = '/work/downloads';
 
 const SYSTEM_CANDIDATES = ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable'] as const;
 

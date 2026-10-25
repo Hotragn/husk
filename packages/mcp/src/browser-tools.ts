@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
-import { browserFor, inspectBrowserCapability, withCallSignal } from '@husk-ai/browser';
-import type { ActionOutcome, PageAction, SnapshotNode } from '@husk-ai/browser';
+import { browserFor, describeHappened, inspectBrowserCapability, withCallSignal } from '@husk-ai/browser';
+import type { ActionOutcome, Happened, PageAction, SnapshotNode } from '@husk-ai/browser';
 import type { Computer } from '@husk-ai/core';
 import { redact } from '@husk-ai/core';
 import type { ToolDef, ToolResult } from './tools.js';
@@ -73,6 +73,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
               text: { type: 'string', description: 'fill: what to type. wait: visible text to wait for.' },
               submit: { type: 'boolean', description: 'fill: press Enter afterwards.' },
               force: { type: 'boolean', description: 'click: press at its centre without checking it is enabled, visible, still and uncovered.' },
+              dialog: { type: 'string', enum: ['accept', 'dismiss'], description: 'click, fill: answer a confirm or prompt it opens; dismissed unless accept.' },
               selector: { type: 'string', description: 'wait: a CSS selector to wait for.' },
               gone: { type: 'boolean', description: 'wait: wait for it to go away instead.' },
               timeoutSec: { type: 'number', description: 'goto, wait: give up after this long.' },
@@ -92,7 +93,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
       'Run a short Python script against the current page when the next steps depend on what ' +
       'the page shows -- branch, loop over results, retry -- all in ONE call. It runs in its own ' +
       'process inside your computer, not on the host, and is stopped at timeoutSec. `page` has: ' +
-      'goto(url), click(ref= or role=, name=, force=), fill(text, ref= or role=, name=, submit=), ' +
+      'goto(url), click(ref= or role=, name=, force=, dialog=), fill(text, ref= or role=, name=, submit=), ' +
       'wait_for_text(text, timeout=) / wait_for_url(part) / wait_for_selector(css) -> True or False, ' +
       'has_text(text), snapshot() -> list of {ref, role, name}, text(ref= or selector=), url(), title(); ' +
       'also sleep(seconds). A refused call raises PageError. Whatever you print comes back, and ' +
@@ -135,6 +136,11 @@ export const BROWSER_TOOLS: ToolDef[] = [
       properties: {
         ref: { type: 'string', description: 'A `ref` from browser_snapshot, e.g. e42.' },
         force: { type: 'boolean', description: 'Press at its centre without the checks. Defaults to false.' },
+        dialog: {
+          type: 'string',
+          enum: ['accept', 'dismiss'],
+          description: 'How to answer a confirm or a prompt this opens: dismiss (the default) or accept. An alert is always accepted.',
+        },
       },
       required: ['ref'],
     },
@@ -151,6 +157,11 @@ export const BROWSER_TOOLS: ToolDef[] = [
         ref: { type: 'string', description: 'A `ref` from browser_snapshot.' },
         text: { type: 'string', description: 'The text to type.' },
         submit: { type: 'boolean', description: 'Press Enter after typing. Defaults to false.' },
+        dialog: {
+          type: 'string',
+          enum: ['accept', 'dismiss'],
+          description: 'How to answer a confirm or a prompt this opens: dismiss (the default) or accept. An alert is always accepted.',
+        },
       },
       required: ['ref', 'text'],
     },
@@ -330,8 +341,8 @@ function parseActions(raw: unknown): PageAction[] | string {
     if (kind === 'goto') {
       if (!s('url')?.trim()) return `${at}: goto needs a url`;
       out.push({ do: 'goto', url: s('url')!, ...ms });
-    } else if (kind === 'click') out.push({ do: 'click', ...el, ...(a['force'] === true ? { force: true } : {}) });
-    else if (kind === 'fill') out.push({ do: 'fill', ...el, text: s('text') ?? '', ...(a['submit'] === true ? { submit: true } : {}) });
+    } else if (kind === 'click') out.push({ do: 'click', ...el, ...(a['force'] === true ? { force: true } : {}), ...dialogArg(a['dialog']) });
+    else if (kind === 'fill') out.push({ do: 'fill', ...el, text: s('text') ?? '', ...(a['submit'] === true ? { submit: true } : {}), ...dialogArg(a['dialog']) });
     else if (kind === 'wait') {
       if (s('text') === undefined && s('url') === undefined && s('selector') === undefined) return `${at}: wait needs text, url or selector`;
       out.push({
@@ -346,6 +357,12 @@ function parseActions(raw: unknown): PageAction[] | string {
   return out;
 }
 
+/** How to answer a dialog, from a tool argument: only the two words that mean something. */
+function dialogArg(v: unknown): { dialog?: 'accept' | 'dismiss' } {
+  return v === 'accept' || v === 'dismiss' ? { dialog: v } : {};
+}
+
+
 /** One line per action, what it did; a snapshot's tree under its line. */
 function describeOutcome(a: PageAction, o: ActionOutcome, n: number): string {
   const what =
@@ -353,8 +370,9 @@ function describeOutcome(a: PageAction, o: ActionOutcome, n: number): string {
     : a.do === 'click' || a.do === 'fill' ? `${a.do} ${a.ref ?? `${a.role ?? ''} ${a.name ? JSON.stringify(a.name) : ''}`.trim()}`
     : a.do === 'wait' ? `wait for ${a.selector ?? (a.url !== undefined ? `url ${JSON.stringify(a.url)}` : JSON.stringify(a.text))}${a.gone ? ' to go' : ''}`
     : a.do;
+  const also = describeHappened(o).map((l) => `\n   ${l}`).join('');
   if (o.skipped) return `${n}. ${what} -- skipped`;
-  if (o.error) return `${n}. ${what} -- FAILED: ${o.error}`;
+  if (o.error) return `${n}. ${what} -- FAILED: ${o.error}${also}`;
   const how =
     a.do === 'goto' ? `${o.loaded ? 'loaded' : 'load did not finish'}, now at ${o.url}`
     : a.do === 'click' ? `${o.ref}${o.checked === false ? ' (forced, unchecked)' : ''}${o.navigated ? ', navigated' : ''}`
@@ -362,7 +380,7 @@ function describeOutcome(a: PageAction, o: ActionOutcome, n: number): string {
     : a.do === 'wait' ? `after ${o.waitedMs} ms`
     : a.do === 'snapshot' ? `at ${o.url}\n${renderSnapshot(o.nodes ?? [])}`
     : 'see the image';
-  return `${n}. ${what} -- ${how}`;
+  return `${n}. ${what} -- ${how}${also}`;
 }
 
 /** url + snapshot as plain text, for replies that also say something else. */
@@ -406,7 +424,8 @@ async function browserTool(computer: Computer, name: string, args: Record<string
       const head = [
         result.url,
         await page.title(),
-        result.loaded ? '' : '[the load event never fired; this is what had rendered by the timeout]',
+        result.loaded || result.downloads?.length ? '' : '[the load event never fired; this is what had rendered by the timeout]',
+        ...describeHappened(result),
       ]
         .filter(Boolean)
         .join('\n');
@@ -439,6 +458,8 @@ async function browserTool(computer: Computer, name: string, args: Record<string
         parts.push(`result: ${JSON.stringify(out.result, null, 2)}${out.resultTruncated ? '\n[the result was over 64 KB; this is its JSON, cut]' : ''}`);
       }
       if (out.error) parts.push(out.error.trimEnd());
+      const also = describeHappened(out);
+      if (also.length) parts.push(also.join('\n'));
       // Cut before redacting: redact scans the whole string, so it gets the bounded one.
       const body = redact(clampLength(parts.join('\n\n'), maxTextBytes));
       return out.error ? bad(body) : text(body);
@@ -457,24 +478,23 @@ async function browserTool(computer: Computer, name: string, args: Record<string
       const page = await session.activePage();
       // Waits for a load only when the click started one. A click that opens a
       // menu used to cost a flat 5s waiting for an event that was never coming.
-      const { navigated } = await page.clickAndSettle(ref, 5000, { force });
+      const { navigated, ...happened } = await page.clickAndSettle(ref, 5000, { force, ...dialogArg(args.dialog) });
       // What happened, said truthfully: a checked click landed; a forced one was only dispatched.
       const receipt = force
         ? `Dispatched a click at the centre of ${ref} without the checks (force), so it may have landed on something else.`
         : `Clicked ${ref}: it was enabled, visible, still and uncovered, so the click landed on it.`;
-      return text(redact(`${receipt}${navigated ? ' It started a navigation.' : ''}\n\n${await stateText(computer)}`));
+      const also = describeHappened(happened).map((l) => `\n${l}`).join('');
+      return text(redact(`${receipt}${navigated ? ' It started a navigation.' : ''}${also}\n\n${await stateText(computer)}`));
     }
 
     case 'browser_type': {
       const ref = String(args.ref ?? '');
       if (!ref.trim()) return bad('ref is empty');
       const page = await session.activePage();
-      await page.type(ref, String(args.text ?? ''));
-      if (args.submit === true) {
-        await page.press('Enter');
-        await page.waitForLoad(10_000);
-      }
-      return await pageState(computer);
+      // Enter, when asked, is the driver's too, so a dialog the submit opens is answered and said.
+      const happened = await page.type(ref, String(args.text ?? ''), { submit: args.submit === true, ...dialogArg(args.dialog) });
+      const also = describeHappened(happened);
+      return also.length ? text(redact(`${also.join('\n')}\n\n${await stateText(computer)}`)) : await pageState(computer);
     }
 
     case 'browser_screenshot': {

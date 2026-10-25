@@ -27,11 +27,12 @@ export type {
 
 export { DRIVER_PATH, DRIVER_SOURCE } from './driver.js';
 
-export { Page, backendNodeIdOf, compactAxTree, flattenAxTree, keyDescriptor, waitExpression } from './page.js';
-export type { ActionOutcome, AxNodeLike, ElementTarget, GotoResult, PageAction, ScreenshotOptions, ScriptOutcome, SnapshotNode } from './page.js';
+export { Page, backendNodeIdOf, compactAxTree, describeHappened, flattenAxTree, happenedOf, keyDescriptor, waitExpression } from './page.js';
+export type { ActionOutcome, AxNodeLike, ClickOptions, ElementTarget, GotoResult, Happened, PageAction, ScreenshotOptions, ScriptOutcome, SnapshotNode } from './page.js';
 
 export {
   CACHE_ROOT,
+  DOWNLOADS_DIR,
   CHROME_FOR_TESTING_MANIFEST,
   PLAYWRIGHT_CHROMIUM_REVISION,
   downloadPlanFor,

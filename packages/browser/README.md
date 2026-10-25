@@ -142,6 +142,17 @@ forced one was only dispatched. One path does every click: `browser_click`,
 `browser_run`, `page.click` in a script and the console's Browser page all use the
 driver's `click` action.
 
+## Dialogs, downloads and new tabs
+
+A dialog blocks its page, and every command on it, until it is answered, so the
+driver answers it at once and the action's result says so: an alert or a
+leave-this-page is accepted, and a confirm or a prompt is dismissed unless the action
+passes `dialog: "accept"`. A download goes to `/work/downloads`, beside the browser's
+own folder, so it stays with the computer; a click or a goto that starts one follows
+it to its end (at most 30 s) and says where it went, and a URL that is a file to
+download is a download, not a failed load. A tab a page opens, from `target="_blank"`
+or `window.open`, is said with its address; `browser_tabs` switches to it.
+
 ## Network policy
 
 Every URL Husk opens — `goto`, a tab opened with `newTab`, the `goto` steps of `run`,

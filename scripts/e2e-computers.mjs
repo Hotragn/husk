@@ -577,6 +577,43 @@ async function checkFreshRefs(id) {
 }
 
 /**
+ * Pages that ask and pages that hand things over (J3-c): an alert is answered
+ * and said, a confirm is dismissed unless dialog: "accept", a download lands in
+ * /work/downloads, and a link to a new tab says which tab it opened.
+ */
+async function checkDialogsDownloadsTabs(id) {
+  const pages = {
+    'dialogs.html':
+      '<!doctype html><title>dialogs</title>' +
+      '<button onclick="alert(\'Saved!\'); document.title = \'after-alert\'">Save</button> ' +
+      '<button onclick="document.title = confirm(\'Delete it?\') ? \'deleted\' : \'kept\'">Delete</button>',
+    'files.html': '<!doctype html><title>files</title><a href="/report.txt" download>Report</a> <a href="/index.html" target="_blank">Open in a new tab</a>',
+    'report.txt': 'quarterly numbers\n',
+  };
+  for (const [name, content] of Object.entries(pages)) await tool(id, 'write_file', { path: `/work/fixture/${name}`, content });
+  const title = async () => /result: "([^"]*)"/.exec(textOf(await tool(id, 'browser_script', { script: 'result = page.title()' })))?.[1];
+  const refOf = (snap, role, label) => new RegExp(`^ *(e\\d+) {2}${role} "${label}"`, 'm').exec(textOf(snap))?.[1];
+
+  await tool(id, 'browser_goto', { url: `${FIXTURE}dialogs.html` });
+  let snap = await tool(id, 'browser_snapshot');
+  const saved = await tool(id, 'browser_click', { ref: refOf(snap, 'button', 'Save') });
+  check('an alert a click opens is answered and said, and the click goes on', !saved.isError && /showed an alert dialog: "Saved!"/.test(textOf(saved)) && (await title()) === 'after-alert', textOf(saved).slice(0, 200));
+  const del = refOf(snap, 'button', 'Delete');
+  const kept = await tool(id, 'browser_click', { ref: del });
+  check('a confirm is dismissed unless asked, saying how to accept it', /confirm dialog: "Delete it\?"\. Husk dismissed it/.test(textOf(kept)) && (await title()) === 'kept', textOf(kept).slice(0, 200));
+  const deleted = await tool(id, 'browser_click', { ref: del, dialog: 'accept' });
+  check('dialog: "accept" accepts it', /Husk accepted it/.test(textOf(deleted)) && (await title()) === 'deleted', textOf(deleted).slice(0, 200));
+
+  await tool(id, 'browser_goto', { url: `${FIXTURE}files.html` });
+  snap = await tool(id, 'browser_snapshot');
+  const got = await tool(id, 'browser_click', { ref: refOf(snap, 'link', 'Report') });
+  const file = textOf(await tool(id, 'read_file', { path: '/work/downloads/report.txt' }));
+  check('a download lands in /work/downloads, and the click says so', /downloaded report\.txt/.test(textOf(got)) && /quarterly numbers/.test(file), textOf(got).slice(0, 200));
+  const opened = await tool(id, 'browser_click', { ref: refOf(snap, 'link', 'Open in a new tab') });
+  check('a link to a new tab says which tab it opened', /opened a new tab: http:\/\/127\.0\.0\.1:8766\/index\.html/.test(textOf(opened)), textOf(opened).slice(0, 200));
+}
+
+/**
  * A stopped command is gone from the computer, not only from this side: killing
  * the `docker exec` client used to leave it running there while the chat was
  * told it "was killed".
@@ -973,6 +1010,7 @@ try {
   // 8c. Clicks that are honest about where they land, and refs that expire.
   await checkHonestClicks(id);
   await checkFreshRefs(id);
+  await checkDialogsDownloadsTabs(id);
 
   // 8d. Taking over stops the AI where it is, scripts included.
   await checkTakeover(id);
