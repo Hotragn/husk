@@ -394,6 +394,11 @@ class Conn(object):
             info = params.get('targetInfo') or {}
             if info.get('type') == 'page':
                 self.popups.append({'targetId': info.get('targetId') or '', 'url': info.get('url') or ''})
+        elif method == 'Target.targetInfoChanged':
+            info = params.get('targetInfo') or {}
+            for popup in self.popups:
+                if popup['targetId'] == info.get('targetId') and info.get('url'):
+                    popup['url'] = info['url']
         # A target that detaches takes the page with it; without this, a closed
         # tab means the caller waits out the whole budget for nothing.
         if msg.get('method') == 'Target.detachedFromTarget':
@@ -603,15 +608,12 @@ def resolve(conn, session_id, step, deadline, unique=False):
     return elements[0]['backendDOMNodeId']
 
 
-# Downloads land beside the browser's own folder, in the computer's /work: kept with it.
-HERE = os.path.dirname(os.path.abspath(__file__))
-DOWNLOADS = os.path.join(os.path.dirname(HERE), 'downloads')
-
-
-def prepare(conn, deadline):
+def prepare(conn, deadline, downloads):
     """
-    Once per connection: hear about the tabs pages open, and, where this driver
-    runs in a computer, send downloads to /work/downloads with their progress.
+    Once per connection: hear about the tabs pages open, and, when the host names
+    a folder for downloads (in a computer, /work/downloads), keep them there and
+    follow their progress. The host names it because only the host knows where
+    the computer keeps things: the driver itself runs from a tmpfs.
     """
     if conn.prepared:
         return
@@ -619,10 +621,10 @@ def prepare(conn, deadline):
     try:
         conn.call('Target.setDiscoverTargets', {'discover': True}, None, deadline)
         conn.discovering = True
-        if os.path.basename(HERE) == '.husk-browser':
-            if not os.path.isdir(DOWNLOADS):
-                os.makedirs(DOWNLOADS)
-            conn.call('Browser.setDownloadBehavior', {'behavior': 'allow', 'downloadPath': DOWNLOADS, 'eventsEnabled': True}, None, deadline)
+        if downloads:
+            if not os.path.isdir(downloads):
+                os.makedirs(downloads)
+            conn.call('Browser.setDownloadBehavior', {'behavior': 'allow', 'downloadPath': downloads, 'eventsEnabled': True}, None, deadline)
     except (DriverError, OSError) as exc:
         if isinstance(exc, DriverError) and exc.kind != PROTOCOL:
             raise
@@ -651,6 +653,13 @@ def finish_downloads(conn, session_id, started, deadline, seconds=30.0):
     end = min(deadline, _now() + seconds)
     while _now() < end and any(d['state'] == 'inProgress' for g, d in conn.downloads.items() if g not in started):
         listen_for(conn, session_id, ('Browser.downloadProgress',), min(1.0, end - _now()), deadline)
+
+
+def settle_popups(conn, session_id, popped, deadline, seconds=2.0):
+    """A tab an action opened starts out blank and gets its address once its page commits: wait for that, at most 2 s."""
+    end = min(deadline, _now() + seconds)
+    while _now() < end and any(p['url'] in ('', 'about:blank') for p in conn.popups[popped:]):
+        listen_for(conn, session_id, ('Target.targetInfoChanged',), end - _now(), deadline)
 
 
 def happened(conn, started, popped):
@@ -1355,8 +1364,8 @@ ACTIONS = {
 }
 
 
-def execute(conn, session_id, steps, deadline):
-    prepare(conn, deadline)
+def execute(conn, session_id, steps, deadline, downloads=None):
+    prepare(conn, deadline, downloads)
     results = []
     halted = False
     for step in steps:
@@ -1431,6 +1440,7 @@ def execute(conn, session_id, steps, deadline):
             popped = len(conn.popups)
             try:
                 result = fn(conn, session_id, step, step_deadline)
+                settle_popups(conn, session_id, popped, step_deadline)
                 result.update(happened(conn, started, popped))
                 results.append(result)
             except DriverError as exc:
@@ -1461,7 +1471,7 @@ def run(req):
         # of statelessness, and it is one round trip on a loopback socket.
         if target_id:
             session_id = session_for(conn, target_id, deadline)
-        out = {'ok': True, 'results': execute(conn, session_id, req.get('steps') or [], deadline), 'ws': ws_url}
+        out = {'ok': True, 'results': execute(conn, session_id, req.get('steps') or [], deadline, req.get('downloads')), 'ws': ws_url}
         if browser:
             out['browser'] = browser
         if session_id:
@@ -1683,7 +1693,7 @@ def serve(port):
             fps = min(30, max(1, int(req.get('fps', 4))))
             casts.start(conn, target_id, session_id, fps, int(req.get('quality', 60)), deadline)
             return {'ok': True}
-        return {'ok': True, 'results': execute(conn, session_id, req.get('steps') or [], deadline)}
+        return {'ok': True, 'results': execute(conn, session_id, req.get('steps') or [], deadline, req.get('downloads'))}
 
     def handle(raw):
         try:

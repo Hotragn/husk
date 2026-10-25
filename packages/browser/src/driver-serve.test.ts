@@ -1,9 +1,11 @@
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import type { Socket } from 'node:net';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -372,20 +374,39 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
     expect(answers).toEqual([false, true, true]);
   });
 
-  it('follows a download a click starts to its end', async () => {
+  it('follows a download a click starts to its end, into the folder the host names', async () => {
     fake = await fakeChromium();
     driver = serveDriver(fake.port);
     fake.onRelease = [
       { method: 'Browser.downloadWillBegin', params: { guid: 'g1', url: 'https://fake.test/report.pdf', suggestedFilename: 'report.pdf' } },
       { method: 'Browser.downloadProgress', params: { guid: 'g1', state: 'completed', totalBytes: 1234, receivedBytes: 1234 } },
     ];
-    expect(await clicking({ ref: 'e7' })).toMatchObject({ downloads: [{ name: 'report.pdf', state: 'completed', bytes: 1234 }] });
+    const folder = join(tmpdir(), `husk-downloads-${process.pid}`);
+    try {
+      const res = await driver.request({ targetId: 'T1', downloads: folder, steps: [{ op: 'action', do: 'click', ref: 'e7' }] });
+      expect((res['results'] as unknown[])[0]).toMatchObject({ downloads: [{ name: 'report.pdf', state: 'completed', bytes: 1234 }] });
+      // The driver runs from a tmpfs in a computer, so only the host can say where downloads belong.
+      expect(fake.received.find((m) => m.method === 'Browser.setDownloadBehavior')?.params).toEqual({ behavior: 'allow', downloadPath: folder, eventsEnabled: true });
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  it('turns downloads on only when the host names a folder for them', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    await clicking({ ref: 'e7' });
+    expect(fake.received.some((m) => m.method === 'Browser.setDownloadBehavior')).toBe(false);
   });
 
   it('says which tab a click opened', async () => {
     fake = await fakeChromium();
     driver = serveDriver(fake.port);
-    fake.onRelease = [{ method: 'Target.targetCreated', params: { targetInfo: { targetId: 'T2', type: 'page', url: 'https://fake.test/new', openerId: 'T1' } } }];
+    // A new tab starts out blank and gets its address when its page commits.
+    fake.onRelease = [
+      { method: 'Target.targetCreated', params: { targetInfo: { targetId: 'T2', type: 'page', url: 'about:blank', openerId: 'T1' } } },
+      { method: 'Target.targetInfoChanged', params: { targetInfo: { targetId: 'T2', type: 'page', url: 'https://fake.test/new', openerId: 'T1' } } },
+    ];
     expect(await clicking({ ref: 'e7' })).toMatchObject({ popups: [{ targetId: 'T2', url: 'https://fake.test/new' }] });
     expect(fake.received.some((m) => m.method === 'Target.setDiscoverTargets')).toBe(true);
   });
