@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
 import { SseStream, closedEarly } from '../sse.js';
+import { sendTo } from '../viewers.js';
 import { programCall } from './handoffs.js';
 import { browseInComputer } from '@husk-ai/core';
 import { browserSessionFor, livePageFor } from '@husk-ai/browser';
@@ -362,8 +363,9 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
       stopWatching?.();
       stopWatching = undefined;
     });
-    const send = (obj: unknown) => {
-      if (open && socket.readyState === socket.OPEN) socket.send(JSON.stringify(obj));
+    // A frame the viewer is too far behind for is dropped: the next one shows the same screen, newer.
+    const send = (obj: unknown, droppable = false) => {
+      if (open) sendTo(socket, JSON.stringify(obj), { droppable });
     };
     const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -399,7 +401,7 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
           watched = session;
           const stop = await session.watchScreen(
             fps,
-            (frame) => send({ type: 'frame', ...frame }),
+            (frame) => send({ type: 'frame', ...frame }, true),
             // Pushing stopped for good after it started: ask for frames instead.
             () => {
               stopWatching = undefined;
@@ -417,7 +419,7 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
         let wait = 1000 / fps;
         try {
           const frame = await page.frame(60);
-          send({ type: 'frame', ...frame });
+          send({ type: 'frame', ...frame }, true);
         } catch {
           // Mid-navigation frames fail and the next one usually lands. A stopped
           // computer fails every time, so slow down rather than spin on it.
@@ -442,9 +444,8 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
     const abort = new AbortController();
     let closed = false;
 
-    const send = (obj: unknown) => {
-      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(obj));
-    };
+    // A terminal's output must not go missing: a viewer too far behind is disconnected instead, and reconnects.
+    const send = (obj: unknown) => sendTo(socket, JSON.stringify(obj), { droppable: false });
 
     socket.on('close', () => {
       closed = true;
