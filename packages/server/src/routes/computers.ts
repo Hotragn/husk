@@ -115,6 +115,9 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
       activeRuns: ctx.runner.listActive(),
       handoffs: ctx.runner.handoffs.list(),
       activity,
+      // What the AI is doing right now: a take-over says what it waits for, and
+      // the desktop opens a computer's window when a call starts, not ends.
+      running: ctx.runner.handoffs.control.inFlight(),
       // Run by a chat in its own process: watched and taken over from the chat's own link.
       inChat: [...ctx.inChat],
     };

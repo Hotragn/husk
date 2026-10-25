@@ -341,6 +341,8 @@ export interface Overview {
   handoffs: PendingHandoff[];
   /** The last tool call on each computer, chats included. Absent from older servers. */
   activity?: Record<string, ActivityEntry>;
+  /** The AI's call running on each computer now: what a take-over waits for. Absent from older servers. */
+  running?: Record<string, { tool: string; since: string }>;
   /** Computers a chat runs in its own process: watched and taken over from the chat's link. Absent from older servers. */
   inChat?: string[];
 }

@@ -26,6 +26,8 @@ export interface DesktopComputer {
   /** A chat asked the person for something, and why. */
   waiting?: string;
   last?: { tool: string; summary?: string; at: string };
+  /** The tool the AI is running on it now: a long call is still work, and a take-over waits for it. */
+  calling?: string;
   /** Its screen is pushed, so watching it never counts as using the computer. */
   live: boolean;
   /** The chat app's own icon as a data URL, where the desktop app found one. */
@@ -93,6 +95,7 @@ export function statusOf(c: DesktopComputer, now = Date.now()): DeskStatus {
   if (c.state !== 'running') return 'stopped';
   if (c.held) return 'held';
   if (c.waiting) return 'waiting';
+  if (c.calling) return 'active';
   return c.last && now - Date.parse(c.last.at) < 15_000 ? 'active' : 'idle';
 }
 
@@ -112,6 +115,12 @@ export function doing(c: DesktopComputer): string {
   if (c.held) return 'You have it';
   if (c.waiting) return `Waiting for you · ${c.waiting}`;
   if (c.state !== 'running') return c.state === 'stopped' ? 'Stopped' : c.state;
+  if (c.calling) return `${c.calling}…`;
   if (!c.last) return 'Ready';
   return [c.last.tool, c.last.summary].filter(Boolean).join(' ');
+}
+
+/** While a take-over waits for the AI's call to stop: never long, but never a silent spinner. */
+export function takingText(tool: string): string {
+  return `Taking over: waiting for ${tool} to stop…`;
 }

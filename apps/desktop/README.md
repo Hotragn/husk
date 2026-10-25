@@ -19,11 +19,13 @@ that tells you when a chat is waiting for you.
   its screen white. It never moves or shows a picture, so it never distracts: it glows
   amber only when the chat is waiting for you and teal while you hold it. Hover it for a
   tiny label with the chat app's name. Without WebGL it draws the same iMac flat.
-- **Opens the Computers window when you click one, and only then.** One compact window
+- **Opens the Computers window when you click one.** One compact window
   whose tabs are your computers, each with its chat app's logo: the browser live on a
   white screen, and **Take over** or **Give back** beside what it is doing. Resize it,
   maximize it, or keep it on top (the pin). Closing it only hides it; the computers keep
-  running. "Open the window when a chat starts using a computer" is in the tray, off.
+  running. At first run Husk asks once whether to also open it by itself, without taking
+  focus, the moment a chat starts using a computer; the tray changes that later. Taking
+  over while the chat's AI is mid-call says which call it waits for to stop.
 - **Minimizes to the notch.** The minimized window becomes its computers' logos in a black
   capsule hanging from the top of the screen: around the notch on a Mac that has one,
   centred on Windows and Linux. Click a logo to open that tab; hover to see what each

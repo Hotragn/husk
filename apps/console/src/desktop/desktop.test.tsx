@@ -96,6 +96,27 @@ describe('the Computers window', () => {
     await waitFor(() => expect(acts).toContainEqual({ type: 'refresh' }));
   });
 
+  it('says what the AI is running, and which call a take-over waits for', async () => {
+    let release!: () => void;
+    const stopped = new Promise<void>((r) => (release = r));
+    const answer = fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string, init?: RequestInit) => {
+        if (input.endsWith('/takeover')) await stopped;
+        return answer(input, init);
+      }),
+    );
+    bridge(desk([computer('cmp_a01', { calling: 'browser_goto' })], { active: 'cmp_a01' }));
+    render(<ComputersWindow />);
+    expect(screen.getByText('browser_goto…')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Take over' }));
+    expect(await screen.findByText('Taking over: waiting for browser_goto to stop…')).toBeTruthy();
+    release();
+    await waitFor(() => expect(requests).toContain('POST /v1/computers/cmp_a01/takeover'));
+    await waitFor(() => expect(screen.queryByText(/Taking over/)).toBeNull());
+  });
+
   it('switches computers through the desktop app, which says which tab is in front', async () => {
     bridge(desk([computer('cmp_a01'), computer('cmp_a02', { platform: 'Cursor' })], { active: 'cmp_a01' }));
     render(<ComputersWindow />);
@@ -277,6 +298,9 @@ describe('the words for a computer', () => {
     expect(statusOf(computer('cmp_a01', { state: 'stopped', held: true }), NOW)).toBe('stopped');
     expect(doing(computer('cmp_a01'))).toBe('browser_goto https://example.com');
     expect(doing(computer('cmp_a01', { held: true }))).toBe('You have it');
+    // A long call is still work: the light stays on until it ends.
+    expect(statusOf(computer('cmp_a01', { calling: 'shell', last: { tool: 'shell', at: new Date(NOW - 60_000).toISOString() } }), NOW)).toBe('active');
+    expect(doing(computer('cmp_a01', { calling: 'shell' }))).toBe('shell…');
     expect(ago(new Date(NOW - 2_000).toISOString(), NOW)).toBe('now');
     expect(ago(new Date(NOW - 42_000).toISOString(), NOW)).toBe('42s ago');
     expect(ago(new Date(NOW - 5 * 60_000).toISOString(), NOW)).toBe('5 min ago');
