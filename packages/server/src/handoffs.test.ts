@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ComputerControl, HandoffRegistry } from './handoffs.js';
+import { CHAT_RUN, ComputerControl, HandoffRegistry, PERSON_RUN } from './handoffs.js';
 import { buildTestApp, fakeAgentFactory, sampleSpec, type TestApp } from './testing.js';
 
 function raise(registry: HandoffRegistry, signal = new AbortController().signal) {
@@ -57,6 +57,28 @@ describe('HandoffRegistry', () => {
     registry.complete(raised[0]!.handoffId);
     expect(() => registry.complete(raised[0]!.handoffId)).toThrow(/no handoff/);
     expect(() => registry.complete('hnd_missing')).toThrow(/no handoff/);
+  });
+
+  it('keeps the browser open under every hold, however long, and stops when it ends', () => {
+    vi.useFakeTimers();
+    try {
+      const touched: string[] = [];
+      const registry = new HandoffRegistry({ keepAlive: (id) => touched.push(id) });
+      const chat = new AbortController();
+      const person = new AbortController();
+      void registry.request({ runId: CHAT_RUN, husk: 'chat', reason: 'Sign in', computerId: 'c1', signal: chat.signal }, () => {});
+      void registry.request({ runId: PERSON_RUN, husk: 'you', reason: 'You took over this computer', computerId: 'c2', signal: person.signal }, () => {});
+      // Past the browser's five idle minutes, with nobody watching.
+      vi.advanceTimersByTime(6 * 60_000);
+      expect(touched.filter((id) => id === 'c1')).toHaveLength(6);
+      expect(touched.filter((id) => id === 'c2')).toHaveLength(6);
+      chat.abort();
+      person.abort();
+      vi.advanceTimersByTime(10 * 60_000);
+      expect(touched).toHaveLength(12);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('denyAll ends every wait so shutdown leaves no run parked', async () => {

@@ -432,6 +432,10 @@ and holds them again when it restarts, before it serves anything. A chat's hando
 a fresh lease, which its chat's polling keeps. A file it cannot read fails closed: every
 computer is held for the person until they give it back.
 
+While any hold is open, a run's, a chat's or a take-over, its computer's browser stays
+open, so the page the person is coming to use is still there however long they take.
+The person's typing counts as use of the computer; watching it does not.
+
 Every other route that changes a held computer (`exec`, `exec/stream`, `fs`,
 `browser/*`, `ports`, `browse`, `stop`, `start`, `DELETE`) refuses a program with
 409 `E_COMPUTER_HELD` until Give back, and stops one that was running. The console's
