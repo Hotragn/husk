@@ -612,6 +612,58 @@ async function checkFrames(id) {
 }
 
 /**
+ * The network policy below the tool (J3-e): what a page loads by itself goes by
+ * the policy too. An HTTP redirect, a script redirect, a frame, a pop-up, and a
+ * link inside a cross-site frame, each to an internal address, are stopped
+ * before anything is sent, and the result says so. 10.255.255.1 is internal on
+ * every provider and routes nowhere, so nothing is ever contacted.
+ */
+async function checkPolicyBelowTheTool(id) {
+  const INTERNAL = 'http://10.255.255.1/secret';
+  const pages = {
+    'jsredirect.html': `<!doctype html><title>js</title><script>location.href = '${INTERNAL}'</script>`,
+    'badframe.html': `<!doctype html><title>badframe</title><iframe title="bad" src="${INTERNAL}"></iframe>`,
+    'popup.html': `<!doctype html><title>popup</title><button onclick="window.open('${INTERNAL}')">Open</button>`,
+    'framelink.html': `<!doctype html><title>framelink</title><iframe title="cross" src="http://localhost:${FIXTURE_PORT}/secretlink.html" style="width:420px;height:120px"></iframe>`,
+    'secretlink.html': `<!doctype html><title>secretlink</title><a href="${INTERNAL}">Secret</a>`,
+  };
+  for (const [name, content] of Object.entries(pages)) await tool(id, 'write_file', { path: `/work/fixture/${name}`, content });
+  // An HTTP redirect needs a server that answers 302: a few lines of Python, on the next port.
+  const redirectPort = FIXTURE_PORT + 1;
+  await tool(id, 'write_file', {
+    path: '/work/redirect.py',
+    content: [
+      'import http.server',
+      'class Redirect(http.server.BaseHTTPRequestHandler):',
+      '    def do_GET(self):',
+      '        self.send_response(302)',
+      `        self.send_header('Location', '${INTERNAL}')`,
+      '        self.end_headers()',
+      '    def log_message(self, *args):',
+      '        pass',
+      `http.server.HTTPServer(('127.0.0.1', ${redirectPort}), Redirect).serve_forever()`,
+      '',
+    ].join('\n'),
+  });
+  await tool(id, 'shell', { command: '(setsid python3 /work/redirect.py >/dev/null 2>&1 &) ; sleep 1' });
+  const stopped = (r) => /network policy (refused|stopped the page from loading) http:\/\/10\.255\.255\.1\/secret/.test(textOf(r));
+  const refOf = (snap, role, label) => new RegExp(`^ *((?:f\\d+)?e\\d+) {2}${role} "${label}"`, 'm').exec(textOf(snap))?.[1];
+
+  const redirected = await tool(id, 'browser_goto', { url: `http://127.0.0.1:${redirectPort}/` });
+  check('an HTTP redirect to an internal address is refused, saying where it led', redirected.isError === true && stopped(redirected), textOf(redirected).slice(0, 300));
+  const scripted = await tool(id, 'browser_goto', { url: `${FIXTURE}jsredirect.html` });
+  check('a page that sends itself to an internal address is stopped, and the result says so', stopped(scripted), textOf(scripted).slice(0, 300));
+  const framed = await tool(id, 'browser_goto', { url: `${FIXTURE}badframe.html` });
+  check('a frame from an internal address is stopped, and the page still loads', !framed.isError && stopped(framed), textOf(framed).slice(0, 300));
+  await tool(id, 'browser_goto', { url: `${FIXTURE}popup.html` });
+  const popup = await tool(id, 'browser_click', { ref: refOf(await tool(id, 'browser_snapshot'), 'button', 'Open') });
+  check('a pop-up to an internal address is stopped', stopped(popup), textOf(popup).slice(0, 300));
+  await tool(id, 'browser_goto', { url: `${FIXTURE}framelink.html` });
+  const followed = await tool(id, 'browser_click', { ref: refOf(await tool(id, 'browser_snapshot'), 'link', 'Secret') });
+  check('a link inside a cross-site frame to an internal address is stopped', stopped(followed), textOf(followed).slice(0, 300));
+}
+
+/**
  * The browser recovers (J3-d): Chromium killed inside the computer, the call
  * that finds it gone says so, and the next one starts it again.
  */
@@ -1114,6 +1166,7 @@ try {
   await checkDialogsDownloadsTabs(id);
   await checkFrames(id);
   await checkBrowserRecovers(id);
+  await checkPolicyBelowTheTool(id);
 
   // 8d. Taking over stops the AI where it is, scripts included.
   await checkTakeover(id);

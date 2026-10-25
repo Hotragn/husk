@@ -115,10 +115,14 @@ the honest choices when the distinction matters.
 
 The tool layer checks the URLs Husk itself opens: `browse` (every redirect hop, not
 just the first URL), `browser_goto`, a new tab from `browser_tabs`, the `goto` steps of
-`browser_run` and the `page.goto` calls of `browser_script`. A page can still navigate
-itself — a link, a script, a pop-up — so for the rendered browser it is a guardrail, not
-a boundary. Making it cover every navigation is tracked in
-[#187](https://github.com/Hotragn/husk/issues/187). With no policy set, which is the
+`browser_run` and the `page.goto` calls of `browser_script`. Below it, the browser
+driver checks every document a page loads by itself against the same policy: a
+redirect's every hop, a link, a script that sends the page somewhere, a frame (cross-site
+ones included) and a pop-up's first load. A refused load is stopped before anything is
+sent, and the result says so. It does not check subresources (images, scripts, a page's
+own `fetch` calls). Those are not documents, and a page's scripts cannot read a
+cross-origin response anyway. On the one-process-per-call fallback, used by a provider
+that cannot keep the driver running, it checks only while a call runs. With no policy set, which is the
 MCP server's default, public addresses are allowed and Husk refuses internal ones
 (loopback it does not own, private ranges, link-local, the cloud metadata address), in
 IPv6 spellings too, such as `[::ffff:169.254.169.254]`. Names are not resolved, so a

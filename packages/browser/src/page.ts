@@ -233,6 +233,8 @@ export interface Happened {
   dialogs?: Array<{ type: string; message: string; answer: string }>;
   downloads?: Array<{ name: string; state: string; bytes?: number }>;
   popups?: Array<{ targetId: string; url: string }>;
+  /** Document loads the network policy stopped: a redirect's next hop, a link, a frame, a pop-up. */
+  blocked?: Array<{ url: string; reason: string }>;
 }
 
 export interface GotoResult extends Happened {
@@ -370,6 +372,13 @@ export class Page {
     // The driver's goto: a dialog the page shows on load is answered and said,
     // and a URL that is a file to download is a download, not a failure.
     const [out] = await this.actions([{ do: 'goto', url, ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}) }]);
+    if (!out?.ok && out?.blocked?.length) {
+      // Husk checked this URL; a redirect from it went where the policy refuses, and the driver stopped it.
+      throw new HuskError('E_EXEC_DENIED', out.error ?? `the network policy refused where ${url} led`, {
+        hint: 'nothing was sent there; name the host in computer.network.allow if this page should reach it',
+        details: { url, blocked: out.blocked },
+      });
+    }
     if (!out?.ok) {
       throw new HuskError('E_EXEC_FAILED', out?.error ?? `could not load ${url}`, {
         hint: 'the browser reached the network stack and was refused -- check the host and the scheme',
@@ -848,12 +857,14 @@ export function happenedOf(o: Happened): Happened {
     ...(o.dialogs?.length ? { dialogs: o.dialogs } : {}),
     ...(o.downloads?.length ? { downloads: o.downloads } : {}),
     ...(o.popups?.length ? { popups: o.popups } : {}),
+    ...(o.blocked?.length ? { blocked: o.blocked } : {}),
   };
 }
 
 /**
  * What else an action did, in words a model reads: a dialog Husk answered
- * (and how to answer it the other way), a file it downloaded, a tab it opened.
+ * (and how to answer it the other way), a file it downloaded, a tab it opened,
+ * a load the network policy stopped.
  */
 export function describeHappened(h: Happened): string[] {
   const lines: string[] = [];
@@ -873,6 +884,7 @@ export function describeHappened(h: Happened): string[] {
     );
   }
   for (const p of h.popups ?? []) lines.push(`It opened a new tab: ${p.url || 'about:blank'} (browser_tabs lists it, to switch to it).`);
+  for (const b of h.blocked ?? []) lines.push(`The network policy stopped the page from loading ${b.url}: ${b.reason}.`);
   return lines;
 }
 
@@ -1007,7 +1019,8 @@ function target(a: ElementTarget): ElementTarget {
 function outcomeOf(a: PageAction, raw: unknown): ActionOutcome {
   const r = (raw ?? {}) as Record<string, unknown>;
   if (r['skipped'] === true) return { do: a.do, ok: false, skipped: true };
-  if (typeof r['error'] === 'string') return { do: a.do, ok: false, error: r['error'] };
+  // A failure says what else happened on the way, too: a dialog, a load the policy stopped.
+  if (typeof r['error'] === 'string') return { do: a.do, ok: false, error: r['error'], ...happenedOf(r as Happened) };
   const out: ActionOutcome = { do: a.do, ok: true };
   if (typeof r['url'] === 'string') out.url = r['url'];
   if (typeof r['loaded'] === 'boolean') out.loaded = r['loaded'];
@@ -1020,6 +1033,7 @@ function outcomeOf(a: PageAction, raw: unknown): ActionOutcome {
   if (Array.isArray(r['dialogs'])) out.dialogs = r['dialogs'] as NonNullable<Happened['dialogs']>;
   if (Array.isArray(r['downloads'])) out.downloads = r['downloads'] as NonNullable<Happened['downloads']>;
   if (Array.isArray(r['popups'])) out.popups = r['popups'] as NonNullable<Happened['popups']>;
+  if (Array.isArray(r['blocked'])) out.blocked = r['blocked'] as NonNullable<Happened['blocked']>;
   if (typeof r['waitedMs'] === 'number') out.waitedMs = r['waitedMs'];
   if (typeof r['data'] === 'string') out.data = r['data'];
   if (a.do === 'snapshot') {

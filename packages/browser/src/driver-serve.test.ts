@@ -477,6 +477,42 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
     expect(typed[0]).toEqual({ ref: 'f3e7' });
   });
 
+  it('stops a document load the network policy refuses, says so, and lets the rest go', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    const paused = (requestId: string, url: string) => ({ method: 'Fetch.requestPaused', sessionId: 'S1', params: { requestId, resourceType: 'Document', request: { url } } });
+    fake.onRelease = [paused('R1', 'http://169.254.169.254/latest/meta-data/'), paused('R2', 'https://example.com/next')];
+    const policy = { network: null, loopbackIsOwn: true };
+    const res = await driver.request({ targetId: 'T1', policy, steps: [{ op: 'action', do: 'click', ref: 'e7' }] });
+    expect((res['results'] as unknown[])[0]).toMatchObject({ blocked: [{ url: 'http://169.254.169.254/latest/meta-data/', reason: 'an internal address' }] });
+    const answered = fake.received.filter((m) => m.method?.startsWith('Fetch.') && m.method !== 'Fetch.enable').map((m) => [m.method, m.params?.['requestId']]);
+    expect(answered).toEqual([
+      ['Fetch.failRequest', 'R1'],
+      ['Fetch.continueRequest', 'R2'],
+    ]);
+    // Every document of the tab, intercepted on its session before anything else is asked of it.
+    expect(fake.received.find((m) => m.method === 'Fetch.enable')).toMatchObject({ sessionId: 'S1', params: { patterns: [{ resourceType: 'Document' }] } });
+  });
+
+  it('guards a new tab before it runs: its loads go by the policy and its dialogs are answered', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    // A pop-up, held by auto-attach until the driver lets it go.
+    fake.onRelease = [{ method: 'Target.attachedToTarget', params: { sessionId: 'S9', waitingForDebugger: true, targetInfo: { targetId: 'T9', type: 'page', url: '' } } }];
+    await driver.request({ targetId: 'T1', policy: { network: { mode: 'full' }, loopbackIsOwn: false }, steps: [{ op: 'action', do: 'click', ref: 'e7' }] });
+    const toPopup = fake.received.filter((m) => m.sessionId === 'S9').map((m) => m.method);
+    expect(toPopup).toEqual(['Fetch.enable', 'Page.enable', 'Runtime.runIfWaitingForDebugger']);
+    // Every tab, held when it is new: set up before the first request does anything.
+    expect(fake.received.find((m) => m.method === 'Target.setAutoAttach' && !m.sessionId)?.params).toMatchObject({ waitForDebuggerOnStart: true, filter: [{ type: 'page' }] });
+  });
+
+  it('intercepts nothing when the host sends no policy', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    await clicking({ ref: 'e7' });
+    expect(fake.received.some((m) => m.method === 'Fetch.enable')).toBe(false);
+  });
+
   it('pushes screencast frames, acked no faster than the rate asked for', async () => {
     fake = await fakeChromium(4);
     driver = serveDriver(fake.port);
