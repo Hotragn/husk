@@ -65,7 +65,7 @@ archive and checks restart persistence, access control, assets, downloads, and Z
 ## Computer tools for developers
 
 ```bash
-npx @husk-ai/cli setup
+npx @husk-ai/cli@~0.2 setup
 ```
 
 `setup` asks where your chats' computers should run (Docker, Podman, this machine, SSH or
@@ -82,14 +82,14 @@ each app's config file before changing it and touches only its own `husk` entry.
 
 Once the next release is on npm, you can let the chat do it. Paste this into Claude Code,
 Codex, Gemini CLI, Cursor or any chat that can run a command (the Connect page makes one
-for a single app). Until then the `npx` line in it fails, because npm's 0.1.4 has no
-`setup`: use the checkout command above instead.
+for a single app). Until then the `npx` line in it fails, because npm has no 0.2 yet: use
+the checkout command above instead.
 
 ```text
 Set up Husk for me, so you get a computer of your own for tasks: a terminal and a real browser, kept apart from my files.
 
 1. Run this in a terminal:
-   npx -y @husk-ai/cli@latest setup --computer auto --apps all --yes
+   npx -y @husk-ai/cli@~0.2 setup --computer auto --apps all --yes
    It picks the safest computer this machine can run (a Docker container if Docker is installed) and adds Husk to my chat apps. If you can't run terminal commands, show me that line and I'll run it.
 2. Tell me to restart my chat apps so the Husk tools load.
 3. Tell me that if the Husk desktop app is installed, it shows your computer in a small window and I can take over any time.
