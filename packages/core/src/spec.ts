@@ -12,6 +12,7 @@ export const NetworkPolicySchema = z.object({
   mode: z.enum(['none', 'egress', 'full']).default('egress'),
   allow: z.array(z.string()).optional(),
   deny: z.array(z.string()).optional(),
+  strict: z.boolean().optional(),
 });
 
 export const ComputerConfigSchema = z.object({

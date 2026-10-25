@@ -287,6 +287,25 @@ describe('one computer per name (#112)', () => {
     }
   });
 
+  it('says what a provider cannot enforce of the network policy, and refuses it only when asked to be strict', async () => {
+    const warns: string[] = [];
+    const log = { warn: (m: string) => void warns.push(m), info() {}, debug() {}, error() {}, child: () => log } as unknown as Logger;
+    const local = new FakeProvider('local', 1, up(false));
+    const made = { info: info({ id: 'cmp_2' }) } as Computer;
+    local.create = async () => made;
+    const m = new ComputerManager({ providers: [local], logger: log });
+    await expect(m.create({ network: { mode: 'none' } })).resolves.toBe(made);
+    expect(warns.join('\n')).toMatch(/"none" is not enforced on local/);
+    await expect(m.create({ network: { mode: 'none', strict: true } })).rejects.toMatchObject({
+      code: 'E_SPEC_INVALID',
+      message: expect.stringContaining('strict enforcement'),
+    });
+    // Docker gives a "none" computer no network at all: strict is satisfied.
+    const docker = new FakeProvider('docker', 1, up(true));
+    docker.create = async () => made;
+    await expect(manager([docker]).create({ network: { mode: 'none', strict: true } })).resolves.toBe(made);
+  });
+
   it('lets a destroyed computer give its name back', async () => {
     const p = new FakeProvider('docker', 1, up(true));
     p.list = async () => [info({ state: 'destroyed' })];

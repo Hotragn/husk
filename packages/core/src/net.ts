@@ -188,6 +188,36 @@ export function sharesHostNetwork(provider: string): boolean {
   return !OWNS_LOOPBACK.has(provider);
 }
 
+/**
+ * What a provider cannot enforce of a network policy for the processes in the
+ * computer, as a sentence to warn with, or undefined when there is nothing to say.
+ *
+ * Husk's own tools and the browser's page loads follow the policy on every
+ * provider: the tool layer checks the URLs Husk opens, and the browser driver
+ * checks every document a page loads. Everything else in the computer -- a
+ * shell command, a script, a server the agent starts -- is the provider's to
+ * stop. Docker and Podman give a `none` computer no network at all; nothing
+ * firewalls `egress` or a deny list yet. The internal-address floor is not
+ * firewalled for processes either, which the matrix in SECURITY-MODEL.md says
+ * rather than every computer saying it.
+ */
+export function networkEnforcement(provider: string, policy: NetworkPolicy | undefined): string | undefined {
+  if (!policy) return undefined;
+  const kernel = provider === 'docker' || provider === 'podman';
+  if (policy.mode === 'none') {
+    return kernel
+      ? undefined
+      : `network mode "none" is not enforced on ${provider}: Husk's own tools and the browser's page loads follow it, but a process in the computer can still reach the network`;
+  }
+  if (policy.mode === 'egress') {
+    return `network mode "egress" holds Husk's own tools and the browser's page loads to the allow-list, but no provider firewalls it yet: a process in the computer can still reach any host`;
+  }
+  if (policy.deny?.length) {
+    return `the network deny list holds for Husk's own tools and the browser's page loads, but no provider firewalls it yet: a process in the computer can still reach those hosts`;
+  }
+  return undefined;
+}
+
 export interface HostPolicyContext {
   /**
    * True when this computer's loopback is its own, not the host's.

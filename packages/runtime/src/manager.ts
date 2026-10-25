@@ -1,7 +1,7 @@
 import { readFile, mkdir, rename, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { HuskError, chatIdentityOf, createLogger, notifyComputerDestroyed, paths } from '@husk-ai/core';
+import { HuskError, chatIdentityOf, createLogger, networkEnforcement, notifyComputerDestroyed, paths } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -215,6 +215,18 @@ export class ComputerManager {
     }
     await this.assertQuota(all);
     const provider = await this.resolveProvider(spec.provider ?? 'auto');
+    // What the provider cannot enforce of the network policy is said; asked to be strict, refused.
+    const unenforced = networkEnforcement(provider.name, spec.network);
+    if (unenforced && spec.network?.strict) {
+      throw new HuskError('E_SPEC_INVALID', `the network policy asks for strict enforcement, but ${unenforced}`, {
+        hint:
+          spec.network.mode === 'none'
+            ? 'use the docker or podman provider, which give a "none" computer no network at all'
+            : 'no provider enforces this for processes yet: drop strict to run with a warning, or use mode "none" on docker or podman',
+        details: { provider: provider.name, mode: spec.network.mode },
+      });
+    }
+    if (unenforced) this.log.warn(unenforced);
     const computer = await provider.create({ ...spec, provider: provider.name });
     this.log.debug(`created ${computer.id} on ${provider.name}`);
     return computer;

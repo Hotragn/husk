@@ -18,6 +18,13 @@ export interface NetworkPolicy {
   allow?: string[];
   /** Always-denied hosts, applied even in 'full' mode. */
   deny?: string[];
+  /**
+   * Refuse to create a computer on a provider that cannot enforce this policy
+   * for every process in it, rather than warn and go on (see
+   * `networkEnforcement`). Husk's own tools and the browser's page loads follow
+   * the policy on every provider either way.
+   */
+  strict?: boolean;
 }
 
 export interface MountSpec {
