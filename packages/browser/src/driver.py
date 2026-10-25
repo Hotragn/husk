@@ -1290,12 +1290,45 @@ def act_click(conn, sid, step, deadline):
     started = set(conn.downloads)
     # The page's session takes the click wherever it lands, a cross-site frame included.
     to_front(conn, sid, deadline)
+    arm(conn, sid, step, deadline)
     base = {'x': x, 'y': y, 'button': 'left', 'clickCount': 1, 'buttons': 1}
     conn.call('Input.dispatchMouseEvent', dict(base, type='mousePressed'), sid, deadline)
     conn.call('Input.dispatchMouseEvent', dict(base, type='mouseReleased', buttons=0), sid, deadline)
     navigated = loads(conn, sid, el, float(step.get('loadTimeoutMs', 5000)) / 1000.0, deadline)
     finish_downloads(conn, sid, started, deadline)
-    return {'ref': el['ref'], 'navigated': navigated, 'checked': not force}
+    return with_wait(conn, sid, step, deadline, {'ref': el['ref'], 'navigated': navigated, 'checked': not force})
+
+
+def arm(conn, sid, step, deadline):
+    """
+    The wait an action asked for, watching from just before it acts (the host's
+    armExpression), so a change that comes and goes before anyone looks is seen.
+    """
+    if not step.get('arm'):
+        return
+    try:
+        evaluate(conn, sid, step['arm'], deadline)
+    except DriverError as exc:
+        if exc.kind not in (PROTOCOL, ACTION):
+            raise
+
+
+def with_wait(conn, sid, step, deadline, result):
+    """The action's result, and what its wait found. Not finding it is an answer, not a failure: the action happened."""
+    wait = step.get('wait')
+    if not wait:
+        return result
+    started = _now()
+    try:
+        found = evaluate(conn, sid, wait['expression'], deadline) is True
+    except DriverError as exc:
+        if exc.kind not in (PROTOCOL, ACTION):
+            raise
+        found = False
+    result['waited'] = {'what': wait.get('what') or 'it', 'found': found, 'waitedMs': int((_now() - started) * 1000)}
+    if wait.get('gone'):
+        result['waited']['gone'] = True
+    return result
 
 
 def to_front(conn, sid, deadline):
@@ -1337,6 +1370,7 @@ def act_fill(conn, sid, step, deadline):
     conn.call('DOM.focus', {'backendNodeId': el['backend']}, el['sid'], deadline)
     if step.get('clear', True):
         call_on(conn, el['sid'], field, SELECT_NODE, deadline)
+    arm(conn, sid, step, deadline)
     # The element's own session: a cross-site frame's text and keys go to its own process.
     conn.call('Input.insertText', {'text': str(step.get('text', ''))}, el['sid'], deadline)
     call_on(conn, el['sid'], field, CHANGE_NODE, deadline)
@@ -1348,7 +1382,7 @@ def act_fill(conn, sid, step, deadline):
             maybe_event(conn, 'Page.loadEventFired', sid, 10.0, deadline)
         else:
             loads(conn, sid, el, 10.0, deadline)
-    return {'ref': el['ref']}
+    return with_wait(conn, sid, step, deadline, {'ref': el['ref']})
 
 
 def act_select(conn, sid, step, deadline):

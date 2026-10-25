@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
-import { browserFor, describeHappened, inspectBrowserCapability, withCallSignal } from '@husk-ai/browser';
-import type { ActionOutcome, PageAction, SnapshotNode } from '@husk-ai/browser';
+import { browserFor, describeHappened, describeWaited, inspectBrowserCapability, withCallSignal } from '@husk-ai/browser';
+import type { ActionOutcome, PageAction, SnapshotNode, WaitTarget } from '@husk-ai/browser';
 import type { Computer } from '@husk-ai/core';
 import { redact } from '@husk-ai/core';
 import type { ToolDef, ToolResult } from './tools.js';
@@ -27,6 +27,21 @@ import type { ToolDef, ToolResult } from './tools.js';
 /** A viewport PNG the model can actually look at; beyond this, only the path. */
 const INLINE_IMAGE_LIMIT = 750 * 1024;
 
+/** A wait a click or a type can carry in the same call, watched from just before it acts. */
+const WAIT_FOR = {
+  type: 'object',
+  description:
+    'Wait in the same call for this on the page (its own document): text, selector or url, or gone for it to go. ' +
+    'It is watched from just before the action, so something that shows only briefly is still caught. The result says whether it came.',
+  properties: {
+    text: { type: 'string', description: 'Visible text to wait for.' },
+    selector: { type: 'string', description: 'A CSS selector to wait for.' },
+    url: { type: 'string', description: 'Part of the address to wait for.' },
+    gone: { type: 'boolean', description: 'Wait for it to go away instead.' },
+    timeoutSec: { type: 'number', description: 'Give up after this long. Defaults to 15.' },
+  },
+};
+
 export const BROWSER_TOOLS: ToolDef[] = [
   {
     name: 'browser_goto',
@@ -50,9 +65,9 @@ export const BROWSER_TOOLS: ToolDef[] = [
     description:
       'Do several page actions in ONE call, in order, stopping at the first that fails -- far ' +
       'faster than one tool call per action, so use it whenever you already know the next few ' +
-      'steps. Each action is an object with "do": goto {url}; click {ref, or role and name; force}; ' +
-      'fill {ref or role and name, text, submit}; wait {text, url or selector, gone, timeoutSec}; ' +
-      'snapshot {limit}; screenshot {fullPage}. role and name match the accessibility tree, e.g. ' +
+      'steps. Each action is an object with "do": goto {url}; click {ref, or role and name; force; waitFor}; ' +
+      'fill {ref or role and name, text, submit; waitFor}; wait {text, url or selector, gone, timeoutSec}; ' +
+      'snapshot {limit; ref for only part of the page}; screenshot {fullPage}. role and name match the accessibility tree, e.g. ' +
       '{"do":"click","role":"button","name":"Sign in"}. End with a snapshot to see where you ' +
       'landed. Never fill the user\'s passwords or codes yourself: call hand_off.',
     inputSchema: {
@@ -67,7 +82,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
             properties: {
               do: { type: 'string', enum: ['goto', 'click', 'fill', 'wait', 'snapshot', 'screenshot'] },
               url: { type: 'string', description: 'goto: the URL. wait: text the URL must contain.' },
-              ref: { type: 'string', description: 'click, fill: a ref from a snapshot, e.g. e42, or f2e7 inside a frame.' },
+              ref: { type: 'string', description: 'click, fill: a ref from a snapshot, e.g. e42, or f2e7 inside a frame. snapshot: only the part of the page under it.' },
               role: { type: 'string', description: 'click, fill: an accessibility role, e.g. button, link, textbox.' },
               name: { type: 'string', description: 'click, fill: the accessible name, exactly.' },
               text: { type: 'string', description: 'fill: what to type. wait: visible text to wait for.' },
@@ -79,6 +94,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
               timeoutSec: { type: 'number', description: 'goto, wait: give up after this long.' },
               limit: { type: 'number', description: 'snapshot: cap the number of elements. Defaults to 400.' },
               fullPage: { type: 'boolean', description: 'screenshot: the whole document, not just the viewport.' },
+              waitFor: { ...WAIT_FOR, description: `click, fill: ${WAIT_FOR.description}` },
             },
             required: ['do'],
           },
@@ -121,6 +137,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
       type: 'object',
       properties: {
         limit: { type: 'number', description: 'Cap the number of elements. Defaults to 400.' },
+        ref: { type: 'string', description: 'Only the part of the page under this ref -- a form, a dialog, a list -- for a smaller answer.' },
       },
     },
   },
@@ -141,6 +158,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
           enum: ['accept', 'dismiss'],
           description: 'How to answer a confirm or a prompt this opens: dismiss (the default) or accept. An alert is always accepted.',
         },
+        waitFor: WAIT_FOR,
       },
       required: ['ref'],
     },
@@ -162,6 +180,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
           enum: ['accept', 'dismiss'],
           description: 'How to answer a confirm or a prompt this opens: dismiss (the default) or accept. An alert is always accepted.',
         },
+        waitFor: WAIT_FOR,
       },
       required: ['ref', 'text'],
     },
@@ -338,11 +357,14 @@ function parseActions(raw: unknown): PageAction[] | string {
     const ms = sec > 0 ? { timeoutMs: sec * 1000 } : {};
     const el = { ...(s('ref') ? { ref: s('ref') } : {}), ...(s('role') ? { role: s('role') } : {}), ...(s('name') ? { name: s('name') } : {}) };
     if ((kind === 'click' || kind === 'fill') && !el.ref && !el.role && !el.name) return `${at}: say which element, with ref or role and name`;
+    const waitFor = waitForArg(a['waitFor']);
+    if (a['waitFor'] !== undefined && !waitFor) return `${at}: waitFor needs text, selector or url`;
+    const wait = waitFor ? { waitFor } : {};
     if (kind === 'goto') {
       if (!s('url')?.trim()) return `${at}: goto needs a url`;
       out.push({ do: 'goto', url: s('url')!, ...ms });
-    } else if (kind === 'click') out.push({ do: 'click', ...el, ...(a['force'] === true ? { force: true } : {}), ...dialogArg(a['dialog']) });
-    else if (kind === 'fill') out.push({ do: 'fill', ...el, text: s('text') ?? '', ...(a['submit'] === true ? { submit: true } : {}), ...dialogArg(a['dialog']) });
+    } else if (kind === 'click') out.push({ do: 'click', ...el, ...(a['force'] === true ? { force: true } : {}), ...dialogArg(a['dialog']), ...wait });
+    else if (kind === 'fill') out.push({ do: 'fill', ...el, text: s('text') ?? '', ...(a['submit'] === true ? { submit: true } : {}), ...dialogArg(a['dialog']), ...wait });
     else if (kind === 'wait') {
       if (s('text') === undefined && s('url') === undefined && s('selector') === undefined) return `${at}: wait needs text, url or selector`;
       out.push({
@@ -351,10 +373,20 @@ function parseActions(raw: unknown): PageAction[] | string {
         ...(a['gone'] === true ? { gone: true } : {}),
         ...ms,
       });
-    } else if (kind === 'snapshot') out.push({ do: 'snapshot', limit: typeof a['limit'] === 'number' ? a['limit'] : 400 });
+    } else if (kind === 'snapshot') out.push({ do: 'snapshot', limit: typeof a['limit'] === 'number' ? a['limit'] : 400, ...(el.ref ? { root: el.ref } : {}) });
     else out.push({ do: 'screenshot', ...(a['fullPage'] === true ? { fullPage: true } : {}) });
   }
   return out;
+}
+
+/** A waitFor argument as what to wait for, or undefined when it names nothing to wait for. */
+function waitForArg(v: unknown): WaitTarget | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const w = v as Record<string, unknown>;
+  const s = (k: string): string | undefined => (typeof w[k] === 'string' ? (w[k] as string) : undefined);
+  const what = s('selector') !== undefined ? { selector: s('selector')! } : s('url') !== undefined ? { url: s('url')! } : s('text') !== undefined ? { text: s('text')! } : undefined;
+  if (!what) return undefined;
+  return { ...what, ...(w['gone'] === true ? { gone: true } : {}), timeoutMs: secondsArg(w['timeoutSec'], 15) * 1000 };
 }
 
 /** How to answer a dialog, from a tool argument: only the two words that mean something. */
@@ -370,7 +402,7 @@ function describeOutcome(a: PageAction, o: ActionOutcome, n: number): string {
     : a.do === 'click' || a.do === 'fill' ? `${a.do} ${a.ref ?? `${a.role ?? ''} ${a.name ? JSON.stringify(a.name) : ''}`.trim()}`
     : a.do === 'wait' ? `wait for ${a.selector ?? (a.url !== undefined ? `url ${JSON.stringify(a.url)}` : JSON.stringify(a.text))}${a.gone ? ' to go' : ''}`
     : a.do;
-  const also = describeHappened(o).map((l) => `\n   ${l}`).join('');
+  const also = [...describeHappened(o), ...(o.waited ? [describeWaited(o.waited)] : [])].map((l) => `\n   ${l}`).join('');
   if (o.skipped) return `${n}. ${what} -- skipped`;
   if (o.error) return `${n}. ${what} -- FAILED: ${o.error}${also}`;
   const how =
@@ -383,17 +415,34 @@ function describeOutcome(a: PageAction, o: ActionOutcome, n: number): string {
   return `${n}. ${what} -- ${how}${also}`;
 }
 
-/** url + snapshot as plain text, for replies that also say something else. */
+/** The page's status line and snapshot as plain text, for replies that also say something else. */
 async function stateText(computer: Computer, limit = 400): Promise<string> {
   const page = await browserFor(computer).activePage();
-  return `now at ${await page.url()}\n\n${renderSnapshot(await page.snapshot({ limit }))}`;
+  return `${await page.status()}\n\n${renderSnapshot(await page.snapshot({ limit }))}`;
 }
 
-/** url + snapshot: the shape every tool that acts on the page returns. */
+/** The page's status line and snapshot: the shape every tool that acts on the page returns. */
 async function pageState(computer: Computer, limit = 400): Promise<ToolResult> {
-  const page = await browserFor(computer).activePage();
-  const url = await page.url();
-  return text(redact(`now at ${url}\n\n${renderSnapshot(await page.snapshot({ limit }))}`));
+  return text(redact(await stateText(computer, limit)));
+}
+
+/**
+ * The page's one-line status, for a result that would not otherwise say where
+ * the page is. From the live page only, so it never starts a browser, and
+ * never the reason a call fails: it is the empty string when the page cannot say.
+ */
+async function statusLine(computer: Computer): Promise<string> {
+  try {
+    return (await browserFor(computer).livePage()?.status()) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/** A body with the page's status after it. */
+async function withStatus(computer: Computer, body: string): Promise<string> {
+  const status = await statusLine(computer);
+  return status ? `${body}\n\n${status}` : body;
 }
 
 /**
@@ -422,8 +471,7 @@ async function browserTool(computer: Computer, name: string, args: Record<string
       const result = await session.goto(url, { timeoutMs: timeoutSec * 1000 });
       const page = await session.activePage();
       const head = [
-        result.url,
-        await page.title(),
+        await page.status(),
         result.loaded || result.downloads?.length ? '' : '[the load event never fired; this is what had rendered by the timeout]',
         ...describeHappened(result),
       ]
@@ -444,7 +492,7 @@ async function browserTool(computer: Computer, name: string, args: Record<string
         lines.push('(a screenshot was too large to return inline; use browser_screenshot to save it to a file)');
       }
       const failed = outcomes.some((o) => o.error);
-      return { content: [{ type: 'text', text: redact(lines.join('\n')) }, ...images], ...(failed ? { isError: true } : {}) };
+      return { content: [{ type: 'text', text: redact(await withStatus(computer, lines.join('\n'))) }, ...images], ...(failed ? { isError: true } : {}) };
     }
 
     case 'browser_script': {
@@ -460,6 +508,8 @@ async function browserTool(computer: Computer, name: string, args: Record<string
       if (out.error) parts.push(out.error.trimEnd());
       const also = describeHappened(out);
       if (also.length) parts.push(also.join('\n'));
+      const status = await statusLine(computer);
+      if (status) parts.push(status);
       // Cut before redacting: redact scans the whole string, so it gets the bounded one.
       const body = redact(clampLength(parts.join('\n\n'), maxTextBytes));
       return out.error ? bad(body) : text(body);
@@ -467,33 +517,43 @@ async function browserTool(computer: Computer, name: string, args: Record<string
 
     case 'browser_snapshot': {
       const limit = typeof args.limit === 'number' ? args.limit : 400;
+      const root = typeof args.ref === 'string' && args.ref.trim() ? args.ref : undefined;
       const page = await session.activePage();
-      return text(redact(`${await page.url()}\n\n${renderSnapshot(await page.snapshot({ limit }))}`));
+      const nodes = await page.snapshot({ limit, ...(root ? { root } : {}) });
+      return text(redact(`${await page.status()}\n\n${root ? `under ${root}:\n` : ''}${renderSnapshot(nodes)}`));
     }
 
     case 'browser_click': {
       const ref = String(args.ref ?? '');
       if (!ref.trim()) return bad('ref is empty');
       const force = args.force === true;
+      const waitFor = waitForArg(args.waitFor);
+      if (args.waitFor !== undefined && !waitFor) return bad('waitFor needs text, selector or url');
       const page = await session.activePage();
       // Waits for a load only when the click started one. A click that opens a
       // menu used to cost a flat 5s waiting for an event that was never coming.
-      const { navigated, ...happened } = await page.clickAndSettle(ref, 5000, { force, ...dialogArg(args.dialog) });
+      const { navigated, waited, ...happened } = await page.clickAndSettle(ref, 5000, { force, ...dialogArg(args.dialog), ...(waitFor ? { waitFor } : {}) });
       // What happened, said truthfully: a checked click landed; a forced one was only dispatched.
       const receipt = force
         ? `Dispatched a click at the centre of ${ref} without the checks (force), so it may have landed on something else.`
         : `Clicked ${ref}: it was enabled, visible, still and uncovered, so the click landed on it.`;
-      const also = describeHappened(happened).map((l) => `\n${l}`).join('');
+      const also = [...describeHappened(happened), ...(waited ? [describeWaited(waited)] : [])].map((l) => `\n${l}`).join('');
       return text(redact(`${receipt}${navigated ? ' It started a navigation.' : ''}${also}\n\n${await stateText(computer)}`));
     }
 
     case 'browser_type': {
       const ref = String(args.ref ?? '');
       if (!ref.trim()) return bad('ref is empty');
+      const waitFor = waitForArg(args.waitFor);
+      if (args.waitFor !== undefined && !waitFor) return bad('waitFor needs text, selector or url');
       const page = await session.activePage();
       // Enter, when asked, is the driver's too, so a dialog the submit opens is answered and said.
-      const happened = await page.type(ref, String(args.text ?? ''), { submit: args.submit === true, ...dialogArg(args.dialog) });
-      const also = describeHappened(happened);
+      const { waited, ...happened } = await page.type(ref, String(args.text ?? ''), {
+        submit: args.submit === true,
+        ...dialogArg(args.dialog),
+        ...(waitFor ? { waitFor } : {}),
+      });
+      const also = [...describeHappened(happened), ...(waited ? [describeWaited(waited)] : [])];
       return also.length ? text(redact(`${also.join('\n')}\n\n${await stateText(computer)}`)) : await pageState(computer);
     }
 
@@ -505,7 +565,7 @@ async function browserTool(computer: Computer, name: string, args: Record<string
       const bytes = Buffer.from(data, 'base64');
       await computer.writeFile(path, bytes);
 
-      const note = `wrote a ${fullPage ? 'full-page' : 'viewport'} screenshot to ${path} (${bytes.length} bytes)`;
+      const note = await withStatus(computer, `wrote a ${fullPage ? 'full-page' : 'viewport'} screenshot to ${path} (${bytes.length} bytes)`);
       // A full-page PNG is routinely a megabyte, and a megabyte of base64 buys
       // the model little that a snapshot would not give it more precisely. A
       // viewport shot usually fits, and seeing the page is worth real tokens.
@@ -536,10 +596,15 @@ async function browserTool(computer: Computer, name: string, args: Record<string
       // A timeout is reported, not thrown: "it never appeared" is information
       // the model should act on, not an error that ends the attempt.
       return text(
-        res.found
-          ? `${what} ${args.gone === true ? 'went away' : 'appeared'} after ${res.waitedMs} ms`
-          : `${what} did not ${args.gone === true ? 'go away' : 'appear'} within ${res.waitedMs} ms. ` +
-              `Take a snapshot to see what is actually on the page.`,
+        redact(
+          await withStatus(
+            computer,
+            res.found
+              ? `${what} ${args.gone === true ? 'went away' : 'appeared'} after ${res.waitedMs} ms`
+              : `${what} did not ${args.gone === true ? 'go away' : 'appear'} within ${res.waitedMs} ms. ` +
+                  `Take a snapshot to see what is actually on the page.`,
+          ),
+        ),
       );
     }
 
@@ -568,7 +633,7 @@ async function browserTool(computer: Computer, name: string, args: Record<string
       if (files.length === 0) return bad('files is empty');
       const page = await session.activePage();
       await page.setFiles(ref, files);
-      return text(`attached ${files.length} file${files.length === 1 ? '' : 's'}: ${files.join(', ')}`);
+      return text(redact(await withStatus(computer, `attached ${files.length} file${files.length === 1 ? '' : 's'}: ${files.join(', ')}`)));
     }
 
     case 'browser_hover': {
@@ -590,7 +655,7 @@ async function browserTool(computer: Computer, name: string, args: Record<string
     case 'browser_tabs': {
       if (typeof args.open === 'string' && args.open.trim()) {
         const opened = await session.newTab(args.open);
-        return text(`opened and switched to ${opened.targetId} (${opened.url})`);
+        return text(redact(await withStatus(computer, `opened and switched to ${opened.targetId} (${opened.url})`)));
       }
       if (typeof args.switchTo === 'string' && args.switchTo.trim()) {
         const now = await session.switchTab(args.switchTo);

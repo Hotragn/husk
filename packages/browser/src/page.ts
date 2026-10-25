@@ -405,7 +405,7 @@ export class Page {
    * instead, and only then wait for it to finish.
    */
   /** `click`, named for what a caller cares about: did the page move, and what else it did. */
-  async clickAndSettle(ref: string, loadTimeoutMs = 5000, opts: ClickOptions = {}): Promise<{ navigated: boolean } & Happened> {
+  async clickAndSettle(ref: string, loadTimeoutMs = 5000, opts: ClickOptions = {}): Promise<{ navigated: boolean; waited?: Waited } & Happened> {
     const { navigationStarted, ...rest } = await this.click(ref, loadTimeoutMs, opts);
     return { navigated: navigationStarted, ...rest };
   }
@@ -421,6 +421,31 @@ export class Page {
   async url(): Promise<string> {
     const res = await this.evaluate('location.href');
     return typeof res === 'string' ? res : '';
+  }
+
+  /**
+   * Where the page is, in one line a browser tool can end with: its address,
+   * its title, whether it has finished loading, and how many tabs are open when
+   * there is more than one. A model that has it does not spend its next turn
+   * asking, or miss the tab a click opened.
+   */
+  async status(): Promise<string> {
+    const [state, targets] = await this.run([
+      {
+        op: 'send',
+        method: 'Runtime.evaluate',
+        params: evalParams('({ url: location.href, title: document.title, ready: document.readyState })'),
+        session: true,
+        soft: true,
+      },
+      { op: 'send', method: 'Target.getTargets', soft: true },
+    ]);
+    const s = (valueOf((state ?? {}) as CdpParams) ?? {}) as { url?: string; title?: string; ready?: string };
+    const infos = ((targets ?? {}) as { targetInfos?: Array<{ type?: string }> }).targetInfos ?? [];
+    const tabs = infos.filter((t) => t.type === 'page').length;
+    const title = s.title ? JSON.stringify(s.title) : 'untitled';
+    const ready = s.ready === 'complete' ? 'loaded' : 'still loading';
+    return `now at ${s.url ?? 'an unknown address'} -- ${title}, ${ready}${tabs > 1 ? `; ${tabs} tabs are open (browser_tabs lists them)` : ''}`;
   }
 
   async title(): Promise<string> {
@@ -459,9 +484,14 @@ export class Page {
    * A frame's refs are `f<k>e<n>`, and a frame that cannot be read is said,
    * not left as a silence a model would read as "the page does not have one".
    */
-  async snapshot(opts: { limit?: number } = {}): Promise<SnapshotNode[]> {
+  async snapshot(opts: { limit?: number; root?: string } = {}): Promise<SnapshotNode[]> {
     // The driver's snapshot action, which also records which document its refs belong to.
-    const [out] = await this.actions([{ do: 'snapshot', ...(opts.limit !== undefined ? { limit: opts.limit } : {}) }]);
+    const [out] = await this.actions([
+      { do: 'snapshot', ...(opts.limit !== undefined ? { limit: opts.limit } : {}), ...(opts.root !== undefined ? { root: opts.root } : {}) },
+    ]);
+    if (!out?.ok && opts.root !== undefined && out?.nodes === undefined) {
+      throw new HuskError('E_TOOL_ERROR', out?.error ?? `${opts.root} is not on the page`, { hint: 'take a snapshot without ref to see the page as it is now', details: { ref: opts.root } });
+    }
     if (!out?.ok) {
       throw new HuskError('E_EXEC_FAILED', out?.error ?? 'could not read the page', { hint: 'the page may be mid-navigation; try again' });
     }
@@ -632,9 +662,16 @@ export class Page {
    * centre, as clicks always did. The navigation watch is in the same driver
    * round as the click, so a fast local navigation is not missed.
    */
-  async click(ref: string, loadTimeoutMs = 5000, opts: ClickOptions = {}): Promise<{ navigationStarted: boolean } & Happened> {
+  async click(ref: string, loadTimeoutMs = 5000, opts: ClickOptions = {}): Promise<{ navigationStarted: boolean; waited?: Waited } & Happened> {
     const [out] = await this.actions([
-      { do: 'click', ref, loadTimeoutMs, ...(opts.force ? { force: true } : {}), ...(opts.dialog ? { dialog: opts.dialog } : {}) },
+      {
+        do: 'click',
+        ref,
+        loadTimeoutMs,
+        ...(opts.force ? { force: true } : {}),
+        ...(opts.dialog ? { dialog: opts.dialog } : {}),
+        ...(opts.waitFor ? { waitFor: opts.waitFor } : {}),
+      },
     ]);
     if (!out?.ok) {
       throw new HuskError('E_TOOL_ERROR', out?.error ?? `could not click ${ref}`, {
@@ -642,7 +679,7 @@ export class Page {
         details: { ref },
       });
     }
-    return { navigationStarted: out.navigated === true, ...happenedOf(out) };
+    return { navigationStarted: out.navigated === true, ...(out.waited ? { waited: out.waited } : {}), ...happenedOf(out) };
   }
 
   /**
@@ -652,7 +689,11 @@ export class Page {
    * on the field itself, never on `document.activeElement`, which inside a
    * frame is the frame.
    */
-  async type(ref: string, text: string, opts: { clear?: boolean; submit?: boolean; dialog?: 'accept' | 'dismiss' } = {}): Promise<Happened> {
+  async type(
+    ref: string,
+    text: string,
+    opts: { clear?: boolean; submit?: boolean; dialog?: 'accept' | 'dismiss'; waitFor?: WaitTarget } = {},
+  ): Promise<Happened & { waited?: Waited }> {
     const [out] = await this.actions([
       {
         do: 'fill',
@@ -661,6 +702,7 @@ export class Page {
         ...(opts.clear === false ? { clear: false } : {}),
         ...(opts.submit ? { submit: true } : {}),
         ...(opts.dialog ? { dialog: opts.dialog } : {}),
+        ...(opts.waitFor ? { waitFor: opts.waitFor } : {}),
       },
     ]);
     if (!out?.ok) {
@@ -669,7 +711,7 @@ export class Page {
         details: { ref },
       });
     }
-    return happenedOf(out);
+    return { ...(out.waited ? { waited: out.waited } : {}), ...happenedOf(out) };
   }
 
   async press(key: string): Promise<void> {
@@ -828,27 +870,95 @@ export class Page {
  * gone), false at the deadline. Polling rather than a MutationObserver, so a
  * one-shot driver -- a process per call -- waits the same way a served one does.
  */
-export function waitExpression(what: { text?: string; url?: string; selector?: string; gone?: boolean }, timeoutMs: number): string {
-  const probe = what.selector
+function waitProbe(what: WaitTarget): string {
+  return what.selector
     ? `!!document.querySelector(${JSON.stringify(what.selector)})`
     : what.url !== undefined
       ? `location.href.includes(${JSON.stringify(what.url)})`
       : `document.body ? document.body.innerText.includes(${JSON.stringify(what.text ?? '')}) : false`;
+}
+
+/**
+ * The page-side wait loop. With `armed`, what `armExpression` saw before the
+ * action counts too: a toast that came and went while the click settled was
+ * there, even if it is gone by the time anyone looks. A page the action
+ * replaced has no watcher, so there the condition is looked for afresh.
+ */
+export function waitExpression(what: WaitTarget, timeoutMs: number, armed = false): string {
+  const probe = waitProbe(what);
   const want = what.gone === true ? 'false' : 'true';
+  const seen = armed ? '(window.__huskArmed && window.__huskArmed.seen) || ' : '';
+  const done = armed ? 'if (window.__huskArmed && window.__huskArmed.stop) window.__huskArmed.stop(); ' : '';
   return `(async () => {
      const deadline = Date.now() + ${Math.max(0, timeoutMs)};
      while (Date.now() < deadline) {
-       if ((${probe}) === ${want}) return true;
+       if (${seen}(${probe}) === ${want}) { ${done}return true; }
        await new Promise((r) => setTimeout(r, 100));
      }
-     return (${probe}) === ${want};
+     const found = ${seen}(${probe}) === ${want};
+     ${done}return found;
    })()`;
 }
 
-/** How a click goes: `force` skips its checks; `dialog` answers a confirm or prompt it opens (dismissed unless "accept"). */
+/**
+ * A watcher installed just before an action, for the wait the action asked
+ * for: it notes the moment the page shows what is waited for, so a change the
+ * action causes and undoes before anyone looks is still seen. It stops itself
+ * when it has seen it, when the wait ends, or after ten minutes at most.
+ */
+export function armExpression(what: WaitTarget): string {
+  const probe = waitProbe(what);
+  const want = what.gone === true ? 'false' : 'true';
+  return `(() => {
+     const probe = () => { try { return (${probe}) === ${want}; } catch { return false; } };
+     if (window.__huskArmed && window.__huskArmed.stop) window.__huskArmed.stop();
+     const w = { seen: probe() };
+     window.__huskArmed = w;
+     if (!w.seen) {
+       const mo = new MutationObserver(() => { if (probe()) { w.seen = true; w.stop(); } });
+       const timer = setTimeout(() => w.stop(), 600000);
+       w.stop = () => { mo.disconnect(); clearTimeout(timer); };
+       mo.observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
+     }
+     return true;
+   })()`;
+}
+
+/** A wait in a few words: `text "Saved"`, `selector .toast`, `url "/done"`. */
+export function describeWait(what: WaitTarget): string {
+  return what.selector !== undefined ? `selector ${what.selector}` : what.url !== undefined ? `url ${JSON.stringify(what.url)}` : `text ${JSON.stringify(what.text ?? '')}`;
+}
+
+/** What a wait an action asked for found, in words a model reads. */
+export function describeWaited(w: Waited): string {
+  const verb = w.gone ? 'went away' : 'appeared';
+  return w.found
+    ? `Then waited for ${w.what}: it ${verb} after ${w.waitedMs} ms.`
+    : `Then waited for ${w.what}: it did not ${w.gone ? 'go away' : 'appear'} within ${w.waitedMs} ms. Take a snapshot to see what is there.`;
+}
+
+/** How a click goes: `force` skips its checks; `dialog` answers a confirm or prompt it opens (dismissed unless "accept"); `waitFor`, armed before it. */
 export interface ClickOptions {
   force?: boolean;
   dialog?: 'accept' | 'dismiss';
+  waitFor?: WaitTarget;
+}
+
+/** What to wait for on the page's own document: text, a selector or part of the address, or `gone` for it to go. */
+export interface WaitTarget {
+  text?: string;
+  url?: string;
+  selector?: string;
+  gone?: boolean;
+  timeoutMs?: number;
+}
+
+/** What a wait an action asked for found. */
+export interface Waited {
+  what: string;
+  found: boolean;
+  waitedMs: number;
+  gone?: boolean;
 }
 
 /** The dialogs, downloads and tabs an outcome carries, and nothing else. */
@@ -902,11 +1012,11 @@ export interface ElementTarget {
  */
 export type PageAction =
   | { do: 'goto'; url: string; timeoutMs?: number }
-  | ({ do: 'click'; force?: boolean; loadTimeoutMs?: number; dialog?: 'accept' | 'dismiss' } & ElementTarget)
-  | ({ do: 'fill'; text: string; submit?: boolean; clear?: boolean; dialog?: 'accept' | 'dismiss' } & ElementTarget)
+  | ({ do: 'click'; force?: boolean; loadTimeoutMs?: number; dialog?: 'accept' | 'dismiss'; waitFor?: WaitTarget } & ElementTarget)
+  | ({ do: 'fill'; text: string; submit?: boolean; clear?: boolean; dialog?: 'accept' | 'dismiss'; waitFor?: WaitTarget } & ElementTarget)
   | ({ do: 'select'; value: string } & ElementTarget)
   | { do: 'wait'; text?: string; url?: string; selector?: string; gone?: boolean; timeoutMs?: number }
-  | { do: 'snapshot'; limit?: number }
+  | { do: 'snapshot'; limit?: number; root?: string }
   | { do: 'screenshot'; fullPage?: boolean }
   | ({ do: 'hover' | 'scroll' } & ElementTarget)
   | ({ do: 'upload'; files: string[] } & ElementTarget);
@@ -947,6 +1057,8 @@ export interface ActionOutcome extends Happened {
   document?: string;
   /** A snapshot's frames, by number (`f1`): the refs `f<k>e<n>` act in their frame's document. */
   frames?: Record<string, SnapshotFrame>;
+  /** What a wait the click or fill asked for found. */
+  waited?: Waited;
   waitedMs?: number;
   nodes?: SnapshotNode[];
   /** Base64 PNG, for `screenshot`. */
@@ -968,7 +1080,8 @@ function actionStep(a: PageAction): DriverStep {
         ...(a.force ? { force: true } : {}),
         ...(a.loadTimeoutMs !== undefined ? { loadTimeoutMs: a.loadTimeoutMs } : {}),
         ...(a.dialog ? { dialog: a.dialog } : {}),
-        timeoutMs: 30_000,
+        ...armed(a.waitFor),
+        timeoutMs: 30_000 + waitMs(a.waitFor),
       };
     case 'fill':
       return {
@@ -979,7 +1092,8 @@ function actionStep(a: PageAction): DriverStep {
         ...(a.submit ? { submit: true } : {}),
         ...(a.clear === false ? { clear: false } : {}),
         ...(a.dialog ? { dialog: a.dialog } : {}),
-        timeoutMs: 30_000,
+        ...armed(a.waitFor),
+        timeoutMs: 30_000 + waitMs(a.waitFor),
       };
     case 'select':
       return { ...base, do: 'select', ...target(a), value: a.value, timeoutMs: 30_000 };
@@ -1008,6 +1122,20 @@ function actionStep(a: PageAction): DriverStep {
   }
 }
 
+/** The default wait, as browser_wait_for's: fifteen seconds. */
+function waitMs(w: WaitTarget | undefined): number {
+  return w ? (w.timeoutMs ?? 15_000) : 0;
+}
+
+/** A click's or a fill's wait, as the driver takes it: armed just before it acts, looked for after. */
+function armed(w: WaitTarget | undefined): Record<string, unknown> {
+  if (!w) return {};
+  return {
+    arm: armExpression(w),
+    wait: { expression: waitExpression(w, waitMs(w), true), what: describeWait(w), ...(w.gone ? { gone: true } : {}) },
+  };
+}
+
 function target(a: ElementTarget): ElementTarget {
   return {
     ...(a.ref !== undefined ? { ref: a.ref } : {}),
@@ -1030,6 +1158,7 @@ function outcomeOf(a: PageAction, raw: unknown): ActionOutcome {
   if (typeof r['selected'] === 'string') out.selected = r['selected'];
   if (typeof r['document'] === 'string') out.document = r['document'];
   if (r['frames'] && typeof r['frames'] === 'object') out.frames = r['frames'] as Record<string, SnapshotFrame>;
+  if (r['waited'] && typeof r['waited'] === 'object') out.waited = r['waited'] as Waited;
   if (Array.isArray(r['dialogs'])) out.dialogs = r['dialogs'] as NonNullable<Happened['dialogs']>;
   if (Array.isArray(r['downloads'])) out.downloads = r['downloads'] as NonNullable<Happened['downloads']>;
   if (Array.isArray(r['popups'])) out.popups = r['popups'] as NonNullable<Happened['popups']>;
@@ -1037,8 +1166,31 @@ function outcomeOf(a: PageAction, raw: unknown): ActionOutcome {
   if (typeof r['waitedMs'] === 'number') out.waitedMs = r['waitedMs'];
   if (typeof r['data'] === 'string') out.data = r['data'];
   if (a.do === 'snapshot') {
-    const nodes = Array.isArray(r['nodes']) ? (r['nodes'] as AxNodeLike[]) : [];
-    out.nodes = snapshotOf(nodes, r['unreachable'], a.limit !== undefined ? { limit: a.limit } : {});
+    const all = Array.isArray(r['nodes']) ? (r['nodes'] as AxNodeLike[]) : [];
+    const nodes = a.root !== undefined ? subtree(all, a.root) : all;
+    if (!nodes) return { do: a.do, ok: false, error: `${a.root} is not on the page` };
+    out.nodes = snapshotOf(nodes, a.root !== undefined ? [] : r['unreachable'], a.limit !== undefined ? { limit: a.limit } : {});
+  }
+  return out;
+}
+
+/**
+ * The part of the tree under the node a ref names, that node included, or
+ * undefined when the page has no such node: a form, a dialog or a list read on
+ * its own, for a model that needs only that.
+ */
+function subtree(nodes: AxNodeLike[], root: string): AxNodeLike[] | undefined {
+  const top = nodes.find((n) => n.backendDOMNodeId !== undefined && `${n.frame ?? ''}e${n.backendDOMNodeId}` === root);
+  if (!top) return undefined;
+  const byId = new Map(nodes.map((n) => [str(n.nodeId), n]));
+  const out: AxNodeLike[] = [];
+  const todo = [top];
+  for (let n = todo.pop(); n; n = todo.pop()) {
+    out.push(n);
+    for (const id of n.childIds ?? []) {
+      const child = byId.get(id);
+      if (child) todo.push(child);
+    }
   }
   return out;
 }

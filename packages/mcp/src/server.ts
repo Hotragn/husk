@@ -20,7 +20,7 @@ import type { ToolDef, ToolResult } from './tools.js';
 import { DaemonUnreachable, HandoffGone, RunLocally, connectDaemon } from './daemon.js';
 import type { DaemonClient } from './daemon.js';
 import { WorkspaceStore } from '@husk-ai/workspaces';
-import { HandoffRegistry, PERSON_RUN, ScopedTokens, computerLink, handoffLink, startWorkspaceViewer, takenText, underControl } from '@husk-ai/server/workspace-viewer';
+import { HandoffRegistry, PERSON_RUN, ScopedTokens, computerLink, handoffLink, refusalText, startWorkspaceViewer, takenText, underControl } from '@husk-ai/server/workspace-viewer';
 import { CARD_APP_TOOLS, CARD_APP_TOOL_NAMES, CARD_HTML, CARD_MIME, CARD_URI, OPEN_UI_TOOL, UI_EXTENSION } from './card.js';
 import type { CardState } from './card.js';
 import type { WorkspaceProfile } from '@husk-ai/server/workspace-viewer';
@@ -270,8 +270,7 @@ export class HuskMcpServer {
       const held = this.handoffs.list().find((h) => !h.computerId || h.computerId === computer.id);
       if (held && name !== 'computer_info') {
         // Taken from a link, not handed off by the model: only the person's Give back ends it.
-        const text = held.runId === PERSON_RUN ? takenText(held.handoffId) : heldText(held.handoffId, held.reason);
-        return { isError: true, content: [{ type: 'text', text }] };
+        return { isError: true, content: [{ type: 'text', text: refusalText(held) }] };
       }
 
       // Every call, at the one place they all pass through. An audit log that

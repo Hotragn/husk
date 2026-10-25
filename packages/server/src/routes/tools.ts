@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { summarise } from '../activity.js';
 import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
-import { PERSON_RUN, heldText, takenText } from '../handoffs.js';
+import { PERSON_RUN, refusalText } from '../handoffs.js';
 import { closedEarly } from '../sse.js';
 import { underControl } from '../control.js';
 
@@ -59,8 +59,7 @@ export async function toolRoutes(app: FastifyInstance): Promise<void> {
       held = heldNow();
     }
     if (held) {
-      const text = held.runId === PERSON_RUN ? takenText(held.handoffId) : heldText(held.handoffId, held.reason);
-      return { isError: true, content: [{ type: 'text', text }] };
+      return { isError: true, content: [{ type: 'text', text: refusalText(held) }] };
     }
 
     // Cancelled while it waited for the person: nothing runs that nobody asked for any more.

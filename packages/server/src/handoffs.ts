@@ -75,6 +75,17 @@ export function takenText(handoffId: string): string {
   );
 }
 
+/**
+ * What a tool call on a held computer gets back: a code that stays the same
+ * whatever the wording, then the words. E_COMPUTER_HELD and who has it --
+ * `handoff` when the chat asked the user to (wait for them, then
+ * hand_off_done), `person` when they took it over (wait for Give back) -- so
+ * a client, a benchmark or a model can stop retrying without reading prose.
+ */
+export function refusalText(h: { handoffId: string; runId: string; reason: string }): string {
+  return h.runId === PERSON_RUN ? `E_COMPUTER_HELD (person): ${takenText(h.handoffId)}` : `E_COMPUTER_HELD (handoff): ${heldText(h.handoffId, h.reason)}`;
+}
+
 /** A tab as the AI's calls left it, when a person took the computer. */
 export interface PageMark {
   tab: string;

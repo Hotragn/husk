@@ -27,8 +27,8 @@ export type {
 
 export { DRIVER_PATH, DRIVER_SOURCE } from './driver.js';
 
-export { Page, backendNodeIdOf, compactAxTree, describeHappened, flattenAxTree, happenedOf, keyDescriptor, waitExpression } from './page.js';
-export type { ActionOutcome, AxNodeLike, ClickOptions, ElementTarget, GotoResult, Happened, PageAction, ScreenshotOptions, ScriptOutcome, SnapshotNode } from './page.js';
+export { Page, backendNodeIdOf, compactAxTree, describeHappened, describeWaited, flattenAxTree, happenedOf, keyDescriptor, waitExpression } from './page.js';
+export type { ActionOutcome, AxNodeLike, ClickOptions, ElementTarget, GotoResult, Happened, PageAction, ScreenshotOptions, ScriptOutcome, SnapshotNode, WaitTarget, Waited } from './page.js';
 
 export {
   CACHE_ROOT,
