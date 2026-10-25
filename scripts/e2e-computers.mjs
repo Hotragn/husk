@@ -570,14 +570,16 @@ async function checkTakeover(id) {
   const running = (await api('GET', '/v1/overview')).body.running?.[id];
   check('the overview names the call a take-over would wait for', running?.tool === 'browser_script', JSON.stringify(running));
   const started = Date.now();
-  const taken = await api('POST', `/v1/computers/${id}/takeover`);
+  // As the console does it: the person takes it, and only the person gives it back.
+  const person = { 'x-husk-as': 'person' };
+  const taken = await api('POST', `/v1/computers/${id}/takeover`, undefined, rec.token, person);
   const stopped = textOf(await call);
   check(
     'a take-over stops a running browser script, and tells the chat',
     seen !== '0' && taken.status === 201 && /stopped part-way/.test(stopped),
     `${seen} running, stopped in ${Date.now() - started} ms: ${stopped.slice(0, 160)}`,
   );
-  await api('POST', `/v1/handoffs/${taken.body.handoffId}/done`);
+  await api('POST', `/v1/handoffs/${taken.body.handoffId}/done`, undefined, rec.token, person);
   const left = await count();
   check('the stopped script is gone from the computer', left === '0', left);
   const early = textOf(await tool(id, 'browser_click', { ref: 'e99999' }));

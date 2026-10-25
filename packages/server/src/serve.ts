@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { join } from 'node:path';
 import { HUSK_PROTOCOL, HUSK_VERSION, clearDaemonRecord, createLogger, ensurePaths, writeDaemonRecord } from '@husk-ai/core';
 import type { Logger, ModelProvider } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
@@ -147,6 +148,9 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
   };
   if (injected?.agentFactory) appOptions.agentFactory = injected.agentFactory;
   if (injected?.runTool) appOptions.runTool = injected.runTool;
+  // The machine's one Husk keeps holds across its restarts. A second server on
+  // the same home would fight it over the file, so only the shared one does.
+  if (daemon) appOptions.holdsFile = join(ensurePaths().root, 'holds.json');
 
   const app = await createApp(appOptions);
   const ctx = app.husk;

@@ -371,6 +371,7 @@ export async function buildTestApp(
     modelProviders?: ModelProvider[];
     runTool?: ToolRunner;
     chatAppsHome?: string;
+    holdsFile?: string;
   } = {},
 ): Promise<TestApp> {
   const { store, root, cleanup } = await tempStore();
@@ -397,6 +398,7 @@ export async function buildTestApp(
     ...(overrides.createAdapter ? { createAdapter: overrides.createAdapter } : {}),
     ...(overrides.runTool ? { runTool: overrides.runTool } : {}),
     ...(overrides.chatAppsHome ? { chatAppsHome: overrides.chatAppsHome } : {}),
+    ...(overrides.holdsFile ? { holdsFile: overrides.holdsFile } : {}),
   });
 
   return {

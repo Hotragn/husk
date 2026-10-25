@@ -84,7 +84,7 @@ export async function createWorkspaceViewer(options: WorkspaceViewerOptions = {}
         registry,
         authorize: (req, h) => scopeCovers(scopeOf(req), h),
       });
-      registerScopedComputerRoutes(scoped, { scopeOf, describe, registry, takeOver: (id) => takeOver(registry, id, closing.signal) });
+      registerScopedComputerRoutes(scoped, { scopeOf, describe, registry, takeOver: (id) => takeOver(registry, id, closing.signal, {}, 'link') });
     });
   }
   await app.register((await import('@fastify/static')).default, { root: options.consoleDir ?? consoleAssetsPath, prefix: '/', index: ['index.html'] });

@@ -17,7 +17,7 @@ import { ComputerManager, ensureRunning } from '@husk-ai/runtime';
 import { audited } from '@husk-ai/core';
 import { callTool, toolsFor } from './tools.js';
 import type { ToolDef, ToolResult } from './tools.js';
-import { DaemonUnreachable, RunLocally, connectDaemon } from './daemon.js';
+import { DaemonUnreachable, HandoffGone, RunLocally, connectDaemon } from './daemon.js';
 import type { DaemonClient } from './daemon.js';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { HandoffRegistry, PERSON_RUN, ScopedTokens, computerLink, handoffLink, startWorkspaceViewer, takenText, underControl } from '@husk-ai/server/workspace-viewer';
@@ -135,6 +135,8 @@ export class HuskMcpServer {
   private viewer?: Promise<{ url: string; origin: string; close: () => Promise<void> }>;
   /** The shared Husk, found on the first computer tool call. */
   private daemon?: Promise<DaemonClient | undefined>;
+  /** Starting the shared Husk again after it went away mid-handoff; one at a time. */
+  private reviving?: Promise<unknown>;
   /** Why this chat's calls run here rather than in the shared Husk, when connecting left them here. */
   private localReason: string | undefined;
   /** Computers this chat has told the model it runs itself, so it is said once. */
@@ -366,6 +368,19 @@ export class HuskMcpServer {
   /** The shared Husk, found (or started) once per process. */
   private shared(): Promise<DaemonClient | undefined> {
     return (this.daemon ??= this.useDaemon ? this.connect() : Promise.resolve(undefined));
+  }
+
+  /**
+   * The shared Husk went away while a handoff waits on it: start it again. Its
+   * clients find the new one by its record, so the handoff's own polling goes on.
+   */
+  private revive(): void {
+    this.reviving ??= (async () => {
+      this.daemon = undefined;
+      await this.shared();
+    })().finally(() => {
+      this.reviving = undefined;
+    });
   }
 
   /** One honest line about what this machine actually is. */
@@ -817,9 +832,13 @@ export class HuskMcpServer {
       try {
         await daemon.complete(remoteId);
       } catch (err) {
-        // Not handed back there, so not here either: the model must not resume
-        // on a computer the shared Husk still holds for the person.
-        throw new Error(`Could not hand the computer back: ${(err as Error).message}. Ask the user to press Done in the Husk console.`);
+        // Gone there (a restart lost it): nothing holds it there, and a computer
+        // held under another handoff still refuses the model's calls.
+        // Anything else: not handed back there, so not here either, and the
+        // model must not resume on a computer the shared Husk still holds.
+        if (!(err instanceof HandoffGone)) {
+          throw new Error(`Could not hand the computer back: ${(err as Error).message}. Ask the user to press Done in the Husk console.`);
+        }
       }
     }
     if (this.handoffs.isOpen(handoffId)) this.handoffs.complete(handoffId);
@@ -837,13 +856,18 @@ export class HuskMcpServer {
     const poll = setInterval(() => {
       void daemon.state(remoteId).then(
         (state) => {
-          if (state === 'open' || !this.handoffs.isOpen(localId)) return;
-          // Done only when the person said so. Cancelled, expired, or lost in a
-          // restart is not done, and the model is not told it was.
+          // Unknown is not ended: a shared Husk that restarted without it may
+          // still hold the computer for the person, and only they end that.
+          if (state === 'open' || state === 'unknown' || !this.handoffs.isOpen(localId)) return;
+          // Done only when the person said so. Cancelled or expired is not
+          // done, and the model is not told it was.
           if (state === 'done') this.handoffs.complete(localId);
           else this.handoffs.cancel(localId);
         },
-        () => undefined,
+        (err) => {
+          // Gone mid-login: start it again, so the person's console and their hold come back.
+          if (err instanceof DaemonUnreachable) this.revive();
+        },
       );
     }, MIRROR_POLL_MS);
     poll.unref?.();

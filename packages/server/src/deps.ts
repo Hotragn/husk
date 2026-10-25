@@ -145,6 +145,8 @@ export interface ServerDeps {
   runTool?: ToolRunner;
   /** Whose chat apps the Connect page reads and edits. The real home unless a test says otherwise. */
   chatAppsHome?: string;
+  /** Where holds outlive a restart: the machine's one Husk keeps them in ~/.husk/holds.json. */
+  holdsFile?: string;
 }
 
 /** The MCP result shape: content parts, and whether the tool failed. */
@@ -168,6 +170,7 @@ export interface ResolvedDeps extends Required<Pick<ServerDeps, 'manager' | 'rou
   createAdapter: AdapterFactory;
   runTool?: ToolRunner;
   chatAppsHome?: string;
+  holdsFile?: string;
 }
 
 export function resolveConfig(partial: Partial<ServerConfig> = {}): ServerConfig {
@@ -201,6 +204,7 @@ export function resolveDeps(deps: ServerDeps): ResolvedDeps {
     createAdapter: deps.createAdapter ?? createAdapter,
     ...(deps.runTool ? { runTool: deps.runTool } : {}),
     ...(deps.chatAppsHome ? { chatAppsHome: deps.chatAppsHome } : {}),
+    ...(deps.holdsFile ? { holdsFile: deps.holdsFile } : {}),
   };
 }
 

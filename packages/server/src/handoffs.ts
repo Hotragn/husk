@@ -1,3 +1,4 @@
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { id } from '@husk-ai/core';
 import type { HandoffOutcome } from '@husk-ai/core';
 import { notFound } from './errors.js';
@@ -10,6 +11,8 @@ export interface PendingHandoff {
   /** The machine a viewer may show and send input to. Absent: nothing to show. */
   computerId?: string;
   createdAt: string;
+  /** A person's take-over: where they took it. A link's take-over is that link's to give back too. */
+  takenFrom?: 'console' | 'link';
 }
 
 interface Waiter extends PendingHandoff {
@@ -34,6 +37,26 @@ export function heldText(handoffId: string, reason: string): string {
 
 /** The `runId` of a handoff the person started from the console, rather than one a chat asked for. */
 export const PERSON_RUN = 'person';
+
+/** The `runId` of a handoff a chat asked the shared Husk for. */
+export const CHAT_RUN = 'chat';
+
+/** Why every computer is held after a restart that could not read who held which. */
+export const UNREADABLE_HOLDS =
+  'Husk restarted and could not read who held this computer, so it is held for you. Give it back when the AI may use it again.';
+
+function isHold(v: unknown): v is PendingHandoff {
+  const h = v as Partial<PendingHandoff> | null;
+  return (
+    typeof h?.handoffId === 'string' &&
+    (h.runId === PERSON_RUN || h.runId === CHAT_RUN) &&
+    typeof h.husk === 'string' &&
+    typeof h.reason === 'string' &&
+    typeof h.createdAt === 'string' &&
+    (h.computerId === undefined || typeof h.computerId === 'string') &&
+    (h.takenFrom === undefined || h.takenFrom === 'console' || h.takenFrom === 'link')
+  );
+}
 
 /**
  * For a chat whose computer the person took, from the console or a link. It did
@@ -198,6 +221,14 @@ export class HandoffRegistry {
   private readonly settled = new Map<string, HandoffOutcome>();
   /** The AI's calls on each computer, which a person's take-over stops. */
   readonly control = new ComputerControl();
+  /** Set while the server closes: what is held then must still be held when it starts again. */
+  private frozen = false;
+
+  /**
+   * @param file where the person's holds and chats' handoffs outlive a
+   *   restart of this server. Without it they last as long as this registry.
+   */
+  constructor(private readonly file?: string) {}
 
   /** `open`, or how it ended (`done`, `aborted`), or undefined if this server never had it. */
   state(handoffId: string): 'open' | HandoffOutcome | undefined {
@@ -219,35 +250,109 @@ export class HandoffRegistry {
   }
 
   request(
-    args: { runId: string; husk: string; reason: string; computerId?: string; signal: AbortSignal },
+    args: { runId: string; husk: string; reason: string; computerId?: string; takenFrom?: 'console' | 'link'; signal: AbortSignal },
     onRaised: (pending: PendingHandoff) => void,
   ): Promise<HandoffOutcome> {
     if (args.signal.aborted) return Promise.resolve('aborted');
 
-    const handoffId = id('hnd');
     const record: PendingHandoff = {
-      handoffId,
+      handoffId: id('hnd'),
       runId: args.runId,
       husk: args.husk,
       reason: args.reason,
       ...(args.computerId ? { computerId: args.computerId } : {}),
       createdAt: new Date().toISOString(),
+      ...(args.takenFrom ? { takenFrom: args.takenFrom } : {}),
     };
 
     return new Promise<HandoffOutcome>((resolve) => {
-      const onAbort = (): void => settle('aborted');
-      const settle = (outcome: HandoffOutcome): void => {
-        if (!this.pending.delete(handoffId)) return;
-        this.settled.set(handoffId, outcome);
-        if (this.settled.size > 500) this.settled.delete(this.settled.keys().next().value as string);
+      const onAbort = (): void => this.pending.get(record.handoffId)?.settle('aborted');
+      this.hold(record, (outcome) => {
         args.signal.removeEventListener('abort', onAbort);
         resolve(outcome);
-      };
-
-      this.pending.set(handoffId, { ...record, settle });
+      });
       args.signal.addEventListener('abort', onAbort, { once: true });
       onRaised(record);
     });
+  }
+
+  /** Open `record`, with nothing waiting on it but `onEnded`: a hold restored after a restart, or one `request` makes. */
+  private hold(record: PendingHandoff, onEnded: (outcome: HandoffOutcome) => void): void {
+    const settle = (outcome: HandoffOutcome): void => {
+      if (!this.pending.delete(record.handoffId)) return;
+      this.settled.set(record.handoffId, outcome);
+      if (this.settled.size > 500) this.settled.delete(this.settled.keys().next().value as string);
+      this.persist();
+      onEnded(outcome);
+    };
+    this.pending.set(record.handoffId, { ...record, settle });
+    this.persist();
+  }
+
+  /**
+   * A person takes the handoff something asked them for: from now on it is
+   * their hold, which only their Give back ends, never a chat's hand_off_done.
+   */
+  claim(handoffId: string, from: 'console' | 'link'): PendingHandoff {
+    const waiter = this.pending.get(handoffId);
+    if (!waiter) throw notFound('handoff', handoffId);
+    waiter.runId = PERSON_RUN;
+    waiter.takenFrom = from;
+    this.persist();
+    return this.get(handoffId);
+  }
+
+  /** The server is closing: the holds open now are written as they are, to be restored on its next start. */
+  freeze(): void {
+    this.frozen = true;
+  }
+
+  /** The person's holds and chats' handoffs, written then renamed into place, so a crash never leaves half a file. */
+  private persist(): void {
+    if (!this.file || this.frozen) return;
+    const tmp = `${this.file}.${process.pid}.tmp`;
+    try {
+      writeFileSync(tmp, JSON.stringify(this.list().filter(isHold)), { mode: 0o600 });
+      renameSync(tmp, this.file);
+    } catch {
+      // Not written, still held: only a restart loses it, and the next change writes it again.
+    }
+  }
+
+  /**
+   * The holds a previous run of this server left open, open again, before it
+   * serves anything. A file there but unreadable fails closed: who held which
+   * computer is unknown, so every computer `computers` names is held for the
+   * person until they give it back.
+   */
+  async restore(computers: () => Promise<string[]>, onEnded: (handoff: PendingHandoff, outcome: HandoffOutcome) => void): Promise<PendingHandoff[]> {
+    if (!this.file || !existsSync(this.file)) return [];
+    let holds: PendingHandoff[] | undefined;
+    try {
+      const records: unknown = JSON.parse(readFileSync(this.file, 'utf8'));
+      if (Array.isArray(records) && records.every(isHold)) holds = records;
+    } catch {
+      // read below as unreadable
+    }
+    if (!holds) {
+      try {
+        renameSync(this.file, `${this.file}.unreadable-${Date.now()}`);
+      } catch {
+        // kept where it is; the holds written next replace it
+      }
+      const at = new Date().toISOString();
+      holds = (await computers()).map((computerId) => ({
+        handoffId: id('hnd'),
+        runId: PERSON_RUN,
+        husk: 'you',
+        reason: UNREADABLE_HOLDS,
+        computerId,
+        createdAt: at,
+        takenFrom: 'console' as const,
+      }));
+    }
+    for (const h of holds) this.hold(h, (outcome) => onEnded(h, outcome));
+    return holds;
   }
 
   /** The open handoff, or a 404. A viewer's access lasts exactly as long as this does. */

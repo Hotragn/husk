@@ -7,8 +7,9 @@ import { ctxOf } from '../context.js';
 import { redact } from '@husk-ai/core';
 import { huskError, invalidSpec, notFound } from '../errors.js';
 import { pageMark } from '../control.js';
-import { PERSON_RUN } from '../handoffs.js';
+import { CHAT_RUN, PERSON_RUN } from '../handoffs.js';
 import type { HandoffRegistry, PendingHandoff } from '../handoffs.js';
+import type { HandoffOutcome } from '@husk-ai/core';
 
 /** Viewport coordinates in CSS pixels. Bounded so nothing absurd reaches Chromium. */
 const coord = z.number().finite().min(0).max(20_000);
@@ -113,6 +114,15 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
   sweep.unref();
   app.addHook('onClose', async () => clearInterval(sweep));
 
+  // What a previous run of this Husk held, held again before anything is
+  // served. A chat's handoff gets a fresh lease: a chat still there polls it.
+  const ended = (h: PendingHandoff, outcome: HandoffOutcome): void => {
+    lastSeen.delete(h.handoffId);
+    ctx.bus.emit('runs', outcome === 'done' ? 'handoff_completed' : 'handoff_cancelled', { computerId: h.computerId });
+  };
+  const live = async () => (await ctx.deps.manager.list()).filter((c) => c.state !== 'destroyed').map((c) => c.id);
+  for (const h of await ctx.runner.handoffs.restore(live, ended)) if (h.runId === CHAT_RUN) lastSeen.set(h.handoffId, Date.now());
+
   // How a chat's handoff stands. The server token only: a link has no business here.
   app.get('/v1/handoffs/:handoffId/state', async (req: FastifyRequest) => {
     if (req.huskScope !== undefined) throw huskError('E_HANDOFF_NOT_FOUND', 'no open handoff with that link');
@@ -133,7 +143,7 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
     }
     let opened: PendingHandoff | undefined;
     void ctx.runner.handoffs
-      .request({ runId: 'chat', husk: parsed.data.label ?? 'chat', reason: redact(parsed.data.reason), computerId: id, signal: chatHandoffs.signal }, (p) => {
+      .request({ runId: CHAT_RUN, husk: parsed.data.label ?? 'chat', reason: redact(parsed.data.reason), computerId: id, signal: chatHandoffs.signal }, (p) => {
         opened = p;
       })
       .then((outcome) => {
@@ -148,24 +158,35 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // The person takes a computer whenever they choose, from the console or from
-  // a chat's link. No lease: only their Give back (done) ends it, or the server
-  // closing. Unlike a chat's handoff, ending it revokes no link.
-  const take = (id: string) =>
-    takeOver(ctx.runner.handoffs, id, chatHandoffs.signal, {
-      opened: (h) => ctx.bus.emit('runs', 'handoff_requested', h),
-      ended: (outcome) => ctx.bus.emit('runs', outcome === 'done' ? 'handoff_completed' : 'handoff_cancelled', { computerId: id }),
-    });
+  // a chat's link. No lease: only their Give back (done) ends it. Unlike a
+  // chat's handoff, ending it revokes no link, and a restart keeps it.
+  const take = async (id: string, from: 'console' | 'link') => {
+    const taken = await takeOver(
+      ctx.runner.handoffs,
+      id,
+      chatHandoffs.signal,
+      {
+        opened: (h) => ctx.bus.emit('runs', 'handoff_requested', h),
+        ended: (outcome) => ctx.bus.emit('runs', outcome === 'done' ? 'handoff_completed' : 'handoff_cancelled', { computerId: id }),
+      },
+      from,
+    );
+    // A chat's handoff the person took is theirs now: its chat going quiet no longer ends it.
+    lastSeen.delete(taken.handoff.handoffId);
+    return taken;
+  };
   app.post('/v1/computers/:id/takeover', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
     refuseInChat(ctx.inChat, id);
     if (!(await ctx.deps.manager.get(id))) throw notFound('computer', id);
-    const { handoff, created } = await take(id);
+    const { handoff, created } = await take(id, 'console');
     return reply.code(created ? 201 : 200).send(handoff);
   });
 
   app.delete('/v1/handoffs/:handoffId', async (req: FastifyRequest) => {
     const { handoffId } = req.params as { handoffId: string };
     if (req.huskScope !== undefined) throw huskError('E_HANDOFF_NOT_FOUND', 'no open handoff with that link');
+    refuseEndingTakeOver(ctx.runner.handoffs.get(handoffId), actorOf(req));
     return ctx.runner.handoffs.cancel(handoffId);
   });
 
@@ -195,38 +216,63 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
       return { computerId: id, ...(label ? { label } : {}), state: c.info.state };
     },
     registry: ctx.runner.handoffs,
-    takeOver: take,
+    takeOver: (id) => take(id, 'link'),
   });
-  app.addHook('onClose', async () => chatHandoffs.abort());
+  // Written as they are first: what is held while this server stops is held when it starts again.
+  app.addHook('onClose', async () => {
+    ctx.runner.handoffs.freeze();
+    chatHandoffs.abort();
+  });
 }
 
 /**
- * The person takes a computer: the handoff already waiting on it, which is
- * theirs to finish, or a new one that only their done (or `signal`) ends.
- * A new one stops the AI's calls on the computer before it resolves, so the
- * person never shares the screen with the AI's half-done work.
+ * The person takes a computer, from the console or from a link (`from`): a
+ * hold already theirs; the handoff a chat or run asked them for, which becomes
+ * theirs, so only their Give back ends it; or a new hold, which only their
+ * Give back (or `signal`) ends. Taking it stops the AI's calls on the
+ * computer first, so the person never shares the screen with half-done work.
  */
 export async function takeOver(
   registry: HandoffRegistry,
   computerId: string,
   signal: AbortSignal,
   on: { opened?: (handoff: PendingHandoff) => void; ended?: (outcome: string) => void } = {},
+  from: 'console' | 'link' = 'console',
 ): Promise<{ handoff: PendingHandoff; created: boolean }> {
   const held = registry.list().find((h) => h.computerId === computerId);
-  if (held) return { handoff: held, created: false };
-  let opened: PendingHandoff | undefined;
-  void registry
-    .request({ runId: PERSON_RUN, husk: 'you', reason: 'You took over this computer', computerId, signal }, (p) => {
-      opened = p;
-    })
-    .then((outcome) => on.ended?.(outcome));
-  on.opened?.(opened!);
+  if (held?.runId === PERSON_RUN) return { handoff: held, created: false };
+  let handoff: PendingHandoff;
+  if (held) {
+    handoff = registry.claim(held.handoffId, from);
+  } else {
+    let opened: PendingHandoff | undefined;
+    void registry
+      .request({ runId: PERSON_RUN, husk: 'you', reason: 'You took over this computer', computerId, takenFrom: from, signal }, (p) => {
+        opened = p;
+      })
+      .then((outcome) => on.ended?.(outcome));
+    on.opened?.(opened!);
+    handoff = opened!;
+  }
   // Held from here, so no new call starts. A browser call stopped part-way
   // leaves the page somewhere the AI has not seen: its next action there is
   // refused until it looks again.
   const stopped = await registry.control.stop(computerId);
   registry.control.mark(computerId, await pageMark(computerId), stopped.some((t) => t.startsWith('browser_')));
-  return { handoff: opened!, created: true };
+  return { handoff, created: !held };
+}
+
+/**
+ * A person's take-over ends only with their Give back: from the console or
+ * the desktop app, which act as the person, or from the link it was taken
+ * with. Never from a program: a chat's hand_off_done, or the model's link.
+ */
+function refuseEndingTakeOver(h: PendingHandoff, by: 'person' | 'program' | 'link'): void {
+  if (h.runId !== PERSON_RUN || by === 'person' || (by === 'link' && h.takenFrom === 'link')) return;
+  throw huskError('E_COMPUTER_HELD', 'the user took over this computer, and only they give it back', {
+    hint: 'they press Give back where they took it: in the Husk console, the Husk window or the tray',
+    details: { handoffId: h.handoffId },
+  });
 }
 
 /** A take-over this Husk cannot honour: the chat runs the computer in its own process. */
@@ -407,7 +453,11 @@ export function registerHandoffRoutes(app: FastifyInstance, opts: HandoffRouteOp
 
   // The only request that resumes a run that asked for a person.
   app.post('/v1/handoffs/:handoffId/done', async (req: FastifyRequest) => {
-    const pending = registry.complete(open(req).handoffId);
+    const handoff = open(req);
+    // Let in by a link the same way `open` decides it.
+    const viaLink = opts.authorize !== undefined && !(opts.scopedOnly && req.huskScope === undefined);
+    refuseEndingTakeOver(handoff, viaLink ? 'link' : actorOf(req));
+    const pending = registry.complete(handoff.handoffId);
     opts.onDone?.(pending);
     return { handoffId: pending.handoffId, outcome: 'done' };
   });

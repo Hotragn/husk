@@ -10,6 +10,9 @@ import type { ToolResult } from './tools.js';
 /** The daemon could not be reached at all, so nothing ran there and running locally is safe. */
 export class DaemonUnreachable extends Error {}
 
+/** The shared Husk does not have this handoff: it ended there, or a restart lost it. Nothing holds it there. */
+export class HandoffGone extends Error {}
+
 /**
  * The daemon is up but cannot see this chat's computer (a provider that needs
  * this chat's own environment, such as FLY_API_TOKEN). Nothing ran there, so
@@ -206,7 +209,7 @@ function client(first: DaemonRecord, doFetch: typeof fetch, read: () => DaemonRe
     },
     async complete(handoffId) {
       const { status } = await call('POST', `/v1/handoffs/${id(handoffId)}/done`);
-      if (status === 404) throw new Error(`the shared husk no longer has handoff ${handoffId}`);
+      if (status === 404) throw new HandoffGone(`the shared husk no longer has handoff ${handoffId}`);
     },
     async cancel(handoffId) {
       await call('DELETE', `/v1/handoffs/${id(handoffId)}`);

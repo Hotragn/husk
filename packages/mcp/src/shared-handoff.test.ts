@@ -12,7 +12,7 @@ import type { Computer, Logger } from '@husk-ai/core';
 import type { ComputerManager } from '@husk-ai/runtime';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DaemonUnreachable, RunLocally } from './daemon.js';
+import { DaemonUnreachable, HandoffGone, RunLocally } from './daemon.js';
 import type { DaemonClient } from './daemon.js';
 import { HuskMcpServer } from './server.js';
 
@@ -130,6 +130,38 @@ describe('with the shared Husk', { timeout: 30_000 }, () => {
     await new Promise((r) => setTimeout(r, 2_500));
     const done = await call('hand_off_done', { handoff: localId });
     expect(done.isError).toBe(true);
+  });
+
+  it('stays paused when a restart lost its handoff, and the chat’s done still frees it', async () => {
+    const f = fakeShared();
+    const call = await chat(f.shared);
+    await call('shell', { command: 'ls' });
+    const handed = await call('hand_off', { reason: 'Sign in' });
+    const localId = /handoff "(hnd_[a-z0-9]+)"/i.exec(handed.text)?.[1] ?? '';
+    f.open.delete('hnd_remote'); // the shared Husk restarted without it: unknown, not ended
+    await new Promise((r) => setTimeout(r, 2_500));
+    expect((await call('shell', { command: 'ls' })).isError).toBe(true);
+    f.shared.complete = async (h) => {
+      throw new HandoffGone(`the shared husk no longer has handoff ${h}`);
+    };
+    expect((await call('hand_off_done', { handoff: localId })).isError).toBe(false);
+    expect((await call('shell', { command: 'ls' })).isError).toBe(false);
+  });
+
+  it('starts the shared Husk again when it goes away during a handoff', async () => {
+    const f = fakeShared();
+    let starts = 0;
+    const call = await chat(f.shared, async () => {
+      starts++;
+      return f.shared;
+    });
+    await call('shell', { command: 'ls' });
+    await call('hand_off', { reason: 'Sign in' });
+    f.shared.state = async () => {
+      throw new DaemonUnreachable('the shared husk refused the connection');
+    };
+    await new Promise((r) => setTimeout(r, 2_500));
+    expect(starts).toBe(1);
   });
 
   it("runs a computer's tools here when the shared Husk cannot see it", async () => {
