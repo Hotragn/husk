@@ -584,6 +584,17 @@ async function liveSmoke() {
     );
     check('the window shows the computer’s browser live', width, `${width}px wide`);
     if (SHOTS) await computers.capture('window', join(SHOTS, 'live-window.png'));
+
+    // The tray says what the person holds, and its Give back ends it.
+    const taken = await fetch(`${rec.url}/v1/computers/${encodeURIComponent(id)}/takeover`, {
+      method: 'POST',
+      headers: { ...(rec.token ? { authorization: `Bearer ${rec.token}` } : {}), 'x-husk-as': 'person' },
+    }).then((r) => r.json(), () => undefined);
+    await poll();
+    check('the tray lists what the person holds, with Give back', held.length === 1 && held[0].handoffId === taken?.handoffId, JSON.stringify(held));
+    check('the tray’s Give back ends the hold', taken?.handoffId ? await giveBack(taken.handoffId) : false);
+    await poll();
+    check('and then the tray holds nothing', held.length === 0, JSON.stringify(held));
     await sleep(8000); // the chat browses on in the window, for the film
   }
   app.exit(passed() ? 0 : 1);

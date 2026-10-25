@@ -746,7 +746,8 @@ async function measureScript(id) {
  * The chat setup connected, started the way its app starts it, from the entry
  * setup wrote: a page on the computer setup chose. Then the shared Husk is
  * killed under it, and the chat's next call must start a new one and go on with
- * the same computer, never quietly somewhere else.
+ * the same computer, never quietly somewhere else. The chat stays open for
+ * checkSignIn; its computer is what this returns.
  */
 async function checkRestart() {
   mcp = mcpSession([], appEntry);
@@ -771,6 +772,56 @@ async function checkRestart() {
   check('a new shared Husk took over', Boolean(rec?.token) && rec.pid !== old.pid, `pid ${old.pid} -> ${rec?.pid}`);
   const seen = (await api('GET', '/v1/overview')).body.activity?.[mine.id];
   check('the call went through the new shared Husk, not the chat’s own process', seen?.via === 'mcp' && seen.tool === 'shell', JSON.stringify(seen));
+  return mine.id;
+}
+
+/**
+ * Sign in for me, across a restart (the J2 gate): the chat hands its computer
+ * to the person, who types into the page; the shared Husk restarts mid-login;
+ * the hold is still there and the AI is refused; the person gives it back, and
+ * the chat goes on.
+ */
+async function checkSignIn(computerId) {
+  const hidden = (s) => s.replace(/token=[0-9a-f]+/g, 'token=<redacted>');
+  const page = textOf((await mcp.request('tools/call', { name: 'browser_goto', arguments: { computer: computerId, url: FIXTURE } })).result ?? {});
+  check('the chat opens the page to sign in on', /Husk fixture/.test(page), page.slice(0, 120));
+
+  // 1. hand_off, then the person types in the viewer.
+  const handed = textOf((await mcp.request('tools/call', { name: 'hand_off', arguments: { computer: computerId, reason: 'e2e: sign in to the fixture' } })).result ?? {});
+  const link = /#handoff=(hnd_[a-z0-9]+)&token=([0-9a-f]+)/i.exec(handed);
+  check('the chat hands the computer to the person, with a link', Boolean(link), hidden(handed).slice(0, 200));
+  const [, handoffId, token] = link;
+  const typed = await api('POST', `/v1/handoffs/${handoffId}/input`, { type: 'text', text: 'e2e-sign-in' }, token);
+  check('the person types into the page through the link', typed.status === 204, String(typed.status));
+
+  // 2. The shared Husk restarts mid-login: killed, and started again by the chat waiting on it.
+  const old = readDaemon();
+  process.kill(old.pid, 'SIGKILL');
+  let fresh = old;
+  for (let i = 0; i < 160 && fresh?.pid === old.pid; i++) {
+    await sleep(250);
+    fresh = readDaemon() ?? old;
+  }
+  const up = fresh.pid !== old.pid && (await fetch(`${fresh.url}/health`).then((r) => r.ok, () => false));
+  check('the chat starts the shared Husk again while the person signs in', up, `pid ${old.pid} -> ${fresh.pid}`);
+  rec = fresh;
+
+  // 3. The hold is still there, and the AI is refused.
+  const held = (await api('GET', '/v1/overview')).body.handoffs.find((h) => h.computerId === computerId);
+  check('the hold is still there after the restart', held?.handoffId === handoffId, JSON.stringify(held));
+  const refused = await tool(computerId, 'shell', { command: 'echo should-not-run' });
+  check('the AI is refused while the person has it', refused.isError === true && /has the computer/.test(textOf(refused)), textOf(refused).slice(0, 160));
+
+  // 4. Give back, and the chat goes on.
+  const given = await api('POST', `/v1/handoffs/${handoffId}/done`, undefined, rec.token, { 'x-husk-as': 'person' });
+  check('the person gives it back', given.status === 200, JSON.stringify(given.body).slice(0, 120));
+  let after;
+  for (let i = 0; i < 20; i++) {
+    after = await mcp.request('tools/call', { name: 'shell', arguments: { computer: computerId, command: 'echo back-to-work' } });
+    if (!after.result?.isError) break;
+    await sleep(500);
+  }
+  check('the chat goes on once it is given back', !after.result?.isError && /back-to-work/.test(textOf(after.result ?? {})), textOf(after.result ?? {}).slice(0, 160));
   mcp.child.stdin.end();
 }
 
@@ -918,7 +969,10 @@ try {
 
   // 10. The chat setup connected goes on when the shared Husk dies under it. Last:
   // what came before ran on the first shared Husk.
-  await checkRestart();
+  const signingIn = await checkRestart();
+
+  // 11. Sign in for me, across another restart, mid-login (the J2 gate).
+  await checkSignIn(signingIn);
 
   console.log(`\n${steps.length} checks passed`);
 } catch (err) {
