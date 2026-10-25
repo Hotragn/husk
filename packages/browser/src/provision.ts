@@ -357,8 +357,8 @@ export async function provisionChromium(
         ? 'the computer has a downloader but could not reach the CDN; check `husk exec <name> ' +
           `-- curl -sSI ${plan.url}\`, or install a system chromium and husk will use that instead`
         : 'this machine has neither curl nor python3, so there is nothing here to download ' +
-          'with, and nothing was attempted over the network. Use a flavor whose image ships ' +
-          'one -- `--flavor python` works -- or set computer.image to your own.',
+          'with, and nothing was attempted over the network. Use `--flavor full`, the image that ' +
+          'carries what Chromium needs to run, or set computer.image to your own.',
       details: { url: plan.url, haveDownloader: canDownload, detail: dl.detail.slice(0, 500) },
     });
   }

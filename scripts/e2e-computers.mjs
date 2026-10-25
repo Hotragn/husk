@@ -801,8 +801,9 @@ try {
   check('done with the link ends it', done.body.outcome === 'done');
   check('tools run again after done', !(await tool(id, 'shell', { command: 'echo back' })).isError);
 
-  // 7. A real MCP session forwards its tools to the shared Husk.
-  mcp = mcpSession(['--provider', 'docker', '--flavor', 'base']);
+  // 7. A real MCP session forwards its tools to the shared Husk. No --flavor:
+  // a chat gets the image that runs the browser, as `claude mcp add` gives it.
+  mcp = mcpSession(['--provider', 'docker']);
   const init = await mcp.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'husk-e2e', version: '0' } });
   check('an MCP client connects over stdio', init.result?.serverInfo?.name === 'husk');
   mcp.notify('notifications/initialized');
@@ -813,6 +814,12 @@ try {
   const chatComputer = overview.computers.find((c) => c.id !== id && c.spec?.labels?.['husk.via'] === 'mcp');
   if (chatComputer) created.push(chatComputer.id);
   check('the shared Husk saw the chat call', overview.activity?.[chatComputer?.id]?.via === 'mcp', JSON.stringify(overview.activity?.[chatComputer?.id]));
+  if (chatComputer) {
+    await serveFixture(chatComputer.id);
+    const page = await mcp.request('tools/call', { name: 'browser_goto', arguments: { computer: chatComputer.id, url: FIXTURE } });
+    const pageText = textOf(page.result ?? {});
+    check('a chat with no --flavor opens a page in its browser', /Husk fixture/.test(pageText), pageText.slice(0, 200));
+  }
   mcp.child.stdin.end();
   await sleep(1000);
 

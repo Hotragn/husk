@@ -48,7 +48,7 @@ describe('Connect panel', () => {
     render(<ConnectPanel />);
     await screen.findByText('Claude Desktop', { selector: 'strong' });
     const box = screen.getByRole('textbox', { name: 'Setup prompt' }) as HTMLTextAreaElement;
-    expect(box.value).toContain('npx -y @husk-ai/cli@latest setup --computer auto --apps all --yes');
+    expect(box.value).toContain('npx -y @husk-ai/cli@~0.2 setup --computer auto --apps all --yes');
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'claude-desktop' } });
     expect(box.value).toContain('--apps claude-desktop --yes');
     expect(box.value).toContain('Tell me to restart Claude Desktop');

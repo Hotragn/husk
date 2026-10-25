@@ -220,6 +220,24 @@ if (!SITES_ONLY) {
   contains('packages/mcp/README.md', `${words(TOOLS.browser)} tools that drive a real Chromium`, toolHint('packages/mcp/README.md'));
   contains('apps/desktop/README.md', `then ${TOOLS.computer + TOOLS.workspace} tools listed`, toolHint('apps/desktop/README.md'));
 
+  /* ---------------------------------------------------------------------------
+     The copy-paste setup lines. `@latest` meant 0.1.4 for a while, whose
+     `setup` was the old onboard and rejected every flag the line passed (F-21).
+     A range names the release the line documents, and each flag it uses must be
+     one setup parses.
+  --------------------------------------------------------------------------- */
+  const RANGE = `~${VERSION.split('.').slice(0, 2).join('.')}`;
+  const SETUP_LINE = `npx -y @husk-ai/cli@${RANGE} setup`;
+  const rangeHint = `the copy-paste setup line names @husk-ai/cli@${RANGE}, the release it documents`;
+  contains('README.md', SETUP_LINE, rangeHint);
+  contains('apps/console/src/panels/setupPrompt.ts', SETUP_LINE, rangeHint);
+  const setupSource = read('packages/cli/src/commands/setup.ts');
+  for (const flag of new Set([...read('README.md').matchAll(/@husk-ai\/cli@\S+ setup((?: --[a-z-]+(?: [a-z-]+)?)+)/g)].flatMap((m) => [...m[1].matchAll(/--([a-z-]+)/g)].map((f) => f[1])))) {
+    const label = `README's setup line uses --${flag}, which setup parses`;
+    if (setupSource.includes(`${flag}: { type:`) || setupSource.includes(`'${flag}': { type:`)) passes.push(label);
+    else failures.push({ label, hint: `packages/cli/src/commands/setup.ts has no --${flag}; fix the README's line` });
+  }
+
   const GROUPS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
   for (const dir of readdirSync(join(ROOT, 'packages'))) {
     const rel = `packages/${dir}/package.json`;

@@ -58,4 +58,20 @@ describe('husk setup, unattended', () => {
       results: [],
     });
   });
+
+  it('gives chats the image that runs the browser when nobody is there to ask', async () => {
+    const out: unknown[] = [];
+    vi.spyOn(ui, 'json').mockImplementation((v) => void out.push(v));
+    vi.spyOn(ui, 'print').mockImplementation(() => {});
+    const withDocker = {
+      ...probes,
+      providerStatus: async () => [{ name: 'docker', description: 'x', priority: 50, available: true, isolated: true, isolationKind: 'kernel' as const }],
+    };
+    // --no-start: nothing is started, and no image is pulled.
+    expect(await run(['--computer', 'docker', '--apps', '', '--no-start', '--json'], withDocker)).toBe(0);
+    expect(out[0]).toMatchObject({
+      flavor: 'full',
+      launch: { args: ['-y', `@husk-ai/mcp@${HUSK_RANGE}`, '--provider', 'docker', '--flavor', 'full'] },
+    });
+  });
 });
