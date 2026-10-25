@@ -113,6 +113,11 @@ export function restartDelay(previous) {
   return previous ? Math.min(previous * 2, 60_000) : 2_000;
 }
 
+/** The tray's item for each computer on the screen, which opens its window: its chat, and whether it needs the person. */
+export function trayComputers(list) {
+  return list.map((c) => ({ id: c.id, label: `${c.label}${c.held ? ' · you have it' : c.waiting ? ' · waiting for you' : ''}` }));
+}
+
 /** Handoffs that were not waiting last time: one notification each. */
 export function newlyWaiting(before, after) {
   const seen = new Set(before.map((h) => h.handoffId));

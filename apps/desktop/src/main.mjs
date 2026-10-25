@@ -11,7 +11,7 @@ import { spawn } from 'node:child_process';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { app, BrowserWindow, Menu, Notification, Tray, desktopCapturer, dialog, nativeImage, screen, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, Menu, Notification, Tray, desktopCapturer, dialog, globalShortcut, nativeImage, screen, shell, systemPreferences } from 'electron';
 import { Computers } from './computers.mjs';
 import {
   consoleUrl,
@@ -25,11 +25,14 @@ import {
   restartDelay,
   runtimeBin,
   sameOrigin,
+  trayComputers,
   trayStatus,
 } from './lib.mjs';
 
 const ICON = join(import.meta.dirname, '..', 'assets', 'icon.png');
 const POLL_MS = 2000;
+/** The keyboard's way to the corner and the notch, from anywhere: four keys, so another app is unlikely to want them. */
+const ROW_KEYS = 'CommandOrControl+Alt+Shift+H';
 // `HUSK_DESKTOP_SMOKE=1`: start hidden, load the console on a panel that asks
 // no provider anything, put two made-up computers on the screen and check
 // their windows, print what loaded, stop the Husk it started, and quit.
@@ -284,6 +287,8 @@ async function quit(stopHusk) {
 
 function refreshTray(status) {
   const atLogin = app.getLoginItemSettings().openAtLogin;
+  // An item per computer, as the corner shows them: the tray is where a keyboard and a screen reader find them.
+  const shown = computers ? trayComputers(computers.computers()) : [];
   tray.setToolTip(`Husk · ${status.label}`);
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -295,6 +300,13 @@ function refreshTray(status) {
           if (!(await giveBack(h.handoffId))) dialog.showErrorBox('Could not give it back', 'Husk did not answer. Try Give back in the Husk window.');
         },
       })),
+      ...(shown.length
+        ? [
+            { type: 'separator' },
+            ...shown.map((c) => ({ label: c.label, click: () => computers.open(c.id, { focus: true }) })),
+            { label: 'Go to the computers', accelerator: ROW_KEYS, registerAccelerator: false, click: () => computers.focusRow() },
+          ]
+        : []),
       { type: 'separator' },
       { label: 'Open Husk', click: () => openWindow() },
       { label: 'Connect chat apps', click: () => openWindow('connect') },
@@ -626,6 +638,10 @@ async function liveSmoke() {
   check('a chat’s running computer stands in the corner', id, id);
   if (id) {
     await walkComputers(check, [id], 'live');
+    // The keyboard's way in, the app's shortcut: on Linux, where the corner cannot take the keyboard, it opens the window.
+    computers.close();
+    computers.focusRow();
+    check('the keyboard shortcut brings the computers to the keyboard (on Linux, their window)', await until(() => computers.win?.isVisible(), 5000));
     const width = await until(
       () => computers.run('window', `(() => { const i = document.querySelector('.cw-screen img'); return i && i.naturalWidth > 0 ? i.naturalWidth : 0; })()`),
       30_000,
@@ -710,6 +726,8 @@ async function startApp() {
     return;
   }
   computers = new Computers({ rec: () => rec, icon: ICON, onConsole: () => openWindow(), onRefresh: () => void poll(), giveBack });
+  if (!globalShortcut.register(ROW_KEYS, () => computers.focusRow())) log(`${ROW_KEYS} belongs to another app: the tray lists the computers instead`);
+  app.on('will-quit', () => globalShortcut.unregisterAll());
   watchCalls();
   if (LIVE) {
     void liveSmoke();

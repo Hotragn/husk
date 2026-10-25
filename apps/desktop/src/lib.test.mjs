@@ -24,6 +24,7 @@ import {
   runtimeBin,
   sameOrigin,
   toOpen,
+  trayComputers,
   trayStatus,
 } from './lib.mjs';
 
@@ -215,4 +216,17 @@ test('Husk is started again two seconds after the first try, the wait doubling t
   let wait = 0;
   for (let i = 0; i < 8; i++) waits.push((wait = restartDelay(wait)));
   assert.deepEqual(waits, [2_000, 4_000, 8_000, 16_000, 32_000, 60_000, 60_000, 60_000]);
+});
+
+test('the tray has an item per computer on the screen, saying which need the person', () => {
+  const items = trayComputers([
+    { id: 'cmp_a', label: 'Claude Code · chat started 09:41', held: false },
+    { id: 'cmp_b', label: 'Cursor · chat started 09:44', held: true, handoffId: 'hnd_1' },
+    { id: 'cmp_c', label: 'Zed · chat started 09:50', held: false, waiting: 'Sign in to GitHub' },
+  ]);
+  assert.deepEqual(items, [
+    { id: 'cmp_a', label: 'Claude Code · chat started 09:41' },
+    { id: 'cmp_b', label: 'Cursor · chat started 09:44 · you have it' },
+    { id: 'cmp_c', label: 'Zed · chat started 09:50 · waiting for you' },
+  ]);
 });
