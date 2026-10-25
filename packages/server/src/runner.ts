@@ -1,4 +1,3 @@
-import { livePageFor } from '@husk-ai/browser';
 import { HuskError, isHuskError } from '@husk-ai/core';
 import type {
   ApprovalRequest,
@@ -119,7 +118,7 @@ export class Runner {
     this.approvals = new ApprovalRegistry(
       opts.approvalTimeoutMs === undefined ? {} : { timeoutMs: opts.approvalTimeoutMs },
     );
-    this.handoffs = new HandoffRegistry(deps.holdsFile);
+    this.handoffs = new HandoffRegistry({ file: deps.holdsFile });
   }
 
   get activeCount(): number {
@@ -191,23 +190,16 @@ export class Runner {
     if (body.vars) opts.vars = body.vars;
     // Not gated on approval mode: a handoff pauses the run, it does not act on
     // the machine, so there is nothing for an approver to decide.
+    // Its browser stays open while the person comes to it: every hold keeps its own (handoffs.ts).
     opts.onHandoff = async (request: HandoffRequest, runSignal: AbortSignal) => {
-      // Nobody may be watching yet, and the browser closes itself after five idle
-      // minutes. The login form the person is coming to fill in has to still be there.
       const computerId = request.computerId;
-      const keepAlive = computerId ? setInterval(() => livePageFor(computerId), 60_000) : undefined;
-      keepAlive?.unref?.();
-      try {
-        return await this.handoffs.request(
-          { runId, husk: spec.name, reason: request.reason, ...(computerId ? { computerId } : {}), signal: runSignal },
-          (pending: PendingHandoff) => {
-            onEvent({ type: 'handoff_required', request });
-            this.bus.emit('runs', 'handoff_required', pending);
-          },
-        );
-      } finally {
-        if (keepAlive) clearInterval(keepAlive);
-      }
+      return await this.handoffs.request(
+        { runId, husk: spec.name, reason: request.reason, ...(computerId ? { computerId } : {}), signal: runSignal },
+        (pending: PendingHandoff) => {
+          onEvent({ type: 'handoff_required', request });
+          this.bus.emit('runs', 'handoff_required', pending);
+        },
+      );
     };
     // The run's tools obey a person holding its computer, as a chat's do:
     // refused while they hold it, stopped part-way when they take it.

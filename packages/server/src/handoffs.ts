@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { livePageFor } from '@husk-ai/browser';
 import { id } from '@husk-ai/core';
 import type { HandoffOutcome } from '@husk-ai/core';
 import { notFound } from './errors.js';
@@ -40,6 +41,9 @@ export const PERSON_RUN = 'person';
 
 /** The `runId` of a handoff a chat asked the shared Husk for. */
 export const CHAT_RUN = 'chat';
+
+/** How often an open hold touches its computer's browser: well inside the browser's five idle minutes. */
+export const KEEP_ALIVE_MS = 60_000;
 
 /** Why every computer is held after a restart that could not read who held which. */
 export const UNREADABLE_HOLDS =
@@ -224,11 +228,19 @@ export class HandoffRegistry {
   /** Set while the server closes: what is held then must still be held when it starts again. */
   private frozen = false;
 
+  private readonly file: string | undefined;
+  private readonly keepAlive: (computerId: string) => unknown;
+
   /**
-   * @param file where the person's holds and chats' handoffs outlive a
+   * @param opts.file where the person's holds and chats' handoffs outlive a
    *   restart of this server. Without it they last as long as this registry.
+   * @param opts.keepAlive what an open hold does to its computer's browser
+   *   every minute: touch the live page, so it does not close for idleness.
    */
-  constructor(private readonly file?: string) {}
+  constructor(opts: { file?: string | undefined; keepAlive?: (computerId: string) => unknown } = {}) {
+    this.file = opts.file;
+    this.keepAlive = opts.keepAlive ?? livePageFor;
+  }
 
   /** `open`, or how it ended (`done`, `aborted`), or undefined if this server never had it. */
   state(handoffId: string): 'open' | HandoffOutcome | undefined {
@@ -278,8 +290,16 @@ export class HandoffRegistry {
 
   /** Open `record`, with nothing waiting on it but `onEnded`: a hold restored after a restart, or one `request` makes. */
   private hold(record: PendingHandoff, onEnded: (outcome: HandoffOutcome) => void): void {
+    // The browser closes itself after five idle minutes, and the person may not
+    // be looking yet: the page they are coming to use must still be there.
+    // Touching it is not use, so the computer's own idle time counts only
+    // their typing, never their watching.
+    const { computerId } = record;
+    const keepAlive = computerId ? setInterval(() => this.keepAlive(computerId), KEEP_ALIVE_MS) : undefined;
+    keepAlive?.unref?.();
     const settle = (outcome: HandoffOutcome): void => {
       if (!this.pending.delete(record.handoffId)) return;
+      clearInterval(keepAlive);
       this.settled.set(record.handoffId, outcome);
       if (this.settled.size > 500) this.settled.delete(this.settled.keys().next().value as string);
       this.persist();
