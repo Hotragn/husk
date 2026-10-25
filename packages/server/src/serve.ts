@@ -3,6 +3,7 @@ import { HUSK_PROTOCOL, HUSK_VERSION, clearDaemonRecord, createLogger, ensurePat
 import type { Logger, ModelProvider } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
+import { startChatIdleStop } from './chat-idle.js';
 import type { CreateAppOptions } from './app.js';
 import { resolveConfig } from './deps.js';
 import type { ManagerLike, RouterLike, ServerConfig, ServerDeps } from './deps.js';
@@ -152,6 +153,8 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
 
   const reaperMs = reaperIntervalMs ?? 60_000;
   if (reaperMs > 0) ctx.deps.manager.startReaper?.(reaperMs);
+  // The machine's one Husk owns its chats' computers, idle stop included.
+  const stopSweeping = daemon ? startChatIdleStop(ctx) : undefined;
 
   await app.listen({ host: config.host, port: config.port });
   const address = app.server.address();
@@ -179,6 +182,7 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
       await ctx.triggers?.stop();
       ctx.scheduler.stop();
       ctx.deps.manager.stopReaper?.();
+      stopSweeping?.();
       const cancelled = ctx.runner.cancelAll('server shutting down');
       if (cancelled) log.info(`cancelled ${cancelled} in-flight run(s)`);
       await app.close();

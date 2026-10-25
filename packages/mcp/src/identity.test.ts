@@ -12,6 +12,7 @@ import type { Computer, ComputerSpec, Logger } from '@husk-ai/core';
 import type { ComputerManager } from '@husk-ai/runtime';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { HuskMcpServer } from './server.js';
+import type { DaemonClient } from './daemon.js';
 
 const silent = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger;
 
@@ -98,13 +99,14 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((x) => x.close()));
 });
 
-async function connect(clientName: string, opts: { fake?: Fake; idleStopMs?: number; ephemeral?: boolean } = {}) {
+async function connect(clientName: string, opts: { fake?: Fake; idleStopMs?: number; ephemeral?: boolean; shared?: DaemonClient } = {}) {
   const fake = opts.fake ?? fakeManager();
   const server = new HuskMcpServer({
     manager: fake.manager,
     ephemeral: opts.ephemeral ?? false,
     logger: silent,
     ...(opts.idleStopMs ? { idleStopMs: opts.idleStopMs } : {}),
+    ...(opts.shared ? { shared: opts.shared } : {}),
   });
   servers.push(server);
   const client = new Client({ name: clientName, version: '1.0' });
@@ -283,5 +285,48 @@ describe('hand_off from a chat with no computer yet', () => {
     };
     expect(r.isError).not.toBe(true);
     expect(fake.made).toHaveLength(0);
+  });
+});
+
+describe('a chat computer the shared Husk serves', () => {
+  const stopsAsked: string[] = [];
+  const shared = (): DaemonClient => ({
+    url: 'http://127.0.0.1:7377',
+    async callTool(_id, name) {
+      return { content: [{ type: 'text', text: `ran ${name} in the shared husk` }] };
+    },
+    async openHandoff() {
+      throw new Error('not in these tests');
+    },
+    async state() {
+      return 'unknown';
+    },
+    async complete() {},
+    async cancel() {},
+    async linkToken() {
+      return 'token';
+    },
+    async markInChat() {},
+    async stop(id) {
+      stopsAsked.push(id);
+    },
+  });
+
+  it('is never stopped by the chat when idle: the shared Husk owns it, and sees a person holding it', async () => {
+    const fake = fakeManager();
+    const { shell } = await connect('claude-ai', { fake, idleStopMs: 30, shared: shared() });
+    expect((await shell('new')).text).toContain('ran shell in the shared husk');
+    await new Promise((r) => setTimeout(r, 120));
+    expect(fake.activity.stops).toBe(0);
+  });
+
+  it('is stopped by the shared Husk when the chat closes, which refuses while a person holds it', async () => {
+    stopsAsked.length = 0;
+    const fake = fakeManager();
+    const { shell, server } = await connect('claude-ai', { fake, ephemeral: true, shared: shared() });
+    await shell('new');
+    await server.close();
+    expect(fake.made[0]?.info.state).toBe('running');
+    expect(stopsAsked).toEqual(['cmp_1']);
   });
 });
