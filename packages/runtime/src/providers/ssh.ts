@@ -3,7 +3,7 @@ import { unlink } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
-import { HuskError, clampText, id as newId } from '@husk-ai/core';
+import { HuskError, READ_FILE_MAX_BYTES, fileTooLarge, headText, id as newId } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -785,11 +785,24 @@ class SshComputer implements Computer {
     this.touch();
   }
 
-  async readFile(path: string): Promise<Uint8Array> {
+  async readFile(path: string, opts: { maxBytes?: number } = {}): Promise<Uint8Array> {
+    const max = opts.maxBytes ?? READ_FILE_MAX_BYTES;
+    const bytes = await this.readHead(path, max);
+    // Refused, never cut short: a file read whole that is not whole corrupts whatever is made of it.
+    if (bytes.byteLength > max) throw fileTooLarge(normaliseGuestPath(path), max);
+    return bytes;
+  }
+
+  async readTextFile(path: string, maxBytes = 1024 * 1024): Promise<string> {
+    return headText(await this.readHead(path, maxBytes), maxBytes);
+  }
+
+  /** At most `maxBytes + 1` bytes from the start, stopped on the remote: one past tells the caller there was more. */
+  private async readHead(path: string, maxBytes: number): Promise<Uint8Array> {
     this.assertLive();
-    const r = await this.guarded(path, (remote) => `cat ${shellQuote([remote])}`, {
+    const r = await this.guarded(path, (remote) => `head -c ${maxBytes + 1} -- ${shellQuote([remote])}`, {
       binary: true,
-      maxOutputBytes: 32 * 1024 * 1024,
+      maxOutputBytes: maxBytes + 1,
       timeoutMs: 120_000,
     });
     if (r.code !== 0) {
@@ -799,11 +812,6 @@ class SshComputer implements Computer {
     }
     this.touch();
     return new Uint8Array(r.raw);
-  }
-
-  async readTextFile(path: string, maxBytes = 1024 * 1024): Promise<string> {
-    const buf = await this.readFile(path);
-    return clampText(Buffer.from(buf).toString('utf8'), maxBytes).text;
   }
 
   async listDir(path: string): Promise<DirEntry[]> {

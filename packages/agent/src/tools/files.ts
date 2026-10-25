@@ -144,7 +144,8 @@ export const edit_file = defineTool<
       });
     }
     const computer = await ctx.acquireComputer();
-    const before = await computer.readTextFile(input.path, 8 * 1024 * 1024);
+    // The whole file, or a refusal: an edit made to part of a file and written back loses the rest.
+    const before = new TextDecoder().decode(await computer.readFile(input.path));
     const hits = countOccurrences(before, input.oldString);
 
     if (hits === 0) {

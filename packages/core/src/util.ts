@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { HuskError } from './errors.js';
 
 /**
  * Where a UTF-8 character actually starts, at or before `i`.
@@ -65,6 +66,28 @@ export function nextCharBoundary(buf: Buffer, i: number): number {
  * no longer returns 38 bytes -- a cap the caller chose for a token budget was
  * being exceeded by the very code enforcing it.
  */
+/** The most a whole-file read takes unless the caller asks for more. */
+export const READ_FILE_MAX_BYTES = 32 * 1024 * 1024;
+
+/** A whole-file read refused for size, and what to do instead. */
+export function fileTooLarge(path: string, maxBytes: number): HuskError {
+  return new HuskError('E_QUOTA', `${path} is larger than ${maxBytes} bytes, the most one read takes`, {
+    hint: 'read it in parts with offset and limit, or split or compress it with a command first',
+    details: { limit: maxBytes },
+  });
+}
+
+/**
+ * The first `maxBytes` of a file read one byte past them, as text, with a note
+ * when there was more. One byte past is how the reader knows: the read itself
+ * stopped there, wherever it ran.
+ */
+export function headText(bytes: Uint8Array, maxBytes: number): string {
+  const all = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (all.byteLength <= maxBytes) return all.toString('utf8');
+  return `${all.subarray(0, maxBytes).toString('utf8')}\n... [the file goes on past ${maxBytes} bytes; read the rest in parts] ...\n`;
+}
+
 export function clampText(input: string, maxBytes: number): { text: string; truncated: boolean } {
   const buf = Buffer.from(input, 'utf8');
   const marker = (omitted: number) => `\n... [${omitted} bytes elided by husk] ...\n`;

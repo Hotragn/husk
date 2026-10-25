@@ -89,6 +89,9 @@ function requirePath(query: unknown): string {
 /** How often the live screen asks for a frame, at most. */
 const SCREEN_FPS = 4;
 
+/** The largest file `fs/read` returns: the same ceiling as an archive. */
+const MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024;
+
 export async function computerRoutes(app: FastifyInstance): Promise<void> {
   const ctx = ctxOf(app);
   const { manager, log } = ctx.deps;
@@ -276,7 +279,8 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
   app.get('/v1/computers/:id/fs/read', async (req, reply) => {
     const { id } = req.params as { id: string };
     const computer = await mustGet(app, id);
-    const bytes = await computer.readFile(requirePath(req.query));
+    // A person's download: larger than a tool's read, still bounded, since it is held in memory.
+    const bytes = await computer.readFile(requirePath(req.query), { maxBytes: MAX_DOWNLOAD_BYTES });
     return reply.type('application/octet-stream').send(Buffer.from(bytes));
   });
 

@@ -211,7 +211,7 @@ event: done
 
 ```
 GET    /v1/computers/:id/fs?path=/work                  -> { "entries": DirEntry[] }
-GET    /v1/computers/:id/fs/read?path=/work/a.txt       -> raw bytes
+GET    /v1/computers/:id/fs/read?path=/work/a.txt       -> raw bytes (at most 256 MiB; past that, E_QUOTA)
 PUT    /v1/computers/:id/fs/write?path=/work/a.txt      body: raw bytes -> 204
 DELETE /v1/computers/:id/fs?path=/work/a.txt&recursive=true -> 204
 

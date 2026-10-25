@@ -552,7 +552,8 @@ export class BrowserSession {
     const ready = await this.computer.exec({ cmd, timeoutSec: 90 });
 
     if (ready.exitCode !== 0) {
-      const log = await this.computer.readTextFile(LOG_PATH, 4000).catch(() => '');
+      // The end of the log, where Chromium says why it stopped.
+      const log = (await this.computer.exec({ cmd: ['tail', '-c', '4000', LOG_PATH], timeoutSec: 15 }).catch(() => undefined))?.stdout ?? '';
       // A browser that never opened its port is still running, and close() only
       // knows how to kill a port this method returned. Reap it here or every
       // failed launch leaks one.

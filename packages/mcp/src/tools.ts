@@ -42,8 +42,8 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'read_file',
     description:
-      'Read a text file from the computer. Use offset/limit for large files rather than ' +
-      'reading the whole thing -- output is capped and the middle will be elided.',
+      'Read a text file from the computer. Without offset/limit you get its start, about 96 KB, ' +
+      'with a note when it goes on; read the rest by line with offset and limit.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -252,17 +252,18 @@ async function shell(computer: Computer, args: Record<string, unknown>, signal?:
 
 async function readFile(computer: Computer, args: Record<string, unknown>): Promise<ToolResult> {
   const path = String(args.path ?? '');
-  const text = await computer.readTextFile(path, MAX_TOOL_OUTPUT);
   const offset = typeof args.offset === 'number' ? Math.max(1, args.offset) : undefined;
   const limit = typeof args.limit === 'number' ? args.limit : undefined;
 
-  if (offset === undefined && limit === undefined) return ok(redact(text));
+  if (offset === undefined && limit === undefined) return ok(redact(await computer.readTextFile(path, MAX_TOOL_OUTPUT)));
 
-  const lines = text.split('\n');
+  // A part of a large file: the whole of it is read (bounded, or refused), so
+  // a line past the first 96 KB is reachable; what comes back is capped.
+  const lines = new TextDecoder().decode(await computer.readFile(path)).split('\n');
   const start = (offset ?? 1) - 1;
   const slice = lines.slice(start, limit ? start + limit : undefined);
   const header = `[lines ${start + 1}-${start + slice.length} of ${lines.length}]`;
-  return ok(`${header}\n${redact(slice.join('\n'))}`);
+  return ok(clampText(`${header}\n${redact(slice.join('\n'))}`, MAX_TOOL_OUTPUT).text);
 }
 
 async function writeFile(computer: Computer, args: Record<string, unknown>): Promise<ToolResult> {
@@ -278,7 +279,8 @@ async function editFile(computer: Computer, args: Record<string, unknown>): Prom
   const newStr = String(args.new_string ?? '');
   if (!oldStr) return fail('old_string is empty; use write_file to create a file');
 
-  const before = await computer.readTextFile(path);
+  // The whole file, or a refusal: an edit made to part of a file and written back loses the rest.
+  const before = new TextDecoder().decode(await computer.readFile(path));
   const first = before.indexOf(oldStr);
   if (first === -1) {
     return fail(

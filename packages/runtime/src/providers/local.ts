@@ -1,10 +1,11 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { connect } from 'node:net';
 import { createReadStream, createWriteStream, existsSync } from 'node:fs';
-import { cp, lstat, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { cp, lstat, mkdir, open, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { HuskError, clampText, ensurePaths, id as newId, paths } from '@husk-ai/core';
+import { HuskError, READ_FILE_MAX_BYTES, ensurePaths, fileTooLarge, headText, id as newId, paths } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -743,10 +744,22 @@ class LocalComputer implements Computer {
     this.touch();
   }
 
-  async readFile(path: string): Promise<Uint8Array> {
+  async readFile(path: string, opts: { maxBytes?: number } = {}): Promise<Uint8Array> {
+    const max = opts.maxBytes ?? READ_FILE_MAX_BYTES;
+    const bytes = await this.readHead(path, max);
+    if (bytes.byteLength > max) throw fileTooLarge(normaliseGuestPath(path, this.info.workdir), max);
+    return bytes;
+  }
+
+  async readTextFile(path: string, maxBytes = 1024 * 1024): Promise<string> {
+    return headText(await this.readHead(path, maxBytes), maxBytes);
+  }
+
+  /** At most `maxBytes + 1` bytes from the start: one past the limit tells the caller there was more. */
+  private async readHead(path: string, maxBytes: number): Promise<Uint8Array> {
     this.assertLive();
     try {
-      return await this.viaGuestLinks(path, (h) => readFile(h));
+      return await this.viaGuestLinks(path, (h) => headOf(h, maxBytes + 1));
     } catch (e) {
       if (e instanceof HuskError) throw e;
       throw new HuskError('E_FS_DENIED', `cannot read ${normaliseGuestPath(path, this.info.workdir)}`, {
@@ -754,11 +767,6 @@ class LocalComputer implements Computer {
         cause: e,
       });
     }
-  }
-
-  async readTextFile(path: string, maxBytes = 1024 * 1024): Promise<string> {
-    const buf = await this.readFile(path);
-    return clampText(Buffer.from(buf).toString('utf8'), maxBytes).text;
   }
 
   async listDir(path: string): Promise<DirEntry[]> {
@@ -1265,5 +1273,33 @@ function killProcessTree(child: ChildProcess): void {
     } catch {
       /* already gone */
     }
+  }
+}
+
+/**
+ * Up to `n` bytes from the start of a regular file. A device or a pipe is
+ * refused: a read of /dev/zero never ends, and opening a pipe nobody writes to
+ * would hang (O_NONBLOCK opens it without waiting, so it can be refused).
+ */
+async function headOf(file: string, n: number): Promise<Uint8Array> {
+  const fh = await open(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  try {
+    if (!(await fh.stat()).isFile()) {
+      throw new HuskError('E_FS_DENIED', `${file} is not a regular file`, {
+        hint: 'read a device or a pipe with a command you can stop',
+      });
+    }
+    const chunks: Buffer[] = [];
+    let got = 0;
+    while (got < n) {
+      const chunk = Buffer.alloc(Math.min(64 * 1024, n - got));
+      const { bytesRead } = await fh.read(chunk, 0, chunk.byteLength, null);
+      if (bytesRead === 0) break;
+      chunks.push(chunk.subarray(0, bytesRead));
+      got += bytesRead;
+    }
+    return new Uint8Array(Buffer.concat(chunks));
+  } finally {
+    await fh.close();
   }
 }
