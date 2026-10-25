@@ -115,24 +115,24 @@ explicitly rather than resolving them to something nearby.
 
 ## Network policy
 
-Every URL Husk opens — `goto`, the `goto` steps of `run`, and the `page.goto` calls of
-a script — goes through `assertUrlAllowed` from `@husk-ai/core`, with the same
-`loopbackIsOwn` rule `browseInComputer` uses: `docker`, `podman` and `fly` own their
-loopback, `local` and `ssh` do not. `mode: 'full'` still refuses `169.254.169.254`.
-A real browser — which will follow a redirect chain a prompt-injected page hands it —
-makes this matter more, not less, and today the check does not see a page navigating
-itself (links, redirects, pop-ups) or a tab opened with `newTab`. Closing those gaps
-is tracked in [#187](https://github.com/Hotragn/husk/issues/187).
+Every URL Husk opens — `goto`, a tab opened with `newTab`, the `goto` steps of `run`,
+and the `page.goto` calls of a script — goes through `assertUrlAllowed` from
+`@husk-ai/core`, with the same `loopbackIsOwn` rule `browseInComputer` uses: `docker`,
+`podman` and `fly` own their loopback, `local` and `ssh` do not. `mode: 'full'` still
+refuses `169.254.169.254`, in its IPv6 spellings too. A real browser — which will follow
+a redirect chain a prompt-injected page hands it — makes this matter more, not less,
+and the check still does not see a page navigating itself (links, scripts, pop-ups).
+Closing that gap is tracked in [#187](https://github.com/Hotragn/husk/issues/187).
 
-## Not sandboxed by itself
+## Chromium's own sandbox
 
-Chromium runs with `--no-sandbox` on every provider today. In a container that is
-required: Chromium's own namespace sandbox cannot nest inside an unprivileged
-container, and the container is the boundary. On `local` and `ssh` it is not: there
-Chromium's sandbox is the only thing between a hostile page and your account, and
-keeping it on outside containers is tracked in
-[#187](https://github.com/Hotragn/husk/issues/187). Run untrusted pages in a `docker`
-or `podman` computer.
+In a `docker` or `podman` container, or on a `fly` machine, Chromium runs with
+`--no-sandbox`: its namespace sandbox cannot nest inside an unprivileged container, and
+the computer is the boundary. On `local`, in WSL and over `ssh` it keeps its sandbox,
+the only thing there between a hostile page and your account. Where that sandbox
+cannot run at all — no unprivileged user namespaces, or running as root — Chromium is
+started again without it and Husk says so. Run untrusted pages in a `docker` or
+`podman` computer.
 
 One caveat measured rather than assumed: on `local` under **WSL2**, Windows'
 loopback relay forwards a WSL `127.0.0.1` listener to the Windows host, so the

@@ -90,7 +90,8 @@ describe('assertUrlAllowed', () => {
   });
 
   it('refuses the cloud metadata endpoint even in full mode', () => {
-    expect(() => assertUrlAllowed('http://169.254.169.254/latest/meta-data/', full)).toThrow(/private address/);
+    expect(() => assertUrlAllowed('http://169.254.169.254/latest/meta-data/', full)).toThrow(/network policy refuses 169.254.169.254/);
+    expect(() => assertUrlAllowed('http://[::ffff:169.254.169.254]/latest/meta-data/', full)).toThrow(/network policy refuses/);
   });
 
   it('permits a private host that the operator named explicitly', () => {
