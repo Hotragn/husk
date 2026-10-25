@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // The whole chat path, end to end, on a real Docker computer with a real browser.
 //
-// What unit tests cannot show: the shared Husk starting from a chat's first
-// call, a container computer running the chat tools, Chromium rendering a page,
-// the live screen sending real frames, a handoff opened and finished with a
-// scoped link, and a real MCP stdio session forwarding its tools to the shared
-// Husk. Needs Docker; CI runs it on ubuntu-latest. Run `npm run build` first.
+// What unit tests cannot show: a non-interactive setup in a fresh home, the
+// shared Husk it starts, a container computer running the chat tools, Chromium
+// rendering a page, the live screen sending real frames, a handoff opened and
+// finished with a scoped link, a real MCP stdio session forwarding its tools to
+// the shared Husk, and that session going on when the shared Husk dies. Needs
+// Docker; CI runs it on ubuntu-latest. Run `npm run build` first.
 //
 //   node scripts/e2e-computers.mjs
 
@@ -13,10 +14,12 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, 'packages', 'mcp', 'dist', 'bin.js');
+const cli = join(root, 'packages', 'cli', 'dist', 'bin.js');
+const { resolveImage } = await import(pathToFileURL(join(root, 'packages', 'runtime', 'dist', 'index.js')).href);
 const home = mkdtempSync(join(tmpdir(), 'husk-e2e-'));
 const env = { ...process.env, HUSK_HOME: home };
 delete env.HUSK_DAEMON;
@@ -38,16 +41,27 @@ function note(name, ok, detail = '') {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-let daemon;
 let rec;
 let mcp;
+/** The `husk` entry setup wrote into the chat app: how that app starts Husk. */
+let appEntry;
 const created = [];
+
+/** The running shared Husk's record, or undefined. */
+function readDaemon() {
+  try {
+    return JSON.parse(readFileSync(join(home, 'daemon.json'), 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
 
 async function cleanup() {
   mcp?.child.kill();
   // As the owner, so a run that failed while it held a computer still tidies it away.
   for (const id of created) await api('DELETE', `/v1/computers/${id}?confirm=${id}`, undefined, rec.token, { 'x-husk-as': 'person' }).catch(() => undefined);
-  daemon?.kill();
+  // Setup started the shared Husk detached, and a chat may have started it again: ask it to stop.
+  if (rec) await api('POST', '/v1/shutdown').catch(() => undefined);
   rmSync(home, { recursive: true, force: true });
 }
 process.once('SIGINT', () => void cleanup().finally(() => process.exit(130)));
@@ -70,9 +84,9 @@ async function tool(id, name, args = {}) {
   return r.body;
 }
 
-/** A minimal MCP client over a child's stdio. */
-function mcpSession(args) {
-  const child = spawn(process.execPath, [bin, ...args], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+/** A minimal MCP client over a child's stdio: this build with `args`, or a chat app's own `launch` entry. */
+function mcpSession(args, launch = { command: process.execPath, args: [bin] }) {
+  const child = spawn(launch.command, [...launch.args, ...args], { env: { ...env, ...(launch.env ?? {}) }, stdio: ['pipe', 'pipe', 'inherit'] });
   let buffer = '';
   const waiting = new Map();
   child.stdout.on('data', (chunk) => {
@@ -728,15 +742,64 @@ async function measureScript(id) {
   check('a browser_script goto obeys the network policy', /refused file:\/\//.test(body) && !/let file:\/\/ through/.test(body), body.slice(0, 300));
 }
 
+/**
+ * The chat setup connected, started the way its app starts it, from the entry
+ * setup wrote: a page on the computer setup chose. Then the shared Husk is
+ * killed under it, and the chat's next call must start a new one and go on with
+ * the same computer, never quietly somewhere else.
+ */
+async function checkRestart() {
+  mcp = mcpSession([], appEntry);
+  await mcp.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'husk-e2e-app', version: '0' } });
+  mcp.notify('notifications/initialized');
+  const known = new Set((await api('GET', '/v1/overview')).body.computers.map((c) => c.id));
+  const hello = textOf((await mcp.request('tools/call', { name: 'shell', arguments: { computer: 'new', command: 'echo from-the-app' } })).result ?? {});
+  const mine = (await api('GET', '/v1/overview')).body.computers.find((c) => !known.has(c.id));
+  if (mine) created.push(mine.id);
+  check('a chat started from the app’s entry gets its computer', /from-the-app/.test(hello) && Boolean(mine), hello.slice(0, 200));
+  await serveFixture(mine.id);
+  const page = textOf((await mcp.request('tools/call', { name: 'browser_goto', arguments: { computer: mine.id, url: FIXTURE } })).result ?? {});
+  check('it opens a page, on the image setup chose', /Husk fixture/.test(page), page.slice(0, 200));
+
+  const old = readDaemon();
+  process.kill(old.pid, 'SIGKILL');
+  for (let i = 0; i < 40 && (await fetch(`${old.url}/health`).then(() => true, () => false)); i++) await sleep(250);
+  const after = await mcp.request('tools/call', { name: 'shell', arguments: { computer: mine.id, command: 'head -c 60 /work/fixture/index.html; echo; echo still-here' } });
+  const text = textOf(after.result ?? {});
+  check('the chat goes on, with its files, when the shared Husk dies under it', !after.result?.isError && /still-here/.test(text) && /Husk fixture/.test(text), text.slice(0, 300));
+  rec = readDaemon();
+  check('a new shared Husk took over', Boolean(rec?.token) && rec.pid !== old.pid, `pid ${old.pid} -> ${rec?.pid}`);
+  const seen = (await api('GET', '/v1/overview')).body.activity?.[mine.id];
+  check('the call went through the new shared Husk, not the chat’s own process', seen?.via === 'mcp' && seen.tool === 'shell', JSON.stringify(seen));
+  mcp.child.stdin.end();
+}
+
 try {
-  // 1. The shared Husk, as a chat's first call starts it.
-  daemon = spawn(process.execPath, [bin, '--daemon'], { env, stdio: 'inherit' });
-  for (let i = 0; i < 120 && !rec; i++) {
-    await sleep(250);
-    const file = join(home, 'daemon.json');
-    if (existsSync(file)) rec = JSON.parse(readFileSync(file, 'utf8'));
-  }
-  check('the shared Husk starts and writes daemon.json', Boolean(rec?.token), rec?.url);
+  // 1. A fresh home and a non-interactive setup, as the README's line runs it:
+  // Husk added to one chat app on the computer chosen, the image with the
+  // browser pulled now, and the shared Husk started. HUSK_LAUNCH points the app
+  // at this build (npm has no 0.2 yet), and XDG_CONFIG_HOME keeps the app's
+  // settings in this run's own folder.
+  const xdg = join(home, 'xdg');
+  mkdirSync(join(xdg, 'Claude'), { recursive: true });
+  const setupEnv = { ...env, XDG_CONFIG_HOME: xdg, HUSK_LAUNCH: JSON.stringify({ command: process.execPath, args: [bin] }) };
+  const setup = spawnSync(process.execPath, [cli, 'setup', '--computer', 'docker', '--apps', 'claude-desktop', '--yes'], {
+    env: setupEnv,
+    encoding: 'utf8',
+    timeout: 1_200_000,
+  });
+  console.log(`${setup.stdout ?? ''}${setup.stderr ?? ''}`.trim().replace(/token=[0-9a-f]+/g, 'token=<redacted>'));
+  check('a non-interactive setup finishes', setup.status === 0, `exit ${setup.status}`);
+  appEntry = JSON.parse(readFileSync(join(xdg, 'Claude', 'claude_desktop_config.json'), 'utf8')).mcpServers?.husk;
+  check(
+    'setup adds Husk to the chat app, on the computer chosen',
+    appEntry?.command === process.execPath && appEntry.args?.[0] === bin && appEntry.args.join(' ').includes('--provider docker'),
+    JSON.stringify(appEntry?.args),
+  );
+  const image = resolveImage({ flavor: 'full' }).primary;
+  check('setup gets the image with the browser before any chat', spawnSync('docker', ['image', 'inspect', image], { stdio: 'ignore' }).status === 0, image);
+  rec = readDaemon();
+  check('setup starts the shared Husk, which writes daemon.json', Boolean(rec?.token), rec?.url);
   check('the console page loads without the token', (await fetch(`${rec.url}/`)).status === 200);
   check('the API refuses a request without the token', (await fetch(`${rec.url}/v1/computers`)).status === 401);
 
@@ -853,9 +916,19 @@ try {
   if (process.env.E2E_DESKTOP === '1') await walkDesktop(id);
   else console.log('skip the desktop app (set E2E_DESKTOP=1 with apps/desktop installed and xvfb-run)');
 
+  // 10. The chat setup connected goes on when the shared Husk dies under it. Last:
+  // what came before ran on the first shared Husk.
+  await checkRestart();
+
   console.log(`\n${steps.length} checks passed`);
 } catch (err) {
   console.error(`\n${err.stack ?? err}`);
+  // The shared Husk runs detached, as setup starts it: its own log says what it saw.
+  try {
+    console.error(`\n--- daemon.log, the end ---\n${readFileSync(join(home, 'daemon.log'), 'utf8').slice(-6000)}`);
+  } catch {
+    // no log: it never started
+  }
   process.exitCode = 1;
 } finally {
   await cleanup();
