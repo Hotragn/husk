@@ -113,6 +113,24 @@ thing is sometimes "Delete account".
 Nodes with no DOM element get an `a`-prefixed ref, and `click` refuses those
 explicitly rather than resolving them to something nearby.
 
+## Honest clicks
+
+A click is refused, saying why, before anything is pressed:
+
+- when its element is gone, disabled (a disabled form control, or `aria-disabled`),
+  hidden, or of no size;
+- when its element is still moving: two box readings 50 ms apart must agree to the
+  pixel, within half a second;
+- when something covers it: a hit test at the point the click would land must find the
+  element or something inside it, and the refusal names what is there instead;
+- when a role and name match more than one element, rather than taking the first.
+
+`force` skips every check and presses at the element's centre, as clicks always did.
+`browser_click` says which happened: a checked click landed on its element, and a
+forced one was only dispatched. One path does every click: `browser_click`,
+`browser_run`, `page.click` in a script and the console's Browser page all use the
+driver's `click` action.
+
 ## Network policy
 
 Every URL Husk opens — `goto`, a tab opened with `newTab`, the `goto` steps of `run`,

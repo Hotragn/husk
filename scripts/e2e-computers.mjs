@@ -507,6 +507,47 @@ async function walkDesktop(id) {
 }
 
 /**
+ * Honest clicks (J3-a), on pages served from inside the computer: a click on
+ * something covered or disabled, or a role and name that match two buttons,
+ * is refused, saying why; force still clicks; a plain click lands and says so.
+ */
+async function checkHonestClicks(id) {
+  const pages = {
+    'overlay.html':
+      '<!doctype html><title>overlay</title><button onclick="document.title=\'button\'">Behind</button>' +
+      '<div onclick="document.title=\'backdrop\'" style="position:fixed;inset:0;background:rgba(0,0,0,.3)">Backdrop</div>',
+    'disabled.html': '<!doctype html><title>disabled</title><button disabled onclick="document.title=\'clicked\'">Submit</button>',
+    'dupes.html':
+      '<!doctype html><title>dupes</title><button onclick="document.title=\'first\'">OK</button> ' +
+      '<button onclick="document.title=\'second\'">OK</button>',
+  };
+  for (const [name, html] of Object.entries(pages)) await tool(id, 'write_file', { path: `/work/fixture/${name}`, content: html });
+  const title = async () => /result: "([^"]*)"/.exec(textOf(await tool(id, 'browser_script', { script: 'result = page.title()' })))?.[1];
+  const refOf = async (label) => new RegExp(`^ *(e\\d+) {2}button "${label}"`, 'm').exec(textOf(await tool(id, 'browser_snapshot')))?.[1];
+
+  await tool(id, 'browser_goto', { url: `${FIXTURE}overlay.html` });
+  const behind = await refOf('Behind');
+  const covered = await tool(id, 'browser_click', { ref: behind });
+  check('a click on a covered button is refused, saying what covers it', covered.isError === true && /covered/.test(textOf(covered)) && /Backdrop/.test(textOf(covered)), textOf(covered).slice(0, 200));
+  const forced = await tool(id, 'browser_click', { ref: behind, force: true });
+  check('force still clicks, and lands where the click lands', !forced.isError && /without the checks/.test(textOf(forced)) && (await title()) === 'backdrop', textOf(forced).slice(0, 160));
+
+  await tool(id, 'browser_goto', { url: `${FIXTURE}disabled.html` });
+  const disabled = await tool(id, 'browser_click', { ref: await refOf('Submit') });
+  check('a click on a disabled button is refused', disabled.isError === true && /disabled/.test(textOf(disabled)), textOf(disabled).slice(0, 160));
+
+  await tool(id, 'browser_goto', { url: `${FIXTURE}dupes.html` });
+  const twice = await tool(id, 'browser_run', { actions: [{ do: 'click', role: 'button', name: 'OK' }] });
+  check('a role and name that match two buttons is refused', twice.isError === true && /2 elements have role 'button' and name 'OK'/.test(textOf(twice)), textOf(twice).slice(0, 200));
+  const first = await tool(id, 'browser_run', { actions: [{ do: 'click', role: 'button', name: 'OK', force: true }] });
+  check('force clicks the first of them', !first.isError && (await title()) === 'first', textOf(first).slice(0, 160));
+
+  await tool(id, 'browser_goto', { url: FIXTURE });
+  const press = await tool(id, 'browser_click', { ref: await refOf('Press') });
+  check('a click on a plain button lands, and says so', !press.isError && /landed on it/.test(textOf(press)), textOf(press).slice(0, 160));
+}
+
+/**
  * A stopped command is gone from the computer, not only from this side: killing
  * the `docker exec` client used to leave it running there while the chat was
  * told it "was killed".
@@ -900,7 +941,10 @@ try {
   // 8b. A script that makes its own decisions, run inside the computer.
   await measureScript(id);
 
-  // 8c. Taking over stops the AI where it is, scripts included.
+  // 8c. Clicks that are honest about where they land.
+  await checkHonestClicks(id);
+
+  // 8d. Taking over stops the AI where it is, scripts included.
   await checkTakeover(id);
 
   // 9. The console in a real browser: Home's live screen, take over at any
