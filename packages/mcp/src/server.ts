@@ -102,6 +102,17 @@ const ELICIT_WAIT_MS = 200_000;
  */
 const SHOWS_ELICITATION = [/claude-code/i, /cursor/i, /visual studio code|vscode/i];
 
+/**
+ * Whether a handoff asks "Done?" in the chat, or gives a link at once: the
+ * client declares form elicitation (`elicitation: {}` means form mode; one
+ * that lists only `url` has no form) and is one known to show it.
+ * https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation
+ */
+export function asksInChat(clientName: string, elicitation: { form?: unknown; url?: unknown } | undefined): boolean {
+  if (!elicitation || (elicitation.form === undefined && elicitation.url !== undefined)) return false;
+  return SHOWS_ELICITATION.some((re) => re.test(clientName));
+}
+
 /** How often a chat checks whether the person finished in the console. */
 const MIRROR_POLL_MS = 2_000;
 
@@ -630,12 +641,8 @@ export class HuskMcpServer {
       ? handoffLink(origin, remote.handoffId, remote.token)
       : handoffLink(origin, handoffId, this.tokens.mint(computer ? `computer:${computer.id}` : `handoff:${handoffId}`));
 
-    // In-chat "Done?" where the client declared form elicitation.
-    // https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation
-    // `elicitation: {}` means form mode; a client that lists only `url` has no form.
-    const elicit = this.mcp.getClientCapabilities()?.elicitation;
-    const client = this.mcp.getClientVersion()?.name ?? '';
-    if (elicit && (elicit.form !== undefined || elicit.url === undefined) && SHOWS_ELICITATION.some((re) => re.test(client))) {
+    // In-chat "Done?" where the client shows it; a link everywhere else.
+    if (asksInChat(this.mcp.getClientVersion()?.name ?? '', this.mcp.getClientCapabilities()?.elicitation)) {
       const stop = new AbortController();
       const onCallAbort = (): void => stop.abort();
       callSignal.addEventListener('abort', onCallAbort, { once: true });
