@@ -322,8 +322,12 @@ function watchCalls() {
     if (msg.type === 'subscribed') eventsReady = true;
     if (msg.type !== 'tool_started') return;
     lastCall = msg.payload;
-    // Only a call that could open a window: the first on a computer not shown yet.
-    if (computers?.settings.onScreen && computers.settings.autoOpen && !computers.seen.has(msg.payload?.computerId)) void poll();
+    const id = msg.payload?.computerId;
+    // Only a call that could open a window: the first since this run began on a computer not shown yet.
+    if (!computers?.settings.onScreen || !computers.settings.autoOpen || computers.seen.has(id) || !(Date.parse(msg.payload?.at) > computers.since)) return;
+    // One already on the screen opens now; a new one once a reading says what it is.
+    if (computers.computers().some((c) => c.id === id && c.state === 'running')) computers.open(id, { focus: false });
+    else void poll();
   };
   // A Husk that restarted has a new token; `rec` names it again by the time this reconnects.
   ws.onclose = () => {

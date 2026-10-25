@@ -75,6 +75,11 @@ and starts the one Husk every chat goes through, printing its console link. It b
 each app's config file before changing it and touches only its own `husk` entry.
 `--remove` takes it out again. The console's **Connect** page does the same.
 
+Coming from 0.1.4? Run setup again, or **Update** on the Connect page. Each chat app's
+`husk` entry moves to this release and keeps the flags and env you gave it, Claude Code's
+per-project entries included (`claude mcp add` writes those by default). Your computers,
+the named sessions bound to them, their files and your bots carry over as they are.
+
 > [!NOTE]
 > `setup`, the shared Husk and the console's Connect page are on `main` and not yet
 > published: npm has 0.1.4. Until the next release, run it from a checkout with

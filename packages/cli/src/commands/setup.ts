@@ -184,7 +184,7 @@ async function chooseApps(apps: ChatApp[], flag: string | undefined): Promise<Ch
   ui.print();
   ui.print(ui.heading('CHAT APPS ON THIS MACHINE'));
   apps.forEach((a, i) => {
-    const state = a.connected ? ui.green('connected') : a.found ? 'found' : ui.dim('not found');
+    const state = a.outdated ? ui.yellow('older Husk, moves here') : a.connected ? ui.green('connected') : a.found ? 'found' : ui.dim('not found');
     ui.print(`  ${i + 1}. ${a.name.padEnd(15)} ${state}`);
   });
   const found = apps.filter((a) => a.found);
