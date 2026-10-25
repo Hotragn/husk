@@ -42,6 +42,12 @@ export interface DesktopState {
   window: 'open' | 'minimized' | 'closed';
   /** The window stays on top of other windows. */
   pinned: boolean;
+  /**
+   * False while the shared Husk is not answering: a banner says so, the screens
+   * are cleared rather than left frozen on their last frame, and nothing that
+   * needs Husk is offered. Absent from an older app: then it is answering.
+   */
+  connected?: boolean;
   /** A Mac with a notch: the pill wraps it, its logos left and right of `gap` pixels. */
   notch?: { gap: number; height: number };
 }
@@ -110,8 +116,9 @@ export function tabName(c: DesktopComputer, all: DesktopComputer[]): string {
   return twin && time ? `${c.platform} ${time}` : c.platform;
 }
 
-/** What a computer is doing, in a few words. */
-export function doing(c: DesktopComputer): string {
+/** What a computer is doing, in a few words: nothing anyone can tell while Husk is `away`. */
+export function doing(c: DesktopComputer, away = false): string {
+  if (away) return 'Husk is not answering';
   if (c.held) return 'You have it';
   if (c.waiting) return `Waiting for you · ${c.waiting}`;
   if (c.state !== 'running') return c.state === 'stopped' ? 'Stopped' : c.state;

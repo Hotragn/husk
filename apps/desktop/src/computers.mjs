@@ -72,6 +72,13 @@ export class Computers {
     this.broadcast();
   }
 
+  /** Whether the shared Husk is answering: when it is not, the windows say so and clear their screens. */
+  setConnected(on) {
+    if (this.connected === on) return;
+    this.connected = on;
+    this.broadcast();
+  }
+
   /** A new reading of GET /v1/overview. */
   update(overview) {
     if (!overview) return;
@@ -87,14 +94,21 @@ export class Computers {
   }
 
   computers() {
-    return desktopComputers(this.overview, this.active, this.icons);
+    return desktopComputers(this.overview, this.active, this.icons, this.connected !== false);
   }
 
   snapshot() {
     const notch = notchOf(process.platform, screen.getPrimaryDisplay());
     const computers = this.computers();
     const active = this.active ?? computers[0]?.id;
-    return { computers, ...(active ? { active } : {}), window: this.state, pinned: this.pinned, ...(notch ? { notch } : {}) };
+    return {
+      computers,
+      ...(active ? { active } : {}),
+      window: this.state,
+      pinned: this.pinned,
+      connected: this.connected !== false,
+      ...(notch ? { notch } : {}),
+    };
   }
 
   broadcast() {
@@ -397,8 +411,8 @@ export class Computers {
   run(which, js) {
     const w = this.windowOf(which);
     if (!w || w.isDestroyed()) return Promise.resolve(undefined);
-    // A page that stopped answering answers nothing after 10 s, so its checks fail instead of the walk hanging.
-    return Promise.race([w.webContents.executeJavaScript(js), new Promise((r) => setTimeout(r, 10_000))]);
+    // A page that stopped answering, or is loading again, answers nothing (after 10 s at most), so its checks fail instead of the walk.
+    return Promise.race([w.webContents.executeJavaScript(js).catch(() => undefined), new Promise((r) => setTimeout(r, 10_000))]);
   }
 }
 

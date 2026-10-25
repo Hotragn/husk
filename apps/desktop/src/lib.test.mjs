@@ -20,6 +20,7 @@ import {
   notchOf,
   pillBounds,
   readDaemonRecord,
+  restartDelay,
   runtimeBin,
   sameOrigin,
   toOpen,
@@ -187,6 +188,7 @@ test('it opens as a chat’s call starts, not once it ends, and says what is run
   assert.deepEqual(toOpen(busy, since, new Set()), ['cmp_a', 'cmp_b']);
   assert.equal(desktopComputers(busy).find((c) => c.id === 'cmp_b').calling, 'browser_goto');
   assert.equal(desktopComputers(overview).find((c) => c.id === 'cmp_b').calling, undefined);
+  assert.equal(desktopComputers(busy, undefined, {}, false).find((c) => c.id === 'cmp_b').calling, undefined, 'nothing is known to run while Husk is not answering');
 });
 
 test('desktop windows are the console signed in, on their own view', () => {
@@ -201,4 +203,16 @@ test('a chat app’s icon is looked for where it is usually installed, and nowhe
   ]);
   assert.deepEqual(appIconPaths('Claude Code', 'darwin'), []);
   assert.deepEqual(appIconPaths('Cursor', 'linux'), []);
+});
+
+test('a shared Husk that is not answering is said so in the tray, not that it is starting', () => {
+  assert.deepEqual(trayStatus(undefined, false), { label: 'Husk is not answering · trying again', waiting: [], held: [] });
+  assert.equal(trayStatus(undefined).label, 'Husk is starting');
+});
+
+test('Husk is started again two seconds after the first try, the wait doubling to a minute', () => {
+  const waits = [];
+  let wait = 0;
+  for (let i = 0; i < 8; i++) waits.push((wait = restartDelay(wait)));
+  assert.deepEqual(waits, [2_000, 4_000, 8_000, 16_000, 32_000, 60_000, 60_000, 60_000]);
 });
