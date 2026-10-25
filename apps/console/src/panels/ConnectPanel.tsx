@@ -123,24 +123,26 @@ export function ConnectPanel() {
         <ul className="connect-list">
           {(state.data?.apps ?? []).map((app) => {
             const r = results[app.id];
+            // An entry from 0.1.4, or another install: Update moves it here, keeping its own flags and env.
+            const verb = app.outdated ? 'Update' : app.connected ? 'Connect again' : 'Connect';
             return (
               <li key={app.id}>
                 <div className="connect-row">
                   <StatusDot
-                    tone={app.connected ? 'success' : app.found ? 'info' : 'muted'}
-                    label={app.connected ? 'connected' : app.found ? 'found' : 'not found'}
+                    tone={app.outdated ? 'warn' : app.connected ? 'success' : app.found ? 'info' : 'muted'}
+                    label={app.outdated ? 'older Husk' : app.connected ? 'connected' : app.found ? 'found' : 'not found'}
                   />
                   <strong>{app.name}</strong>
                   <div className="btn-row">
                     {app.found || app.connected ? (
                       <Button
                         size="sm"
-                        variant={app.connected ? 'secondary' : 'primary'}
+                        variant={app.connected && !app.outdated ? 'secondary' : 'primary'}
                         loading={busy === app.id}
                         onClick={() => void connect(app)}
-                        aria-label={`${app.connected ? 'Connect again' : 'Connect'} ${app.name}`}
+                        aria-label={`${verb} ${app.name}`}
                       >
-                        {app.connected ? 'Connect again' : 'Connect'}
+                        {verb}
                       </Button>
                     ) : null}
                     {app.connected ? (

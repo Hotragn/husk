@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { baseLaunch, chatAppDefs, connectChatApp, detectChatApps, disconnectChatApp, huskLaunch } from './chat-apps.js';
+import { baseLaunch, chatAppDefs, connectChatApp, detectChatApps, disconnectChatApp, huskLaunch, keepingTheirs, shellSafe } from './chat-apps.js';
 import { HUSK_RANGE } from './identity.js';
 
 let home = '';
@@ -112,11 +112,80 @@ describe('the launch line', () => {
     expect(JSON.parse(readFileSync(fileOf('cursor'), 'utf8')).mcpServers.husk).toEqual({ command: 'Husk.exe', args: ['bin.js'], env: { ELECTRON_RUN_AS_NODE: '1' } });
   });
 
+  it('passes Claude Code and Codex a launch line their CLIs can take, version range included', () => {
+    for (const id of ['claude-code', 'codex']) {
+      const def = chatAppDefs(home || undefined).find((d) => d.id === id) as { add: (l: unknown) => string[] };
+      expect(shellSafe(def.add(huskLaunch({ provider: 'docker', flavor: 'full' })))).toBe(true);
+    }
+    expect(shellSafe(['a&b'])).toBe(false);
+    expect(shellSafe(['%PATH%'])).toBe(false);
+  });
+
   it('puts Claude Code’s -e after the server name, because -e takes several values', () => {
     const def = chatAppDefs(home || undefined).find((d) => d.id === 'claude-code') as { add: (l: unknown) => string[] };
     expect(def.add({ command: 'Husk.exe', args: ['bin.js'], env: { ELECTRON_RUN_AS_NODE: '1' } })).toEqual([
       'mcp', 'add', '--scope', 'user', 'husk', '-e', 'ELECTRON_RUN_AS_NODE=1', '--', 'Husk.exe', 'bin.js',
     ]);
+  });
+});
+
+type CliDef = {
+  entries: () => Array<{ command: string; args: string[]; env: Record<string, string>; project?: string }>;
+  add: (l: unknown, scope?: string) => string[];
+};
+const cliDef = (id: string) => chatAppDefs(home).find((d) => d.id === id) as unknown as CliDef;
+
+describe('coming from 0.1.4', () => {
+  // The line 0.1.4 told people to add, with flags and env a person put on it.
+  const old = { command: 'npx', args: ['-y', '@husk-ai/mcp', '--session', 'proj', '--provider', 'docker', '--keep'], env: { HUSK_LOG_LEVEL: 'debug' } };
+
+  it('sees an entry that starts an older Husk, and moves it here with the person’s own flags and env', async () => {
+    fresh();
+    mkdirSync(dirOf('claude-desktop'), { recursive: true });
+    writeFileSync(fileOf('claude-desktop'), JSON.stringify({ mcpServers: { husk: old } }));
+    expect(detectChatApps(home).find((a) => a.id === 'claude-desktop')).toMatchObject({ connected: true, outdated: true });
+    await connectChatApp('claude-desktop', huskLaunch({ provider: 'podman', flavor: 'full' }), { home });
+    // The computer is the one just chosen; the session, --keep and the env are the person's.
+    expect(JSON.parse(readFileSync(fileOf('claude-desktop'), 'utf8')).mcpServers.husk).toEqual({
+      command: 'npx',
+      args: ['-y', `@husk-ai/mcp@${HUSK_RANGE}`, '--provider', 'podman', '--flavor', 'full', '--session', 'proj', '--keep'],
+      env: { HUSK_LOG_LEVEL: 'debug' },
+    });
+    expect(detectChatApps(home).find((a) => a.id === 'claude-desktop')?.outdated).toBe(false);
+  });
+
+  it('reads Claude Code’s user-wide entry and each project’s own, and moves a project’s in place', () => {
+    fresh();
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    writeFileSync(
+      join(home, '.claude.json'),
+      JSON.stringify({
+        mcpServers: { husk: { type: 'stdio', command: 'npx', args: ['-y', `@husk-ai/mcp@${HUSK_RANGE}`], env: {} } },
+        projects: { '/work/proj': { mcpServers: { husk: { type: 'stdio', ...old } } }, '/work/other': { mcpServers: {} } },
+      }),
+    );
+    const def = cliDef('claude-code');
+    const entries = def.entries();
+    expect(entries.map((e) => e.project ?? 'user')).toEqual(['user', '/work/proj']);
+    expect(detectChatApps(home).find((a) => a.id === 'claude-code')).toMatchObject({ connected: true, outdated: true });
+    // In its own project, with its own computer choice, flags and env, on this launch line.
+    expect(def.add(keepingTheirs(huskLaunch({ provider: 'podman' }), entries[1], true), 'local')).toEqual([
+      'mcp', 'add', '--scope', 'local', 'husk', '-e', 'HUSK_LOG_LEVEL=debug', '--',
+      'npx', '-y', `@husk-ai/mcp@${HUSK_RANGE}`, '--session', 'proj', '--provider', 'docker', '--keep',
+    ]);
+  });
+
+  it('reads a Codex entry’s flags and env, inline or in a table of its own', () => {
+    fresh();
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    const toml = join(home, '.codex', 'config.toml');
+    writeFileSync(
+      toml,
+      ['model = "o3"', '', '[mcp_servers.husk]', 'command = "npx"', 'args = ["-y", "@husk-ai/mcp", "--session", "proj"]', '', '[mcp_servers.husk.env]', 'HUSK_LOG_LEVEL = "debug"', '', '[mcp_servers.other]', 'command = "x"'].join('\n'),
+    );
+    expect(cliDef('codex').entries()).toEqual([{ command: 'npx', args: ['-y', '@husk-ai/mcp', '--session', 'proj'], env: { HUSK_LOG_LEVEL: 'debug' } }]);
+    writeFileSync(toml, '[mcp_servers.husk]\ncommand = "npx"\nargs = []\nenv = { HUSK_LOG_LEVEL = "debug" }\n');
+    expect(cliDef('codex').entries()[0]?.env).toEqual({ HUSK_LOG_LEVEL: 'debug' });
   });
 });
 

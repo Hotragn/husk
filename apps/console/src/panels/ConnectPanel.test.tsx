@@ -17,6 +17,7 @@ const state: SetupState = {
     { id: 'claude-desktop', name: 'Claude Desktop', found: true, connected: false, where: 'C:/Users/me/AppData/Roaming/Claude/claude_desktop_config.json', after: 'Restart it.' },
     { id: 'cursor', name: 'Cursor', found: true, connected: true, where: '/home/me/.cursor/mcp.json', after: '' },
     { id: 'windsurf', name: 'Windsurf', found: false, connected: false, where: '/home/me/.codeium/windsurf/mcp_config.json', after: '' },
+    { id: 'gemini', name: 'Gemini CLI', found: true, connected: true, outdated: true, where: '/home/me/.gemini/settings.json', after: '' },
   ],
 };
 
@@ -32,6 +33,7 @@ beforeEach(() => {
       if (path === '/v1/setup/apps/claude-desktop')
         return Response.json({ id: 'claude-desktop', ok: true, message: 'added to Claude Desktop. Restart it.', backup: 'C:/x.husk-backup' });
       if (path === '/v1/setup/test') return Response.json({ ok: true, provider: 'docker', output: 'Linux 6.6', ms: 2400 });
+      if (path === '/v1/setup/apps/gemini') return Response.json({ id: 'gemini', ok: true, message: 'added to Gemini CLI.' });
       return Response.json({ error: { code: 'E_ROUTE_NOT_FOUND', message: 'no' } }, { status: 404 });
     }),
   );
@@ -78,6 +80,15 @@ describe('Connect panel', () => {
     await screen.findByText('Windsurf', { selector: 'strong' });
     expect(screen.queryByRole('button', { name: 'Connect Windsurf' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Connect again Cursor' })).toBeTruthy();
+  });
+
+  it('offers Update for an app whose Husk is older, and moves it with the chosen computer', async () => {
+    render(<ConnectPanel />);
+    await screen.findByText('Gemini CLI', { selector: 'strong' });
+    expect(screen.getByText('older Husk')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Update Gemini CLI' }));
+    expect(await screen.findByText('added to Gemini CLI.')).toBeTruthy();
+    expect(calls.find((c) => c.path === '/v1/setup/apps/gemini')?.body).toEqual({ provider: 'docker', flavor: 'full' });
   });
 
   it('runs a test on the chosen computer', async () => {

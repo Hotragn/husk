@@ -369,6 +369,8 @@ export interface ChatApp {
   name: string;
   found: boolean;
   connected: boolean;
+  /** Husk is in it, but starts an older or another Husk: Update moves it here. Absent from older servers. */
+  outdated?: boolean;
   where: string;
   after: string;
 }

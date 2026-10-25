@@ -23,6 +23,12 @@ export interface ChatApp {
   found: boolean;
   /** Husk is already in its MCP servers. */
   connected: boolean;
+  /**
+   * Some `husk` entry starts another Husk than this one: an older release
+   * (0.1.4 told people to add `npx -y @husk-ai/mcp`), or another install.
+   * Connecting moves it to this launch line, keeping the person's own flags and env.
+   */
+  outdated: boolean;
   /** The file Husk edits, or the command it runs. */
   where: string;
   /** What to do after connecting, e.g. restart the app. */
@@ -88,16 +94,120 @@ interface FileApp {
   after: string;
 }
 
+type Scope = 'user' | 'local';
+
 interface CliApp {
   kind: 'cli';
   id: ChatAppId;
   name: string;
   bin: string;
   dir: string;
-  add: (l: HuskLaunch) => string[];
-  remove: string[];
-  isConnected: () => boolean;
+  add: (l: HuskLaunch, scope?: Scope) => string[];
+  remove: (scope?: Scope) => string[];
+  /** Its `husk` entries, read from the app's own settings: Claude Code's user-wide one first, then each project's. */
+  entries: () => Entry[];
   after: string;
+}
+
+/** A `husk` entry as an app has it. */
+interface Entry {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  /** Claude Code's local scope: the project folder it is for. */
+  project?: string;
+}
+
+function entryOf(value: unknown, project?: string): Entry | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const e = value as { command?: unknown; args?: unknown; env?: unknown };
+  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  const env = e.env && typeof e.env === 'object' ? Object.entries(e.env).filter((kv): kv is [string, string] => typeof kv[1] === 'string') : [];
+  return { command: typeof e.command === 'string' ? e.command : '', args: strings(e.args), env: Object.fromEntries(env), ...(project ? { project } : {}) };
+}
+
+/** Claude Code's `~/.claude.json`: the user-wide entry, and each project's own (`claude mcp add` without `--scope`). */
+function claudeEntries(home: string): Entry[] {
+  try {
+    const json = JSON.parse(readText(join(home, '.claude.json')) ?? '{}') as {
+      mcpServers?: Record<string, unknown>;
+      projects?: Record<string, { mcpServers?: Record<string, unknown> } | null>;
+    };
+    const user = entryOf(json.mcpServers?.husk);
+    const local = Object.entries(json.projects ?? {}).flatMap(([project, p]) => entryOf(p?.mcpServers?.husk, project) ?? []);
+    return [...(user ? [user] : []), ...local];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Codex's `[mcp_servers.husk]` table, with its env inline or as its own table.
+ * ponytail: reads the shapes `codex mcp add` writes (double-quoted strings, a
+ * one-line array, an inline env); anything else reads as no flags and no env.
+ */
+function codexEntry(text: string): Entry | undefined {
+  let table: 'husk' | 'env' | undefined;
+  let seen = false;
+  const entry: Entry = { command: '', args: [], env: {} };
+  for (const line of text.split(/\r?\n/)) {
+    const header = /^\s*\[([^\]]+)\]\s*$/.exec(line)?.[1];
+    if (header !== undefined) {
+      table = header === 'mcp_servers.husk' ? 'husk' : header === 'mcp_servers.husk.env' ? 'env' : undefined;
+      seen ||= table === 'husk';
+      continue;
+    }
+    const kv = table && /^\s*"?([\w.-]+)"?\s*=\s*(.+?)\s*$/.exec(line);
+    if (!kv) continue;
+    const [, key, raw] = kv as unknown as [string, string, string];
+    // An inline table is JSON once its keys are quoted and `=` is `:`.
+    const json = raw.startsWith('{') ? raw.replace(/([{,]\s*)"?([\w.-]+)"?\s*=/g, '$1"$2":') : raw;
+    let value: unknown;
+    try {
+      value = JSON.parse(json);
+    } catch {
+      continue;
+    }
+    if (table === 'env' && typeof value === 'string') entry.env[key] = value;
+    else if (key === 'command' && typeof value === 'string') entry.command = value;
+    else if (key === 'args') entry.args = entryOf({ args: value })?.args ?? [];
+    else if (key === 'env') entry.env = { ...entry.env, ...entryOf({ env: value })?.env };
+  }
+  return seen ? entry : undefined;
+}
+
+/** The bin's own flags a person may have set. The computer choice's two are setup's to decide. */
+const PERSON_FLAGS = new Set(['--session', '--profile', '--network', '--memory', '--cpus']);
+const CHOICE_FLAGS = new Set(['--provider', '--flavor']);
+
+/** The person's own flags in an entry's args, in order; with `choice`, its provider and flavor too. */
+function theirFlags(args: string[], choice: boolean): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] as string;
+    const name = arg.split('=')[0] as string;
+    if (arg === '--keep') out.push(arg);
+    else if (!PERSON_FLAGS.has(name) && !(choice && CHOICE_FLAGS.has(name))) continue;
+    else if (arg.includes('=')) out.push(arg);
+    else if (i + 1 < args.length) out.push(arg, args[++i] as string);
+  }
+  return out;
+}
+
+/** Whether an entry starts this install's Husk: its command and launch line, whatever flags follow. */
+function isCurrent(e: Entry, base: HuskLaunch): boolean {
+  return e.command === base.command && base.args.every((a, i) => e.args[i] === a);
+}
+
+/**
+ * `launch` for the entry it replaces, keeping the person's own flags and env.
+ * With `own`, the entry keeps its computer choice too: a project's own entry
+ * moving in place, whose choice the person made for that project.
+ */
+export function keepingTheirs(launch: HuskLaunch, prev: { args: string[]; env: Record<string, string> } | undefined, own = false): HuskLaunch {
+  const base = own ? launch.args.filter((_, i, all) => !CHOICE_FLAGS.has(all[i] as string) && !CHOICE_FLAGS.has(all[i - 1] as string)) : launch.args;
+  const env = { ...(prev?.env ?? {}), ...(launch.env ?? {}) };
+  return { command: launch.command, args: [...base, ...theirFlags(prev?.args ?? [], own)], ...(Object.keys(env).length ? { env } : {}) };
 }
 
 type AppDef = FileApp | CliApp;
@@ -165,15 +275,9 @@ export function chatAppDefs(home = homedir()): AppDef[] {
     {
       kind: 'cli', id: 'claude-code', name: 'Claude Code', bin: 'claude', dir: join(home, '.claude'),
       // `-e` takes several values, so it goes after the name or it swallows it.
-      add: (l) => ['mcp', 'add', '--scope', 'user', 'husk', ...envFlags('-e', l), '--', l.command, ...l.args],
-      remove: ['mcp', 'remove', '--scope', 'user', 'husk'],
-      isConnected: () => {
-        try {
-          return Boolean((JSON.parse(readText(join(home, '.claude.json')) ?? '{}') as { mcpServers?: Record<string, unknown> }).mcpServers?.husk);
-        } catch {
-          return false;
-        }
-      },
+      add: (l, scope = 'user') => ['mcp', 'add', '--scope', scope, 'husk', ...envFlags('-e', l), '--', l.command, ...l.args],
+      remove: (scope = 'user') => ['mcp', 'remove', '--scope', scope, 'husk'],
+      entries: () => claudeEntries(home),
       after: 'Start a new Claude Code session.',
     },
     {
@@ -194,8 +298,8 @@ export function chatAppDefs(home = homedir()): AppDef[] {
     {
       kind: 'cli', id: 'codex', name: 'Codex CLI', bin: 'codex', dir: join(home, '.codex'),
       add: (l) => ['mcp', 'add', 'husk', ...envFlags('--env', l), '--', l.command, ...l.args],
-      remove: ['mcp', 'remove', 'husk'],
-      isConnected: () => /^\[mcp_servers\.husk\]/m.test(readText(join(home, '.codex', 'config.toml')) ?? ''),
+      remove: () => ['mcp', 'remove', 'husk'],
+      entries: () => [codexEntry(readText(join(home, '.codex', 'config.toml')) ?? '')].filter((e): e is Entry => e !== undefined),
       after: 'Start a new Codex session.',
     },
     {
@@ -218,22 +322,34 @@ function parseConfig(def: FileApp): Record<string, unknown> {
   }
 }
 
-function fileConnected(def: FileApp): boolean {
+function entriesOf(def: AppDef): Entry[] {
+  if (def.kind === 'cli') return def.entries();
   try {
     const servers = parseConfig(def)[def.key] as Record<string, unknown> | undefined;
-    return Boolean(servers?.husk);
+    return [entryOf(servers?.husk)].filter((e): e is Entry => e !== undefined);
   } catch {
-    return false;
+    return [];
   }
 }
 
-/** Every app Husk knows how to connect, whether it is on this machine, and whether Husk is in it. */
-export function detectChatApps(home = homedir()): ChatApp[] {
+/**
+ * Every app Husk knows how to connect, whether it is on this machine, whether
+ * Husk is in it, and whether that entry starts another Husk than `base`.
+ */
+export function detectChatApps(home = homedir(), base: HuskLaunch = baseLaunch()): ChatApp[] {
   return chatAppDefs(home).map((def) => {
     const found = def.kind === 'file' ? existsSync(def.dir) : onPath(def.bin) || existsSync(def.dir);
-    const connected = found && (def.kind === 'file' ? fileConnected(def) : def.isConnected());
+    const entries = found ? entriesOf(def) : [];
     const where = def.kind === 'file' ? def.file : `${def.bin} ${def.add(huskLaunch()).join(' ')}`;
-    return { id: def.id, name: def.name, found, connected, where, after: def.after };
+    return {
+      id: def.id,
+      name: def.name,
+      found,
+      connected: entries.length > 0,
+      outdated: entries.some((e) => !isCurrent(e, base)),
+      where,
+      after: def.after,
+    };
   });
 }
 
@@ -259,13 +375,13 @@ function backupOf(file: string, now: Date): string | undefined {
  * a fixed token from this file or the launch line, never text from a page or
  * a chat, and SAFE_TOKEN keeps out every character cmd.exe treats specially.
  */
-function runCli(exe: string, args: string[]): Promise<{ ok: boolean; output: string }> {
+function runCli(exe: string, args: string[], cwd = homedir()): Promise<{ ok: boolean; output: string }> {
   const win = process.platform === 'win32';
   return new Promise((resolveRun) => {
     execFile(
       win ? `"${exe}"` : exe,
       win ? args.map((a) => (a.includes(' ') ? `"${a}"` : a)) : args,
-      { cwd: homedir(), timeout: 60_000, windowsHide: true, shell: win, encoding: 'utf8' },
+      { cwd, timeout: 60_000, windowsHide: true, shell: win, encoding: 'utf8' },
       (err, stdout, stderr) => resolveRun({ ok: !err, output: `${stdout ?? ''}${stderr ?? ''}`.trim() || (err?.message ?? '') }),
     );
   });
@@ -277,27 +393,66 @@ function cliRefused(def: CliApp, home: string | undefined): ConnectResult | unde
   return { id: def.id, ok: false, message: `${def.name} keeps its settings in the real home folder, so Husk changes it only for the real user` };
 }
 
-// Letters and digits in any script (a profile folder such as C:\Users\José), and
-// the punctuation a path needs. Every character cmd.exe treats specially stays out.
-const SAFE_TOKEN = /^[\p{L}\p{N}@/\\._=:() '-]+$/u;
+// Letters and digits in any script (a profile folder such as C:\Users\José), the
+// punctuation a path needs, and the `~` of the version range, which cmd.exe reads
+// only inside %...%. Every character cmd.exe treats specially stays out.
+const SAFE_TOKEN = /^[\p{L}\p{N}@/\\._=:() '~-]+$/u;
 
-/** Add Husk to one app, or update its entry, keeping any fields the person added to it. */
+/** Whether every argument can go to an app's CLI through cmd.exe as it is. */
+export function shellSafe(args: string[]): boolean {
+  return args.every((a) => SAFE_TOKEN.test(a));
+}
+
+/**
+ * Claude Code's per-project entries win over the user-wide one in their
+ * project, and `claude mcp add` writes one by default: 0.1.4's setup line did.
+ * Each that starts another Husk moves to this launch line in place, with its
+ * own flags, computer choice and env. Says what it moved, or could not.
+ */
+async function moveProjects(def: CliApp, exe: string, stale: Entry[], launch: HuskLaunch): Promise<string> {
+  const moved: string[] = [];
+  const failed: string[] = [];
+  for (const e of stale) {
+    const args = def.add(keepingTheirs(launch, e, true), 'local');
+    if (!e.project || !existsSync(e.project) || !shellSafe(args)) {
+      failed.push(e.project ?? 'a project');
+      continue;
+    }
+    await runCli(exe, def.remove('local'), e.project);
+    ((await runCli(exe, args, e.project)).ok ? moved : failed).push(e.project);
+  }
+  const n = moved.length;
+  return [
+    n ? ` Its own entry in ${n === 1 ? 'one project' : `${n} projects`} now starts this Husk too.` : '',
+    failed.length ? ` Could not update the one in ${failed.join(', ')}: run \`claude mcp remove husk\` there.` : '',
+  ].join('');
+}
+
+/**
+ * Add Husk to one app, or update its entry, keeping any fields, flags and env
+ * the person added to it. An entry from an older Husk moves to this launch line.
+ */
 export async function connectChatApp(id: ChatAppId, launch: HuskLaunch, opts: { home?: string; now?: Date } = {}): Promise<ConnectResult> {
   const def = chatAppDefs(opts.home).find((d) => d.id === id);
   if (!def) return { id, ok: false, message: `unknown app ${id}` };
   if (def.kind === 'cli') {
     const refused = cliRefused(def, opts.home);
     if (refused) return refused;
-    const args = def.add(launch);
-    if (!args.every((a) => SAFE_TOKEN.test(a))) return { id, ok: false, message: 'the launch line has characters Husk will not pass to a shell' };
+    const entries = def.entries();
+    const args = def.add(keepingTheirs(launch, entries.find((e) => !e.project)));
+    if (!shellSafe(args)) return { id, ok: false, message: 'the launch line has characters Husk will not pass to a shell' };
     const exe = findOnPath(def.bin);
     if (!exe || /[&|<>^%"!]/.test(exe)) return { id, ok: false, message: `${def.bin} is not on PATH; install ${def.name} first` };
     // Replace, so a changed computer choice takes effect.
-    const removed = await runCli(exe, def.remove);
+    const removed = await runCli(exe, def.remove());
     const r = await runCli(exe, args);
-    if (r.ok) return { id, ok: true, message: `added to ${def.name}. ${def.after}` };
-    const lost = removed.ok ? ' Its earlier Husk entry was removed first, so run setup again once this is fixed.' : '';
-    return { id, ok: false, message: `${def.bin} said: ${r.output}${lost}` };
+    if (!r.ok) {
+      const lost = removed.ok ? ' Its earlier Husk entry was removed first, so run setup again once this is fixed.' : '';
+      return { id, ok: false, message: `${def.bin} said: ${r.output}${lost}` };
+    }
+    const base = { command: launch.command, args: keepingTheirs(launch, undefined, true).args };
+    const projects = await moveProjects(def, exe, entries.filter((e) => e.project && !isCurrent(e, base)), launch);
+    return { id, ok: true, message: `added to ${def.name}.${projects} ${def.after}` };
   }
   try {
     const config = parseConfig(def);
@@ -308,7 +463,7 @@ export async function connectChatApp(id: ChatAppId, launch: HuskLaunch, opts: { 
       ...prev,
       ...(def.extra ?? {}),
       command: launch.command,
-      args: launch.args,
+      args: keepingTheirs(launch, entryOf(prev)).args,
       ...(launch.env ? { env: { ...prevEnv, ...launch.env } } : {}),
     };
     const backup = backupOf(def.file, opts.now ?? new Date());
@@ -319,7 +474,7 @@ export async function connectChatApp(id: ChatAppId, launch: HuskLaunch, opts: { 
   }
 }
 
-/** Take Husk out of one app. Its other servers are left as they are. */
+/** Take Husk out of one app, Claude Code's projects included. Its other servers are left as they are. */
 export async function disconnectChatApp(id: ChatAppId, opts: { home?: string; now?: Date } = {}): Promise<ConnectResult> {
   const def = chatAppDefs(opts.home).find((d) => d.id === id);
   if (!def) return { id, ok: false, message: `unknown app ${id}` };
@@ -328,8 +483,12 @@ export async function disconnectChatApp(id: ChatAppId, opts: { home?: string; no
     if (refused) return refused;
     const exe = findOnPath(def.bin);
     if (!exe) return { id, ok: false, message: `${def.bin} is not on PATH` };
-    const r = await runCli(exe, def.remove);
-    return { id, ok: r.ok, message: r.ok ? `removed from ${def.name}` : `${def.bin} said: ${r.output}` };
+    const projects = def.entries().flatMap((e) => (e.project && existsSync(e.project) ? [e.project] : []));
+    const r = await runCli(exe, def.remove());
+    for (const project of projects) await runCli(exe, def.remove('local'), project);
+    // Gone from everywhere it can run: a project folder deleted since cannot start it.
+    const gone = def.entries().every((e) => e.project !== undefined && !existsSync(e.project));
+    return { id, ok: gone, message: gone ? `removed from ${def.name}` : `${def.bin} said: ${r.output}` };
   }
   try {
     const config = parseConfig(def);
