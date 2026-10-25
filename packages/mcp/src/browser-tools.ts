@@ -50,7 +50,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
     description:
       'Do several page actions in ONE call, in order, stopping at the first that fails -- far ' +
       'faster than one tool call per action, so use it whenever you already know the next few ' +
-      'steps. Each action is an object with "do": goto {url}; click {ref, or role and name}; ' +
+      'steps. Each action is an object with "do": goto {url}; click {ref, or role and name; force}; ' +
       'fill {ref or role and name, text, submit}; wait {text, url or selector, gone, timeoutSec}; ' +
       'snapshot {limit}; screenshot {fullPage}. role and name match the accessibility tree, e.g. ' +
       '{"do":"click","role":"button","name":"Sign in"}. End with a snapshot to see where you ' +
@@ -72,6 +72,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
               name: { type: 'string', description: 'click, fill: the accessible name, exactly.' },
               text: { type: 'string', description: 'fill: what to type. wait: visible text to wait for.' },
               submit: { type: 'boolean', description: 'fill: press Enter afterwards.' },
+              force: { type: 'boolean', description: 'click: press at its centre without checking it is enabled, visible, still and uncovered.' },
               selector: { type: 'string', description: 'wait: a CSS selector to wait for.' },
               gone: { type: 'boolean', description: 'wait: wait for it to go away instead.' },
               timeoutSec: { type: 'number', description: 'goto, wait: give up after this long.' },
@@ -91,7 +92,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
       'Run a short Python script against the current page when the next steps depend on what ' +
       'the page shows -- branch, loop over results, retry -- all in ONE call. It runs in its own ' +
       'process inside your computer, not on the host, and is stopped at timeoutSec. `page` has: ' +
-      'goto(url), click(ref= or role=, name=), fill(text, ref= or role=, name=, submit=), ' +
+      'goto(url), click(ref= or role=, name=, force=), fill(text, ref= or role=, name=, submit=), ' +
       'wait_for_text(text, timeout=) / wait_for_url(part) / wait_for_selector(css) -> True or False, ' +
       'has_text(text), snapshot() -> list of {ref, role, name}, text(ref= or selector=), url(), title(); ' +
       'also sleep(seconds). A refused call raises PageError. Whatever you print comes back, and ' +
@@ -127,10 +128,14 @@ export const BROWSER_TOOLS: ToolDef[] = [
     description:
       'Click the element with this ref, then return a fresh snapshot of whatever the page ' +
       'became. Refs come from browser_snapshot; there is deliberately no way to click a ' +
-      'coordinate.',
+      'coordinate. A click on something disabled, hidden, still moving or covered is refused, ' +
+      'saying why; force clicks anyway.',
     inputSchema: {
       type: 'object',
-      properties: { ref: { type: 'string', description: 'A `ref` from browser_snapshot, e.g. e42.' } },
+      properties: {
+        ref: { type: 'string', description: 'A `ref` from browser_snapshot, e.g. e42.' },
+        force: { type: 'boolean', description: 'Press at its centre without the checks. Defaults to false.' },
+      },
       required: ['ref'],
     },
   },
@@ -325,7 +330,7 @@ function parseActions(raw: unknown): PageAction[] | string {
     if (kind === 'goto') {
       if (!s('url')?.trim()) return `${at}: goto needs a url`;
       out.push({ do: 'goto', url: s('url')!, ...ms });
-    } else if (kind === 'click') out.push({ do: 'click', ...el });
+    } else if (kind === 'click') out.push({ do: 'click', ...el, ...(a['force'] === true ? { force: true } : {}) });
     else if (kind === 'fill') out.push({ do: 'fill', ...el, text: s('text') ?? '', ...(a['submit'] === true ? { submit: true } : {}) });
     else if (kind === 'wait') {
       if (s('text') === undefined && s('url') === undefined && s('selector') === undefined) return `${at}: wait needs text, url or selector`;
@@ -352,7 +357,7 @@ function describeOutcome(a: PageAction, o: ActionOutcome, n: number): string {
   if (o.error) return `${n}. ${what} -- FAILED: ${o.error}`;
   const how =
     a.do === 'goto' ? `${o.loaded ? 'loaded' : 'load did not finish'}, now at ${o.url}`
-    : a.do === 'click' ? `${o.ref}${o.navigated ? ', navigated' : ''}`
+    : a.do === 'click' ? `${o.ref}${o.checked === false ? ' (forced, unchecked)' : ''}${o.navigated ? ', navigated' : ''}`
     : a.do === 'fill' ? `${o.ref}`
     : a.do === 'wait' ? `after ${o.waitedMs} ms`
     : a.do === 'snapshot' ? `at ${o.url}\n${renderSnapshot(o.nodes ?? [])}`
@@ -448,11 +453,16 @@ async function browserTool(computer: Computer, name: string, args: Record<string
     case 'browser_click': {
       const ref = String(args.ref ?? '');
       if (!ref.trim()) return bad('ref is empty');
+      const force = args.force === true;
       const page = await session.activePage();
       // Waits for a load only when the click started one. A click that opens a
       // menu used to cost a flat 5s waiting for an event that was never coming.
-      await page.clickAndSettle(ref);
-      return await pageState(computer);
+      const { navigated } = await page.clickAndSettle(ref, 5000, { force });
+      // What happened, said truthfully: a checked click landed; a forced one was only dispatched.
+      const receipt = force
+        ? `Dispatched a click at the centre of ${ref} without the checks (force), so it may have landed on something else.`
+        : `Clicked ${ref}: it was enabled, visible, still and uncovered, so the click landed on it.`;
+      return text(redact(`${receipt}${navigated ? ' It started a navigation.' : ''}\n\n${await stateText(computer)}`));
     }
 
     case 'browser_type': {

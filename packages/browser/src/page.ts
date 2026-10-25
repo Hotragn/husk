@@ -396,8 +396,8 @@ export class Page {
    * instead, and only then wait for it to finish.
    */
   /** `click`, named for what a caller cares about: did the page move. */
-  async clickAndSettle(ref: string, loadTimeoutMs = 5000): Promise<{ navigated: boolean }> {
-    const { navigationStarted } = await this.click(ref, loadTimeoutMs);
+  async clickAndSettle(ref: string, loadTimeoutMs = 5000, opts: { force?: boolean } = {}): Promise<{ navigated: boolean }> {
+    const { navigationStarted } = await this.click(ref, loadTimeoutMs, opts);
     return { navigated: navigationStarted };
   }
 
@@ -629,41 +629,23 @@ export class Page {
   }
 
   /**
-   * Click, and report whether that started a navigation.
+   * Click, honestly, and report whether that started a navigation.
    *
-   * The watch is part of the *same* driver invocation as the click, not a call
-   * after it. The driver buffers events as they arrive and `wait` checks that
-   * buffer first, so a navigation that completes before the listener would
-   * otherwise have attached is still seen. Watching from a second invocation
-   * loses exactly the fast local navigations this is for -- measured: the URL
-   * had already changed and the watcher reported nothing.
+   * The driver's `click` action: it refuses, saying why, an element that is
+   * gone, disabled, hidden, still moving or covered by something the click
+   * would land on instead; `force` skips the checks and presses at the
+   * centre, as clicks always did. The navigation watch is in the same driver
+   * round as the click, so a fast local navigation is not missed.
    */
-  async click(ref: string, loadTimeoutMs = 5000): Promise<{ navigationStarted: boolean }> {
-    const { x, y } = await this.centreOf(ref);
-    const base = { x, y, button: 'left', clickCount: 1, buttons: 1 };
-    const results = await this.run([
-      { op: 'send', method: 'Input.dispatchMouseEvent', params: { ...base, type: 'mousePressed' }, session: true },
-      {
-        op: 'send',
-        method: 'Input.dispatchMouseEvent',
-        params: { ...base, type: 'mouseReleased', buttons: 0 },
-        session: true,
-      },
-      { op: 'wait', event: 'Page.frameStartedLoading', session: true, timeoutMs: 250, optional: true },
-      // Same batch, and skipped entirely when nothing navigated. It has to be
-      // here rather than in a follow-up call: each driver invocation is a fresh
-      // process on a fresh connection, so a load event that fired during the
-      // click is simply gone by the time a second invocation starts listening.
-      {
-        op: 'wait',
-        event: 'Page.loadEventFired',
-        session: true,
-        timeoutMs: loadTimeoutMs,
-        optional: true,
-        skipUnless: { step: 2, key: 'fired' },
-      },
-    ]);
-    return { navigationStarted: waitResultOf(results[2]).fired };
+  async click(ref: string, loadTimeoutMs = 5000, opts: { force?: boolean } = {}): Promise<{ navigationStarted: boolean }> {
+    const [out] = await this.actions([{ do: 'click', ref, loadTimeoutMs, ...(opts.force ? { force: true } : {}) }]);
+    if (!out?.ok) {
+      throw new HuskError('E_TOOL_ERROR', out?.error ?? `could not click ${ref}`, {
+        hint: 'browser_snapshot shows the page as it is now',
+        details: { ref },
+      });
+    }
+    return { navigationStarted: out.navigated === true };
   }
 
   async type(ref: string, text: string, opts: { clear?: boolean } = {}): Promise<void> {
@@ -910,7 +892,7 @@ export interface ElementTarget {
 /** One step of `browser_run`. Data only: the driver does it, nothing evaluates it. */
 export type PageAction =
   | { do: 'goto'; url: string; timeoutMs?: number }
-  | ({ do: 'click' } & ElementTarget)
+  | ({ do: 'click'; force?: boolean; loadTimeoutMs?: number } & ElementTarget)
   | ({ do: 'fill'; text: string; submit?: boolean } & ElementTarget)
   | { do: 'wait'; text?: string; url?: string; selector?: string; gone?: boolean; timeoutMs?: number }
   | { do: 'snapshot'; limit?: number }
@@ -938,6 +920,8 @@ export interface ActionOutcome {
   loaded?: boolean;
   ref?: string;
   navigated?: boolean;
+  /** A click's checks ran; false when it was forced. */
+  checked?: boolean;
   waitedMs?: number;
   nodes?: SnapshotNode[];
   /** Base64 PNG, for `screenshot`. */
@@ -952,7 +936,14 @@ function actionStep(a: PageAction): DriverStep {
       return { ...base, do: 'goto', url: a.url, loadTimeoutMs: load, timeoutMs: load + 30_000 };
     }
     case 'click':
-      return { ...base, do: 'click', ...target(a), timeoutMs: 30_000 };
+      return {
+        ...base,
+        do: 'click',
+        ...target(a),
+        ...(a.force ? { force: true } : {}),
+        ...(a.loadTimeoutMs !== undefined ? { loadTimeoutMs: a.loadTimeoutMs } : {}),
+        timeoutMs: 30_000,
+      };
     case 'fill':
       return { ...base, do: 'fill', ...target(a), text: a.text, ...(a.submit ? { submit: true } : {}), timeoutMs: 30_000 };
     case 'wait': {
@@ -992,6 +983,7 @@ function outcomeOf(a: PageAction, raw: unknown): ActionOutcome {
   if (typeof r['loaded'] === 'boolean') out.loaded = r['loaded'];
   if (typeof r['ref'] === 'string') out.ref = r['ref'];
   if (typeof r['navigated'] === 'boolean') out.navigated = r['navigated'];
+  if (typeof r['checked'] === 'boolean') out.checked = r['checked'];
   if (typeof r['waitedMs'] === 'number') out.waitedMs = r['waitedMs'];
   if (typeof r['data'] === 'string') out.data = r['data'];
   if (a.do === 'snapshot') {

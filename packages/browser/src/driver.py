@@ -463,6 +463,34 @@ SELECT_ACTIVE = "(() => { const el = document.activeElement; if (el && 'select' 
 # insertText fires `input`; frameworks listening for `change` need the nudge.
 CHANGE_ACTIVE = "(() => { const el = document.activeElement; if (el) el.dispatchEvent(new Event('change', { bubbles: true })); })()"
 
+# What an honest click asks of its element before it presses. A disabled form
+# control (one in a disabled fieldset too) or aria-disabled means a click would
+# do nothing; hidden, or no box at all, means there is nothing there to click.
+CLICK_STATE = r'''function () {
+  const el = this.nodeType === 1 ? this : this.parentElement;
+  if (!this.isConnected || !el) return { gone: true };
+  const style = getComputedStyle(el);
+  const box = el.getBoundingClientRect();
+  return {
+    disabled: el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true',
+    hidden: style.visibility === 'hidden' || style.display === 'none' || box.width === 0 || box.height === 0,
+  };
+}'''
+# Whether the node a click would land on is the element or inside it, through shadow roots.
+WITHIN = r'''function (hit) {
+  for (let n = hit; n; n = n.parentNode || (n instanceof ShadowRoot ? n.host : null)) if (n === this) return true;
+  return false;
+}'''
+# What covers an element, in a few words, for the refusal.
+DESCRIBE = r'''function () {
+  const el = this.nodeType === 1 ? this : this.parentElement;
+  if (!el) return 'something else';
+  const cls = typeof el.className === 'string' ? el.className.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((c) => '.' + c).join('') : '';
+  const text = (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  return '<' + el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + cls + '>' + (text ? ' "' + text + '"' : '');
+}'''
+GONE = 'e%d is no longer on the page; take a snapshot and use the new ref'
+
 
 def evaluate(conn, session_id, expression, deadline):
     res = conn.call(
@@ -489,8 +517,12 @@ def maybe_event(conn, event, session_id, seconds, deadline):
         raise
 
 
-def resolve(conn, session_id, step, deadline):
-    """The DOM node an action means: a ref from a snapshot, or a role and an accessible name."""
+def resolve(conn, session_id, step, deadline, unique=False):
+    """
+    The DOM node an action means: a ref from a snapshot, or a role and an
+    accessible name. With `unique`, a role and name that match more than one
+    element is refused rather than quietly taking the first.
+    """
     ref = step.get('ref')
     if ref:
         if not (isinstance(ref, str) and ref[:1] == 'e' and ref[1:].isdigit()):
@@ -499,16 +531,40 @@ def resolve(conn, session_id, step, deadline):
     role, name = step.get('role'), step.get('name')
     if not role and not name:
         raise DriverError(ACTION, 'say which element: a ref, or a role and a name')
+    wanted = ' and '.join(x for x in ('role %r' % (role,) if role else '', 'name %r' % (name,) if name else '') if x)
     root = conn.call('DOM.getDocument', {'depth': 0}, session_id, deadline).get('root') or {}
     query = {'nodeId': root.get('nodeId')}
     if role:
         query['role'] = role
     if name:
         query['accessibleName'] = name
-    for node in conn.call('Accessibility.queryAXTree', query, session_id, deadline).get('nodes') or []:
-        if not node.get('ignored') and node.get('backendDOMNodeId'):
-            return node['backendDOMNodeId']
-    raise DriverError(ACTION, 'nothing on the page has role %r and name %r; take a snapshot' % (role, name))
+    found = conn.call('Accessibility.queryAXTree', query, session_id, deadline).get('nodes') or []
+    nodes = [n for n in found if not n.get('ignored') and n.get('backendDOMNodeId')]
+    # A name alone also finds the text inside an element, which is that element, not another one.
+    elements = [n for n in nodes if (n.get('role') or {}).get('value') not in ('StaticText', 'InlineTextBox')] or nodes
+    if not elements:
+        raise DriverError(ACTION, 'nothing on the page has %s; take a snapshot' % wanted)
+    if unique and len(elements) > 1:
+        raise DriverError(
+            ACTION,
+            '%d elements have %s; take a snapshot and use the ref of the one you mean, or pass force to click the first'
+            % (len(elements), wanted),
+        )
+    return elements[0]['backendDOMNodeId']
+
+
+def box_centre(conn, session_id, backend, deadline):
+    """The centre of the element's box as it is now, or None when it has none."""
+    try:
+        quad = conn.call('DOM.getBoxModel', {'backendNodeId': backend}, session_id, deadline)['model']['content']
+    except (DriverError, KeyError, TypeError) as exc:
+        if isinstance(exc, DriverError) and exc.kind != PROTOCOL:
+            raise
+        return None
+    if not quad or len(quad) < 8:
+        return None
+    xs, ys = quad[0::2], quad[1::2]
+    return (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
 
 
 def centre(conn, session_id, backend, deadline):
@@ -517,16 +573,87 @@ def centre(conn, session_id, backend, deadline):
     except DriverError as exc:
         if exc.kind != PROTOCOL:
             raise
+    point = box_centre(conn, session_id, backend, deadline)
+    if point is None:
+        raise DriverError(ACTION, GONE % backend)
+    return point
+
+
+def steady_centre(conn, session_id, backend, deadline):
+    """
+    The element's centre once it has stopped moving: a click aimed at a box
+    still sliding into place lands beside it. Two readings 50 ms apart must
+    agree to the pixel; a box still moving after half a second is refused.
+    """
+    x, y = centre(conn, session_id, backend, deadline)
+    for _ in range(10):
+        time.sleep(0.05)
+        point = box_centre(conn, session_id, backend, deadline)
+        if point is None:
+            raise DriverError(ACTION, GONE % backend)
+        if abs(point[0] - x) < 1 and abs(point[1] - y) < 1:
+            return point
+        x, y = point
+    raise DriverError(
+        ACTION, 'e%d is still moving, so a click could land beside it; try again once the page settles, or pass force to click anyway' % backend
+    )
+
+
+def page_object(conn, session_id, backend, deadline):
+    """The node as a page object, or None once the page no longer has it."""
     try:
-        quad = conn.call('DOM.getBoxModel', {'backendNodeId': backend}, session_id, deadline)['model']['content']
-    except (DriverError, KeyError, TypeError) as exc:
-        if isinstance(exc, DriverError) and exc.kind != PROTOCOL:
+        return (conn.call('DOM.resolveNode', {'backendNodeId': backend}, session_id, deadline).get('object') or {}).get('objectId')
+    except DriverError as exc:
+        if exc.kind != PROTOCOL:
             raise
-        quad = None
-    if not quad or len(quad) < 8:
-        raise DriverError(ACTION, 'e%d is no longer on the page; take a snapshot and use the new ref' % backend)
-    xs, ys = quad[0::2], quad[1::2]
-    return (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+        return None
+
+
+def call_on(conn, session_id, object_id, fn, deadline, args=None):
+    """`fn` run on a page object, and its value. A page that throws is an ACTION error."""
+    res = conn.call(
+        'Runtime.callFunctionOn',
+        {'objectId': object_id, 'functionDeclaration': fn, 'arguments': args or [], 'returnByValue': True},
+        session_id,
+        deadline,
+    )
+    exc = res.get('exceptionDetails')
+    if exc:
+        described = (exc.get('exception') or {}).get('description') or exc.get('text') or 'unknown error'
+        raise DriverError(ACTION, 'the page threw: %s' % (described,))
+    return (res.get('result') or {}).get('value')
+
+
+def covering(conn, session_id, backend, target, x, y, deadline):
+    """
+    What a click at (x, y) would land on instead of the element, in a few
+    words; None when it reaches the element, or Chromium cannot say.
+    """
+    try:
+        hit = conn.call(
+            'DOM.getNodeForLocation', {'x': int(round(x)), 'y': int(round(y)), 'includeUserAgentShadowDOM': True}, session_id, deadline
+        )
+    except DriverError as exc:
+        if exc.kind != PROTOCOL:
+            raise
+        return None
+    other = hit.get('backendNodeId')
+    if not other or other == backend:
+        return None
+    hit_object = page_object(conn, session_id, other, deadline)
+    if not hit_object:
+        return None
+    try:
+        if call_on(conn, session_id, target, WITHIN, deadline, [{'objectId': hit_object}]) is True:
+            return None
+    except DriverError as exc:
+        # ponytail: a node in another frame cannot be handed to this frame's
+        # script, so the click goes ahead as it always did; frames get their own
+        # refs with J3-c.
+        if exc.kind != PROTOCOL:
+            raise
+        return None
+    return call_on(conn, session_id, hit_object, DESCRIBE, deadline) or 'something else'
 
 
 def act_goto(conn, sid, step, deadline):
@@ -539,8 +666,29 @@ def act_goto(conn, sid, step, deadline):
 
 
 def act_click(conn, sid, step, deadline):
-    backend = resolve(conn, sid, step, deadline)
-    x, y = centre(conn, sid, backend, deadline)
+    """
+    An honest click. Refused, saying why, when the element is gone, disabled,
+    hidden, still moving, or covered by something the click would land on
+    instead, and when a role and name match more than one element. `force`
+    skips every check and presses at the element's centre, as clicks always did.
+    """
+    force = bool(step.get('force'))
+    backend = resolve(conn, sid, step, deadline, unique=not force)
+    if force:
+        x, y = centre(conn, sid, backend, deadline)
+    else:
+        target = page_object(conn, sid, backend, deadline)
+        state = call_on(conn, sid, target, CLICK_STATE, deadline) if target else None
+        if not isinstance(state, dict) or state.get('gone'):
+            raise DriverError(ACTION, GONE % backend)
+        if state.get('disabled'):
+            raise DriverError(ACTION, 'e%d is disabled, so a click would do nothing; wait until it is enabled, or pass force to click anyway' % backend)
+        if state.get('hidden'):
+            raise DriverError(ACTION, 'e%d is not visible (hidden, or of no size); open or scroll to what shows it, or pass force to click anyway' % backend)
+        x, y = steady_centre(conn, sid, backend, deadline)
+        over = covering(conn, sid, backend, target, x, y, deadline)
+        if over:
+            raise DriverError(ACTION, 'e%d is covered: a click on it would land on %s instead; close or move that first, or pass force to click anyway' % (backend, over))
     base = {'x': x, 'y': y, 'button': 'left', 'clickCount': 1, 'buttons': 1}
     conn.call('Input.dispatchMouseEvent', dict(base, type='mousePressed'), sid, deadline)
     conn.call('Input.dispatchMouseEvent', dict(base, type='mouseReleased', buttons=0), sid, deadline)
@@ -548,7 +696,7 @@ def act_click(conn, sid, step, deadline):
     navigated = maybe_event(conn, 'Page.frameStartedLoading', sid, 0.25, deadline)
     if navigated:
         maybe_event(conn, 'Page.loadEventFired', sid, float(step.get('loadTimeoutMs', 5000)) / 1000.0, deadline)
-    return {'ref': 'e%d' % backend, 'navigated': navigated}
+    return {'ref': 'e%d' % backend, 'navigated': navigated, 'checked': not force}
 
 
 def act_fill(conn, sid, step, deadline):
@@ -673,8 +821,8 @@ class Page(object):
     def goto(self, url, timeout=30):
         return _call("goto", url=url, timeout=timeout)
 
-    def click(self, ref=None, role=None, name=None):
-        return _call("click", ref=ref, role=role, name=name)
+    def click(self, ref=None, role=None, name=None, force=False):
+        return _call("click", ref=ref, role=role, name=name, force=force or None)
 
     def fill(self, text, ref=None, role=None, name=None, submit=False):
         return _call("fill", text=text, ref=ref, role=role, name=name, submit=submit or None)

@@ -26,6 +26,15 @@ interface FakeChromium {
   received: Cdp[];
   connections: number;
   acks: number[];
+  /** What the clicked element says of itself. */
+  element: { disabled?: boolean; hidden?: boolean; gone?: boolean };
+  /** The node a hit test finds, and whether it is inside the clicked element. */
+  hit: number;
+  within: boolean;
+  /** What a role and name query finds. */
+  matches: Array<{ backendDOMNodeId: number; role: { value: string } }>;
+  /** How far each successive box reading has moved, for an element still sliding into place. */
+  shifts: number[];
   close(): Promise<void>;
 }
 
@@ -41,7 +50,16 @@ function frame(payload: Buffer): Buffer {
 }
 
 async function fakeChromium(frames = 4): Promise<FakeChromium> {
-  const fake = { received: [] as Cdp[], connections: 0, acks: [] as number[] } as FakeChromium;
+  const fake = {
+    received: [] as Cdp[],
+    connections: 0,
+    acks: [] as number[],
+    element: {},
+    hit: 7,
+    within: true,
+    matches: [{ backendDOMNodeId: 7, role: { value: 'button' } }],
+    shifts: [],
+  } as unknown as FakeChromium;
   const sockets = new Set<Socket>();
   const server: Server = createServer((req, res) => {
     res.setHeader('content-type', 'application/json');
@@ -95,9 +113,28 @@ async function fakeChromium(frames = 4): Promise<FakeChromium> {
           case 'Runtime.evaluate':
             reply({ result: { value: String(msg.params?.['expression']).includes('location.href') ? 'https://fake.test/' : true } });
             break;
-          case 'DOM.getBoxModel':
+          case 'DOM.getBoxModel': {
+            const d = fake.shifts.shift() ?? 0;
             if (msg.params?.['backendNodeId'] === 404) send({ id: msg.id, sessionId: msg.sessionId, error: { code: -32000, message: 'No node with given id found' } });
-            else reply({ model: { content: [10, 10, 30, 10, 30, 30, 10, 30] } });
+            else reply({ model: { content: [10 + d, 10, 30 + d, 10, 30 + d, 30, 10 + d, 30] } });
+            break;
+          }
+          case 'DOM.resolveNode':
+            if (msg.params?.['backendNodeId'] === 404) send({ id: msg.id, sessionId: msg.sessionId, error: { code: -32000, message: 'No node with given id found' } });
+            else reply({ object: { objectId: `O${String(msg.params?.['backendNodeId'])}` } });
+            break;
+          case 'Runtime.callFunctionOn': {
+            // Told apart by what each asks: the click's state, containment, a description.
+            const fn = String(msg.params?.['functionDeclaration']);
+            const value = fn.includes('getComputedStyle') ? fake.element : fn.includes('ShadowRoot') ? fake.within : fn.includes('className') ? '<div.backdrop> "Backdrop"' : undefined;
+            reply({ result: { value } });
+            break;
+          }
+          case 'DOM.getNodeForLocation':
+            reply({ backendNodeId: fake.hit });
+            break;
+          case 'Accessibility.queryAXTree':
+            reply({ nodes: fake.matches });
             break;
           case 'Accessibility.getFullAXTree':
             reply({ nodes: [{ nodeId: '1', role: { value: 'RootWebArea' }, childIds: ['2'] }, { nodeId: '2', parentId: '1', role: { value: 'button' }, name: { value: 'Go' }, backendDOMNodeId: 7 }] });
@@ -224,6 +261,56 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
     // The click pressed and released at the centre of the box.
     const press = fake.received.find((m) => m.method === 'Input.dispatchMouseEvent' && m.params?.['type'] === 'mousePressed');
     expect(press?.params).toMatchObject({ x: 20, y: 20 });
+  });
+
+  const clicking = async (step: Record<string, unknown>) =>
+    ((await driver!.request({ targetId: 'T1', steps: [{ op: 'action', do: 'click', ...step }] }))['results'] as Array<Record<string, unknown>>)[0]!;
+  const pressed = () => fake!.received.filter((m) => m.method === 'Input.dispatchMouseEvent' && m.params?.['type'] === 'mousePressed').length;
+
+  it('refuses a click that would do nothing or land elsewhere, saying why, and force still clicks', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    fake.element = { disabled: true };
+    expect(String((await clicking({ ref: 'e7' }))['error'])).toMatch(/e7 is disabled/);
+    fake.element = { hidden: true };
+    expect(String((await clicking({ ref: 'e7' }))['error'])).toMatch(/e7 is not visible/);
+    fake.element = {};
+    fake.hit = 99;
+    fake.within = false;
+    expect(String((await clicking({ ref: 'e7' }))['error'])).toMatch(/e7 is covered: a click on it would land on <div\.backdrop> "Backdrop" instead/);
+    expect(pressed()).toBe(0);
+    // Without the checks, a press at the centre, as clicks always did.
+    expect(await clicking({ ref: 'e7', force: true })).toMatchObject({ ref: 'e7', checked: false });
+    expect(pressed()).toBe(1);
+    // Landing on something inside the element is landing on it.
+    fake.within = true;
+    expect(await clicking({ ref: 'e7' })).toMatchObject({ ref: 'e7', checked: true });
+  });
+
+  it('refuses a role and name that match more than one element, and force takes the first', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    fake.matches = [
+      { backendDOMNodeId: 7, role: { value: 'button' } },
+      { backendDOMNodeId: 8, role: { value: 'button' } },
+    ];
+    expect(String((await clicking({ role: 'button', name: 'OK' }))['error'])).toMatch(/2 elements have role 'button' and name 'OK'/);
+    expect(await clicking({ role: 'button', name: 'OK', force: true })).toMatchObject({ ref: 'e7' });
+    // The text inside a button is that button, not a second match.
+    fake.matches = [
+      { backendDOMNodeId: 7, role: { value: 'button' } },
+      { backendDOMNodeId: 70, role: { value: 'StaticText' } },
+    ];
+    expect(await clicking({ name: 'OK' })).toMatchObject({ ref: 'e7', checked: true });
+  });
+
+  it('waits for a moving element to settle, and refuses one that never does', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    fake.shifts = [0, 6];
+    expect(await clicking({ ref: 'e7' })).toMatchObject({ ref: 'e7', checked: true });
+    fake.shifts = Array.from({ length: 20 }, (_, i) => i * 6);
+    expect(String((await clicking({ ref: 'e7' }))['error'])).toMatch(/e7 is still moving/);
   });
 
   it('pushes screencast frames, acked no faster than the rate asked for', async () => {

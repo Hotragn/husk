@@ -97,14 +97,18 @@ export const browserSnapshot = defineTool<{ limit?: number }, { url: string; nod
   },
 });
 
-export const browserClick = defineTool<{ ref: string }, { url: string; nodes: SnapshotNode[] }>({
+export const browserClick = defineTool<{ ref: string; force?: boolean }, { url: string; nodes: SnapshotNode[] }>({
   name: 'browser_click',
   description:
     'Click the element with this ref, then return a fresh snapshot of whatever the page became. ' +
-    'Refs come from browser_snapshot; there is deliberately no way to click a coordinate.',
+    'Refs come from browser_snapshot; there is deliberately no way to click a coordinate. A click ' +
+    'on something disabled, hidden, still moving or covered is refused, saying why; force clicks anyway.',
   parameters: {
     type: 'object',
-    properties: { ref: { type: 'string', description: 'A `ref` from browser_snapshot, e.g. e42.' } },
+    properties: {
+      ref: { type: 'string', description: 'A `ref` from browser_snapshot, e.g. e42.' },
+      force: { type: 'boolean', description: 'Press at its centre without the checks. Defaults to false.' },
+    },
     required: ['ref'],
     additionalProperties: false,
   },
@@ -116,7 +120,7 @@ export const browserClick = defineTool<{ ref: string }, { url: string; nodes: Sn
     // Waits for the load only when the click actually started one. Waiting
     // unconditionally cost a flat 5s on every click that opened a menu, which
     // is most of them.
-    await page.clickAndSettle(input.ref);
+    await page.clickAndSettle(input.ref, 5000, { force: input.force === true });
     return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }) };
   },
 
