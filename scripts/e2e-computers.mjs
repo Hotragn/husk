@@ -788,9 +788,13 @@ async function benchmarkAgainstPlaywright(id, container) {
         'for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:9333/json/version && exit 0; sleep 0.5; done; exit 1',
     });
     if (started.isError) throw new Error(`the second Chromium did not start: ${textOf(started).slice(0, 200)}`);
+    // The computer's user has no home directory, and Playwright MCP keeps a cache in one: /tmp is its home here.
     pw = mcpSession([], {
       command: 'docker',
-      args: ['exec', '-i', '-e', 'npm_config_cache=/tmp/.npm', '-e', 'npm_config_update_notifier=false', '-w', '/tmp', container, 'npx', '-y', PLAYWRIGHT_MCP, '--cdp-endpoint', 'http://127.0.0.1:9333', '--output-dir', '/tmp/pwmcp'],
+      args: [
+        'exec', '-i', '-e', 'HOME=/tmp', '-e', 'npm_config_cache=/tmp/.npm', '-e', 'npm_config_update_notifier=false', '-w', '/tmp', container,
+        'npx', '-y', PLAYWRIGHT_MCP, '--cdp-endpoint', 'http://127.0.0.1:9333', '--output-dir', '/tmp/pwmcp',
+      ],
     });
     await pw.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'husk-e2e', version: '0' } });
     pw.notify('notifications/initialized');
