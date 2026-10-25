@@ -500,16 +500,17 @@ async function browserTool(computer: Computer, name: string, args: Record<string
       if (!script.trim()) return bad('script is empty');
       if (script.length > 100_000) return bad('script is over 100 KB; keep it to the steps that need deciding');
       const out = await session.script(script, secondsArg(args.timeoutSec, 60));
+      // What happened and where the page is come first, so the result stays last, whole JSON to the end.
       const parts = [`${out.error ? 'failed' : 'finished'} in ${out.ms} ms`];
-      if (out.output) parts.push(`printed:\n${out.output.trimEnd()}${out.truncated ? '\n[output past 64 KB was dropped]' : ''}`);
-      if (out.result !== null && out.result !== undefined) {
-        parts.push(`result: ${JSON.stringify(out.result, null, 2)}${out.resultTruncated ? '\n[the result was over 64 KB; this is its JSON, cut]' : ''}`);
-      }
-      if (out.error) parts.push(out.error.trimEnd());
       const also = describeHappened(out);
       if (also.length) parts.push(also.join('\n'));
       const status = await statusLine(computer);
       if (status) parts.push(status);
+      if (out.output) parts.push(`printed:\n${out.output.trimEnd()}${out.truncated ? '\n[output past 64 KB was dropped]' : ''}`);
+      if (out.error) parts.push(out.error.trimEnd());
+      if (out.result !== null && out.result !== undefined) {
+        parts.push(`result: ${JSON.stringify(out.result, null, 2)}${out.resultTruncated ? '\n[the result was over 64 KB; this is its JSON, cut]' : ''}`);
+      }
       // Cut before redacting: redact scans the whole string, so it gets the bounded one.
       const body = redact(clampLength(parts.join('\n\n'), maxTextBytes));
       return out.error ? bad(body) : text(body);
