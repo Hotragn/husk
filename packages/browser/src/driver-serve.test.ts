@@ -506,6 +506,20 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
     expect(fake.received.find((m) => m.method === 'Target.setAutoAttach' && !m.sessionId)?.params).toMatchObject({ waitForDebuggerOnStart: true, filter: [{ type: 'page' }] });
   });
 
+  it('arms a click\'s wait just before it presses, and says what the wait found', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    const res = await driver.request({
+      targetId: 'T1',
+      steps: [{ op: 'action', do: 'click', ref: 'e7', arm: 'window.__armed = 1', wait: { expression: 'window.__waited', what: 'text "Saved"' } }],
+    });
+    expect((res['results'] as unknown[])[0]).toMatchObject({ ref: 'e7', waited: { what: 'text "Saved"', found: true } });
+    const order = fake.received
+      .map((m) => (m.method === 'Runtime.evaluate' ? String(m.params?.['expression']) : m.method === 'Input.dispatchMouseEvent' ? `mouse ${String(m.params?.['type'])}` : ''))
+      .filter((m) => m === 'window.__armed = 1' || m === 'window.__waited' || m.startsWith('mouse mousePressed'));
+    expect(order).toEqual(['window.__armed = 1', 'mouse mousePressed', 'window.__waited']);
+  });
+
   it('intercepts nothing when the host sends no policy', async () => {
     fake = await fakeChromium();
     driver = serveDriver(fake.port);

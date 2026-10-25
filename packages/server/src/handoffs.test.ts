@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CHAT_RUN, ComputerControl, HandoffRegistry, PERSON_RUN } from './handoffs.js';
+import { CHAT_RUN, ComputerControl, HandoffRegistry, PERSON_RUN, refusalText } from './handoffs.js';
 import { buildTestApp, fakeAgentFactory, sampleSpec, type TestApp } from './testing.js';
 
 function raise(registry: HandoffRegistry, signal = new AbortController().signal) {
@@ -263,5 +263,16 @@ describe('a husk run on a computer a person holds', { timeout: 30_000 }, () => {
 
   it('runs them as before when nobody holds it', async () => {
     expect(await toolOutput(false)).toBe('ran');
+  });
+});
+
+describe('a tool call on a held computer', () => {
+  it('opens with a code that stays the same whatever the wording, saying who has it', () => {
+    expect(refusalText({ handoffId: 'hnd_1', runId: PERSON_RUN, reason: 'You took over this computer' })).toMatch(
+      /^E_COMPUTER_HELD \(person\): The user took over this computer/,
+    );
+    expect(refusalText({ handoffId: 'hnd_2', runId: CHAT_RUN, reason: 'sign in to GitHub' })).toMatch(
+      /^E_COMPUTER_HELD \(handoff\): The user has the computer right now \(handoff hnd_2: sign in to GitHub\)/,
+    );
   });
 });

@@ -1,5 +1,5 @@
 import { livePageFor } from '@husk-ai/browser';
-import { PERSON_RUN, heldText, stoppedText, takenText } from './handoffs.js';
+import { refusalText, stoppedText } from './handoffs.js';
 import type { HandoffRegistry, PageMark } from './handoffs.js';
 
 /**
@@ -50,7 +50,7 @@ export async function admitCall(registry: HandoffRegistry, computerId: string, t
   };
   // Taken after the caller looked: a take-over that did not see this call yet.
   const held = tool === 'computer_info' ? undefined : holder();
-  if (held) return refuse(held.runId === PERSON_RUN ? takenText(held.handoffId) : heldText(held.handoffId, held.reason));
+  if (held) return refuse(refusalText(held));
   const why = await registry.control.refusal(computerId, tool, () => pageMark(computerId));
   if (call.takenOver()) return refuse(stoppedText(holder()?.handoffId));
   if (why) return refuse(why);

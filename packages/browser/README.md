@@ -174,6 +174,19 @@ it to its end (at most 30 s) and says where it went, and a URL that is a file to
 download is a download, not a failed load. A tab a page opens, from `target="_blank"`
 or `window.open`, is said with its address; `browser_tabs` switches to it.
 
+## Fewer turns
+
+Every browser tool's result ends with where the page is: its address, its title,
+whether it has loaded, and how many tabs are open when there is more than one, so
+the tab a click opened is noticed. `browser_snapshot`, and `browser_run`'s snapshot,
+take a ref and list only what is under it: a form, a dialog, a list.
+`browser_click`, `browser_type` and `browser_run`'s click and fill take `waitFor`:
+text, a selector or part of the address, or `gone`. The driver watches for it from
+just before it acts, so a toast that comes and goes while the click settles is still
+seen. Not finding it is said rather than raised, because the action happened. A call
+on a computer the user holds opens with `E_COMPUTER_HELD (handoff)` or
+`E_COMPUTER_HELD (person)`.
+
 ## Network policy
 
 Every URL Husk opens — `goto`, a tab opened with `newTab`, the `goto` steps of `run`,

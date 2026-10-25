@@ -15,6 +15,12 @@
 
 import { describe, expect, it } from 'vitest';
 import { DRIVER_SOURCE } from './driver.js';
+import { armExpression, waitExpression } from './page.js';
+
+/** Run a page expression the way `Runtime.evaluate` would. */
+function evaluate<T>(expression: string): T {
+  return new Function(`return ${expression}`)() as T;
+}
 
 /**
  * The driver's CHOOSE_OPTION, called on a node the way `Runtime.callFunctionOn`
@@ -115,5 +121,30 @@ describe('choosing an option (the driver’s CHOOSE_OPTION)', () => {
     // And a quote-and-parenthesis payload is data, not code.
     form([['x', 'x']]);
     expect(() => choose(`'); throw new Error('injected'); ('`)).toThrow(/no option matching/);
+  });
+});
+
+describe('a wait armed before the action', () => {
+  it('sees what came and went before anyone looked, where a wait started afterwards does not', async () => {
+    document.body.innerHTML = '<p>idle</p>';
+    evaluate(armExpression({ selector: '.toast' }));
+    // The click's toast: shown, then gone before the click's answer.
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    document.body.appendChild(toast);
+    await new Promise((r) => setTimeout(r, 0));
+    toast.remove();
+    await expect(evaluate<Promise<boolean>>(waitExpression({ selector: '.toast' }, 250, true))).resolves.toBe(true);
+    await expect(evaluate<Promise<boolean>>(waitExpression({ selector: '.toast' }, 250))).resolves.toBe(false);
+  });
+
+  it('counts what is already there, and looks afresh on a page the action replaced', async () => {
+    document.body.innerHTML = '<div class="done"></div>';
+    evaluate(armExpression({ selector: '.done' }));
+    await expect(evaluate<Promise<boolean>>(waitExpression({ selector: '.done' }, 100, true))).resolves.toBe(true);
+    // A new document has no watcher: the condition itself decides.
+    delete (window as { __huskArmed?: unknown }).__huskArmed;
+    document.body.innerHTML = '';
+    await expect(evaluate<Promise<boolean>>(waitExpression({ selector: '.done' }, 150, true))).resolves.toBe(false);
   });
 });

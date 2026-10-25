@@ -612,6 +612,34 @@ async function checkFrames(id) {
 }
 
 /**
+ * Fewer turns (J3-f): every browser result says where the page is, a snapshot
+ * can be of one part of the page, and a click can carry its wait, watched from
+ * just before it, so a toast that comes and goes as the click settles is caught.
+ */
+async function checkFewerTurns(id) {
+  const toast = "const t = document.createElement('div'); t.className = 'toast'; t.textContent = 'Saved!'; document.body.append(t); setTimeout(() => t.remove(), 150)";
+  await tool(id, 'write_file', {
+    path: '/work/fixture/toast.html',
+    content:
+      '<!doctype html><title>toast</title>' +
+      '<form aria-label="Sign in"><label>Email <input></label> <button type="button">Go</button></form> ' +
+      `<button onclick="${toast}">Save</button>`,
+  });
+  const refOf = (snap, role, label) => new RegExp(`^ *((?:f\\d+)?e\\d+) {2}${role} "${label}"`, 'm').exec(snap)?.[1];
+  await tool(id, 'browser_goto', { url: `${FIXTURE}toast.html` });
+  const snap = textOf(await tool(id, 'browser_snapshot'));
+  check('a browser result says where the page is', snap.startsWith('now at http://127.0.0.1:8766/toast.html -- "toast", loaded'), snap.slice(0, 200));
+  const part = textOf(await tool(id, 'browser_snapshot', { ref: refOf(snap, 'form', 'Sign in') }));
+  check('a snapshot of one part of the page lists only that part', /textbox "Email"/.test(part) && !/button "Save"/.test(part), part.slice(0, 300));
+  const saved = await tool(id, 'browser_click', { ref: refOf(snap, 'button', 'Save'), waitFor: { selector: '.toast', timeoutSec: 5 } });
+  check(
+    "a click's wait, armed before it, catches a toast that came and went",
+    !saved.isError && /Then waited for selector \.toast: it appeared after \d+ ms/.test(textOf(saved)),
+    textOf(saved).slice(0, 300),
+  );
+}
+
+/**
  * The network policy below the tool (J3-e): what a page loads by itself goes by
  * the policy too. An HTTP redirect, a script redirect, a frame, a pop-up, and a
  * link inside a cross-site frame, each to an internal address, are stopped
@@ -1124,7 +1152,11 @@ try {
   check('the link gets the screen', screen.status === 200 && screen.type.includes('image/jpeg'));
   check('the link cannot list computers', (await api('GET', '/v1/computers', undefined, link)).status === 401);
   const held = await tool(id, 'shell', { command: 'echo should-not-run' });
-  check('tools are refused while the person holds it', held.isError === true && /has the computer/.test(textOf(held)));
+  check(
+    'tools are refused while the person holds it, with a code that stays the same',
+    held.isError === true && /^E_COMPUTER_HELD \(handoff\): .*has the computer/.test(textOf(held)),
+    textOf(held).slice(0, 160),
+  );
   const done = await api('POST', `/v1/handoffs/${opened.body.handoffId}/done`, undefined, link);
   check('done with the link ends it', done.body.outcome === 'done');
   check('tools run again after done', !(await tool(id, 'shell', { command: 'echo back' })).isError);
@@ -1167,6 +1199,7 @@ try {
   await checkFrames(id);
   await checkBrowserRecovers(id);
   await checkPolicyBelowTheTool(id);
+  await checkFewerTurns(id);
 
   // 8d. Taking over stops the AI where it is, scripts included.
   await checkTakeover(id);
