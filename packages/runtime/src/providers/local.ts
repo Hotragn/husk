@@ -21,7 +21,7 @@ import type {
   SpawnRequest,
   WriteFileOptions,
 } from '@husk-ai/core';
-import { loadInfos, persistInfo as persist } from '../registry.js';
+import { loadInfos, persistInfo as persist, reapExpired } from '../registry.js';
 import { EXEC_TAG, STOP_UNCONFIRMED, newExecTag, reapArgv, timerMs } from '../reap.js';
 import { wireSpawned } from './spawned.js';
 import {
@@ -1215,22 +1215,7 @@ export class LocalProvider implements ComputerProvider {
   }
 
   async reap(): Promise<string[]> {
-    const removed: string[] = [];
-    const now = Date.now();
-    for (const info of await this.list()) {
-      const idle = info.spec.idleTimeoutSec ?? 0;
-      const life = info.spec.maxLifetimeSec ?? 0;
-      const idleFor = (now - new Date(info.lastUsedAt).getTime()) / 1000;
-      const aliveFor = (now - new Date(info.createdAt).getTime()) / 1000;
-      if ((idle > 0 && idleFor > idle) || (life > 0 && aliveFor > life)) {
-        const c = await this.get(info.id);
-        if (c) {
-          await c.destroy();
-          removed.push(info.id);
-        }
-      }
-    }
-    return removed;
+    return reapExpired(this);
   }
 }
 

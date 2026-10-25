@@ -15,7 +15,7 @@ import type {
   WriteFileOptions,
 } from '@husk-ai/core';
 import { GUEST_ROOT, evaluateCommand, normaliseGuestPath, shellQuote } from '../policy.js';
-import { expired, forgetInfo, loadInfos, persistInfo } from '../registry.js';
+import { forgetInfo, loadInfos, persistInfo, reapExpired } from '../registry.js';
 import { EXEC_TAG, REAP_SCRIPT, STOP_UNCONFIRMED, newExecTag, timerMs } from '../reap.js';
 import { parseLsLong } from './oci-common.js';
 import { resolveImage } from '../images.js';
@@ -806,13 +806,6 @@ export class FlyProvider implements ComputerProvider {
   }
 
   async reap(): Promise<string[]> {
-    const removed: string[] = [];
-    for (const info of expired(await this.list())) {
-      const c = await this.get(info.id).catch(() => null);
-      if (!c) continue;
-      await c.destroy().catch(() => {});
-      removed.push(info.id);
-    }
-    return removed;
+    return reapExpired(this);
   }
 }

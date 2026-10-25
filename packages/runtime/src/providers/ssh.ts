@@ -18,7 +18,7 @@ import type {
   WriteFileOptions,
 } from '@husk-ai/core';
 import { GUEST_ROOT, GUEST_TMP, OutputBuffer, evaluateCommand, normaliseGuestPath, shellQuote } from '../policy.js';
-import { expired, forgetInfo, loadInfos, persistInfo } from '../registry.js';
+import { forgetInfo, loadInfos, persistInfo, reapExpired } from '../registry.js';
 import { EXEC_TAG, STOP_UNCONFIRMED, newExecTag, reapArgv, timerMs } from '../reap.js';
 import { parseLsLong } from './oci-common.js';
 
@@ -1136,14 +1136,7 @@ export class SshProvider implements ComputerProvider {
   }
 
   async reap(): Promise<string[]> {
-    const removed: string[] = [];
-    for (const info of expired(await this.list())) {
-      const c = await this.get(info.id).catch(() => null);
-      if (!c) continue;
-      await c.destroy().catch(() => {});
-      removed.push(info.id);
-    }
-    return removed;
+    return reapExpired(this);
   }
 }
 

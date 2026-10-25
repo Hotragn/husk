@@ -159,7 +159,9 @@ export class BrowserSession {
   }
 
   /**
-   * The live page, launching Chromium if this is the first call.
+   * The live page, launching Chromium if this is the first call, or the first
+   * since Chromium stopped: a connection closes itself when it finds Chromium
+   * gone, and the next call here starts a new one.
    *
    * This is the door every tool call comes through, and the only one that
    * counts as using the computer. With a long-lived driver nothing here runs
@@ -493,22 +495,32 @@ export class BrowserSession {
 
   private async launch(): Promise<Page> {
     const say = (m: string): void => this.say(m);
+    // What is left of a browser that stopped under an earlier call goes first:
+    // its driver, and its process if it is wedged rather than gone.
+    if (this.conn || this.port) await this.close('restarted');
 
     this.chromium ??= await provisionChromium(this.computer, { onProgress: say });
     this.port = await this.startChromium(this.chromium.binary, say);
 
-    const transport = this.opts.transport
-      ? this.opts.transport(this.computer, this.port)
-      : new ComputerDriverTransport(this.computer, this.port);
-    const conn = new CdpConnection(transport);
-    this.conn = conn;
-    this.transport = transport;
-    transport.onHostCall?.((op, args) => this.answerHost(op, args));
+    let page: Page;
+    try {
+      const transport = this.opts.transport
+        ? this.opts.transport(this.computer, this.port)
+        : new ComputerDriverTransport(this.computer, this.port);
+      const conn = new CdpConnection(transport);
+      this.conn = conn;
+      this.transport = transport;
+      transport.onHostCall?.((op, args) => this.answerHost(op, args));
 
-    const targetId = await createTarget(conn, 'about:blank');
-    const page = new Page(conn, targetId);
-    await page.init();
-    if (this.opts.viewport) await page.setViewport(this.opts.viewport.width, this.opts.viewport.height);
+      const targetId = await createTarget(conn, 'about:blank');
+      page = new Page(conn, targetId);
+      await page.init();
+      if (this.opts.viewport) await page.setViewport(this.opts.viewport.width, this.opts.viewport.height);
+    } catch (err) {
+      // Chromium is up but cannot be driven: reap it, or every failed launch leaks one.
+      await this.close('not started');
+      throw err;
+    }
 
     this.page = page;
     this.touch();
@@ -582,22 +594,22 @@ export class BrowserSession {
     // kill as the hard backstop, so a failed launch is always bounded.
     const ready = await this.computer.exec({ cmd, timeoutSec: 90 });
 
-    if (ready.exitCode === 3 && sandboxed) {
-      throw new HuskError('E_COMPUTER_FAILED', 'Chromium cannot use its sandbox on this machine', {
-        hint: 'it is started again without one, with a warning',
-        details: { port, sandbox: 'unusable' },
-      });
-    }
-
     if (ready.exitCode !== 0) {
+      // A browser that never opened its port, or whose sandbox could not run,
+      // may still be running, and close() only knows how to kill a port this
+      // method returned. Reap it here or every failed launch leaks one.
+      const reap = () =>
+        this.computer.exec({ cmd: `pkill -f -- "--remote-debugging-port=${port}" || true`, timeoutSec: 15 }).catch(() => undefined);
+      if (ready.exitCode === 3 && sandboxed) {
+        await reap();
+        throw new HuskError('E_COMPUTER_FAILED', 'Chromium cannot use its sandbox on this machine', {
+          hint: 'it is started again without one, with a warning',
+          details: { port, sandbox: 'unusable' },
+        });
+      }
       // The end of the log, where Chromium says why it stopped.
       const log = (await this.computer.exec({ cmd: ['tail', '-c', '4000', LOG_PATH], timeoutSec: 15 }).catch(() => undefined))?.stdout ?? '';
-      // A browser that never opened its port is still running, and close() only
-      // knows how to kill a port this method returned. Reap it here or every
-      // failed launch leaks one.
-      await this.computer
-        .exec({ cmd: `pkill -f -- "--remote-debugging-port=${port}" || true`, timeoutSec: 15 })
-        .catch(() => undefined);
+      await reap();
       // "40 seconds" was the poll's own arithmetic, not its ceiling: 80 attempts
       // x 0.5s only holds while each connect is refused instantly. A listener
       // that accepts and wedges makes every curl pay its full --max-time and the

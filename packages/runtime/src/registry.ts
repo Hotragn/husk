@@ -1,7 +1,7 @@
 import { readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { ensurePaths, paths } from '@husk-ai/core';
-import type { ComputerInfo, ProviderName } from '@husk-ai/core';
+import { ensurePaths, notifyComputerDestroyed, paths } from '@husk-ai/core';
+import type { Computer, ComputerInfo, ProviderName } from '@husk-ai/core';
 
 /**
  * The on-disk record of computers whose provider cannot answer "what exists?"
@@ -103,6 +103,33 @@ export async function lastUsedTimes(): Promise<Map<string, string>> {
     }
   }
   return out;
+}
+
+/**
+ * A provider's `reap`: every computer past its idle or lifetime budget,
+ * destroyed the way `ComputerManager.destroy` does it, its browser closed
+ * first. That runs a `pkill` inside the computer, which only works while the
+ * computer is still there; skipped, a reaped computer's Chromium lived on, and
+ * on `local` it lives on the host. One computer that will not go does not stop
+ * the sweep: the next one tries it again.
+ */
+export async function reapExpired(provider: {
+  list(): Promise<ComputerInfo[]>;
+  get(id: string): Promise<Computer | null>;
+}): Promise<string[]> {
+  const removed: string[] = [];
+  for (const info of expired(await provider.list())) {
+    const c = await provider.get(info.id).catch(() => null);
+    if (!c) continue;
+    try {
+      await notifyComputerDestroyed(info.id);
+      await c.destroy();
+      removed.push(info.id);
+    } catch {
+      // Still there: the next sweep tries again.
+    }
+  }
+  return removed;
 }
 
 /** Ids whose idle or lifetime budget has run out. */

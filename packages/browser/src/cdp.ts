@@ -193,11 +193,11 @@ type MappedCode = 'E_COMPUTER_FAILED' | 'E_EXEC_TIMEOUT' | 'E_TOOL_ERROR' | 'E_E
 const KIND_TO_ERROR: Record<string, { code: MappedCode; hint: string }> = {
   unreachable: {
     code: 'E_COMPUTER_FAILED',
-    hint: 'Chromium is not listening on its debug port inside the computer -- it crashed or never started; the session relaunches it on the next call',
+    hint: 'Chromium is not running in the computer -- it crashed, or never started. The next browser call starts it again, on a blank page; the logins in its profile are kept',
   },
   browser_gone: {
     code: 'E_COMPUTER_FAILED',
-    hint: 'Chromium exited while the command was in flight -- the chromium log in the browser cache directory says why',
+    hint: 'Chromium exited while the command was in flight. The next browser call starts it again, on a blank page; the logins in its profile are kept. The chromium log in the browser cache directory says why it stopped',
   },
   timeout: {
     code: 'E_EXEC_TIMEOUT',
@@ -220,6 +220,9 @@ const KIND_TO_ERROR: Record<string, { code: MappedCode; hint: string }> = {
     hint: 'this is a husk bug in the browser driver; the traceback is in details',
   },
 };
+
+/** What a driver says when Chromium is gone: nothing listening, or the socket dropped mid-command. */
+const BROWSER_STOPPED: ReadonlySet<string> = new Set(['unreachable', 'browser_gone']);
 
 /**
  * A connection in the only sense that survives here: a transport, plus the
@@ -244,11 +247,18 @@ export class CdpConnection {
   async run(steps: DriverStep[], opts: { targetId?: string; timeoutMs?: number } = {}): Promise<unknown[]> {
     this.assertOpen(describe(steps));
 
-    const res = await this.transport.run({
-      steps,
-      ...(opts.targetId !== undefined ? { targetId: opts.targetId } : {}),
-      timeoutMs: opts.timeoutMs ?? this.timeoutMs,
-    });
+    const res = await this.transport
+      .run({
+        steps,
+        ...(opts.targetId !== undefined ? { targetId: opts.targetId } : {}),
+        timeoutMs: opts.timeoutMs ?? this.timeoutMs,
+      })
+      .catch((err: unknown) => {
+        // Chromium is gone, so this connection is done with it: closed, it is
+        // what tells the session to start a new browser on the next call.
+        if (err instanceof HuskError && BROWSER_STOPPED.has(String(err.details?.['kind']))) void this.close('Chromium stopped');
+        throw err;
+      });
 
     if (res.results.length !== steps.length) {
       throw new HuskError('E_INTERNAL', 'the browser driver returned the wrong number of results', {

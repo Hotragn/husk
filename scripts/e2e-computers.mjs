@@ -612,6 +612,21 @@ async function checkFrames(id) {
 }
 
 /**
+ * The browser recovers (J3-d): Chromium killed inside the computer, the call
+ * that finds it gone says so, and the next one starts it again.
+ */
+async function checkBrowserRecovers(id) {
+  await tool(id, 'browser_goto', { url: FIXTURE });
+  // por[t]: the pattern matches Chromium's command line and not the shell's that runs it.
+  await tool(id, 'shell', { command: "pkill -KILL -f -- '--remote-debugging-por[t]'; sleep 1" });
+  const gone = await tool(id, 'browser_snapshot');
+  check('a call that finds Chromium dead says so, and that the next call starts it again', gone.isError === true && /starts it again/.test(textOf(gone)), textOf(gone).slice(0, 300));
+  const back = await tool(id, 'browser_goto', { url: FIXTURE });
+  const page = textOf(await tool(id, 'browser_snapshot'));
+  check('the next call starts Chromium again', !back.isError && /Husk fixture page/.test(page), `${textOf(back).slice(0, 200)} | ${page.slice(0, 200)}`);
+}
+
+/**
  * Pages that ask and pages that hand things over (J3-c): an alert is answered
  * and said, a confirm is dismissed unless dialog: "accept", a download lands in
  * /work/downloads, and a link to a new tab says which tab it opened.
@@ -1098,6 +1113,7 @@ try {
   await checkFreshRefs(id);
   await checkDialogsDownloadsTabs(id);
   await checkFrames(id);
+  await checkBrowserRecovers(id);
 
   // 8d. Taking over stops the AI where it is, scripts included.
   await checkTakeover(id);
