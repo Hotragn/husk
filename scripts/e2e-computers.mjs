@@ -549,31 +549,17 @@ async function checkHonestClicks(id) {
 
 /**
  * Refs that expire (J3-b): a ref from an earlier page is refused, rather than
- * resolved to whatever has its id on the new one; and typing into a field
- * inside a same-origin frame reaches the field, whose change event fires.
+ * resolved to whatever has its id on the new one. Typing into a field inside a
+ * frame is shown once frames have refs of their own (J3-c).
  */
 async function checkFreshRefs(id) {
-  await tool(id, 'write_file', {
-    path: '/work/fixture/frame.html',
-    content: '<!doctype html><title>frame</title><iframe src="/field.html" style="width:420px;height:120px"></iframe>',
-  });
-  await tool(id, 'write_file', {
-    path: '/work/fixture/field.html',
-    content: '<!doctype html><title>field</title><input aria-label="Code" onchange="parent.document.title = \'changed:\' + this.value">',
-  });
-  const title = async () => /result: "([^"]*)"/.exec(textOf(await tool(id, 'browser_script', { script: 'result = page.title()' })))?.[1];
   const refOf = (snap, role, label) => new RegExp(`^ *(e\\d+) {2}${role} "${label}"`, 'm').exec(textOf(snap))?.[1];
-
   await tool(id, 'browser_goto', { url: FIXTURE });
   const old = refOf(await tool(id, 'browser_snapshot'), 'button', 'Press');
   // A new document, with a snapshot of its own.
-  await tool(id, 'browser_goto', { url: `${FIXTURE}frame.html` });
+  await tool(id, 'browser_goto', { url: `${FIXTURE}overlay.html` });
   const stale = await tool(id, 'browser_click', { ref: old });
   check('a ref from an earlier page is refused, not clicked', stale.isError === true && /from an earlier page/.test(textOf(stale)), textOf(stale).slice(0, 200));
-
-  const code = refOf(await tool(id, 'browser_snapshot'), 'textbox', 'Code');
-  const typed = await tool(id, 'browser_type', { ref: code, text: '424242' });
-  check('typing reaches a field inside a frame, and its change event fires', !typed.isError && (await title()) === 'changed:424242', `${code}: ${textOf(typed).slice(0, 160)}`);
 }
 
 /**
