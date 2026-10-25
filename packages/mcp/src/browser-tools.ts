@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { browserFor, describeHappened, inspectBrowserCapability, withCallSignal } from '@husk-ai/browser';
-import type { ActionOutcome, Happened, PageAction, SnapshotNode } from '@husk-ai/browser';
+import type { ActionOutcome, PageAction, SnapshotNode } from '@husk-ai/browser';
 import type { Computer } from '@husk-ai/core';
 import { redact } from '@husk-ai/core';
 import type { ToolDef, ToolResult } from './tools.js';
@@ -67,7 +67,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
             properties: {
               do: { type: 'string', enum: ['goto', 'click', 'fill', 'wait', 'snapshot', 'screenshot'] },
               url: { type: 'string', description: 'goto: the URL. wait: text the URL must contain.' },
-              ref: { type: 'string', description: 'click, fill: a ref from a snapshot, e.g. e42.' },
+              ref: { type: 'string', description: 'click, fill: a ref from a snapshot, e.g. e42, or f2e7 inside a frame.' },
               role: { type: 'string', description: 'click, fill: an accessibility role, e.g. button, link, textbox.' },
               name: { type: 'string', description: 'click, fill: the accessible name, exactly.' },
               text: { type: 'string', description: 'fill: what to type. wait: visible text to wait for.' },
@@ -134,7 +134,7 @@ export const BROWSER_TOOLS: ToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        ref: { type: 'string', description: 'A `ref` from browser_snapshot, e.g. e42.' },
+        ref: { type: 'string', description: 'A `ref` from browser_snapshot, e.g. e42, or f2e7 inside a frame.' },
         force: { type: 'boolean', description: 'Press at its centre without the checks. Defaults to false.' },
         dialog: {
           type: 'string',

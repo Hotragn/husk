@@ -23,6 +23,8 @@ export interface AxNodeLike {
   properties?: Array<{ name?: string; value?: { value?: unknown } }>;
   parentId?: string;
   childIds?: string[];
+  /** The frame a node is in, `f<k>`, for a node of a frame the driver spliced in under its <iframe>. */
+  frame?: string;
 }
 
 export interface SnapshotNode {
@@ -100,7 +102,7 @@ export function flattenAxTree(nodes: AxNodeLike[], opts: { limit?: number } = {}
     // works after the next one. Nodes without one are informational only, and
     // get an `a`-prefixed ref that click will refuse rather than mis-resolve.
     const ref =
-      node.backendDOMNodeId !== undefined ? `e${node.backendDOMNodeId}` : `a${str(node.nodeId) || out.length}`;
+      node.backendDOMNodeId !== undefined ? `${node.frame ?? ''}e${node.backendDOMNodeId}` : `a${str(node.nodeId) || out.length}`;
     if (seen.has(ref)) continue;
     seen.add(ref);
 
@@ -171,12 +173,13 @@ export function compactAxTree(nodes: AxNodeLike[], opts: { limit?: number } = {}
 
     const name = clean(n.name?.value);
     const value = clean(n.value?.value);
-    const ref = n.backendDOMNodeId !== undefined ? `e${n.backendDOMNodeId}` : `a${str(n.nodeId) || index}`;
+    const ref = n.backendDOMNodeId !== undefined ? `${n.frame ?? ''}e${n.backendDOMNodeId}` : `a${str(n.nodeId) || index}`;
     const node: SnapshotNode = { ref, role, name, ...(value ? { value } : {}) };
 
     if (TEXT_ROLES.has(role)) return name ? [{ node, children: [] }] : [];
     // The document itself is the frame everything is in; its children start at the top.
-    if (role === 'RootWebArea' && !n.parentId) return kids;
+    // A frame's document too: its <iframe>'s line already says where the frame starts.
+    if (role === 'RootWebArea') return kids;
     // An ignored node is not a node to a reader at all.
     if (n.ignored || !role) return kids;
 
@@ -211,9 +214,13 @@ export function compactAxTree(nodes: AxNodeLike[], opts: { limit?: number } = {}
   return out;
 }
 
-/** The DOM node a ref points at, or null when the ref is not clickable. */
+/**
+ * The DOM node a ref points at, or null when the ref is not clickable. A
+ * frame's ref, `f<k>e<n>`, names node n of frame k: a frame in another process
+ * numbers its nodes afresh, so the id alone does not say which node.
+ */
 export function backendNodeIdOf(ref: string): number | null {
-  const m = /^e(\d+)$/.exec(ref);
+  const m = /^(?:f\d+)?e(\d+)$/.exec(ref);
   return m?.[1] ? Number(m[1]) : null;
 }
 
@@ -300,8 +307,10 @@ export class Page {
 
   /** Emulation is per-session too, so an override has to be re-applied, not just set once. */
   private viewport: { width: number; height: number } | undefined;
-  /** Which document each ref a snapshot here handed out came from, by backend node id: it acts only there. */
-  private readonly refDocuments = new Map<number, string>();
+  /** Which document, and which frame, each ref a snapshot here handed out came from: it acts only there. */
+  private readonly refDocuments = new Map<string, { document: string; frame?: string }>();
+  /** Each frame's number, by frame id, so a frame keeps its `f<k>` for as long as this page is open. */
+  private readonly frameKeys = new Map<string, number>();
 
   constructor(
     private readonly conn: CdpConnection,
@@ -430,19 +439,16 @@ export class Page {
   }
 
   /**
-   * Everything on this page a caller can read or act on.
+   * Everything on this page a caller can read or act on, frames included.
    *
-   * The tree comes from the page's own session, which covers same-origin
-   * iframes and does *not* cover cross-origin ones -- those render in their own
-   * process and appear here as a single empty `Iframe` node. That matters more
-   * than it sounds: consent dialogs, card fields and embedded sign-in are
-   * routinely cross-origin, so the most important element on the page can be
-   * the one thing missing from the list.
-   *
-   * It cannot be fixed by asking harder; it needs attaching to the child
-   * target, which is a different connection. Until that exists, the gap is
-   * *reported* rather than left as a silence a model would read as "the page
-   * does not have one".
+   * The page's own tree has each iframe as an empty `Iframe` node, so the
+   * driver reads every frame and puts its tree under that node: a same-site
+   * frame from the page's session, a cross-site one from its own, since
+   * Chromium runs it in another process. That matters more than it sounds:
+   * consent dialogs, card fields and embedded sign-in are routinely
+   * cross-origin, so the most important element on the page can be in one.
+   * A frame's refs are `f<k>e<n>`, and a frame that cannot be read is said,
+   * not left as a silence a model would read as "the page does not have one".
    */
   async snapshot(opts: { limit?: number } = {}): Promise<SnapshotNode[]> {
     // The driver's snapshot action, which also records which document its refs belong to.
@@ -493,49 +499,42 @@ export class Page {
     const steps: DriverStep[] = list.map((a) => {
       const step = actionStep(a);
       budget += step.timeoutMs ?? 30_000;
-      // The document a ref came from, for a driver that keeps nothing between requests.
-      const document = 'ref' in a && a.ref ? this.documentOf(a.ref) : undefined;
-      return document ? { ...step, document } : step;
+      // For a driver that keeps nothing between requests: the frame numbers so far, and where a ref came from.
+      if (a.do === 'snapshot') return this.frameKeys.size > 0 ? { ...step, frames: Object.fromEntries(this.frameKeys) } : step;
+      const known = 'ref' in a && a.ref ? this.refDocuments.get(a.ref) : undefined;
+      return known ? { ...step, document: known.document, ...(known.frame ? { frame: known.frame } : {}) } : step;
     });
     const results = await this.run(steps, budget);
     const outcomes = list.map((a, i) => outcomeOf(a, results[i]));
-    for (const o of outcomes) if (o.nodes && o.document) this.remember(o.nodes, o.document);
+    for (const o of outcomes) if (o.nodes && o.document) this.remember(o.nodes, o.document, o.frames ?? {});
     return outcomes;
   }
 
-  /** The refs a snapshot showed, as belonging to its document. */
-  private remember(nodes: SnapshotNode[], document: string): void {
+  /** The refs a snapshot showed, as belonging to its document, or to their frame's. */
+  private remember(nodes: SnapshotNode[], document: string, frames: Record<string, SnapshotFrame>): void {
     // ponytail: forgotten wholesale past a bound; a forgotten ref is checked by the driver, or not at all.
     if (this.refDocuments.size > 50_000) this.refDocuments.clear();
+    if (this.frameKeys.size > 10_000) this.frameKeys.clear();
+    for (const [key, f] of Object.entries(frames)) this.frameKeys.set(f.id, Number(key.slice(1)));
     for (const n of nodes) {
-      const id = backendNodeIdOf(n.ref);
-      if (id !== null) this.refDocuments.set(id, document);
+      if (backendNodeIdOf(n.ref) === null) continue;
+      const key = /^(f\d+)e/.exec(n.ref)?.[1];
+      const frame = key ? frames[key] : undefined;
+      if (!key) this.refDocuments.set(n.ref, { document });
+      else if (frame?.document) this.refDocuments.set(n.ref, { document: frame.document, frame: frame.id });
     }
   }
 
-  /** The document a ref came from, when a snapshot here handed it out. */
-  private documentOf(ref: string): string | undefined {
-    const id = backendNodeIdOf(ref);
-    return id === null ? undefined : this.refDocuments.get(id);
-  }
-
-  /**
-   * Refuse a ref from an earlier page: once the page has loaded another
-   * document, the same id can name a different element. The driver checks the
-   * actions it does; this checks the ones done here.
-   */
-  private async assertFresh(ref: string): Promise<void> {
-    const expected = this.documentOf(ref);
-    if (!expected) return;
-    const [tree] = await this.run([{ op: 'send', method: 'Page.getFrameTree', session: true, soft: true }]);
-    const now = ((tree ?? {}) as { frameTree?: { frame?: { loaderId?: string } } }).frameTree?.frame?.loaderId;
-    if (now && now !== expected) {
-      throw new HuskError(
-        'E_TOOL_ERROR',
-        `${ref} is from an earlier page: this one has loaded since the snapshot that showed it; take a fresh snapshot and use its refs`,
-        { hint: 'browser_snapshot shows the page as it is now', details: { ref } },
-      );
+  /** One action on a ref, refused with the driver's reason. */
+  private async act(a: PageAction & ElementTarget): Promise<ActionOutcome> {
+    const [out] = await this.actions([a]);
+    if (!out?.ok) {
+      throw new HuskError('E_TOOL_ERROR', out?.error ?? `could not ${a.do} ${a.ref ?? 'that'}`, {
+        hint: 'browser_snapshot shows the page as it is now',
+        details: { ref: a.ref },
+      });
     }
+    return out;
   }
 
   /** Base64 png (or jpeg). `fullPage` captures past the viewport. */
@@ -613,41 +612,6 @@ export class Page {
   /** Text into whatever has focus. An input event, not an evaluate. */
   async insertText(text: string): Promise<void> {
     await this.run([{ op: 'send', method: 'Input.insertText', params: { text }, session: true }]);
-  }
-
-  private async centreOf(ref: string): Promise<{ x: number; y: number; backendNodeId: number }> {
-    const backendNodeId = backendNodeIdOf(ref);
-    if (backendNodeId === null) {
-      throw new HuskError('E_TOOL_ERROR', `${ref} is not a clickable element`, {
-        hint: 'refs beginning with `a` are informational nodes with no DOM element; take a fresh snapshot',
-      });
-    }
-    await this.assertFresh(ref);
-
-    // Both soft: a detached or display:none node cannot be scrolled to, and the
-    // box model gives the better error, so the scroll failing on its own is not
-    // worth surfacing.
-    const [, box] = await this.run([
-      { op: 'send', method: 'DOM.scrollIntoViewIfNeeded', params: { backendNodeId }, session: true, soft: true },
-      { op: 'send', method: 'DOM.getBoxModel', params: { backendNodeId }, session: true, soft: true },
-    ]);
-
-    const model = ((box ?? {}) as CdpParams)['model'] as { content?: number[] } | undefined;
-    const quad = model?.content;
-    if (!quad || quad.length < 8) {
-      throw new HuskError('E_TOOL_ERROR', `${ref} is no longer on the page`, {
-        hint: 'the page changed since the snapshot -- call browser_snapshot again and use the new ref',
-        details: { ref },
-      });
-    }
-
-    const xs = [quad[0]!, quad[2]!, quad[4]!, quad[6]!];
-    const ys = [quad[1]!, quad[3]!, quad[5]!, quad[7]!];
-    return {
-      backendNodeId,
-      x: (Math.min(...xs) + Math.max(...xs)) / 2,
-      y: (Math.min(...ys) + Math.max(...ys)) / 2,
-    };
   }
 
   /**
@@ -756,9 +720,8 @@ export class Page {
    */
   async scroll(opts: { ref?: string; by?: number; to?: 'top' | 'bottom' } = {}): Promise<void> {
     if (opts.ref) {
-      // `centreOf` already scrolls into view; this is the same operation, named
-      // for what a caller wants when they are not about to click.
-      await this.centreOf(opts.ref);
+      // The driver's `scroll`: the element into view, its frames' <iframe>s first.
+      await this.act({ do: 'scroll', ref: opts.ref });
       return;
     }
 
@@ -785,13 +748,7 @@ export class Page {
    */
   async select(ref: string, value: string): Promise<{ selected: string }> {
     // The driver's `select`, called on the <select> itself: the option is an argument, never script.
-    const [out] = await this.actions([{ do: 'select', ref, value }]);
-    if (!out?.ok) {
-      throw new HuskError('E_TOOL_ERROR', out?.error ?? `could not choose in ${ref}`, {
-        hint: 'browser_snapshot shows the page as it is now',
-        details: { ref },
-      });
-    }
+    const out = await this.act({ do: 'select', ref, value });
     return { selected: out.selected ?? '' };
   }
 
@@ -803,30 +760,12 @@ export class Page {
    * as far as this page is concerned.
    */
   async setFiles(ref: string, files: string[]): Promise<void> {
-    const backendNodeId = backendNodeIdOf(ref);
-    if (backendNodeId === null) {
-      throw new HuskError('E_TOOL_ERROR', `${ref} is not an element`, {
-        hint: 'take a fresh snapshot and use the ref of the file input',
-      });
-    }
-    await this.assertFresh(ref);
-    const [result] = await this.run([
-      { op: 'send', method: 'DOM.setFileInputFiles', params: { backendNodeId, files }, session: true },
-    ]);
-    assertNoPageException((result ?? {}) as CdpParams);
+    await this.act({ do: 'upload', ref, files });
   }
 
   /** Hover, for the menus that only exist under the pointer. */
   async hover(ref: string): Promise<void> {
-    const { x, y } = await this.centreOf(ref);
-    await this.run([
-      {
-        op: 'send',
-        method: 'Input.dispatchMouseEvent',
-        params: { type: 'mouseMoved', x, y, button: 'none', buttons: 0 },
-        session: true,
-      },
-    ]);
+    await this.act({ do: 'hover', ref });
   }
 
   /** Back, forward or reload, waiting for whatever it starts. */
@@ -944,7 +883,11 @@ export interface ElementTarget {
   name?: string;
 }
 
-/** One step of `browser_run`. Data only: the driver does it, nothing evaluates it. */
+/**
+ * One step of `browser_run`, or one of Page's own (hover, scroll, upload),
+ * which browser_run does not offer. Data only: the driver does it, nothing
+ * evaluates it.
+ */
 export type PageAction =
   | { do: 'goto'; url: string; timeoutMs?: number }
   | ({ do: 'click'; force?: boolean; loadTimeoutMs?: number; dialog?: 'accept' | 'dismiss' } & ElementTarget)
@@ -952,7 +895,15 @@ export type PageAction =
   | ({ do: 'select'; value: string } & ElementTarget)
   | { do: 'wait'; text?: string; url?: string; selector?: string; gone?: boolean; timeoutMs?: number }
   | { do: 'snapshot'; limit?: number }
-  | { do: 'screenshot'; fullPage?: boolean };
+  | { do: 'screenshot'; fullPage?: boolean }
+  | ({ do: 'hover' | 'scroll' } & ElementTarget)
+  | ({ do: 'upload'; files: string[] } & ElementTarget);
+
+/** A frame a snapshot read: its frame id, and the document its refs act on. */
+export interface SnapshotFrame {
+  id: string;
+  document?: string;
+}
 
 /** What a script printed and left in `result`, or the traceback it died with. */
 export interface ScriptOutcome extends Happened {
@@ -982,6 +933,8 @@ export interface ActionOutcome extends Happened {
   selected?: string;
   /** A snapshot's document: its refs act only there. */
   document?: string;
+  /** A snapshot's frames, by number (`f1`): the refs `f<k>e<n>` act in their frame's document. */
+  frames?: Record<string, SnapshotFrame>;
   waitedMs?: number;
   nodes?: SnapshotNode[];
   /** Base64 PNG, for `screenshot`. */
@@ -1032,7 +985,12 @@ function actionStep(a: PageAction): DriverStep {
       };
     }
     case 'snapshot':
-      return { ...base, do: 'snapshot', framesExpression: unreachableFramesExpression(), timeoutMs: 30_000 };
+      return { ...base, do: 'snapshot', timeoutMs: 30_000 };
+    case 'hover':
+    case 'scroll':
+      return { ...base, do: a.do, ...target(a), timeoutMs: 30_000 };
+    case 'upload':
+      return { ...base, do: 'upload', ...target(a), files: a.files, timeoutMs: 30_000 };
     case 'screenshot':
       return { ...base, do: 'screenshot', ...(a.fullPage ? { fullPage: true } : {}), timeoutMs: 60_000 };
   }
@@ -1058,6 +1016,7 @@ function outcomeOf(a: PageAction, raw: unknown): ActionOutcome {
   if (typeof r['checked'] === 'boolean') out.checked = r['checked'];
   if (typeof r['selected'] === 'string') out.selected = r['selected'];
   if (typeof r['document'] === 'string') out.document = r['document'];
+  if (r['frames'] && typeof r['frames'] === 'object') out.frames = r['frames'] as Record<string, SnapshotFrame>;
   if (Array.isArray(r['dialogs'])) out.dialogs = r['dialogs'] as NonNullable<Happened['dialogs']>;
   if (Array.isArray(r['downloads'])) out.downloads = r['downloads'] as NonNullable<Happened['downloads']>;
   if (Array.isArray(r['popups'])) out.popups = r['popups'] as NonNullable<Happened['popups']>;
@@ -1070,7 +1029,7 @@ function outcomeOf(a: PageAction, raw: unknown): ActionOutcome {
   return out;
 }
 
-/** The compact tree, plus a line saying which frames it could not see into. */
+/** The compact tree, plus a line saying which frames could not be read. */
 function snapshotOf(nodes: AxNodeLike[], unreachable: unknown, opts: { limit?: number }): SnapshotNode[] {
   const tree = compactAxTree(nodes, opts);
   if (Array.isArray(unreachable) && unreachable.length > 0) {
@@ -1078,8 +1037,8 @@ function snapshotOf(nodes: AxNodeLike[], unreachable: unknown, opts: { limit?: n
       ref: 'x0',
       role: 'UnreachableFrames',
       name:
-        `${unreachable.length} cross-origin iframe${unreachable.length === 1 ? '' : 's'} on this page ` +
-        `cannot be read or clicked from here: ${unreachable.map(String).join(', ')}`,
+        `${unreachable.length} iframe${unreachable.length === 1 ? '' : 's'} on this page ` +
+        `could not be read, so nothing in ${unreachable.length === 1 ? 'it' : 'them'} is listed: ${unreachable.slice(0, 10).map(String).join(', ')}`,
       depth: 0,
     });
   }
@@ -1114,24 +1073,3 @@ function valueOf(res: CdpParams | undefined): unknown {
 }
 
 
-/**
- * The page-side half of the cross-origin iframe report.
- *
- * `contentDocument` is null for a frame the document may not read, and reading
- * it can itself throw in some engines, so both are treated as "cannot see in".
- * A same-origin frame is readable and is deliberately not reported: it is
- * already in the accessibility tree, and naming it would train a reader to
- * ignore the warning.
- */
-export function unreachableFramesExpression(limit = 10): string {
-  return `(() => [...document.querySelectorAll('iframe')]
-     .filter((f) => { try { return !f.contentDocument; } catch { return true; } })
-     .map((f) => {
-       // The src property resolves against the document, so an iframe with
-       // no src reports the page's own URL -- which reads as a frame that is
-       // somewhere it is not. The attribute says whether there is one at all.
-       const raw = f.getAttribute('src');
-       return raw && raw.trim() ? f.src : '(no src)';
-     })
-     .slice(0, ${limit}))()`;
-}

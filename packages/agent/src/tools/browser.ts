@@ -111,7 +111,7 @@ export const browserClick = defineTool<
   parameters: {
     type: 'object',
     properties: {
-      ref: { type: 'string', description: 'A `ref` from browser_snapshot, e.g. e42.' },
+      ref: { type: 'string', description: 'A `ref` from browser_snapshot, e.g. e42, or f2e7 inside a frame.' },
       force: { type: 'boolean', description: 'Press at its centre without the checks. Defaults to false.' },
       dialog: { type: 'string', enum: ['accept', 'dismiss'], description: 'How to answer a confirm or a prompt this opens: dismiss (the default) or accept.' },
     },

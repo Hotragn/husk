@@ -563,6 +563,55 @@ async function checkFreshRefs(id) {
 }
 
 /**
+ * Frames (J3-c): a same-origin and a cross-site frame are read into the
+ * snapshot under their <iframe>, with refs that name the frame; typing, Enter
+ * and a click in either reach the field, and a frame that loads another page
+ * on its own takes its refs with it. localhost is another site from 127.0.0.1,
+ * so Chromium runs that frame in a process of its own.
+ */
+async function checkFrames(id) {
+  const inner =
+    '<!doctype html><title>inner</title>' +
+    "<form onsubmit=\"event.preventDefault(); parent.postMessage(location.hostname + ' submitted:' + this.q.value, '*')\">" +
+    "<label>Name <input name=\"q\" onchange=\"parent.postMessage(location.hostname + ' changed:' + this.value, '*')\"></label></form> " +
+    "<button onclick=\"parent.postMessage(location.hostname + ' pressed', '*')\">Go</button> " +
+    '<a href="/index.html">Elsewhere</a>';
+  const pages = {
+    'frames.html':
+      '<!doctype html><title>frames</title>' +
+      "<script>addEventListener('message', (e) => { document.title = String(e.data); });</script>" +
+      '<iframe title="same" src="/inner.html" style="width:420px;height:120px"></iframe>' +
+      `<iframe title="cross" src="http://localhost:${FIXTURE_PORT}/inner.html" style="width:420px;height:120px"></iframe>`,
+    'inner.html': inner,
+  };
+  for (const [name, content] of Object.entries(pages)) await tool(id, 'write_file', { path: `/work/fixture/${name}`, content });
+  const title = async () => /result: "([^"]*)"/.exec(textOf(await tool(id, 'browser_script', { script: 'result = page.title()' })))?.[1];
+
+  await tool(id, 'browser_goto', { url: `${FIXTURE}frames.html` });
+  const snap = textOf(await tool(id, 'browser_snapshot'));
+  // A frame's refs follow its <iframe>'s line.
+  const inFrame = (name, role, label) => new RegExp(`Iframe "${name}"\\n(?:.*\\n)*? *(f\\d+e\\d+) {2}${role} "${label}"`).exec(snap)?.[1];
+  const sameName = inFrame('same', 'textbox', 'Name');
+  const crossName = inFrame('cross', 'textbox', 'Name');
+  const crossGo = inFrame('cross', 'button', 'Go');
+  const frameOf = (ref) => /^f\d+/.exec(ref ?? '')?.[0];
+  check(
+    'a snapshot reads a same-origin and a cross-site frame, its refs naming the frame',
+    Boolean(sameName && crossName && crossGo) && frameOf(sameName) !== frameOf(crossName),
+    snap.slice(0, 600),
+  );
+  const typed = await tool(id, 'browser_type', { ref: sameName, text: 'abc' });
+  check('typing in a same-origin frame reaches its field', !typed.isError && (await title()) === '127.0.0.1 changed:abc', textOf(typed).slice(0, 200));
+  const submitted = await tool(id, 'browser_type', { ref: crossName, text: 'xyz', submit: true });
+  check('typing and Enter in a cross-site frame submit its form', !submitted.isError && (await title()) === 'localhost submitted:xyz', textOf(submitted).slice(0, 200));
+  const pressed = await tool(id, 'browser_click', { ref: crossGo });
+  check('a click in a cross-site frame lands on its button', !pressed.isError && (await title()) === 'localhost pressed', textOf(pressed).slice(0, 200));
+  await tool(id, 'browser_click', { ref: inFrame('cross', 'link', 'Elsewhere') });
+  const stale = await tool(id, 'browser_type', { ref: crossName, text: 'late' });
+  check('a frame that loads another page takes its refs with it', stale.isError === true && /from an earlier page/.test(textOf(stale)), textOf(stale).slice(0, 200));
+}
+
+/**
  * Pages that ask and pages that hand things over (J3-c): an alert is answered
  * and said, a confirm is dismissed unless dialog: "accept", a download lands in
  * /work/downloads, and a link to a new tab says which tab it opened.
@@ -1048,6 +1097,7 @@ try {
   await checkHonestClicks(id);
   await checkFreshRefs(id);
   await checkDialogsDownloadsTabs(id);
+  await checkFrames(id);
 
   // 8d. Taking over stops the AI where it is, scripts included.
   await checkTakeover(id);

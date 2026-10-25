@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { compactAxTree } from './page.js';
+import type { AxNodeLike } from './page.js';
 
 /**
  * `driver.py --serve` against a fake Chromium: a loopback HTTP server that
@@ -41,6 +43,8 @@ interface FakeChromium {
   loader: string;
   /** Events the page sends when a click's button is released: a dialog, a download, a new tab. */
   onRelease: unknown[];
+  /** A frame in the page's process, its <iframe> node 9, whose nodes number afresh: its document now. */
+  child?: { loader: string };
   close(): Promise<void>;
 }
 
@@ -147,13 +151,33 @@ async function fakeChromium(frames = 4): Promise<FakeChromium> {
             reply({});
             break;
           case 'Page.getFrameTree':
-            reply({ frameTree: { frame: { id: 'F', loaderId: fake.loader } } });
+            reply({
+              frameTree: {
+                frame: { id: 'F', loaderId: fake.loader },
+                ...(fake.child ? { childFrames: [{ frame: { id: 'C', parentId: 'F', loaderId: fake.child.loader, url: 'https://fake.test/inner' } }] } : {}),
+              },
+            });
+            break;
+          case 'DOM.getFrameOwner':
+            if (fake.child && msg.params?.['frameId'] === 'C') reply({ backendNodeId: 9 });
+            else send({ id: msg.id, sessionId: msg.sessionId, error: { code: -32000, message: 'Frame with the given id was not found.' } });
             break;
           case 'Accessibility.queryAXTree':
             reply({ nodes: fake.matches });
             break;
           case 'Accessibility.getFullAXTree':
-            reply({ nodes: [{ nodeId: '1', role: { value: 'RootWebArea' }, childIds: ['2'] }, { nodeId: '2', parentId: '1', role: { value: 'button' }, name: { value: 'Go' }, backendDOMNodeId: 7 }] });
+            if (msg.params?.['frameId'] === 'C') {
+              // The frame's own tree: its node 7 is not the page's node 7.
+              reply({ nodes: [{ nodeId: '1', role: { value: 'RootWebArea' }, childIds: ['2'] }, { nodeId: '2', parentId: '1', role: { value: 'textbox' }, name: { value: 'Name' }, backendDOMNodeId: 7 }] });
+              break;
+            }
+            reply({
+              nodes: [
+                { nodeId: '1', role: { value: 'RootWebArea' }, childIds: fake.child ? ['2', '3'] : ['2'] },
+                { nodeId: '2', parentId: '1', role: { value: 'button' }, name: { value: 'Go' }, backendDOMNodeId: 7 },
+                ...(fake.child ? [{ nodeId: '3', parentId: '1', role: { value: 'Iframe' }, name: { value: 'inner' }, backendDOMNodeId: 9 }] : []),
+              ],
+            });
             break;
           case 'Page.startScreencast':
             reply({});
@@ -409,6 +433,48 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
     ];
     expect(await clicking({ ref: 'e7' })).toMatchObject({ popups: [{ targetId: 'T2', url: 'https://fake.test/new' }] });
     expect(fake.received.some((m) => m.method === 'Target.setDiscoverTargets')).toBe(true);
+  });
+
+  it('reads a frame into the snapshot under its <iframe>, its refs naming the frame', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    fake.child = { loader: 'C1' };
+    const out = (await driver.request({ targetId: 'T1', steps: [{ op: 'action', do: 'snapshot' }] }))['results'] as Array<Record<string, unknown>>;
+    const snap = out[0]!;
+    expect(snap['frames']).toEqual({ f1: { id: 'C', document: 'C1' } });
+    // The page's node 7 is e7; the frame's node 7 is f1e7, under the frame's <iframe>.
+    expect(compactAxTree(snap['nodes'] as AxNodeLike[])).toEqual([
+      { ref: 'e7', role: 'button', name: 'Go', depth: 0 },
+      { ref: 'e9', role: 'Iframe', name: 'inner', depth: 0 },
+      { ref: 'f1e7', role: 'textbox', name: 'Name', depth: 1 },
+    ]);
+  });
+
+  it("acts on a frame's node in its frame's document, and refuses it once the frame has loaded another", async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    fake.child = { loader: 'C1' };
+    await driver.request({ targetId: 'T1', steps: [{ op: 'action', do: 'snapshot' }] });
+    const typing = async () =>
+      ((await driver!.request({ targetId: 'T1', steps: [{ op: 'action', do: 'fill', ref: 'f1e7', text: 'hi' }] }))['results'] as Array<Record<string, unknown>>)[0]!;
+    expect(await typing()).toEqual({ ref: 'f1e7' });
+    // The page's own document has not changed, only the frame's: the frame's refs go, the page's stay.
+    fake.child.loader = 'C2';
+    expect(String((await typing())['error'])).toMatch(/f1e7 is from an earlier page/);
+    expect(await clicking({ ref: 'e7' })).toMatchObject({ ref: 'e7', checked: true });
+    fake.child = undefined;
+    expect(String((await typing())['error'])).toMatch(/f1e7 is in a frame that is no longer on the page/);
+  });
+
+  it("keeps the host's frame numbers, for a driver that keeps nothing between requests", async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    fake.child = { loader: 'C1' };
+    const out = (await driver.request({ targetId: 'T1', steps: [{ op: 'action', do: 'snapshot', frames: { C: 3 } }] }))['results'] as Array<Record<string, unknown>>;
+    expect(out[0]!['frames']).toEqual({ f3: { id: 'C', document: 'C1' } });
+    // And the host's record of the frame is enough to act there.
+    const typed = (await driver.request({ targetId: 'T1', steps: [{ op: 'action', do: 'fill', ref: 'f3e7', text: 'hi', frame: 'C', document: 'C1' }] }))['results'] as Array<Record<string, unknown>>;
+    expect(typed[0]).toEqual({ ref: 'f3e7' });
   });
 
   it('pushes screencast frames, acked no faster than the rate asked for', async () => {
