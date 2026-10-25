@@ -1,9 +1,10 @@
+import { spawnSync } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
 import { HuskError, isHuskError } from '@husk-ai/core';
 import type { Computer, ComputerProcess, ExecRequest, ExecResult, SpawnRequest } from '@husk-ai/core';
-import { CdpConnection, ComputerDriverTransport, DRIVER_SCRATCH_PATH, createTarget, waitResultOf, withCallSignal, forNoCall } from './cdp.js';
+import { CdpConnection, ComputerDriverTransport, DRIVER_SCRATCH_PATH, REAP_SOURCE, createTarget, waitResultOf, withCallSignal, forNoCall } from './cdp.js';
 import type { CdpTransport, DriverRequest, DriverResult } from './cdp.js';
-import { DRIVER_SOURCE } from './driver.js';
+import { DRIVER_PATH, DRIVER_SOURCE } from './driver.js';
 
 /**
  * Every test here runs with no browser, no Python and no computer.
@@ -669,5 +670,67 @@ describe('a caller stopping its browser call', () => {
     const call = new AbortController();
     await withCallSignal(call.signal, () => new ComputerDriverTransport(c, 9222).run({ steps: [{ op: 'send', method: 'A' }] }));
     expect(c.calls.at(-1)?.signal).toBe(call.signal);
+  });
+});
+
+describe('a computer that refuses stdin to an exec', () => {
+  it('gets each request in a file beside the driver, found out once and remembered', async () => {
+    const c = fakeExec((req) => ({ stdout: JSON.stringify({ ok: true, results: [{ by: typeof req.cmd === 'string' ? 'file' : 'stdin' }] }) }));
+    // Fly's exec endpoint: no stdin at all, said in a way a caller can act on.
+    const exec = c.exec.bind(c);
+    let tried = 0;
+    c.exec = async (req: ExecRequest) => {
+      if (req.stdin !== undefined) {
+        tried++;
+        throw new HuskError('E_EXEC_FAILED', 'the fly exec endpoint cannot accept stdin', { details: { stdin: 'unsupported' } });
+      }
+      return await exec(req);
+    };
+    const t = new ComputerDriverTransport(c, 9222);
+    await expect(t.run({ steps: [{ op: 'send', method: 'A' }] })).resolves.toMatchObject({ results: [{ by: 'file' }] });
+    const triedOnce = tried;
+    await expect(t.run({ steps: [{ op: 'send', method: 'B' }] })).resolves.toMatchObject({ results: [{ by: 'file' }] });
+    // The driver itself went in with writeFile, since cat > /dev/shm needs stdin too; then one stdin try, never another.
+    expect(tried).toBe(triedOnce);
+    const dir = DRIVER_PATH.slice(0, DRIVER_PATH.lastIndexOf('/'));
+    const requests = c.writes.filter((w) => w.path.startsWith(`${dir}/request-`) && w.path.endsWith('.json'));
+    expect(requests).toHaveLength(2);
+    expect(JSON.parse(String(requests[1]!.content))).toMatchObject({ steps: [{ method: 'B' }], port: 9222 });
+    const ran = String(c.calls.at(-1)!.cmd);
+    expect(ran).toBe(`python3 '${DRIVER_PATH}' < '${requests[1]!.path}'; status=$?; rm -f '${requests[1]!.path}'; exit $status`);
+  });
+});
+
+const python = ['python3', 'python'].find((bin) => spawnSync(bin, ['-c', 'pass']).status === 0);
+
+describe.skipIf(!python)('the reap of a wedged driver', () => {
+  it("takes its own driver and its own scripts, never another computer's on the same host", () => {
+    const cases = [
+      { argv: ['python3', '/dev/shm/husk-browser-driver.py', '--serve', '41234'], env: [], want: true },
+      { argv: ['python3', '/dev/shm/husk-browser-driver.py', '--serve', '41999'], env: [], want: false },
+      { argv: ['python3', '-I', '-c', 'runner'], env: ['HUSK_SCRIPT=41234-0A1B2C3D4E5F6071'], want: true },
+      { argv: ['python3', '-I', '-c', 'runner'], env: ['HUSK_SCRIPT=41999-0A1B2C3D4E5F6071'], want: false },
+      // A port that starts another's: the dash ends the port.
+      { argv: ['python3', '-I', '-c', 'runner'], env: ['HUSK_SCRIPT=4123-0A1B2C3D4E5F6071'], want: false },
+      // An older driver's script, its tag without a port: not this driver's to take.
+      { argv: ['sleep', '100'], env: ['HUSK_SCRIPT=0A1B2C3D4E5F6071'], want: false },
+    ];
+    const run = spawnSync(
+      python!,
+      [
+        '-c',
+        [
+          'import json, sys',
+          'ns = {"__name__": "reap"}',
+          'exec(sys.stdin.read(), ns)',
+          'cases = json.loads(sys.argv[1])',
+          "print(json.dumps([ns['doomed']([a.encode() for a in c['argv']], [e.encode() for e in c['env']], b'41234') for c in cases]))",
+        ].join('\n'),
+        JSON.stringify(cases),
+      ],
+      { input: REAP_SOURCE, encoding: 'utf8' },
+    );
+    expect(run.stderr).toBe('');
+    expect(JSON.parse(run.stdout)).toEqual(cases.map((c) => c.want));
   });
 });

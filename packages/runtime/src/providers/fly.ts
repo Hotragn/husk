@@ -343,6 +343,7 @@ class FlyComputer implements Computer {
     if (req.stdin !== undefined) {
       throw new HuskError('E_EXEC_FAILED', 'the fly exec endpoint cannot accept stdin', {
         hint: 'write the input to a file with writeFile and redirect from it',
+        details: { stdin: 'unsupported' },
       });
     }
 
