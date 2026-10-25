@@ -35,6 +35,8 @@ interface FakeChromium {
   matches: Array<{ backendDOMNodeId: number; role: { value: string } }>;
   /** How far each successive box reading has moved, for an element still sliding into place. */
   shifts: number[];
+  /** The page's document now: a new loader id is a page load. */
+  loader: string;
   close(): Promise<void>;
 }
 
@@ -59,6 +61,7 @@ async function fakeChromium(frames = 4): Promise<FakeChromium> {
     within: true,
     matches: [{ backendDOMNodeId: 7, role: { value: 'button' } }],
     shifts: [],
+    loader: 'L1',
   } as unknown as FakeChromium;
   const sockets = new Set<Socket>();
   const server: Server = createServer((req, res) => {
@@ -132,6 +135,9 @@ async function fakeChromium(frames = 4): Promise<FakeChromium> {
           }
           case 'DOM.getNodeForLocation':
             reply({ backendNodeId: fake.hit });
+            break;
+          case 'Page.getFrameTree':
+            reply({ frameTree: { frame: { id: 'F', loaderId: fake.loader } } });
             break;
           case 'Accessibility.queryAXTree':
             reply({ nodes: fake.matches });
@@ -311,6 +317,38 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
     expect(await clicking({ ref: 'e7' })).toMatchObject({ ref: 'e7', checked: true });
     fake.shifts = Array.from({ length: 20 }, (_, i) => i * 6);
     expect(String((await clicking({ ref: 'e7' }))['error'])).toMatch(/e7 is still moving/);
+  });
+
+  it('refuses a ref from an earlier page, whatever has its id now, and force does not change that', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    const snapshot = await driver.request({ targetId: 'T1', steps: [{ op: 'action', do: 'snapshot' }] });
+    expect((snapshot['results'] as Array<Record<string, unknown>>)[0]).toMatchObject({ document: 'L1' });
+    expect(await clicking({ ref: 'e7' })).toMatchObject({ ref: 'e7' });
+    fake.loader = 'L2'; // the page loaded another document
+    expect(String((await clicking({ ref: 'e7' }))['error'])).toMatch(/e7 is from an earlier page/);
+    expect(String((await clicking({ ref: 'e7', force: true }))['error'])).toMatch(/e7 is from an earlier page/);
+    // A role and a name are found afresh on the page as it is.
+    expect(await clicking({ role: 'button', name: 'Go' })).toMatchObject({ ref: 'e7' });
+  });
+
+  it('checks a ref against the host’s record when this driver saw no snapshot', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    expect(String((await clicking({ ref: 'e7', document: 'L0' }))['error'])).toMatch(/e7 is from an earlier page/);
+    expect(await clicking({ ref: 'e7', document: 'L1' })).toMatchObject({ ref: 'e7' });
+  });
+
+  it('types into the field itself, not into whatever the page calls active', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    const out = await driver.request({ targetId: 'T1', steps: [{ op: 'action', do: 'fill', ref: 'e7', text: 'hello' }] });
+    expect((out['results'] as Array<Record<string, unknown>>)[0]).toMatchObject({ ref: 'e7' });
+    const onField = fake.received.filter((m) => m.method === 'Runtime.callFunctionOn' && m.params?.['objectId'] === 'O7').map((m) => String(m.params?.['functionDeclaration']));
+    expect(onField.some((f) => f.includes('select()'))).toBe(true);
+    expect(onField.some((f) => f.includes("new Event('change'"))).toBe(true);
+    expect(fake.received.some((m) => m.method === 'Runtime.evaluate' && String(m.params?.['expression']).includes('activeElement'))).toBe(false);
+    expect(fake.received.find((m) => m.method === 'Input.insertText')?.params).toEqual({ text: 'hello' });
   });
 
   it('pushes screencast frames, acked no faster than the rate asked for', async () => {

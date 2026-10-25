@@ -548,6 +548,21 @@ async function checkHonestClicks(id) {
 }
 
 /**
+ * Refs that expire (J3-b): a ref from an earlier page is refused, rather than
+ * resolved to whatever has its id on the new one. Typing into a field inside a
+ * frame is shown once frames have refs of their own (J3-c).
+ */
+async function checkFreshRefs(id) {
+  const refOf = (snap, role, label) => new RegExp(`^ *(e\\d+) {2}${role} "${label}"`, 'm').exec(textOf(snap))?.[1];
+  await tool(id, 'browser_goto', { url: FIXTURE });
+  const old = refOf(await tool(id, 'browser_snapshot'), 'button', 'Press');
+  // A new document, with a snapshot of its own.
+  await tool(id, 'browser_goto', { url: `${FIXTURE}overlay.html` });
+  const stale = await tool(id, 'browser_click', { ref: old });
+  check('a ref from an earlier page is refused, not clicked', stale.isError === true && /from an earlier page/.test(textOf(stale)), textOf(stale).slice(0, 200));
+}
+
+/**
  * A stopped command is gone from the computer, not only from this side: killing
  * the `docker exec` client used to leave it running there while the chat was
  * told it "was killed".
@@ -992,8 +1007,9 @@ try {
   // 8b. A script that makes its own decisions, run inside the computer.
   await measureScript(id);
 
-  // 8c. Clicks that are honest about where they land.
+  // 8c. Clicks that are honest about where they land, and refs that expire.
   await checkHonestClicks(id);
+  await checkFreshRefs(id);
 
   // 8d. Taking over stops the AI where it is, scripts included.
   await checkTakeover(id);
