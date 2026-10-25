@@ -12,7 +12,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { BrowserWindow, app, ipcMain, screen, shell } from 'electron';
+import { BrowserWindow, app, dialog, ipcMain, screen, shell } from 'electron';
 import { appIconPaths, computersWindowBounds, desktopComputers, desktopUrl, dockBounds, external, notchOf, pillBounds, sameOrigin, toOpen } from './lib.mjs';
 
 const PRELOAD = join(import.meta.dirname, 'preload.cjs');
@@ -28,7 +28,7 @@ const webPreferences = { preload: PRELOAD, contextIsolation: true, sandbox: true
 export class Computers {
   /**
    * @param {{ rec: () => { url: string, token?: string } | undefined, icon: string,
-   *   onConsole: (id: string) => void, onRefresh: () => void }} opts
+   *   onConsole: (id: string) => void, onRefresh: () => void, giveBack: (handoffId: string) => Promise<boolean> }} opts
    */
   constructor(opts) {
     this.opts = opts;
@@ -146,7 +146,7 @@ export class Computers {
         return;
       case 'window':
         if (from !== 'window') return;
-        if (msg.op === 'close') this.close();
+        if (msg.op === 'close') void this.requestClose();
         else if (msg.op === 'minimize') this.minimize();
         else if (msg.op === 'maximize') this.maximize();
         else if (msg.op === 'pin') this.pin();
@@ -222,7 +222,7 @@ export class Computers {
     win.on('close', (event) => {
       if (this.quitting) return;
       event.preventDefault();
-      this.close();
+      void this.requestClose();
     });
     const rec = this.opts.rec();
     if (rec) void win.loadURL(desktopUrl(rec, 'computers'));
@@ -234,6 +234,28 @@ export class Computers {
     this.state = 'minimized';
     this.layout();
     this.broadcast();
+  }
+
+  /**
+   * The person closing the window: while they hold a computer, ask first, so
+   * one is not forgotten with its chat paused. Keeping it is the default:
+   * giving it back hands the computer to the AI. The window hides either way.
+   */
+  async requestClose() {
+    const held = this.computers().filter((c) => c.held && c.handoffId);
+    if (held.length && this.win && !this.win.isDestroyed()) {
+      const one = held.length === 1;
+      const { response } = await dialog.showMessageBox(this.win, {
+        type: 'question',
+        message: one ? `You still hold ${held[0].label}` : `You still hold ${held.length} computers`,
+        detail: `${one ? 'Its chat stays' : 'Their chats stay'} paused until you give ${one ? 'it' : 'them'} back. You can also give it back from the tray.`,
+        buttons: ['Give back', 'Keep holding'],
+        defaultId: 1,
+        cancelId: 1,
+      });
+      if (response === 0) for (const c of held) await this.opts.giveBack(c.handoffId);
+    }
+    this.close();
   }
 
   close() {

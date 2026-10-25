@@ -73,6 +73,8 @@ let win;
 let tray;
 let rec;
 let waiting = [];
+/** What the person holds, from the last reading: its chats are paused until they give it back. */
+let held = [];
 let recovering;
 let computers;
 /** The latest call the shared Husk said had started, and whether its events are coming in. */
@@ -226,6 +228,51 @@ function openWindow(panel) {
   void win.loadURL(consoleUrl(rec, panel));
 }
 
+/** The person's Give back, from the tray or a question: the console's own request, as the person. True if it ended. */
+async function giveBack(handoffId) {
+  if (!rec) return false;
+  const res = await fetch(`${rec.url}/v1/handoffs/${encodeURIComponent(handoffId)}/done`, {
+    method: 'POST',
+    headers: { ...(rec.token ? { authorization: `Bearer ${rec.token}` } : {}), 'x-husk-as': 'person' },
+    signal: AbortSignal.timeout(5000),
+  }).catch(() => undefined);
+  if (!res?.ok) log(`give back ${handoffId}: ${res ? res.status : 'no answer'}`);
+  void poll();
+  return res?.ok === true;
+}
+
+/**
+ * Quitting while the person holds a computer asks first: its chat stays
+ * paused until it is given back. Keeping it is the default: giving it back
+ * hands the computer to the AI.
+ */
+async function quit(stopHusk) {
+  if (held.length) {
+    const one = held.length === 1;
+    const { response } = await dialog.showMessageBox({
+      type: 'question',
+      message: one ? `You still hold ${held[0].label}` : `You still hold ${held.length} computers`,
+      detail: `${one ? 'Its chat stays' : 'Their chats stay'} paused until you give ${one ? 'it' : 'them'} back. ${
+        stopHusk ? 'Husk keeps running while you hold one.' : 'You can give it back from the Husk window later.'
+      }`,
+      buttons: ['Give back and quit', 'Quit and keep holding', 'Cancel'],
+      defaultId: 1,
+      cancelId: 2,
+    });
+    if (response === 2) return;
+    if (response === 0) for (const h of held) await giveBack(h.handoffId);
+    // Kept: Husk does not stop while someone holds one of its computers.
+    else if (stopHusk) return app.exit(0);
+  }
+  // Asked, never killed: a pid in a file may belong to something else by now,
+  // and a clean stop flushes Husk's records.
+  if (stopHusk && rec && !(await askToStop(rec))) {
+    dialog.showErrorBox('Husk is busy', 'A run or a handoff is in progress, so Husk was left running. Quit again when it finishes.');
+    return;
+  }
+  app.exit(0);
+}
+
 function refreshTray(status) {
   const atLogin = app.getLoginItemSettings().openAtLogin;
   tray.setToolTip(`Husk · ${status.label}`);
@@ -233,6 +280,12 @@ function refreshTray(status) {
     Menu.buildFromTemplate([
       { label: status.label, enabled: false },
       ...status.waiting.map((h) => ({ label: `Take over: ${h.reason.slice(0, 60)}`, click: () => openWindow('handoffs') })),
+      ...status.held.map((h) => ({
+        label: `Give back: ${h.label.slice(0, 60)}`,
+        click: async () => {
+          if (!(await giveBack(h.handoffId))) dialog.showErrorBox('Could not give it back', 'Husk did not answer. Try Give back in the Husk window.');
+        },
+      })),
       { type: 'separator' },
       { label: 'Open Husk', click: () => openWindow() },
       { label: 'Connect chat apps', click: () => openWindow('connect') },
@@ -246,19 +299,8 @@ function refreshTray(status) {
           ]
         : []),
       { type: 'separator' },
-      { label: 'Quit (chats keep their computers)', click: () => app.exit(0) },
-      {
-        label: 'Quit and stop Husk',
-        click: async () => {
-          // Asked, never killed: a pid in a file may belong to something else
-          // by now, and a clean stop flushes Husk's records.
-          if (rec && !(await askToStop(rec))) {
-            dialog.showErrorBox('Husk is busy', 'A run or a handoff is in progress, so Husk was left running. Quit again when it finishes.');
-            return;
-          }
-          app.exit(0);
-        },
-      },
+      { label: 'Quit (chats keep their computers)', click: () => void quit(false) },
+      { label: 'Quit and stop Husk', click: () => void quit(true) },
     ]),
   );
 }
@@ -300,6 +342,7 @@ async function poll() {
     n.show();
   }
   waiting = status.waiting;
+  held = status.held;
   refreshTray(status);
 }
 
@@ -592,7 +635,7 @@ async function startApp() {
     new Notification({ title: 'Husk could not start', body: err.message }).show();
     return;
   }
-  computers = new Computers({ rec: () => rec, icon: ICON, onConsole: () => openWindow(), onRefresh: () => void poll() });
+  computers = new Computers({ rec: () => rec, icon: ICON, onConsole: () => openWindow(), onRefresh: () => void poll(), giveBack });
   watchCalls();
   if (LIVE) {
     void liveSmoke();

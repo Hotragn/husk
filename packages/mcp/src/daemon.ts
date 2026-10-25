@@ -40,6 +40,8 @@ export interface DaemonClient {
   markInChat(computerId: string): Promise<void>;
   /** The chat is closing: stop its computer. Refused (409) while a person holds it, which leaves it running. */
   stop(computerId: string): Promise<void>;
+  /** The hold on this computer in the shared Husk, a take-over from its console included. */
+  holdOn?(computerId: string): Promise<{ handoffId: string; runId: string; reason: string } | undefined>;
 }
 
 export interface ConnectOptions {
@@ -201,6 +203,12 @@ function client(first: DaemonRecord, doFetch: typeof fetch, read: () => DaemonRe
       const { status, json } = await call('POST', `/v1/computers/${id(computerId)}/handoffs`, { reason, ...(label ? { label } : {}) });
       if (status === 404) throw new RunLocally(`the shared husk has no computer ${computerId}`);
       return { handoffId: String(json.handoffId), token: String(json.token) };
+    },
+    async holdOn(computerId) {
+      const { json } = await call('GET', '/v1/handoffs');
+      const all = Array.isArray(json.handoffs) ? (json.handoffs as Array<{ handoffId: string; runId: string; reason: string; computerId?: string }>) : [];
+      const h = all.find((x) => x.computerId === computerId);
+      return h ? { handoffId: h.handoffId, runId: h.runId, reason: h.reason } : undefined;
     },
     async state(handoffId) {
       const { json } = await call('GET', `/v1/handoffs/${id(handoffId)}/state`);
