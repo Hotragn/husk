@@ -320,6 +320,8 @@
 .cw-dot-waiting { background: var(--color-warn); animation: desk-pulse 1.4s ease-in-out infinite; }
 .cw-dot-held { background: var(--color-accent-fill); }
 .cw-dot-stopped { background: var(--color-text-subtle); }
+.cw-dot-away { background: var(--color-danger); }
+.cw-banner-away { background: var(--color-danger-subtle); border-bottom-color: var(--color-danger-border); }
 
 .cw-error {
   position: absolute;

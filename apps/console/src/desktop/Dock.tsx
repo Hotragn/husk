@@ -80,6 +80,7 @@ export function Dock() {
           <Slot
             key={c.id}
             computer={c}
+            away={state?.connected === false}
             flat={flat}
             hovered={hover === c.id}
             onEnter={() => enter(c.id)}
@@ -94,6 +95,7 @@ export function Dock() {
 
 function Slot({
   computer: c,
+  away,
   flat,
   hovered,
   onEnter,
@@ -101,6 +103,7 @@ function Slot({
   onClick,
 }: {
   computer: DesktopComputer;
+  away: boolean;
   flat: boolean;
   hovered: boolean;
   onEnter: () => void;
@@ -119,7 +122,7 @@ function Slot({
       <button
         type="button"
         className="dock-hit"
-        aria-label={`${c.label}: ${doing(c)}. Open it`}
+        aria-label={`${c.label}: ${doing(c, away)}. Open it`}
         aria-describedby={hovered ? tip : undefined}
         onPointerEnter={onEnter}
         onPointerLeave={onLeave}

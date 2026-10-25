@@ -22,6 +22,7 @@ export function Pill() {
   const [open, setOpen] = useState(false);
   const items = state?.computers ?? [];
   const notch = state?.notch;
+  const away = state?.connected === false;
   if (!desk) return <p className="desk-note">Open this from the Husk app.</p>;
 
   const enter = () => {
@@ -69,8 +70,8 @@ export function Pill() {
                   <AppGlyph computer={c} size={26} husk />
                   <span className="pill-text">
                     <strong title={c.label}>{tabName(c, items)}</strong>
-                    <span title={doing(c)}>
-                      {doing(c)}
+                    <span title={doing(c, away)}>
+                      {doing(c, away)}
                       {c.last ? ` · ${ago(c.last.at)}` : ''}
                     </span>
                   </span>

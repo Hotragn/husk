@@ -29,11 +29,20 @@ export function ComputersWindow() {
   const state = useDesktopState();
   if (!desk) return <p className="desk-note">Open this window from the Husk app.</p>;
   const active = state?.computers.find((c) => c.id === state.active) ?? state?.computers[0];
+  const away = state?.connected === false;
   return (
     <div className="cw">
       <Bar desk={desk} state={state} active={active} />
+      {away ? (
+        <div className="cw-banner cw-banner-away" role="alert">
+          <span className="cw-dot cw-dot-away" aria-hidden="true" />
+          <span className="cw-banner-text">
+            <strong>Husk is not answering.</strong> The app is trying again; the screen comes back when Husk does.
+          </span>
+        </div>
+      ) : null}
       {active ? (
-        <Pane key={active.id} desk={desk} computer={active} />
+        <Pane key={active.id} desk={desk} computer={active} away={away} />
       ) : (
         <p className="desk-note" role="status">
           {state ? 'No chat is using a computer right now.' : 'Opening…'}
@@ -116,34 +125,35 @@ function Bar({ desk, state, active }: { desk: DesktopBridge; state: DesktopState
 }
 
 /** One computer: its screen, white, and who has it. Keyed by computer, so a tab switch starts fresh. */
-function Pane({ desk, computer: c }: { desk: DesktopBridge; computer: DesktopComputer }) {
+function Pane({ desk, computer: c, away }: { desk: DesktopBridge; computer: DesktopComputer; away: boolean }) {
   const handoff: PendingHandoff | undefined = c.handoffId
     ? { handoffId: c.handoffId, runId: c.held ? 'person' : 'chat', husk: c.held ? 'you' : 'chat', reason: c.waiting ?? '', computerId: c.id, createdAt: '' }
     : undefined;
   const hold = useHold(c.id, handoff, () => void desk.act({ type: 'refresh' }));
   const running = c.state === 'running';
-  const { frame, note } = useScreenFeed(c.id, { enabled: running });
+  // With Husk away, the last frame is not the screen any more: it is cleared, and no feed is asked for.
+  const { frame, note } = useScreenFeed(c.id, { enabled: running && !away });
   const [confirming, setConfirming] = useState(false);
   const status = statusOf(c);
   // While a take-over waits for the AI's call to stop, say which.
-  const line = hold.busy && !handoff && c.calling ? takingText(c.calling) : doing(c);
+  const line = hold.busy && !handoff && c.calling ? takingText(c.calling) : doing(c, away);
 
   let action: ReactNode;
   if (c.held) {
     action = (
-      <button type="button" className="cw-pill cw-pill-light" disabled={hold.busy} onClick={() => void hold.giveBack()}>
+      <button type="button" className="cw-pill cw-pill-light" disabled={hold.busy || away} onClick={() => void hold.giveBack()}>
         Give back
       </button>
     );
   } else if (handoff) {
     action = (
-      <button type="button" className="cw-pill cw-pill-warn" disabled={hold.busy} onClick={() => setConfirming(true)}>
+      <button type="button" className="cw-pill cw-pill-warn" disabled={hold.busy || away} onClick={() => setConfirming(true)}>
         Done
       </button>
     );
   } else {
     action = (
-      <button type="button" className="cw-pill cw-pill-accent" disabled={hold.busy || !running} onClick={() => void hold.take()}>
+      <button type="button" className="cw-pill cw-pill-accent" disabled={hold.busy || !running || away} onClick={() => void hold.take()}>
         Take over
       </button>
     );
@@ -172,11 +182,11 @@ function Pane({ desk, computer: c }: { desk: DesktopBridge; computer: DesktopCom
 
       <main className={`cw-body cw-${status}`} role="tabpanel" aria-label={c.label}>
         <Screen
-          frame={running ? frame : null}
+          frame={running && !away ? frame : null}
           alt={`The browser on ${c.label}, live`}
-          note={running ? note : 'This computer is stopped. It starts again when its chat uses it.'}
-          control={handoff ? hold.send : undefined}
-          onTakeOver={running && !handoff ? () => void hold.take() : undefined}
+          note={away ? 'Husk is not answering.' : running ? note : 'This computer is stopped. It starts again when its chat uses it.'}
+          control={handoff && !away ? hold.send : undefined}
+          onTakeOver={running && !handoff && !away ? () => void hold.take() : undefined}
           taking={hold.busy}
           className="cw-screen"
         />

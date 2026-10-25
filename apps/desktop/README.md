@@ -29,6 +29,11 @@ that tells you when a chat is waiting for you.
 - **Says what you hold.** While you hold a computer, the tray says so ("you hold 1"), with
   **Give back** for each. Closing the window or quitting while you hold one asks first,
   keeping the hold unless you choose to give it back; its chat stays paused until you do.
+- **Says when Husk stops answering.** The tray says "Husk is not answering · trying again",
+  and the Computers window says so over a cleared screen, offering nothing that needs Husk.
+  The app starts Husk again, and after a start that fails waits two seconds before the
+  next, twice as long each time after that, up to a minute. Everything comes back when
+  Husk does.
 - **Minimizes to the notch.** The minimized window becomes its computers' logos in a black
   capsule hanging from the top of the screen: around the notch on a Mac that has one,
   centred on Windows and Linux. Click a logo to open that tab; hover to see what each

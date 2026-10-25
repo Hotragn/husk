@@ -8,7 +8,7 @@ import type { Frame } from './Screen';
  * or what to say instead of one. The socket is closed whenever the page is
  * hidden, since a screen nobody is looking at is a frame stream for nothing.
  * `fps` below the server's 4 is for a small screen among many; `enabled: false`
- * opens nothing at all.
+ * opens nothing at all, and drops the last frame: it is not the screen any more.
  */
 export function useScreenFeed(id: string, { fps, enabled = true }: { fps?: number; enabled?: boolean } = {}) {
   const { api } = useConnection();
@@ -23,11 +23,15 @@ export function useScreenFeed(id: string, { fps, enabled = true }: { fps?: numbe
   }, []);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      setFrame(null);
+      return;
+    }
     if (!visible) {
       setNote('Paused while this tab is hidden.');
       return;
     }
+    setNote('Connecting…');
     const ws = new WebSocket(api.socketUrl(`/v1/computers/${encodeURIComponent(id)}/screen${fps ? `?fps=${fps}` : ''}`));
     ws.onmessage = (ev) => {
       let msg: ScreenMessage;

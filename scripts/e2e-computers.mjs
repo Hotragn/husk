@@ -1293,6 +1293,8 @@ try {
   // CI sets E2E_DESKTOP=1, installs apps/desktop and runs it under xvfb.
   if (process.env.E2E_DESKTOP === '1') await walkDesktop(id);
   else console.log('skip the desktop app (set E2E_DESKTOP=1 with apps/desktop installed and xvfb-run)');
+  // The desktop app's walk ends by killing the shared Husk and starting it again: talk to the new one.
+  rec = readDaemon() ?? rec;
 
   // 10. The chat setup connected goes on when the shared Husk dies under it. Last:
   // what came before ran on the first shared Husk.
