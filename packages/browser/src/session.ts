@@ -3,7 +3,7 @@ import type { Computer, NetworkPolicy } from '@husk-ai/core';
 import { CdpConnection, ComputerDriverTransport, createTarget, forNoCall } from './cdp.js';
 import type { CdpTransport, ScreencastEvent, ScreenFrame } from './cdp.js';
 import { Page, compactAxTree } from './page.js';
-import type { ActionOutcome, AxNodeLike, PageAction, ScriptOutcome } from './page.js';
+import type { ActionOutcome, AxNodeLike, GotoResult, PageAction, ScriptOutcome } from './page.js';
 import { CACHE_ROOT, provisionChromium } from './provision.js';
 import type { ProvisionResult } from './provision.js';
 
@@ -188,7 +188,7 @@ export class BrowserSession {
    * What a page does by itself -- a link, a redirect, a pop-up -- is not seen
    * here; that needs enforcement below the tool layer (#187, J3-e).
    */
-  async goto(url: string, opts: { timeoutMs?: number } = {}): Promise<{ url: string; loaded: boolean }> {
+  async goto(url: string, opts: { timeoutMs?: number } = {}): Promise<GotoResult> {
     // Checked before the browser starts: a refused URL must not cost a launch.
     const checked = this.allowed(url);
     const page = await this.activePage();

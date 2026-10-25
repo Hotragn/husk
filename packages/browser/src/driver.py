@@ -316,6 +316,14 @@ class Conn(object):
         # targetId -> sessionId. Only reused in serve mode, where the socket lives on.
         self.sessions = {}
         self.casts = casts
+        # What pages do besides answer: dialogs answered during the current
+        # action, downloads by guid, and tabs opened since discovery began.
+        self.prepared = False
+        self.discovering = False
+        self.dialog_answer = None
+        self.dialogs = []
+        self.downloads = {}
+        self.popups = []
 
     def _pump(self, deadline):
         # A screencast frame waits for its ack, and Chromium sends no other until
@@ -369,6 +377,28 @@ class Conn(object):
     def _note(self, msg, session_id):
         if self.casts and self.casts.take(self, msg):
             return
+        method = msg.get('method')
+        params = msg.get('params') or {}
+        if method == 'Page.javascriptDialogOpening':
+            self.answer_dialog(msg.get('sessionId'), params)
+            return
+        if method == 'Browser.downloadWillBegin':
+            self.downloads[params.get('guid')] = {'name': params.get('suggestedFilename') or '', 'state': 'inProgress'}
+        elif method == 'Browser.downloadProgress':
+            known = self.downloads.get(params.get('guid'))
+            if known is not None:
+                known['state'] = params.get('state') or known['state']
+                if params.get('totalBytes'):
+                    known['bytes'] = params['totalBytes']
+        elif method == 'Target.targetCreated' and self.discovering:
+            info = params.get('targetInfo') or {}
+            if info.get('type') == 'page':
+                self.popups.append({'targetId': info.get('targetId') or '', 'url': info.get('url') or ''})
+        elif method == 'Target.targetInfoChanged':
+            info = params.get('targetInfo') or {}
+            for popup in self.popups:
+                if popup['targetId'] == info.get('targetId') and info.get('url'):
+                    popup['url'] = info['url']
         # A target that detaches takes the page with it; without this, a closed
         # tab means the caller waits out the whole budget for nothing.
         if msg.get('method') == 'Target.detachedFromTarget':
@@ -377,6 +407,18 @@ class Conn(object):
             if gone and gone == session_id:
                 raise DriverError(BAD_TARGET, 'the page was closed while the command was in flight')
         self.events.append(msg)
+
+    def answer_dialog(self, session_id, params):
+        """
+        A dialog blocks its page, and every command on it, until it is answered,
+        so it is answered at once: an alert or a leave-this-page accepted, a
+        confirm or a prompt dismissed unless the action said to accept it. The
+        action's result says which, so nothing about it is silent.
+        """
+        kind = params.get('type') or 'alert'
+        accept = kind in ('alert', 'beforeunload') or self.dialog_answer == 'accept'
+        self.send_only('Page.handleJavaScriptDialog', {'accept': accept}, session_id)
+        self.dialogs.append({'type': kind, 'message': (params.get('message') or '')[:300], 'answer': 'accepted' if accept else 'dismissed'})
 
     def forget(self, session_id):
         for target, sid in list(self.sessions.items()):
@@ -566,6 +608,73 @@ def resolve(conn, session_id, step, deadline, unique=False):
     return elements[0]['backendDOMNodeId']
 
 
+def prepare(conn, deadline, downloads):
+    """
+    Once per connection: hear about the tabs pages open, and, when the host names
+    a folder for downloads (in a computer, /work/downloads), keep them there and
+    follow their progress. The host names it because only the host knows where
+    the computer keeps things: the driver itself runs from a tmpfs.
+    """
+    if conn.prepared:
+        return
+    conn.prepared = True
+    try:
+        conn.call('Target.setDiscoverTargets', {'discover': True}, None, deadline)
+        conn.discovering = True
+        if downloads:
+            if not os.path.isdir(downloads):
+                os.makedirs(downloads)
+            conn.call('Browser.setDownloadBehavior', {'behavior': 'allow', 'downloadPath': downloads, 'eventsEnabled': True}, None, deadline)
+    except (DriverError, OSError) as exc:
+        if isinstance(exc, DriverError) and exc.kind != PROTOCOL:
+            raise
+
+
+def listen_for(conn, session_id, events, seconds, deadline):
+    """The first of `events` to arrive within `seconds`, or None; every event on the way is noted."""
+    end = min(deadline, _now() + seconds)
+    while True:
+        for i, buffered in enumerate(conn.events):
+            if buffered.get('method') in events and buffered.get('sessionId') in (None, session_id):
+                del conn.events[i]
+                return buffered.get('method')
+        try:
+            msg = conn._pump(end)
+        except DriverError as exc:
+            if exc.kind == TIMEOUT and exc.details.get('boundary', True):
+                return None
+            raise
+        if 'method' in msg:
+            conn._note(msg, session_id)
+
+
+def finish_downloads(conn, session_id, started, deadline, seconds=30.0):
+    """A download an action started, followed to its end (at most 30 s), so its file is there to use."""
+    end = min(deadline, _now() + seconds)
+    while _now() < end and any(d['state'] == 'inProgress' for g, d in conn.downloads.items() if g not in started):
+        listen_for(conn, session_id, ('Browser.downloadProgress',), min(1.0, end - _now()), deadline)
+
+
+def settle_popups(conn, session_id, popped, deadline, seconds=2.0):
+    """A tab an action opened starts out blank and gets its address once its page commits: wait for that, at most 2 s."""
+    end = min(deadline, _now() + seconds)
+    while _now() < end and any(p['url'] in ('', 'about:blank') for p in conn.popups[popped:]):
+        listen_for(conn, session_id, ('Target.targetInfoChanged',), end - _now(), deadline)
+
+
+def happened(conn, started, popped):
+    """What a page did during an action besides its own result: dialogs it showed, files it downloaded, tabs it opened."""
+    out = {}
+    if conn.dialogs:
+        out['dialogs'] = list(conn.dialogs)
+    new = [d for g, d in conn.downloads.items() if g not in started]
+    if new:
+        out['downloads'] = [dict(d) for d in new]
+    if len(conn.popups) > popped:
+        out['popups'] = conn.popups[popped:]
+    return out
+
+
 def current_document(conn, session_id, deadline):
     """The page's document now: its main frame's loader id, new with every page it loads."""
     try:
@@ -715,11 +824,19 @@ def covering(conn, session_id, backend, target, x, y, deadline):
 
 def act_goto(conn, sid, step, deadline):
     url = step.get('url')
+    started = set(conn.downloads)
     nav = conn.call('Page.navigate', {'url': url}, sid, deadline)
     if nav.get('errorText'):
-        raise DriverError(ACTION, 'could not load %s: %s' % (url, nav['errorText']))
-    loaded = maybe_event(conn, 'Page.loadEventFired', sid, float(step.get('loadTimeoutMs', 30000)) / 1000.0, deadline)
-    return {'url': evaluate(conn, sid, 'location.href', deadline), 'loaded': loaded}
+        # A URL that is a file to download aborts the navigation and starts the
+        # download: that is the goto doing what it was asked, not failing.
+        listen_for(conn, sid, ('Browser.downloadWillBegin',), 1.0, deadline)
+        if not any(g not in started for g in conn.downloads):
+            raise DriverError(ACTION, 'could not load %s: %s' % (url, nav['errorText']))
+        finish_downloads(conn, sid, started, deadline)
+        return {'url': evaluate(conn, sid, 'location.href', deadline), 'loaded': False}
+    fired = listen_for(conn, sid, ('Page.loadEventFired', 'Browser.downloadWillBegin'), float(step.get('loadTimeoutMs', 30000)) / 1000.0, deadline)
+    finish_downloads(conn, sid, started, deadline)
+    return {'url': evaluate(conn, sid, 'location.href', deadline), 'loaded': fired == 'Page.loadEventFired'}
 
 
 def act_click(conn, sid, step, deadline):
@@ -747,13 +864,16 @@ def act_click(conn, sid, step, deadline):
         over = covering(conn, sid, backend, target, x, y, deadline)
         if over:
             raise DriverError(ACTION, 'e%d is covered: a click on it would land on %s instead; close or move that first, or pass force to click anyway' % (backend, over))
+    started = set(conn.downloads)
     base = {'x': x, 'y': y, 'button': 'left', 'clickCount': 1, 'buttons': 1}
     conn.call('Input.dispatchMouseEvent', dict(base, type='mousePressed'), sid, deadline)
     conn.call('Input.dispatchMouseEvent', dict(base, type='mouseReleased', buttons=0), sid, deadline)
-    # Most clicks navigate nothing, so wait for a load only once one has started.
+    # Most clicks navigate nothing, so wait for a load only once one has started;
+    # a download starts as a navigation and never loads, so it ends the wait too.
     navigated = maybe_event(conn, 'Page.frameStartedLoading', sid, 0.25, deadline)
     if navigated:
-        maybe_event(conn, 'Page.loadEventFired', sid, float(step.get('loadTimeoutMs', 5000)) / 1000.0, deadline)
+        listen_for(conn, sid, ('Page.loadEventFired', 'Browser.downloadWillBegin'), float(step.get('loadTimeoutMs', 5000)) / 1000.0, deadline)
+    finish_downloads(conn, sid, started, deadline)
     return {'ref': 'e%d' % backend, 'navigated': navigated, 'checked': not force}
 
 
@@ -905,8 +1025,8 @@ class Page(object):
     def goto(self, url, timeout=30):
         return _call("goto", url=url, timeout=timeout)
 
-    def click(self, ref=None, role=None, name=None, force=False):
-        return _call("click", ref=ref, role=role, name=name, force=force or None)
+    def click(self, ref=None, role=None, name=None, force=False, dialog=None):
+        return _call("click", ref=ref, role=role, name=name, force=force or None, dialog=dialog)
 
     def fill(self, text, ref=None, role=None, name=None, submit=False):
         return _call("fill", text=text, ref=ref, role=role, name=name, submit=submit or None)
@@ -992,6 +1112,7 @@ def script_call(conn, sid, op, args, deadline):
         url = BRIDGE.host_call(conn, 'checkUrl', {'url': str(args.get('url', ''))}, deadline)
         return act_goto(conn, sid, {'url': url, 'loadTimeoutMs': timeout * 1000}, deadline)
     if op == 'click':
+        conn.dialog_answer = args.get('dialog')
         return act_click(conn, sid, args, deadline)
     if op == 'fill':
         return act_fill(conn, sid, args, deadline)
@@ -1243,7 +1364,8 @@ ACTIONS = {
 }
 
 
-def execute(conn, session_id, steps, deadline):
+def execute(conn, session_id, steps, deadline, downloads=None):
+    prepare(conn, deadline, downloads)
     results = []
     halted = False
     for step in steps:
@@ -1312,15 +1434,26 @@ def execute(conn, session_id, steps, deadline):
             # Events from before this action are not this action's: a load the
             # previous goto saw must not read as this click navigating.
             conn.events = []
+            conn.dialogs = []
+            conn.dialog_answer = step.get('dialog')
+            started = set(conn.downloads)
+            popped = len(conn.popups)
             try:
-                results.append(fn(conn, session_id, step, step_deadline))
+                result = fn(conn, session_id, step, step_deadline)
+                settle_popups(conn, session_id, popped, step_deadline)
+                result.update(happened(conn, started, popped))
+                results.append(result)
             except DriverError as exc:
                 # The page said no, or the element is not there: the run stops
                 # here and says so. A dead browser still fails the whole request.
                 if exc.kind not in (PROTOCOL, ACTION):
                     raise
-                results.append({'error': exc.message})
+                failed = {'error': exc.message}
+                failed.update(happened(conn, started, popped))
+                results.append(failed)
                 halted = True
+            finally:
+                conn.dialog_answer = None
         else:
             raise DriverError(INTERNAL, 'unknown step op %r' % (op,))
     return results
@@ -1338,7 +1471,7 @@ def run(req):
         # of statelessness, and it is one round trip on a loopback socket.
         if target_id:
             session_id = session_for(conn, target_id, deadline)
-        out = {'ok': True, 'results': execute(conn, session_id, req.get('steps') or [], deadline), 'ws': ws_url}
+        out = {'ok': True, 'results': execute(conn, session_id, req.get('steps') or [], deadline, req.get('downloads')), 'ws': ws_url}
         if browser:
             out['browser'] = browser
         if session_id:
@@ -1560,7 +1693,7 @@ def serve(port):
             fps = min(30, max(1, int(req.get('fps', 4))))
             casts.start(conn, target_id, session_id, fps, int(req.get('quality', 60)), deadline)
             return {'ok': True}
-        return {'ok': True, 'results': execute(conn, session_id, req.get('steps') or [], deadline)}
+        return {'ok': True, 'results': execute(conn, session_id, req.get('steps') or [], deadline, req.get('downloads'))}
 
     def handle(raw):
         try:

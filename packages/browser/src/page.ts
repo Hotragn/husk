@@ -1,5 +1,6 @@
 import { HuskError } from '@husk-ai/core';
 import { waitResultOf } from './cdp.js';
+import { DOWNLOADS_DIR } from './provision.js';
 import type { CdpConnection, CdpParams, DriverStep, SendStep } from './cdp.js';
 
 /**
@@ -216,7 +217,18 @@ export function backendNodeIdOf(ref: string): number | null {
   return m?.[1] ? Number(m[1]) : null;
 }
 
-export interface GotoResult {
+/**
+ * What a page did during an action besides its own result: the dialogs it
+ * showed and how Husk answered them, the files it downloaded (into
+ * DOWNLOADS_DIR), and the tabs it opened.
+ */
+export interface Happened {
+  dialogs?: Array<{ type: string; message: string; answer: string }>;
+  downloads?: Array<{ name: string; state: string; bytes?: number }>;
+  popups?: Array<{ targetId: string; url: string }>;
+}
+
+export interface GotoResult extends Happened {
   url: string;
   /** False when the load timed out; the page is still usable, just not finished. */
   loaded: boolean;
@@ -346,39 +358,16 @@ export class Page {
    * the full load timeout before reporting the refusal.
    */
   async goto(url: string, opts: { timeoutMs?: number } = {}): Promise<GotoResult> {
-    const timeoutMs = opts.timeoutMs ?? 30_000;
-    const [nav, load, href] = await this.run(
-      [
-        { op: 'send', method: 'Page.navigate', params: { url }, session: true },
-        {
-          op: 'wait',
-          event: 'Page.loadEventFired',
-          session: true,
-          timeoutMs,
-          optional: true,
-          skipIf: { step: 0, key: 'errorText' },
-        },
-        {
-          op: 'send',
-          method: 'Runtime.evaluate',
-          params: evalParams('location.href'),
-          session: true,
-          skipIf: { step: 0, key: 'errorText' },
-        },
-      ],
-      timeoutMs + 30_000,
-    );
-
-    const errorText = ((nav ?? {}) as CdpParams)['errorText'];
-    if (typeof errorText === 'string' && errorText) {
-      throw new HuskError('E_EXEC_FAILED', `could not load ${url}: ${errorText}`, {
+    // The driver's goto: a dialog the page shows on load is answered and said,
+    // and a URL that is a file to download is a download, not a failure.
+    const [out] = await this.actions([{ do: 'goto', url, ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}) }]);
+    if (!out?.ok) {
+      throw new HuskError('E_EXEC_FAILED', out?.error ?? `could not load ${url}`, {
         hint: 'the browser reached the network stack and was refused -- check the host and the scheme',
-        details: { url, errorText },
+        details: { url },
       });
     }
-
-    const settled = valueOf((href ?? {}) as CdpParams);
-    return { url: typeof settled === 'string' ? settled : url, loaded: waitResultOf(load).fired };
+    return { url: out.url ?? url, loaded: out.loaded === true, ...happenedOf(out) };
   }
 
   /**
@@ -397,10 +386,10 @@ export class Page {
    * interaction feel broken. Watch for navigation *starting* in a short window
    * instead, and only then wait for it to finish.
    */
-  /** `click`, named for what a caller cares about: did the page move. */
-  async clickAndSettle(ref: string, loadTimeoutMs = 5000, opts: { force?: boolean } = {}): Promise<{ navigated: boolean }> {
-    const { navigationStarted } = await this.click(ref, loadTimeoutMs, opts);
-    return { navigated: navigationStarted };
+  /** `click`, named for what a caller cares about: did the page move, and what else it did. */
+  async clickAndSettle(ref: string, loadTimeoutMs = 5000, opts: ClickOptions = {}): Promise<{ navigated: boolean } & Happened> {
+    const { navigationStarted, ...rest } = await this.click(ref, loadTimeoutMs, opts);
+    return { navigated: navigationStarted, ...rest };
   }
 
   async waitForLoad(timeoutMs = 30_000): Promise<boolean> {
@@ -495,6 +484,7 @@ export class Page {
       resultTruncated: r['resultTruncated'] === true,
       ms: typeof r['ms'] === 'number' ? r['ms'] : 0,
       ...(typeof r['error'] === 'string' ? { error: r['error'] } : {}),
+      ...happenedOf(r as Happened),
     };
   }
 
@@ -669,15 +659,17 @@ export class Page {
    * centre, as clicks always did. The navigation watch is in the same driver
    * round as the click, so a fast local navigation is not missed.
    */
-  async click(ref: string, loadTimeoutMs = 5000, opts: { force?: boolean } = {}): Promise<{ navigationStarted: boolean }> {
-    const [out] = await this.actions([{ do: 'click', ref, loadTimeoutMs, ...(opts.force ? { force: true } : {}) }]);
+  async click(ref: string, loadTimeoutMs = 5000, opts: ClickOptions = {}): Promise<{ navigationStarted: boolean } & Happened> {
+    const [out] = await this.actions([
+      { do: 'click', ref, loadTimeoutMs, ...(opts.force ? { force: true } : {}), ...(opts.dialog ? { dialog: opts.dialog } : {}) },
+    ]);
     if (!out?.ok) {
       throw new HuskError('E_TOOL_ERROR', out?.error ?? `could not click ${ref}`, {
         hint: 'browser_snapshot shows the page as it is now',
         details: { ref },
       });
     }
-    return { navigationStarted: out.navigated === true };
+    return { navigationStarted: out.navigated === true, ...happenedOf(out) };
   }
 
   /**
@@ -687,14 +679,24 @@ export class Page {
    * on the field itself, never on `document.activeElement`, which inside a
    * frame is the frame.
    */
-  async type(ref: string, text: string, opts: { clear?: boolean } = {}): Promise<void> {
-    const [out] = await this.actions([{ do: 'fill', ref, text, ...(opts.clear === false ? { clear: false } : {}) }]);
+  async type(ref: string, text: string, opts: { clear?: boolean; submit?: boolean; dialog?: 'accept' | 'dismiss' } = {}): Promise<Happened> {
+    const [out] = await this.actions([
+      {
+        do: 'fill',
+        ref,
+        text,
+        ...(opts.clear === false ? { clear: false } : {}),
+        ...(opts.submit ? { submit: true } : {}),
+        ...(opts.dialog ? { dialog: opts.dialog } : {}),
+      },
+    ]);
     if (!out?.ok) {
       throw new HuskError('E_TOOL_ERROR', out?.error ?? `could not type into ${ref}`, {
         hint: 'browser_snapshot shows the page as it is now',
         details: { ref },
       });
     }
+    return happenedOf(out);
   }
 
   async press(key: string): Promise<void> {
@@ -895,6 +897,46 @@ export function waitExpression(what: { text?: string; url?: string; selector?: s
    })()`;
 }
 
+/** How a click goes: `force` skips its checks; `dialog` answers a confirm or prompt it opens (dismissed unless "accept"). */
+export interface ClickOptions {
+  force?: boolean;
+  dialog?: 'accept' | 'dismiss';
+}
+
+/** The dialogs, downloads and tabs an outcome carries, and nothing else. */
+export function happenedOf(o: Happened): Happened {
+  return {
+    ...(o.dialogs?.length ? { dialogs: o.dialogs } : {}),
+    ...(o.downloads?.length ? { downloads: o.downloads } : {}),
+    ...(o.popups?.length ? { popups: o.popups } : {}),
+  };
+}
+
+/**
+ * What else an action did, in words a model reads: a dialog Husk answered
+ * (and how to answer it the other way), a file it downloaded, a tab it opened.
+ */
+export function describeHappened(h: Happened): string[] {
+  const lines: string[] = [];
+  for (const d of h.dialogs ?? []) {
+    const article = /^[aeiou]/.test(d.type) ? 'an' : 'a';
+    lines.push(
+      `The page showed ${article} ${d.type} dialog: ${JSON.stringify(d.message)}. Husk ${d.answer} it.` +
+        (d.answer === 'dismissed' ? ' To accept it instead, do this again with dialog: "accept".' : ''),
+    );
+  }
+  for (const f of h.downloads ?? []) {
+    const where = `${DOWNLOADS_DIR}/${f.name}`;
+    lines.push(
+      f.state === 'completed'
+        ? `It downloaded ${f.name}${f.bytes ? ` (${f.bytes} bytes)` : ''} to ${where}.`
+        : `It started downloading ${f.name} to ${where}; the download is ${f.state}.`,
+    );
+  }
+  for (const p of h.popups ?? []) lines.push(`It opened a new tab: ${p.url || 'about:blank'} (browser_tabs lists it, to switch to it).`);
+  return lines;
+}
+
 /** Which element an action means: a ref from a snapshot, or a role and its accessible name. */
 export interface ElementTarget {
   ref?: string;
@@ -905,15 +947,15 @@ export interface ElementTarget {
 /** One step of `browser_run`. Data only: the driver does it, nothing evaluates it. */
 export type PageAction =
   | { do: 'goto'; url: string; timeoutMs?: number }
-  | ({ do: 'click'; force?: boolean; loadTimeoutMs?: number } & ElementTarget)
-  | ({ do: 'fill'; text: string; submit?: boolean; clear?: boolean } & ElementTarget)
+  | ({ do: 'click'; force?: boolean; loadTimeoutMs?: number; dialog?: 'accept' | 'dismiss' } & ElementTarget)
+  | ({ do: 'fill'; text: string; submit?: boolean; clear?: boolean; dialog?: 'accept' | 'dismiss' } & ElementTarget)
   | ({ do: 'select'; value: string } & ElementTarget)
   | { do: 'wait'; text?: string; url?: string; selector?: string; gone?: boolean; timeoutMs?: number }
   | { do: 'snapshot'; limit?: number }
   | { do: 'screenshot'; fullPage?: boolean };
 
 /** What a script printed and left in `result`, or the traceback it died with. */
-export interface ScriptOutcome {
+export interface ScriptOutcome extends Happened {
   output: string;
   /** Output past 64 KB was dropped. */
   truncated: boolean;
@@ -925,7 +967,7 @@ export interface ScriptOutcome {
 }
 
 /** What one action did. `skipped` follows an earlier failure; `error` is that failure. */
-export interface ActionOutcome {
+export interface ActionOutcome extends Happened {
   do: PageAction['do'];
   ok: boolean;
   skipped?: boolean;
@@ -960,6 +1002,7 @@ function actionStep(a: PageAction): DriverStep {
         ...target(a),
         ...(a.force ? { force: true } : {}),
         ...(a.loadTimeoutMs !== undefined ? { loadTimeoutMs: a.loadTimeoutMs } : {}),
+        ...(a.dialog ? { dialog: a.dialog } : {}),
         timeoutMs: 30_000,
       };
     case 'fill':
@@ -970,6 +1013,7 @@ function actionStep(a: PageAction): DriverStep {
         text: a.text,
         ...(a.submit ? { submit: true } : {}),
         ...(a.clear === false ? { clear: false } : {}),
+        ...(a.dialog ? { dialog: a.dialog } : {}),
         timeoutMs: 30_000,
       };
     case 'select':
@@ -1014,6 +1058,9 @@ function outcomeOf(a: PageAction, raw: unknown): ActionOutcome {
   if (typeof r['checked'] === 'boolean') out.checked = r['checked'];
   if (typeof r['selected'] === 'string') out.selected = r['selected'];
   if (typeof r['document'] === 'string') out.document = r['document'];
+  if (Array.isArray(r['dialogs'])) out.dialogs = r['dialogs'] as NonNullable<Happened['dialogs']>;
+  if (Array.isArray(r['downloads'])) out.downloads = r['downloads'] as NonNullable<Happened['downloads']>;
+  if (Array.isArray(r['popups'])) out.popups = r['popups'] as NonNullable<Happened['popups']>;
   if (typeof r['waitedMs'] === 'number') out.waitedMs = r['waitedMs'];
   if (typeof r['data'] === 'string') out.data = r['data'];
   if (a.do === 'snapshot') {

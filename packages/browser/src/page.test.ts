@@ -1,8 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { backendNodeIdOf, flattenAxTree, keyDescriptor } from './page.js';
+import { backendNodeIdOf, describeHappened, flattenAxTree, keyDescriptor } from './page.js';
 import type { AxNodeLike } from './page.js';
 
 const node = (over: AxNodeLike): AxNodeLike => ({ nodeId: '1', ...over });
+
+describe('describeHappened', () => {
+  it('says what else an action did, and how to answer a dismissed dialog the other way', () => {
+    expect(
+      describeHappened({
+        dialogs: [
+          { type: 'confirm', message: 'Delete?', answer: 'dismissed' },
+          { type: 'alert', message: 'Saved', answer: 'accepted' },
+        ],
+        downloads: [{ name: 'report.pdf', state: 'completed', bytes: 1234 }],
+        popups: [{ targetId: 'T2', url: 'https://example.com/' }],
+      }),
+    ).toEqual([
+      'The page showed a confirm dialog: "Delete?". Husk dismissed it. To accept it instead, do this again with dialog: "accept".',
+      'The page showed an alert dialog: "Saved". Husk accepted it.',
+      'It downloaded report.pdf (1234 bytes) to /work/downloads/report.pdf.',
+      'It opened a new tab: https://example.com/ (browser_tabs lists it, to switch to it).',
+    ]);
+    expect(describeHappened({})).toEqual([]);
+  });
+});
 
 describe('flattenAxTree', () => {
   it('keeps named and interactive nodes and drops the scaffolding', () => {

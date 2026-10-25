@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { HuskError } from '@husk-ai/core';
 import type { Computer, ComputerProcess } from '@husk-ai/core';
 import { DRIVER_PATH, DRIVER_SOURCE } from './driver.js';
+import { DOWNLOADS_DIR } from './provision.js';
 
 /**
  * The Chrome DevTools Protocol, spoken from inside the computer.
@@ -355,7 +356,7 @@ export class ComputerDriverTransport implements CdpTransport {
     stopIfAborted(signal);
     this.inFlight++;
     try {
-      const served = await this.serve({ steps: req.steps, ...(req.targetId !== undefined ? { targetId: req.targetId } : {}) }, timeoutMs, signal);
+      const served = await this.serve({ steps: req.steps, downloads: DOWNLOADS_DIR, ...(req.targetId !== undefined ? { targetId: req.targetId } : {}) }, timeoutMs, signal);
       return served ? resultOf(served) : await this.runOneShot(req, signal);
     } catch (err) {
       // Stopped part-way: say that, not what the stop looked like from here.
@@ -512,6 +513,7 @@ export class ComputerDriverTransport implements CdpTransport {
       port: this.port,
       ...(this.ws ? { ws: this.ws } : {}),
       ...req,
+      downloads: DOWNLOADS_DIR,
       timeoutMs,
     });
 
