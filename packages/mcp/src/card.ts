@@ -33,6 +33,8 @@ export const CARD_HTML = `<!doctype html>
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #2e9e5b; flex: none; }
   .card[data-state="waiting"] { border-color: #d48806; }
   .card[data-state="waiting"] .dot { background: #d48806; }
+  .card[data-state="held"] { border-color: #13a8a8; }
+  .card[data-state="held"] .dot { background: #13a8a8; }
   .card[data-state="stopped"] .dot, .card[data-state="unknown"] .dot { background: #8a8a8a; }
   .text { flex: 1; min-width: 0; }
   .title { font-weight: 600; }
@@ -71,10 +73,12 @@ export const CARD_HTML = `<!doctype html>
     if (!state || typeof state.computerId !== 'string') return;
     computer = state.computerId;
     const waiting = state.waiting && typeof state.waiting.reason === 'string';
-    const kind = waiting ? 'waiting' : state.state === 'running' ? 'running' : state.state === 'stopped' ? 'stopped' : 'unknown';
+    // The person took it, in the console or a link: the chat is paused until they give it back.
+    const held = !waiting && state.held && typeof state.held.handoffId === 'string';
+    const kind = waiting ? 'waiting' : held ? 'held' : state.state === 'running' ? 'running' : state.state === 'stopped' ? 'stopped' : 'unknown';
     card.dataset.state = kind;
-    title.textContent = waiting ? 'Waiting for you' : kind === 'running' ? 'Computer running' : kind === 'stopped' ? 'Computer stopped' : 'Husk computer';
-    sub.textContent = waiting ? state.waiting.reason : (typeof state.label === 'string' ? state.label : '');
+    title.textContent = waiting ? 'Waiting for you' : held ? 'You have this computer' : kind === 'running' ? 'Computer running' : kind === 'stopped' ? 'Computer stopped' : 'Husk computer';
+    sub.textContent = waiting ? state.waiting.reason : held ? 'The chat is paused until you give it back.' : (typeof state.label === 'string' ? state.label : '');
     button.textContent = waiting ? 'Take over' : 'Open';
     button.hidden = false;
     // Only when it changes, as the spec's own view library does.
@@ -155,7 +159,7 @@ const computerArg = {
 export const CARD_APP_TOOLS: ToolDef[] = [
   {
     name: 'computer_card_state',
-    description: "The card's view of one computer: running, stopped, or waiting for the user.",
+    description: "The card's view of one computer: running, stopped, waiting for the user, or held by them.",
     inputSchema: computerArg,
     _meta: { ui: { resourceUri: CARD_URI, visibility: ['app'] } },
   },
@@ -184,4 +188,6 @@ export interface CardState {
   label?: string;
   state: string;
   waiting?: { handoffId: string; reason: string };
+  /** The person took the computer, from the console or a link: the chat is paused until they give it back. */
+  held?: { handoffId: string };
 }

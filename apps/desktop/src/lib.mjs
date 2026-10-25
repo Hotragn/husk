@@ -82,15 +82,23 @@ export function external(url) {
   }
 }
 
-/** The tray's one line, from GET /v1/overview. */
+/** The tray's one line, what waits for the person, and what they hold, from GET /v1/overview. */
 export function trayStatus(overview) {
-  if (!overview) return { label: 'Husk is starting', waiting: [] };
+  if (!overview) return { label: 'Husk is starting', waiting: [], held: [] };
   const running = overview.computers.filter((c) => c.state === 'running').length;
-  // A computer the person took themselves is not waiting on them.
-  const waiting = (overview.handoffs ?? []).filter((h) => h.runId !== 'person');
+  const handoffs = overview.handoffs ?? [];
+  // A computer the person took is not waiting on them: it is theirs, and its chat is paused until they give it back.
+  const waiting = handoffs.filter((h) => h.runId !== 'person');
+  const held = handoffs
+    .filter((h) => h.runId === 'person')
+    .map((h) => {
+      const c = overview.computers.find((x) => x.id === h.computerId);
+      return { handoffId: h.handoffId, label: c?.chatLabel ?? c?.name ?? h.computerId ?? h.handoffId };
+    });
   const parts = [`${running} computer${running === 1 ? '' : 's'} running`];
+  if (held.length) parts.push(`you hold ${held.length}`);
   if (waiting.length) parts.push(`${waiting.length} waiting for you`);
-  return { label: parts.join(' · '), waiting };
+  return { label: parts.join(' · '), waiting, held };
 }
 
 /** Handoffs that were not waiting last time: one notification each. */

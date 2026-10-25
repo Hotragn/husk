@@ -66,8 +66,8 @@ async function chat(shared: DaemonClient, connect?: () => Promise<DaemonClient |
   const [c, s] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.server.connect(s), client.connect(c)]);
   return async (name: string, args: Record<string, unknown> = {}) => {
-    const r = (await client.callTool({ name, arguments: args })) as { isError?: boolean; content: Array<{ text: string }> };
-    return { isError: r.isError === true, text: r.content.map((x) => x.text).join('\n') };
+    const r = (await client.callTool({ name, arguments: args })) as { isError?: boolean; content: Array<{ text: string }>; structuredContent?: unknown };
+    return { isError: r.isError === true, text: r.content.map((x) => x.text).join('\n'), structured: r.structuredContent };
   };
 }
 
@@ -96,6 +96,16 @@ describe('with the shared Husk', { timeout: 30_000 }, () => {
     await call('hand_off_done', { handoff: localId });
     expect(f.log).toContain('done hnd_remote');
     expect((await call('shell', { command: 'ls' })).isError).toBe(false);
+  });
+
+  it('shows on its card that the person took the computer in the console', async () => {
+    const f = fakeShared();
+    f.shared.holdOn = async () => ({ handoffId: 'hnd_console', runId: 'person', reason: 'You took over this computer' });
+    const call = await chat(f.shared);
+    await call('shell', { command: 'ls' });
+    const card = await call('computer_card_state', { computer: 'cmp_chat' });
+    expect(card.structured).toMatchObject({ computerId: 'cmp_chat', held: { handoffId: 'hnd_console' } });
+    expect(card.structured).not.toHaveProperty('waiting');
   });
 
   it('frees the chat when the person presses done in the console', async () => {

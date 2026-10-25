@@ -715,8 +715,15 @@ export class HuskMcpServer {
 
   private async cardState(computerId: string): Promise<CardState> {
     const described = (await this.describe(computerId)) ?? { computerId, state: 'unknown' };
-    const held = this.handoffs.list().find((h) => h.computerId === computerId);
-    return { ...described, ...(held ? { waiting: { handoffId: held.handoffId, reason: held.reason } } : {}) };
+    // In the shared Husk the person may have taken it from the console: that hold is the one to show.
+    const daemon = this.localComputers.has(computerId) ? undefined : await this.shared();
+    const remote = daemon?.holdOn ? await daemon.holdOn(computerId).catch(() => undefined) : undefined;
+    const hold = remote ?? this.handoffs.list().find((h) => h.computerId === computerId);
+    if (!hold) return described;
+    return {
+      ...described,
+      ...(hold.runId === PERSON_RUN ? { held: { handoffId: hold.handoffId } } : { waiting: { handoffId: hold.handoffId, reason: hold.reason } }),
+    };
   }
 
   /** A fresh link for one computer: its handoff if one is waiting, otherwise a look at it. */

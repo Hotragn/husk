@@ -91,10 +91,14 @@ test('the tray says what is running and what is waiting, and notifies once per h
   assert.equal(trayStatus(undefined).label, 'Husk is starting');
   assert.deepEqual(newlyWaiting([], overview.handoffs).map((h) => h.handoffId), ['h1']);
   assert.deepEqual(newlyWaiting(overview.handoffs, overview.handoffs), []);
-  // Taken by the person from the console: not waiting on them, so no notification.
-  const taken = { ...overview, handoffs: [...overview.handoffs, { handoffId: 'h2', runId: 'person', reason: 'You took over this computer' }] };
-  assert.equal(trayStatus(taken).label, '2 computers running · 1 waiting for you');
+  // Taken by the person from the console: not waiting on them, so no notification, but theirs to give back.
+  const taken = { ...overview, handoffs: [...overview.handoffs, { handoffId: 'h2', runId: 'person', reason: 'You took over this computer', computerId: 'cmp_x' }] };
+  assert.equal(trayStatus(taken).label, '2 computers running · you hold 1 · 1 waiting for you');
   assert.deepEqual(trayStatus(taken).waiting.map((h) => h.handoffId), ['h1']);
+  assert.deepEqual(trayStatus(taken).held, [{ handoffId: 'h2', label: 'cmp_x' }]);
+  const named = { ...taken, computers: [...taken.computers, { id: 'cmp_x', state: 'running', chatLabel: 'Cursor · chat started 09:44' }] };
+  assert.deepEqual(trayStatus(named).held, [{ handoffId: 'h2', label: 'Cursor · chat started 09:44' }]);
+  assert.deepEqual(trayStatus(undefined).held, []);
 });
 
 const workArea = { x: 0, y: 25, width: 1440, height: 875 };

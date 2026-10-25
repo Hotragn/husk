@@ -68,6 +68,16 @@ describe('the computer card view', () => {
     expect(m.$('.title').textContent).toBe('Waiting for you');
     expect(m.$('.sub').textContent).toBe('Sign in.');
     expect(m.$('button').textContent).toBe('Take over');
+
+    m.deliver({
+      jsonrpc: '2.0',
+      method: 'ui/notifications/tool-result',
+      params: { structuredContent: { computerId: 'cmp_1', state: 'running', held: { handoffId: 'hnd_2' } } },
+    });
+    expect(m.$('.card').getAttribute('data-state')).toBe('held');
+    expect(m.$('.title').textContent).toBe('You have this computer');
+    expect(m.$('.sub').textContent).toBe('The chat is paused until you give it back.');
+    expect(m.$('button').textContent).toBe('Open');
   });
 
   it('asks for a fresh link on click and has the host open it', async () => {

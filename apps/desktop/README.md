@@ -26,6 +26,9 @@ that tells you when a chat is waiting for you.
   running. At first run Husk asks once whether to also open it by itself, without taking
   focus, the moment a chat starts using a computer; the tray changes that later. Taking
   over while the chat's AI is mid-call says which call it waits for to stop.
+- **Says what you hold.** While you hold a computer, the tray says so ("you hold 1"), with
+  **Give back** for each. Closing the window or quitting while you hold one asks first,
+  keeping the hold unless you choose to give it back; its chat stays paused until you do.
 - **Minimizes to the notch.** The minimized window becomes its computers' logos in a black
   capsule hanging from the top of the screen: around the notch on a Mac that has one,
   centred on Windows and Linux. Click a logo to open that tab; hover to see what each
