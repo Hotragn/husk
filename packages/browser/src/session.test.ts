@@ -65,8 +65,13 @@ describe('a failed Chromium launch', () => {
     const computer = {
       id: info.id,
       info,
-      async exec(input: { cmd: string; timeoutSec?: number }): Promise<ExecResult> {
-        calls.push(input);
+      async exec(input: { cmd: string | string[]; timeoutSec?: number }): Promise<ExecResult> {
+        // The end of Chromium's log, where it says why it stopped.
+        if (Array.isArray(input.cmd)) {
+          if (input.cmd[0] === 'tail') return { exitCode: 0, stdout: 'missing libnss3.so', stderr: '', durationMs: 1, truncated: false, timedOut: false };
+          throw new Error(`unexpected command: ${input.cmd.join(' ')}`);
+        }
+        calls.push(input as { cmd: string; timeoutSec?: number });
         if (input.cmd.includes('command -v chromium')) {
           return { exitCode: 0, stdout: '/usr/bin/chromium\n', stderr: '', durationMs: 1, truncated: false, timedOut: false };
         }
@@ -83,9 +88,6 @@ describe('a failed Chromium launch', () => {
           return { exitCode: 0, stdout: '', stderr: '', durationMs: 1, truncated: false, timedOut: false };
         }
         throw new Error(`unexpected command: ${input.cmd}`);
-      },
-      async readTextFile(): Promise<string> {
-        return 'missing libnss3.so';
       },
     } as unknown as Computer;
 

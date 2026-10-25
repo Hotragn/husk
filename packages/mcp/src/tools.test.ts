@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { TOOLS, callTool } from './tools.js';
 import { BROWSER_TOOLS, MAX_WAIT_SEC, secondsArg } from './browser-tools.js';
 import type { Computer } from '@husk-ai/core';
-import { PROBE_COMPUTER_INFO } from '@husk-ai/core';
+import { PROBE_COMPUTER_INFO, fileTooLarge } from '@husk-ai/core';
 import { STOP_UNCONFIRMED } from '@husk-ai/runtime';
 
 /** Never reached: every assertion here stops at the dispatcher. */
@@ -221,5 +221,41 @@ describe('model timeouts', () => {
     expect(secondsArg(-5, 15)).toBe(15);
     expect(secondsArg('30', 15)).toBe(15);
     expect(secondsArg(20, 15)).toBe(20);
+  });
+});
+
+describe('edit_file on a file too large to read whole', () => {
+  it('refuses, and writes nothing, rather than edit part of it and lose the rest', async () => {
+    const writes: string[] = [];
+    const computer = {
+      info: { id: 'cmp_test', provider: 'docker', image: 'x', spec: {} },
+      async readFile(path: string) {
+        throw fileTooLarge(path, 32 * 1024 * 1024);
+      },
+      async readTextFile() {
+        return 'the start of it\n... [the file goes on] ...\n';
+      },
+      async writeFile(path: string) {
+        writes.push(path);
+      },
+    } as unknown as Computer;
+    const result = await callTool(computer, 'edit_file', { path: '/work/big.log', old_string: 'the start', new_string: 'changed' });
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as { text: string }).text).toContain('larger than');
+    expect(writes).toEqual([]);
+  });
+});
+
+describe('read_file with offset and limit', () => {
+  it('reaches lines far past the first 96 KB, and says where they sit in the file', async () => {
+    const big = Array.from({ length: 200_000 }, (_, i) => `line ${i + 1}`).join('\n');
+    const computer = {
+      info: { id: 'cmp_test', provider: 'docker', image: 'x', spec: {} },
+      async readFile() {
+        return new TextEncoder().encode(big);
+      },
+    } as unknown as Computer;
+    const result = await callTool(computer, 'read_file', { path: '/work/big.log', offset: 150_000, limit: 2 });
+    expect((result.content[0] as { text: string }).text).toBe('[lines 150000-150001 of 200000]\nline 150000\nline 150001');
   });
 });

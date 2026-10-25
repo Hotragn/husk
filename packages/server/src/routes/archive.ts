@@ -116,7 +116,7 @@ export async function archiveRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
-      const data = await computer.readFile(scratch);
+      const data = await computer.readFile(scratch, { maxBytes: MAX_ARCHIVE_BYTES });
       return reply
         .type('application/gzip')
         .header('content-disposition', `attachment; filename="${id}.tgz"`)
