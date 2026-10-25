@@ -92,6 +92,8 @@ export function stoppedText(handoffId?: string, printed?: string): string {
 
 interface RunningCall {
   tool: string;
+  /** When it started, for the console's "waiting for" and the desktop's open-on-start. */
+  since: string;
   stop: AbortController;
   ended: Promise<void>;
 }
@@ -115,7 +117,7 @@ export class ComputerControl {
   start(computerId: string, tool: string, signal?: AbortSignal): { signal: AbortSignal; takenOver(): boolean; done(): void } {
     const stop = new AbortController();
     let ended!: () => void;
-    const call: RunningCall = { tool, stop, ended: new Promise<void>((r) => (ended = r)) };
+    const call: RunningCall = { tool, since: new Date().toISOString(), stop, ended: new Promise<void>((r) => (ended = r)) };
     let calls = this.running.get(computerId);
     if (!calls) this.running.set(computerId, (calls = new Set()));
     calls.add(call);
@@ -134,6 +136,17 @@ export class ComputerControl {
   /** Whether the AI has a call running on this computer. */
   busy(computerId: string): boolean {
     return this.running.has(computerId);
+  }
+
+  /** The AI's call on each computer, the longest-running one: what a take-over waits for. */
+  inFlight(): Record<string, { tool: string; since: string }> {
+    const out: Record<string, { tool: string; since: string }> = {};
+    for (const [id, calls] of this.running) {
+      // A Set keeps insertion order: the first is the oldest.
+      const first = calls.values().next().value;
+      if (first) out[id] = { tool: first.tool, since: first.since };
+    }
+    return out;
   }
 
   /** A person took the computer: stop every AI call on it, and wait up to `waitMs` for them to end. The tools stopped. */

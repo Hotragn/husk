@@ -20,7 +20,7 @@ import { useScreenFeed } from '../components/useScreenFeed';
 import { SIDE_KEYS, useHold } from '../panels/ChatPanel';
 import { useTheme } from '../state/theme';
 import { AppGlyph } from './AppGlyph';
-import { ago, desktopBridge, doing, statusOf, tabName, useDesktopState } from './bridge';
+import { ago, desktopBridge, doing, statusOf, tabName, takingText, useDesktopState } from './bridge';
 import type { DesktopBridge, DesktopComputer, DesktopState } from './bridge';
 
 export function ComputersWindow() {
@@ -125,6 +125,8 @@ function Pane({ desk, computer: c }: { desk: DesktopBridge; computer: DesktopCom
   const { frame, note } = useScreenFeed(c.id, { enabled: running });
   const [confirming, setConfirming] = useState(false);
   const status = statusOf(c);
+  // While a take-over waits for the AI's call to stop, say which.
+  const line = hold.busy && !handoff && c.calling ? takingText(c.calling) : doing(c);
 
   let action: ReactNode;
   if (c.held) {
@@ -191,8 +193,8 @@ function Pane({ desk, computer: c }: { desk: DesktopBridge; computer: DesktopCom
 
       <footer className="cw-status">
         <span className={`cw-dot cw-dot-${status}`} aria-hidden="true" />
-        <span className="cw-doing" title={doing(c)}>
-          {doing(c)}
+        <span className="cw-doing" title={line}>
+          {line}
         </span>
         {c.last ? <span className="cw-ago">{ago(c.last.at)}</span> : null}
         {action}

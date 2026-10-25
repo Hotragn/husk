@@ -157,6 +157,7 @@ export function desktopComputers(overview, active, icons = {}) {
     .map((c) => {
       const handoff = (overview.handoffs ?? []).find((h) => h.computerId === c.id);
       const last = overview.activity?.[c.id];
+      const calling = overview.running?.[c.id];
       const platform = c.platform;
       return {
         id: c.id,
@@ -167,6 +168,7 @@ export function desktopComputers(overview, active, icons = {}) {
         held: handoff?.runId === 'person',
         ...(handoff && handoff.runId !== 'person' ? { waiting: handoff.reason } : {}),
         ...(last ? { last: { tool: last.tool, ...(last.summary ? { summary: last.summary } : {}), at: last.at } } : {}),
+        ...(calling ? { calling: calling.tool } : {}),
         live: PUSHED_SCREEN.has(c.provider),
         ...(platform && icons[platform] ? { icon: icons[platform] } : {}),
       };
@@ -174,17 +176,14 @@ export function desktopComputers(overview, active, icons = {}) {
 }
 
 /**
- * With "open by itself" on (off unless chosen): a running computer a chat
- * used since `since`, not shown yet this run. One the person closed stays closed.
+ * With "open by itself" on (asked once, at first run): a running computer a
+ * chat used since `since`, not shown yet this run, from when its call starts
+ * rather than when it ends. One the person closed stays closed.
  */
 export function toOpen(overview, since, seen) {
   if (!overview) return [];
-  return overview.computers
-    .filter((c) => {
-      const last = overview.activity?.[c.id];
-      return c.state === 'running' && !seen.has(c.id) && last !== undefined && Date.parse(last.at) > since;
-    })
-    .map((c) => c.id);
+  const used = (id) => Math.max(Date.parse(overview.running?.[id]?.since ?? '') || 0, Date.parse(overview.activity?.[id]?.at ?? '') || 0);
+  return overview.computers.filter((c) => c.state === 'running' && !seen.has(c.id) && used(c.id) > since).map((c) => c.id);
 }
 
 /** Where a chat app's own icon can be read on this machine, where it is installed in the usual place. */

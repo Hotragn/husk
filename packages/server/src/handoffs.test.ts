@@ -149,6 +149,17 @@ describe('ComputerControl', () => {
     expect(await control.stop('c1')).toEqual([]);
   });
 
+  it('says what the AI is running on each computer, the oldest call first, until it ends', () => {
+    const control = new ComputerControl();
+    const first = control.start('c1', 'browser_goto');
+    const second = control.start('c1', 'shell');
+    expect(control.inFlight()).toEqual({ c1: { tool: 'browser_goto', since: expect.any(String) } });
+    first.done();
+    expect(control.inFlight()['c1']?.tool).toBe('shell');
+    second.done();
+    expect(control.inFlight()).toEqual({});
+  });
+
   it('aborts on the caller’s own signal too, without calling that a take-over', () => {
     const cancel = new AbortController();
     const call = new ComputerControl().start('c1', 'shell', cancel.signal);

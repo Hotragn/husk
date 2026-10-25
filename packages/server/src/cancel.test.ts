@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { ctxOf } from './context.js';
 import { buildTestApp } from './testing.js';
 import type { TestApp } from './testing.js';
 import type { ToolRunner } from './deps.js';
@@ -121,6 +122,26 @@ describe('a person taking over while the AI works', { timeout: 30_000 }, () => {
     expect(text).toContain('took over this computer');
     expect(text).toContain('printed so far');
     expect(order).toEqual(['call ended', 'take-over answered']);
+  });
+
+  it('names the running call in the overview, announced as it starts, until it ends', async () => {
+    let finish!: () => void;
+    harness = await buildTestApp({
+      runTool: async () => {
+        await new Promise<void>((r) => (finish = r));
+        return { content: [{ type: 'text', text: 'done' }] };
+      },
+    });
+    const { id } = (await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: {} })).json() as { id: string };
+    const call = harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/tools/shell`, payload: { args: { command: 'make' } } });
+    await new Promise((r) => setTimeout(r, 200));
+    const running = async () => ((await harness.app.inject({ method: 'GET', url: '/v1/overview' })).json() as { running: Record<string, { tool: string }> }).running;
+    expect((await running())[id]?.tool).toBe('shell');
+    const started = ctxOf(harness.app).bus.history().filter((e) => e.type === 'tool_started');
+    expect(started.map((e) => e.payload)).toEqual([expect.objectContaining({ computerId: id, tool: 'shell' })]);
+    finish();
+    await call;
+    expect((await running())[id]).toBeUndefined();
   });
 
   it('leaves a call on another computer running', async () => {

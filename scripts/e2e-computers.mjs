@@ -552,6 +552,9 @@ async function checkTakeover(id) {
     await sleep(500);
     seen = await count();
   }
+  // What the console and the desktop say a take-over is waiting for.
+  const running = (await api('GET', '/v1/overview')).body.running?.[id];
+  check('the overview names the call a take-over would wait for', running?.tool === 'browser_script', JSON.stringify(running));
   const started = Date.now();
   const taken = await api('POST', `/v1/computers/${id}/takeover`);
   const stopped = textOf(await call);
