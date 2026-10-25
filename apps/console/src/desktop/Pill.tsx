@@ -8,21 +8,33 @@
  *
  * The desktop app shows this window only while the Computers window is
  * minimized, and makes it click-through except while the pointer is on it.
+ * It never takes the keyboard from a click: the app's shortcut hands it over,
+ * opening the list on the first computer, and Escape gives it back.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { AppGlyph } from './AppGlyph';
-import { ago, desktopBridge, doing, statusOf, tabName, useDesktopState } from './bridge';
+import { ago, arrive, desktopBridge, doing, statusOf, tabName, useDesktopState } from './bridge';
 import type { DesktopComputer } from './bridge';
 
 export function Pill() {
   const desk = desktopBridge();
   const state = useDesktopState();
+  const pill = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const items = state?.computers ?? [];
   const notch = state?.notch;
   const away = state?.connected === false;
+  useEffect(() => {
+    const shut = () => setOpen(false);
+    window.addEventListener('blur', shut);
+    const off = arrive(pill, () => setOpen(true));
+    return () => {
+      off();
+      window.removeEventListener('blur', shut);
+    };
+  }, []);
   if (!desk) return <p className="desk-note">Open this from the Husk app.</p>;
 
   const enter = () => {
@@ -46,10 +58,16 @@ export function Pill() {
   return (
     <div className="pill-stage">
       <div
+        ref={pill}
         className={`pill${open ? ' pill-open' : ''}${notch ? ' pill-notch' : ''}`}
         style={style}
         onPointerEnter={enter}
         onPointerLeave={leave}
+        onKeyDown={(e) => {
+          if (e.key !== 'Escape') return;
+          setOpen(false);
+          void desk.act({ type: 'release' });
+        }}
       >
         <div className="pill-bar">
           {notch ? (

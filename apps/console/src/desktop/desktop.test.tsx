@@ -283,6 +283,30 @@ describe('the notch', () => {
   });
 });
 
+describe('the keyboard', () => {
+  it('reaches the corner from the app’s shortcut, on the first computer, and Escape gives it back', async () => {
+    bridge(desk([computer('cmp_a01'), computer('cmp_a02', { platform: 'Cursor', label: 'Cursor · chat started 09:02' })]));
+    const { container } = render(<Dock />);
+    await waitFor(() => expect(container.querySelector('.dock-flat')).not.toBeNull());
+    act(() => void window.dispatchEvent(new FocusEvent('focus')));
+    expect(document.activeElement?.getAttribute('aria-label')).toMatch(/^Claude Code · chat started 09:01: /);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(acts).toContainEqual({ type: 'release' });
+  });
+
+  it('reaches the notch from the app’s shortcut, opening its list on the first computer; Escape closes it and gives it back', () => {
+    bridge(desk([computer('cmp_a01'), computer('cmp_a02', { platform: 'Zed' })], { window: 'minimized' }));
+    render(<Pill />);
+    expect(screen.queryByRole('list', { name: 'Computers' })).toBeNull();
+    act(() => void window.dispatchEvent(new FocusEvent('focus')));
+    expect(screen.getByRole('list', { name: 'Computers' })).toBeTruthy();
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Open Claude Code · chat started 09:01');
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(screen.queryByRole('list', { name: 'Computers' })).toBeNull();
+    expect(acts).toEqual([{ type: 'release' }]);
+  });
+});
+
 describe('the chat apps’ marks', () => {
   it('draws a real mark where Husk has one, the installed icon first, and a monogram otherwise', () => {
     expect(logoOf('Claude Code')?.title).toBe('Claude');

@@ -12,8 +12,15 @@ that tells you when a chat is waiting for you.
   click Connect next to each chat app. When the app connects one, the chat app is pointed
   at the app's own binary (`Husk.exe` with `ELECTRON_RUN_AS_NODE=1`), not at `npx`.
 - **Sits in the tray.** It shows how many computers are running and how many chats are
-  waiting for you, and raises a notification when a chat hands you the computer. Closing
-  the window leaves Husk running; your chats keep their computers.
+  waiting for you, and raises a notification when a chat hands you the computer. It lists
+  each computer too, and choosing one opens its window. Closing the window leaves Husk
+  running; your chats keep their computers.
+- **Works by keyboard.** Ctrl+Alt+Shift+H (Cmd+Option+Shift+H on a Mac) brings the
+  keyboard to your computers: the notch while the window is minimized, else the corner.
+  Tab moves between them, Enter opens one, and Escape goes back to where you were. On
+  Linux, where the corner cannot take the keyboard, it opens the Computers window. A
+  held screen shows a second ring while your keys go to the page. With reduced motion
+  on, nothing in the corner, the notch or the window moves.
 - **Keeps each chat's computer one click away.** A very small 3D iMac for each computer
   a chat is using stands on a small frosted tray in the bottom-right corner, facing you,
   its screen white. It never moves or shows a picture, so it never distracts: it glows

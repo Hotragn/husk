@@ -64,6 +64,8 @@ export type DesktopAct =
   | { type: 'select'; id: string }
   | { type: 'console'; id: string }
   | { type: 'interactive'; on: boolean }
+  /** The corner or the notch gives the keyboard back to whatever had it before the app's shortcut. */
+  | { type: 'release' }
   | { type: 'window'; op: 'close' | 'minimize' | 'maximize' | 'pin' }
   | { type: 'refresh' };
 
@@ -82,6 +84,21 @@ export function useDesktopState(): DesktopState | null {
   const [state, setState] = useState<DesktopState | null>(null);
   useEffect(() => desktopBridge()?.onState(setState), []);
   return state;
+}
+
+/**
+ * The keyboard arriving from the app's shortcut, for the corner and the notch,
+ * which take it from nothing else: their window gets focus, `then` runs, and
+ * the first button in `within` takes it, unless one there has it already.
+ * Returns the listener's cleanup, for an effect.
+ */
+export function arrive(within: { current: HTMLElement | null }, then?: () => void): () => void {
+  const on = () => {
+    then?.();
+    if (!within.current?.contains(document.activeElement)) within.current?.querySelector('button')?.focus();
+  };
+  window.addEventListener('focus', on);
+  return () => window.removeEventListener('focus', on);
 }
 
 /** "3s ago", "4 min ago": how long since a chat's last call, for a status line. */
