@@ -155,6 +155,26 @@ function firstRun() {
   return true;
 }
 
+/**
+ * Asked once, ever: open a chat's computer by itself when the chat starts
+ * using it? Not asked of someone who already chose that from the tray, which
+ * changes it any time after.
+ */
+async function askAutoOpen() {
+  if (computers.settings.autoOpenAsked || computers.settings.autoOpen) return;
+  const options = {
+    type: 'question',
+    message: 'Show a chat’s computer when the chat starts using it?',
+    detail: 'Husk opens a small window with the computer’s screen, without taking you away from what you are doing. You can change this from the tray menu.',
+    buttons: ['Show it', 'Only when I click it'],
+    defaultId: 0,
+    cancelId: 1,
+  };
+  const { response } = await (win && !win.isDestroyed() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options));
+  computers.set('autoOpenAsked', true);
+  computers.set('autoOpen', response === 0);
+}
+
 function openWindow(panel) {
   if (!rec) {
     new Notification({ title: 'Husk is still starting', body: 'Try again in a moment.' }).show();
@@ -523,6 +543,7 @@ async function startApp() {
     return;
   }
   openWindow(SMOKE ? 'husks' : firstRun() ? 'connect' : undefined);
+  if (!SMOKE) void askAutoOpen();
   await poll();
   setInterval(() => void poll(), POLL_MS);
 }

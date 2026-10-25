@@ -19,6 +19,7 @@ import { Button, ErrorBlock, Icon, StatusDot, formatWhen } from '../components/p
 import { Screen, useInputQueue } from '../components/Screen';
 import { useScreenFeed } from '../components/useScreenFeed';
 import { AppBadge } from '../desktop/AppGlyph';
+import { takingText } from '../desktop/bridge';
 import { useConnection } from '../state/connection';
 import { useResource } from '../state/useResource';
 import { stateTone } from './ComputersPanel';
@@ -81,6 +82,7 @@ export function ChatPanel({ computerId, onOpen }: { computerId: string | null; o
             hold={hold}
             running={computer.state === 'running'}
             inChat={overview.data?.inChat?.includes(computer.id) === true}
+            calling={overview.data?.running?.[computer.id]?.tool}
           />
           <Activity id={computer.id} />
         </div>
@@ -151,7 +153,19 @@ export function InChatNote() {
 }
 
 /** Who has the computer, and the one action that changes it. */
-function Control({ handoff, hold, running, inChat }: { handoff: PendingHandoff | undefined; hold: Hold; running: boolean; inChat: boolean }) {
+function Control({
+  handoff,
+  hold,
+  running,
+  inChat,
+  calling,
+}: {
+  handoff: PendingHandoff | undefined;
+  hold: Hold;
+  running: boolean;
+  inChat: boolean;
+  calling: string | undefined;
+}) {
   const [confirming, setConfirming] = useState(false);
   const failed = hold.error ? <ErrorBlock error={hold.error} /> : null;
 
@@ -174,7 +188,9 @@ function Control({ handoff, hold, running, inChat }: { handoff: PendingHandoff |
         <Button variant="accent" loading={hold.busy} disabled={!running} onClick={() => void hold.take()}>
           Take over
         </Button>
-        <p className="field-note">Pauses the chat until you give it back.</p>
+        <p className="field-note" aria-live="polite">
+          {hold.busy && calling ? takingText(calling) : 'Pauses the chat until you give it back.'}
+        </p>
         {failed}
       </div>
     );
@@ -223,12 +239,15 @@ export function TakeOver({
   onOpen,
   onChange,
   inChat = false,
+  calling,
 }: {
   computerId: string;
   handoff: PendingHandoff | undefined;
   onOpen: (target: OverviewTarget, id: string) => void;
   onChange: () => void;
   inChat?: boolean;
+  /** The AI's call running on it now, which a take-over waits for. */
+  calling?: string | undefined;
 }) {
   const hold = useHold(computerId, handoff, onChange);
   const failed = hold.error ? <ErrorBlock error={hold.error} /> : null;
@@ -249,6 +268,7 @@ export function TakeOver({
         >
           Take over
         </Button>
+        {hold.busy && calling ? <p className="field-note">{takingText(calling)}</p> : null}
         {failed}
       </>
     );

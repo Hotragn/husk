@@ -117,7 +117,7 @@ DELETE /v1/computers/:id        -> 204   (a chat's computer needs ?confirm=<id>)
 GET    /v1/computers/:id/disk   -> { "bytes": number | null, "note"?: string }
 GET    /v1/computers/:id/stats  -> { cpuPercent, memoryBytes, memoryLimitBytes, diskBytes, notes? }
 GET    /v1/computers/:id/thumbnail -> image/jpeg of an already-open browser, else 404
-GET    /v1/overview             -> { computers: ComputerInfo[], activeRuns: ActiveRun[], handoffs: PendingHandoff[], activity: { [id]: ActivityEntry }, inChat: string[] }
+GET    /v1/overview             -> { computers: ComputerInfo[], activeRuns: ActiveRun[], handoffs: PendingHandoff[], activity: { [id]: ActivityEntry }, running: { [id]: { tool, since } }, inChat: string[] }
 GET    /v1/computers/:id/activity -> { "entries": ActivityEntry[] }   (oldest first, the last 200)
 POST   /v1/computers/:id/bot    body: { "useModel"?: boolean } -> { transcriptId, spec, yaml, distilled }
 POST   /v1/computers/:id/stop   -> ComputerInfo
@@ -410,8 +410,10 @@ POST   /v1/computers/:id/takeover  -> 201 PendingHandoff (runId "person"), or th
 
 The person takes the computer from its chat without being asked. Taking it stops the
 AI's calls running on it first, browser scripts included, and answers once they have
-ended, so the person never shares the screen with half-done work. While it is held, a
-chat's call to `POST /v1/computers/:id/tools/:name` waits up to 45 seconds for it to
+ended, so the person never shares the screen with half-done work. Until then the
+overview's `running` names the call it waits for, which the console and the desktop
+app show. While it is held, a chat's call to `POST /v1/computers/:id/tools/:name`
+waits up to 45 seconds for it to
 come back, then runs; still held, it answers with an error telling the model it is
 paused. After Give back, a browser action is refused only if the page is not the one
 the AI left (another URL, title or tab, or a call of its own stopped part-way), with

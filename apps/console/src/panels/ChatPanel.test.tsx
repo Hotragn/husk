@@ -109,6 +109,29 @@ describe('Chat panel', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/v1/computers/cmp_chat/takeover')).toBe(true));
   });
 
+  it('says which call a take-over waits for while the AI stops it', async () => {
+    overview.running = { cmp_chat: { tool: 'browser_goto', since: '2026-10-21T10:44:00Z' } };
+    let release!: () => void;
+    const stopped = new Promise<void>((r) => (release = r));
+    const answer = fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string, init?: RequestInit) => {
+        if (new URL(input).pathname === '/v1/computers/cmp_chat/takeover') await stopped;
+        return answer(input, init);
+      }),
+    );
+    try {
+      render(<ChatPanel computerId="cmp_chat" onOpen={() => {}} />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Take over' }));
+      expect(await screen.findByText('Taking over: waiting for browser_goto to stop…')).toBeTruthy();
+      release();
+      await waitFor(() => expect(screen.queryByText(/Taking over/)).toBeNull());
+    } finally {
+      delete overview.running;
+    }
+  });
+
   it('keeps keyboard focus on the screen when the offer closes, whichever way', async () => {
     render(<ChatPanel computerId="cmp_chat" onOpen={() => {}} />);
     await frameShown();

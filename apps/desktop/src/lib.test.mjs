@@ -176,6 +176,15 @@ test('with "open by itself" on, only a running computer a chat used since the ap
   assert.deepEqual(toOpen(undefined, since, new Set()), []);
 });
 
+test('it opens as a chat’s call starts, not once it ends, and says what is running', () => {
+  const since = Date.parse('2026-10-22T09:30:00.000Z');
+  // cmp_b's last call ended before the app started, but another is running now.
+  const busy = { ...overview, running: { cmp_b: { tool: 'browser_goto', since: '2026-10-22T10:01:00.000Z' } } };
+  assert.deepEqual(toOpen(busy, since, new Set()), ['cmp_a', 'cmp_b']);
+  assert.equal(desktopComputers(busy).find((c) => c.id === 'cmp_b').calling, 'browser_goto');
+  assert.equal(desktopComputers(overview).find((c) => c.id === 'cmp_b').calling, undefined);
+});
+
 test('desktop windows are the console signed in, on their own view', () => {
   assert.equal(desktopUrl({ url: 'http://127.0.0.1:7377', token: 'a b' }, 'computers'), 'http://127.0.0.1:7377/#token=a%20b&view=computers');
   assert.equal(desktopUrl({ url: 'http://127.0.0.1:7377' }, 'dock'), 'http://127.0.0.1:7377/#view=dock');

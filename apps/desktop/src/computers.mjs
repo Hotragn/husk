@@ -17,7 +17,7 @@ import { appIconPaths, computersWindowBounds, desktopComputers, desktopUrl, dock
 
 const PRELOAD = join(import.meta.dirname, 'preload.cjs');
 const ID = /^cmp_[a-z0-9]{1,40}$/i;
-// The window opens when the person clicks a computer, not by itself, unless they choose that.
+// The window opens when the person clicks a computer, not by itself, unless they chose that (asked once, main.mjs).
 const DEFAULTS = { onScreen: true, notch: true, autoOpen: false };
 const MAC = process.platform === 'darwin';
 // Linux cannot forward mouse moves through a click-through window, so there
