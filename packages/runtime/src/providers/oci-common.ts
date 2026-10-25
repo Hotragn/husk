@@ -24,7 +24,7 @@ import type {
 } from '@husk-ai/core';
 import { type ImagePlan, installScript, resolveImage } from '../images.js';
 import { OutputBuffer, evaluateCommand } from '../policy.js';
-import { expired, forgetInfo, lastUsedTimes, touchInfo } from '../registry.js';
+import { forgetInfo, lastUsedTimes, reapExpired, touchInfo } from '../registry.js';
 import { EXEC_TAG, STOP_UNCONFIRMED, newExecTag, reapArgv, timerMs } from '../reap.js';
 import { wireSpawned } from './spawned.js';
 
@@ -1279,19 +1279,13 @@ export abstract class OciProvider implements ComputerProvider {
    * only when it removed something, so "not implemented" and "swept, found
    * nothing" produced identical output.
    *
-   * `expired` is shared with the other providers deliberately. Budget
+   * `reapExpired` is shared with the other providers deliberately. Budget
    * arithmetic in two places is two chances to get an off-by-one wrong in a
-   * function whose job is deleting the user's work.
+   * function whose job is deleting the user's work, and the browser has to be
+   * closed before the machine goes on every one of them.
    */
   async reap(): Promise<string[]> {
-    const removed: string[] = [];
-    for (const info of expired(await this.list())) {
-      const c = await this.get(info.id).catch(() => null);
-      if (!c) continue;
-      await c.destroy();
-      removed.push(info.id);
-    }
-    return removed;
+    return reapExpired(this);
   }
 
   private async inspect(nativeId: string): Promise<ComputerInfo | null> {

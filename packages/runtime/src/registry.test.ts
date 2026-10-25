@@ -2,8 +2,9 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { expired, forgetInfo, lastUsedTimes, touchInfo } from './registry.js';
-import type { ComputerInfo } from '@husk-ai/core';
+import { expired, forgetInfo, lastUsedTimes, reapExpired, touchInfo } from './registry.js';
+import { onComputerDestroyed } from '@husk-ai/core';
+import type { Computer, ComputerInfo } from '@husk-ai/core';
 
 /**
  * The last-use record, and the budget arithmetic that acts on it.
@@ -108,5 +109,34 @@ describe('the budget arithmetic reap depends on', () => {
     const forever = info({ createdAt: ago(99999), lastUsedAt: ago(99999) });
     expect(expired([forever])).toEqual([]);
     expect(expired([info({ spec: { provider: 'docker', idleTimeoutSec: 0, maxLifetimeSec: 0 } })])).toEqual([]);
+  });
+});
+
+describe('reaping', () => {
+  const ago = (sec: number) => new Date(Date.now() - sec * 1000).toISOString();
+
+  it("closes each expired computer's browser before the machine goes, and keeps sweeping past one that will not go", async () => {
+    const order: string[] = [];
+    const off = onComputerDestroyed((id) => {
+      order.push(`browser ${id}`);
+    });
+    const idle = (id: string) => info({ id, createdAt: ago(3600), lastUsedAt: ago(700), spec: { provider: 'docker', idleTimeoutSec: 600 } });
+    const provider = {
+      list: async () => [idle('cmp_stuck'), idle('cmp_old'), info({ id: 'cmp_busy', lastUsedAt: ago(1), spec: { provider: 'docker', idleTimeoutSec: 600 } })],
+      get: async (id: string) =>
+        ({
+          destroy: async () => {
+            if (id === 'cmp_stuck') throw new Error('device or resource busy');
+            order.push(`destroy ${id}`);
+          },
+        }) as unknown as Computer,
+    };
+    try {
+      // The browser's close runs a pkill inside the computer, so it has to come first.
+      expect(await reapExpired(provider)).toEqual(['cmp_old']);
+      expect(order).toEqual(['browser cmp_stuck', 'browser cmp_old', 'destroy cmp_old']);
+    } finally {
+      off();
+    }
   });
 });

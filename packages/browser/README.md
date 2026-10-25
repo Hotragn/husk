@@ -96,7 +96,10 @@ await browser.close();
 - **`session.ts`** — one browser per computer, launched lazily and closed after
   five idle minutes, because a resident Chromium is a few hundred megabytes of
   RSS and a machine with four of them gets OOM-killed. The user-data-dir is
-  persisted, so a login survives the relaunch.
+  persisted, so a login survives the relaunch. A Chromium that dies is started
+  again: the call that finds it gone fails, saying so, and the next one gets a
+  new browser, after whatever was left of the old one is killed. A launch that
+  fails once Chromium is up kills that Chromium too, so none is left behind.
 
 ## Refs, not coordinates
 
