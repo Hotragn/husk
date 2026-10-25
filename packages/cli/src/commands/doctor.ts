@@ -5,7 +5,7 @@ import { parse } from '../args.js';
 import * as ui from '../ui.js';
 import { EXIT_OK } from '../exit.js';
 import { paths } from '@husk-ai/core';
-import { findOrphanedWorkspaces } from '@husk-ai/runtime';
+import { findOrphanedWorkspaces, leftOutOfAuto } from '@husk-ai/runtime';
 import { compareModelPreference } from '@husk-ai/models';
 
 /**
@@ -149,7 +149,8 @@ export async function collect(force = false, probes: DoctorProbes = liveProbes):
     collectModels(probes),
   ]);
 
-  const chosen = providers.find((p) => p.available);
+  // What `auto` would pick: never a paid provider unless opted in.
+  const chosen = providers.find((p) => p.available && !leftOutOfAuto(p.name));
   const chosenModel = models.find((m) => m.available && m.models.length > 0);
 
   const warnings: string[] = [];

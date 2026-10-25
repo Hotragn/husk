@@ -283,7 +283,14 @@ export class HuskMcpServer {
         // A client that renders no card (Claude Code, most terminals) shows nothing
         // of the computer unless the model passes a link on.
         const link = this.rendersCards() ? '' : await this.announceLink(computer.id);
-        content.unshift({ type: 'text', text: `${this.isolationNote(computer)}${carry}${link}\n` });
+        // Kept on another provider than asked -- made while that one was down -- is said, not silent.
+        const asked = this.spec.provider;
+        const elsewhere =
+          asked && computer.info.provider !== asked
+            ? ` It runs on ${computer.info.provider}, not the ${asked} this chat asked for: it was made when ${asked} ` +
+              `was not available, and a chat keeps its computer. Tell the user; a new chat gets one on ${asked}.`
+            : '';
+        content.unshift({ type: 'text', text: `${this.isolationNote(computer)}${elsewhere}${carry}${link}\n` });
       }
       // computer_info is where a chat's card first appears; it needs the state, never a token.
       const card = name === 'computer_info' && this.rendersCards() ? { structuredContent: { ...(await this.cardState(computer.id)) } } : {};

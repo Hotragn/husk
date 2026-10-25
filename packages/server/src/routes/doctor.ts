@@ -3,7 +3,7 @@ import { ENV_KEYS, HUSK_VERSION, mapLimit, paths } from '@husk-ai/core';
 import { compareModelPreference } from '@husk-ai/models';
 import type { FastifyInstance } from 'fastify';
 import { ctxOf } from '../context.js';
-import { findOrphanedWorkspaces } from '@husk-ai/runtime';
+import { findOrphanedWorkspaces, leftOutOfAuto } from '@husk-ai/runtime';
 
 /**
  * `GET /v1/doctor`.
@@ -140,7 +140,8 @@ export async function doctorRoutes(app: FastifyInstance): Promise<void> {
       return out;
     });
 
-    const firstProvider = providers.find((p) => p.available);
+    // What `auto` would pick: never a paid provider unless opted in.
+    const firstProvider = providers.find((p) => p.available && !leftOutOfAuto(p.name));
     const firstModelProvider = models.find((m) => m.available && m.models.length > 0) ?? models.find((m) => m.available);
     const firstModel = firstModelProvider?.models[0] ?? null;
 

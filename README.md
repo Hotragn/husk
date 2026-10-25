@@ -274,8 +274,9 @@ Set `HUSK_REGISTRY` to point the lot at your own mirror.
 ## Providers
 
 `auto` walks the ladder and takes the highest rung that answers. Every rung is free
-except `fly`, which is metered. An explicit `--provider` that turns out to be
-unavailable is an error, never a quiet downgrade to weaker isolation.
+except `fly`, which is metered, so `auto` leaves it out: pick it with `--provider fly`,
+or set `HUSK_AUTO_FLY=1` to let `auto` choose it. An explicit `--provider` that turns
+out to be unavailable is an error, never a quiet downgrade to weaker isolation.
 
 | Provider | Priority | Isolation | Cost | Notes |
 | --- | --- | --- | --- | --- |

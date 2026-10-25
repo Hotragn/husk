@@ -20,8 +20,12 @@ protection, and the difference is a first-class value rather than a footnote:
 | `local` | 10 | **process guardrails only** | free, local | Nothing else is available |
 
 `auto` walks that order, highest priority first, and takes the first provider that
-answers. Real isolation beats guardrails, free beats metered, and `local` sits at the
-bottom as the floor that is always there.
+answers. Real isolation beats guardrails, and `local` sits at the bottom as the floor
+that is always there. `fly` bills per machine, so `auto` leaves it out unless you set
+`HUSK_AUTO_FLY=1`; `--provider fly` always works.
+
+A chat keeps its computer: one made on `local` while Docker was down stays on `local`,
+and the chat is told so on its first call, with what to do for one on Docker.
 
 An explicitly named provider is never silently substituted:
 
