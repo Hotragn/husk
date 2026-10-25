@@ -2,8 +2,9 @@
 /**
  * The two page-side expressions, run against a real DOM.
  *
- * `select` and the cross-origin iframe report do their actual work *inside the
- * page*, as strings handed to `Runtime.evaluate`. The CDP plumbing around them
+ * `select` (the driver's CHOOSE_OPTION, called on the <select>) and the
+ * cross-origin iframe report do their actual work *inside the page*, as script
+ * text handed to Chromium. The CDP plumbing around them
  * is shared with `type`, which is covered; what is not covered by anything else
  * is the JavaScript itself -- and a typo in a template literal is invisible
  * until a real page is in front of it.
@@ -16,11 +17,21 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { selectExpression, unreachableFramesExpression } from './page.js';
+import { DRIVER_SOURCE } from './driver.js';
+import { unreachableFramesExpression } from './page.js';
 
 /** Run a page expression the way `Runtime.evaluate` would. */
 function evaluate<T>(expression: string): T {
   return new Function(`return ${expression}`)() as T;
+}
+
+/**
+ * The driver's CHOOSE_OPTION, called on a node the way `Runtime.callFunctionOn`
+ * calls it: the wanted option is an argument, never part of the script.
+ */
+const chooseOption = new Function(`return ${/CHOOSE_OPTION = r'''([\s\S]*?)'''/.exec(DRIVER_SOURCE)![1]}`)() as (this: Element, want: string) => string;
+function choose(want: string, el: Element = document.querySelector('select')!): string {
+  return chooseOption.call(el, want);
 }
 
 function form(options: Array<[value: string, label: string]>): HTMLSelectElement {
@@ -37,7 +48,7 @@ function form(options: Array<[value: string, label: string]>): HTMLSelectElement
   return select;
 }
 
-describe('selectExpression', () => {
+describe('choosing an option (the driver’s CHOOSE_OPTION)', () => {
   const options: Array<[string, string]> = [
     ['sm', 'Small'],
     ['md', 'Medium'],
@@ -46,13 +57,13 @@ describe('selectExpression', () => {
 
   it('matches by the label a model can actually see', () => {
     const select = form(options);
-    expect(evaluate<string>(selectExpression('Large'))).toBe('Large');
+    expect(choose('Large')).toBe('Large');
     expect(select.value).toBe('lg');
   });
 
   it('matches by value too', () => {
     const select = form(options);
-    expect(evaluate<string>(selectExpression('md'))).toBe('Medium');
+    expect(choose('md')).toBe('Medium');
     expect(select.value).toBe('md');
   });
 
@@ -63,14 +74,14 @@ describe('selectExpression', () => {
       ['Large', 'Small'],
       ['lg', 'Large'],
     ]);
-    expect(evaluate<string>(selectExpression('Large'))).toBe('Small');
+    expect(choose('Large')).toBe('Small');
   });
 
   it('tolerates surrounding whitespace in the label', () => {
     // Real markup indents its options, so `o.text` arrives padded.
     document.body.innerHTML = '<select><option value="a">  Spaced  </option></select>';
     document.querySelector('select')!.focus();
-    expect(evaluate<string>(selectExpression('Spaced'))).toBe('Spaced');
+    expect(choose('Spaced')).toBe('Spaced');
   });
 
   it('fires input and change, which is the whole point', () => {
@@ -80,7 +91,7 @@ describe('selectExpression', () => {
     const seen: string[] = [];
     select.addEventListener('input', () => seen.push('input'));
     select.addEventListener('change', () => seen.push('change'));
-    evaluate(selectExpression('Medium'));
+    choose('Medium');
     expect(seen).toEqual(['input', 'change']);
   });
 
@@ -90,7 +101,7 @@ describe('selectExpression', () => {
     form(options);
     let message = '';
     try {
-      evaluate(selectExpression('Enormous'));
+      choose('Enormous');
     } catch (err) {
       message = (err as Error).message;
     }
@@ -104,15 +115,15 @@ describe('selectExpression', () => {
     // `click` on a dropdown already fails silently; this must not repeat that.
     document.body.innerHTML = '<input id="t">';
     document.querySelector('input')!.focus();
-    expect(() => evaluate(selectExpression('anything'))).toThrow(/not a <select>/);
+    expect(() => choose('anything', document.querySelector('input')!)).toThrow(/not a <select>/);
   });
 
   it('escapes a value that would otherwise break out of the expression', () => {
     form([["it's", "it's"]]);
-    expect(evaluate<string>(selectExpression("it's"))).toBe("it's");
+    expect(choose("it's")).toBe("it's");
     // And a quote-and-parenthesis payload is data, not code.
     form([['x', 'x']]);
-    expect(() => evaluate(selectExpression(`'); throw new Error('injected'); ('`))).toThrow(/no option matching/);
+    expect(() => choose(`'); throw new Error('injected'); ('`)).toThrow(/no option matching/);
   });
 });
 

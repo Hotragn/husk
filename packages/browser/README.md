@@ -113,6 +113,15 @@ thing is sometimes "Delete account".
 Nodes with no DOM element get an `a`-prefixed ref, and `click` refuses those
 explicitly rather than resolving them to something nearby.
 
+A ref acts only on the document whose snapshot showed it. Once the page loads
+another, the same id can name a different element, so an earlier page's ref is
+refused, saying so, rather than resolved to whatever has its id now. The driver
+remembers which document each ref it handed out came from, and the host remembers
+too and says so with each action, for a driver that keeps nothing between requests.
+A role and a name are found afresh on the page as it is. `type` and `select` act
+on the field itself, never on `document.activeElement`, which inside a frame is
+the frame.
+
 ## Honest clicks
 
 A click is refused, saying why, before anything is pressed:
@@ -125,7 +134,9 @@ A click is refused, saying why, before anything is pressed:
   element or something inside it, and the refusal names what is there instead;
 - when a role and name match more than one element, rather than taking the first.
 
-`force` skips every check and presses at the element's centre, as clicks always did.
+`force` skips these checks and presses at the element's centre, as clicks always did;
+a ref from an earlier page is refused even then, since that is about which element,
+not its state.
 `browser_click` says which happened: a checked click landed on its element, and a
 forced one was only dispatched. One path does every click: `browser_click`,
 `browser_run`, `page.click` in a script and the console's Browser page all use the

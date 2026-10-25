@@ -288,6 +288,8 @@ export class Page {
 
   /** Emulation is per-session too, so an override has to be re-applied, not just set once. */
   private viewport: { width: number; height: number } | undefined;
+  /** Which document each ref a snapshot here handed out came from, by backend node id: it acts only there. */
+  private readonly refDocuments = new Map<number, string>();
 
   constructor(
     private readonly conn: CdpConnection,
@@ -454,22 +456,12 @@ export class Page {
    * does not have one".
    */
   async snapshot(opts: { limit?: number } = {}): Promise<SnapshotNode[]> {
-    const [, tree, frames] = await this.run([
-      { op: 'send', method: 'Accessibility.enable', session: true },
-      { op: 'send', method: 'Accessibility.getFullAXTree', session: true },
-      {
-        op: 'send',
-        method: 'Runtime.evaluate',
-        params: evalParams(unreachableFramesExpression()),
-        session: true,
-        soft: true,
-      },
-    ]);
-
-    const res = (tree ?? {}) as CdpParams;
-    const nodes = Array.isArray(res['nodes']) ? (res['nodes'] as AxNodeLike[]) : [];
-    const unreachable = ((frames ?? {}) as { result?: { value?: unknown } }).result?.value;
-    return snapshotOf(nodes, unreachable, opts);
+    // The driver's snapshot action, which also records which document its refs belong to.
+    const [out] = await this.actions([{ do: 'snapshot', ...(opts.limit !== undefined ? { limit: opts.limit } : {}) }]);
+    if (!out?.ok) {
+      throw new HuskError('E_EXEC_FAILED', out?.error ?? 'could not read the page', { hint: 'the page may be mid-navigation; try again' });
+    }
+    return out.nodes ?? [];
   }
 
   /**
@@ -511,10 +503,49 @@ export class Page {
     const steps: DriverStep[] = list.map((a) => {
       const step = actionStep(a);
       budget += step.timeoutMs ?? 30_000;
-      return step;
+      // The document a ref came from, for a driver that keeps nothing between requests.
+      const document = 'ref' in a && a.ref ? this.documentOf(a.ref) : undefined;
+      return document ? { ...step, document } : step;
     });
     const results = await this.run(steps, budget);
-    return list.map((a, i) => outcomeOf(a, results[i]));
+    const outcomes = list.map((a, i) => outcomeOf(a, results[i]));
+    for (const o of outcomes) if (o.nodes && o.document) this.remember(o.nodes, o.document);
+    return outcomes;
+  }
+
+  /** The refs a snapshot showed, as belonging to its document. */
+  private remember(nodes: SnapshotNode[], document: string): void {
+    // ponytail: forgotten wholesale past a bound; a forgotten ref is checked by the driver, or not at all.
+    if (this.refDocuments.size > 50_000) this.refDocuments.clear();
+    for (const n of nodes) {
+      const id = backendNodeIdOf(n.ref);
+      if (id !== null) this.refDocuments.set(id, document);
+    }
+  }
+
+  /** The document a ref came from, when a snapshot here handed it out. */
+  private documentOf(ref: string): string | undefined {
+    const id = backendNodeIdOf(ref);
+    return id === null ? undefined : this.refDocuments.get(id);
+  }
+
+  /**
+   * Refuse a ref from an earlier page: once the page has loaded another
+   * document, the same id can name a different element. The driver checks the
+   * actions it does; this checks the ones done here.
+   */
+  private async assertFresh(ref: string): Promise<void> {
+    const expected = this.documentOf(ref);
+    if (!expected) return;
+    const [tree] = await this.run([{ op: 'send', method: 'Page.getFrameTree', session: true, soft: true }]);
+    const now = ((tree ?? {}) as { frameTree?: { frame?: { loaderId?: string } } }).frameTree?.frame?.loaderId;
+    if (now && now !== expected) {
+      throw new HuskError(
+        'E_TOOL_ERROR',
+        `${ref} is from an earlier page: this one has loaded since the snapshot that showed it; take a fresh snapshot and use its refs`,
+        { hint: 'browser_snapshot shows the page as it is now', details: { ref } },
+      );
+    }
   }
 
   /** Base64 png (or jpeg). `fullPage` captures past the viewport. */
@@ -601,6 +632,7 @@ export class Page {
         hint: 'refs beginning with `a` are informational nodes with no DOM element; take a fresh snapshot',
       });
     }
+    await this.assertFresh(ref);
 
     // Both soft: a detached or display:none node cannot be scrolled to, and the
     // box model gives the better error, so the scroll failing on its own is not
@@ -648,35 +680,20 @@ export class Page {
     return { navigationStarted: out.navigated === true };
   }
 
+  /**
+   * Type into the field with this ref: the driver's `fill`, which focuses the
+   * field, selects what is there unless `clear` is false (so "type this into
+   * the search box" replaces it), inserts the text and fires `change` -- all
+   * on the field itself, never on `document.activeElement`, which inside a
+   * frame is the frame.
+   */
   async type(ref: string, text: string, opts: { clear?: boolean } = {}): Promise<void> {
-    const { backendNodeId } = await this.centreOf(ref);
-    const steps: DriverStep[] = [{ op: 'send', method: 'DOM.focus', params: { backendNodeId }, session: true }];
-
-    if (opts.clear !== false) {
-      // Selecting first means `type` replaces rather than appends, which is what
-      // "type this into the search box" means every single time.
-      steps.push({
-        op: 'send',
-        method: 'Runtime.evaluate',
-        params: evalParams(`(() => { const el = document.activeElement; if (el && 'select' in el) el.select(); })()`),
-        session: true,
+    const [out] = await this.actions([{ do: 'fill', ref, text, ...(opts.clear === false ? { clear: false } : {}) }]);
+    if (!out?.ok) {
+      throw new HuskError('E_TOOL_ERROR', out?.error ?? `could not type into ${ref}`, {
+        hint: 'browser_snapshot shows the page as it is now',
+        details: { ref },
       });
-    }
-
-    steps.push({ op: 'send', method: 'Input.insertText', params: { text }, session: true });
-    // insertText does not fire key events; frameworks listening for `input` are
-    // satisfied by it, but ones listening for change need the nudge.
-    steps.push({
-      op: 'send',
-      method: 'Runtime.evaluate',
-      params: evalParams(
-        `(() => { const el = document.activeElement; if (el) el.dispatchEvent(new Event('change', { bubbles: true })); })()`,
-      ),
-      session: true,
-    });
-
-    for (const result of await this.run(steps)) {
-      assertNoPageException((result ?? {}) as CdpParams);
     }
   }
 
@@ -765,20 +782,15 @@ export class Page {
    * events a framework listens for is the only thing that does.
    */
   async select(ref: string, value: string): Promise<{ selected: string }> {
-    const { backendNodeId } = await this.centreOf(ref);
-    const [, result] = await this.run([
-      { op: 'send', method: 'DOM.focus', params: { backendNodeId }, session: true },
-      {
-        op: 'send',
-        method: 'Runtime.evaluate',
-        params: evalParams(selectExpression(value)),
-        session: true,
-      },
-    ]);
-
-    assertNoPageException((result ?? {}) as CdpParams);
-    const chosen = ((result ?? {}) as { result?: { value?: unknown } }).result?.value;
-    return { selected: String(chosen ?? '') };
+    // The driver's `select`, called on the <select> itself: the option is an argument, never script.
+    const [out] = await this.actions([{ do: 'select', ref, value }]);
+    if (!out?.ok) {
+      throw new HuskError('E_TOOL_ERROR', out?.error ?? `could not choose in ${ref}`, {
+        hint: 'browser_snapshot shows the page as it is now',
+        details: { ref },
+      });
+    }
+    return { selected: out.selected ?? '' };
   }
 
   /**
@@ -795,6 +807,7 @@ export class Page {
         hint: 'take a fresh snapshot and use the ref of the file input',
       });
     }
+    await this.assertFresh(ref);
     const [result] = await this.run([
       { op: 'send', method: 'DOM.setFileInputFiles', params: { backendNodeId, files }, session: true },
     ]);
@@ -893,7 +906,8 @@ export interface ElementTarget {
 export type PageAction =
   | { do: 'goto'; url: string; timeoutMs?: number }
   | ({ do: 'click'; force?: boolean; loadTimeoutMs?: number } & ElementTarget)
-  | ({ do: 'fill'; text: string; submit?: boolean } & ElementTarget)
+  | ({ do: 'fill'; text: string; submit?: boolean; clear?: boolean } & ElementTarget)
+  | ({ do: 'select'; value: string } & ElementTarget)
   | { do: 'wait'; text?: string; url?: string; selector?: string; gone?: boolean; timeoutMs?: number }
   | { do: 'snapshot'; limit?: number }
   | { do: 'screenshot'; fullPage?: boolean };
@@ -922,6 +936,10 @@ export interface ActionOutcome {
   navigated?: boolean;
   /** A click's checks ran; false when it was forced. */
   checked?: boolean;
+  /** The option a `select` chose, by its text. */
+  selected?: string;
+  /** A snapshot's document: its refs act only there. */
+  document?: string;
   waitedMs?: number;
   nodes?: SnapshotNode[];
   /** Base64 PNG, for `screenshot`. */
@@ -945,7 +963,17 @@ function actionStep(a: PageAction): DriverStep {
         timeoutMs: 30_000,
       };
     case 'fill':
-      return { ...base, do: 'fill', ...target(a), text: a.text, ...(a.submit ? { submit: true } : {}), timeoutMs: 30_000 };
+      return {
+        ...base,
+        do: 'fill',
+        ...target(a),
+        text: a.text,
+        ...(a.submit ? { submit: true } : {}),
+        ...(a.clear === false ? { clear: false } : {}),
+        timeoutMs: 30_000,
+      };
+    case 'select':
+      return { ...base, do: 'select', ...target(a), value: a.value, timeoutMs: 30_000 };
     case 'wait': {
       const wait = a.timeoutMs ?? 15_000;
       const what = a.selector !== undefined ? `selector ${a.selector}` : a.url !== undefined ? `url ${JSON.stringify(a.url)}` : `text ${JSON.stringify(a.text ?? '')}`;
@@ -984,6 +1012,8 @@ function outcomeOf(a: PageAction, raw: unknown): ActionOutcome {
   if (typeof r['ref'] === 'string') out.ref = r['ref'];
   if (typeof r['navigated'] === 'boolean') out.navigated = r['navigated'];
   if (typeof r['checked'] === 'boolean') out.checked = r['checked'];
+  if (typeof r['selected'] === 'string') out.selected = r['selected'];
+  if (typeof r['document'] === 'string') out.document = r['document'];
   if (typeof r['waitedMs'] === 'number') out.waitedMs = r['waitedMs'];
   if (typeof r['data'] === 'string') out.data = r['data'];
   if (a.do === 'snapshot') {
@@ -1036,31 +1066,6 @@ function valueOf(res: CdpParams | undefined): unknown {
   return result?.value;
 }
 
-/**
- * The page-side half of `select`, as a string.
- *
- * Extracted so it can be run against a real DOM in a test. Everything here
- * executes inside the page, where there is no husk, no types and no way to see
- * a failure except the exception text -- so the message on the way out has to
- * carry the options, or a model that guessed wrong has nothing to guess from.
- */
-export function selectExpression(value: string): string {
-  return `(() => {
-     const el = document.activeElement;
-     if (!el || el.tagName !== 'SELECT') throw new Error('that ref is not a <select>');
-     const want = ${JSON.stringify(value)};
-     const match = [...el.options].find((o) => o.value === want)
-       || [...el.options].find((o) => o.text.trim() === want.trim());
-     if (!match) {
-       throw new Error('no option matching ' + JSON.stringify(want) +
-         '; options are ' + JSON.stringify([...el.options].map((o) => o.text.trim())));
-     }
-     el.value = match.value;
-     el.dispatchEvent(new Event('input', { bubbles: true }));
-     el.dispatchEvent(new Event('change', { bubbles: true }));
-     return match.text.trim();
-   })()`;
-}
 
 /**
  * The page-side half of the cross-origin iframe report.

@@ -458,10 +458,23 @@ def connect(port, ws_url, deadline, casts=None):
 # page-side script they need is fixed text below, or built by the host from
 # JSON-quoted arguments (`wait`, `snapshot`); none of it is the model's.
 
-# Selecting first means `fill` replaces rather than appends. Same text as `Page.type` in page.ts.
-SELECT_ACTIVE = "(() => { const el = document.activeElement; if (el && 'select' in el) el.select(); })()"
-# insertText fires `input`; frameworks listening for `change` need the nudge.
-CHANGE_ACTIVE = "(() => { const el = document.activeElement; if (el) el.dispatchEvent(new Event('change', { bubbles: true })); })()"
+# Called on the field itself, never on `document.activeElement`: inside a frame, the
+# active element of the page is the frame. Selecting first means `fill` replaces
+# rather than appends; insertText fires `input`, and frameworks listening for
+# `change` need the nudge.
+SELECT_NODE = "function () { if (typeof this.select === 'function') this.select(); }"
+CHANGE_NODE = "function () { this.dispatchEvent(new Event('change', { bubbles: true })); }"
+# An option of a native <select>, by its value or its text, with the events a framework listens for.
+CHOOSE_OPTION = r'''function (want) {
+  if (this.tagName !== 'SELECT') throw new Error('that ref is not a <select>');
+  const match = [...this.options].find((o) => o.value === want) || [...this.options].find((o) => o.text.trim() === want.trim());
+  if (!match) throw new Error('no option matching ' + JSON.stringify(want) + '; options are ' + JSON.stringify([...this.options].map((o) => o.text.trim())));
+  this.value = match.value;
+  this.dispatchEvent(new Event('input', { bubbles: true }));
+  this.dispatchEvent(new Event('change', { bubbles: true }));
+  return match.text.trim();
+}'''
+STALE = 'e%d is from an earlier page: this one has loaded since the snapshot that showed it; take a fresh snapshot and use its refs'
 
 # What an honest click asks of its element before it presses. A disabled form
 # control (one in a disabled fieldset too) or aria-disabled means a click would
@@ -551,6 +564,50 @@ def resolve(conn, session_id, step, deadline, unique=False):
             % (len(elements), wanted),
         )
     return elements[0]['backendDOMNodeId']
+
+
+def current_document(conn, session_id, deadline):
+    """The page's document now: its main frame's loader id, new with every page it loads."""
+    try:
+        tree = conn.call('Page.getFrameTree', {}, session_id, deadline).get('frameTree') or {}
+    except DriverError as exc:
+        if exc.kind != PROTOCOL:
+            raise
+        return None
+    return (tree.get('frame') or {}).get('loaderId')
+
+
+def ref_documents(conn, session_id):
+    """Which document each ref handed out on this connection came from, by backend node id."""
+    known = conn.__dict__.setdefault('ref_documents', {}).setdefault(session_id, {})
+    # ponytail: forgotten wholesale past a bound, so a long session's map stays small; a
+    # forgotten ref is checked against the host's own record, or not at all.
+    if len(known) > 200000:
+        known.clear()
+    return known
+
+
+def check_fresh(conn, session_id, step, backend, deadline):
+    """
+    A ref acts only on the document whose snapshot showed it. After the page
+    loads another, the same id can name a different element, so an earlier
+    page's ref is refused rather than resolved to whatever has its id now.
+    Checked against this connection's own snapshots first, then the host's.
+    """
+    expected = ref_documents(conn, session_id).get(backend) or step.get('document')
+    if not expected:
+        return
+    now = current_document(conn, session_id, deadline)
+    if now and now != expected:
+        raise DriverError(ACTION, STALE % backend)
+
+
+def target_of(conn, session_id, step, deadline, unique=False):
+    """The node an action means, refused if it is a ref from an earlier page."""
+    backend = resolve(conn, session_id, step, deadline, unique=unique)
+    if step.get('ref'):
+        check_fresh(conn, session_id, step, backend, deadline)
+    return backend
 
 
 def box_centre(conn, session_id, backend, deadline):
@@ -673,7 +730,8 @@ def act_click(conn, sid, step, deadline):
     skips every check and presses at the element's centre, as clicks always did.
     """
     force = bool(step.get('force'))
-    backend = resolve(conn, sid, step, deadline, unique=not force)
+    # Even forced, a ref from an earlier page is refused: force is about the element's state, not which element.
+    backend = target_of(conn, sid, step, deadline, unique=not force)
     if force:
         x, y = centre(conn, sid, backend, deadline)
     else:
@@ -700,17 +758,31 @@ def act_click(conn, sid, step, deadline):
 
 
 def act_fill(conn, sid, step, deadline):
-    backend = resolve(conn, sid, step, deadline)
+    backend = target_of(conn, sid, step, deadline)
+    field = page_object(conn, sid, backend, deadline)
+    if not field:
+        raise DriverError(ACTION, GONE % backend)
     conn.call('DOM.focus', {'backendNodeId': backend}, sid, deadline)
-    evaluate(conn, sid, SELECT_ACTIVE, deadline)
+    if step.get('clear', True):
+        call_on(conn, sid, field, SELECT_NODE, deadline)
     conn.call('Input.insertText', {'text': str(step.get('text', ''))}, sid, deadline)
-    evaluate(conn, sid, CHANGE_ACTIVE, deadline)
+    call_on(conn, sid, field, CHANGE_NODE, deadline)
     if step.get('submit'):
         enter = {'key': 'Enter', 'code': 'Enter', 'windowsVirtualKeyCode': 13, 'nativeVirtualKeyCode': 13}
         conn.call('Input.dispatchKeyEvent', dict(enter, type='keyDown', text='\r'), sid, deadline)
         conn.call('Input.dispatchKeyEvent', dict(enter, type='keyUp'), sid, deadline)
         maybe_event(conn, 'Page.loadEventFired', sid, 10.0, deadline)
     return {'ref': 'e%d' % backend}
+
+
+def act_select(conn, sid, step, deadline):
+    backend = target_of(conn, sid, step, deadline)
+    field = page_object(conn, sid, backend, deadline)
+    if not field:
+        raise DriverError(ACTION, GONE % backend)
+    conn.call('DOM.focus', {'backendNodeId': backend}, sid, deadline)
+    chosen = call_on(conn, sid, field, CHOOSE_OPTION, deadline, [{'value': str(step.get('value', ''))}])
+    return {'ref': 'e%d' % backend, 'selected': chosen if isinstance(chosen, str) else ''}
 
 
 def act_wait(conn, sid, step, deadline):
@@ -724,6 +796,13 @@ def act_wait(conn, sid, step, deadline):
 def act_snapshot(conn, sid, step, deadline):
     conn.call('Accessibility.enable', {}, sid, deadline)
     tree = conn.call('Accessibility.getFullAXTree', {}, sid, deadline)
+    # Every ref this snapshot hands out belongs to this document, and only to it.
+    document = current_document(conn, sid, deadline)
+    if document:
+        known = ref_documents(conn, sid)
+        for node in tree.get('nodes') or []:
+            if node.get('backendDOMNodeId'):
+                known[node['backendDOMNodeId']] = document
     unreachable = []
     if step.get('framesExpression'):
         try:
@@ -731,7 +810,12 @@ def act_snapshot(conn, sid, step, deadline):
         except DriverError as exc:
             if exc.kind not in (PROTOCOL, ACTION):
                 raise
-    return {'nodes': tree.get('nodes') or [], 'unreachable': unreachable, 'url': evaluate(conn, sid, 'location.href', deadline)}
+    return {
+        'nodes': tree.get('nodes') or [],
+        'unreachable': unreachable,
+        'url': evaluate(conn, sid, 'location.href', deadline),
+        'document': document,
+    }
 
 
 def act_screenshot(conn, sid, step, deadline):
@@ -925,7 +1009,7 @@ def script_call(conn, sid, op, args, deadline):
         return BRIDGE.host_call(conn, 'compact', {'nodes': raw['nodes'], 'limit': args.get('limit', 400)}, deadline)
     if op == 'text':
         if args.get('ref') or args.get('role') or args.get('name'):
-            backend = resolve(conn, sid, args, deadline)
+            backend = target_of(conn, sid, args, deadline)
             obj = conn.call('DOM.resolveNode', {'backendNodeId': backend}, sid, deadline).get('object') or {}
             res = conn.call(
                 'Runtime.callFunctionOn',
@@ -1151,6 +1235,7 @@ ACTIONS = {
     'goto': act_goto,
     'click': act_click,
     'fill': act_fill,
+    'select': act_select,
     'wait': act_wait,
     'snapshot': act_snapshot,
     'screenshot': act_screenshot,
