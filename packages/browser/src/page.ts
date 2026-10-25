@@ -993,7 +993,7 @@ export function describeHappened(h: Happened): string[] {
         : `It started downloading ${f.name} to ${where}; the download is ${f.state}.`,
     );
   }
-  for (const p of h.popups ?? []) lines.push(`It opened a new tab: ${p.url || 'about:blank'} (browser_tabs lists it, to switch to it).`);
+  for (const p of h.popups ?? []) lines.push(`It opened a new tab: ${p.url || 'about:blank'} (browser_tabs with switchTo "${p.targetId}" goes there).`);
   for (const b of h.blocked ?? []) lines.push(`The network policy stopped the page from loading ${b.url}: ${b.reason}.`);
   return lines;
 }
