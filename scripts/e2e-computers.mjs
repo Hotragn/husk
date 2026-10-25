@@ -612,6 +612,82 @@ async function checkFrames(id) {
 }
 
 /**
+ * Every browser tool on a real Chromium (J3-g): the ones no other check here
+ * asserts -- status, select, upload, hover, wait_for, scroll, navigate, tabs
+ * and screenshot -- each do what they say on a fixture page, read back from
+ * the page itself.
+ */
+async function checkEveryBrowserTool(id) {
+  const later = "setTimeout(() => { const p = document.createElement('p'); p.textContent = 'Later!'; document.body.append(p); }, 400)";
+  const scrolled =
+    'addEventListener("scroll", () => { if (!document.getElementById("seen")) { const p = document.createElement("p"); p.id = "seen"; p.textContent = "Scrolled down"; document.body.prepend(p); } })';
+  await tool(id, 'write_file', {
+    path: '/work/fixture/tools.html',
+    content:
+      `<!doctype html><title>tools</title><script>${scrolled}</script>` +
+      `<label>Size <select onchange="document.title = 'size:' + this.value"><option value="s">Small</option><option value="l">Large</option></select></label> ` +
+      `<label>Attachment <input type="file" onchange="document.title = 'file:' + this.files[0].name"></label> ` +
+      `<button onmouseover="document.getElementById('menu').hidden = false">Account</button><div id="menu" hidden><a href="#settings">Settings</a></div> ` +
+      `<button onclick="${later}">Later</button>` +
+      '<div style="height:3000px"></div><p>The end</p>',
+  });
+  await tool(id, 'write_file', { path: '/work/fixture/attachment.txt', content: 'for the upload\n' });
+  const refOf = (snap, role, label) => new RegExp(`^ *((?:f\\d+)?e\\d+) {2}${role} "${label}"`, 'm').exec(snap)?.[1];
+  const title = async () => /result: "([^"]*)"/.exec(textOf(await tool(id, 'browser_script', { script: 'result = page.title()' })))?.[1];
+
+  const status = textOf(await tool(id, 'browser_status'));
+  check('browser_status says a browser is installed, so nothing is downloaded', /already installed/.test(status), status.slice(0, 200));
+
+  await tool(id, 'browser_goto', { url: `${FIXTURE}tools.html` });
+  const snap = textOf(await tool(id, 'browser_snapshot'));
+  const selected = await tool(id, 'browser_select', { ref: refOf(snap, 'combobox', 'Size'), value: 'Large' });
+  check('browser_select chooses an option, and the page hears it', /selected "Large"/.test(textOf(selected)) && (await title()) === 'size:l', textOf(selected).slice(0, 200));
+
+  const uploaded = await tool(id, 'browser_upload', { ref: refOf(snap, 'button', 'Attachment'), files: ['/work/fixture/attachment.txt'] });
+  check('browser_upload attaches a file from the computer, and the page sees it', /attached 1 file/.test(textOf(uploaded)) && (await title()) === 'file:attachment.txt', textOf(uploaded).slice(0, 200));
+
+  const hovered = textOf(await tool(id, 'browser_hover', { ref: refOf(snap, 'button', 'Account') }));
+  check('browser_hover reveals what only shows under the pointer', /link "Settings"/.test(hovered), hovered.slice(0, 300));
+
+  await tool(id, 'browser_click', { ref: refOf(snap, 'button', 'Later') });
+  const waited = textOf(await tool(id, 'browser_wait_for', { text: 'Later!', timeoutSec: 5 }));
+  check('browser_wait_for waits for text that comes later', /appeared after \d+ ms/.test(waited), waited.slice(0, 200));
+
+  const scrolledTo = await tool(id, 'browser_scroll', { ref: refOf(snap, 'StaticText', 'The end') });
+  const seen = textOf(await tool(id, 'browser_wait_for', { text: 'Scrolled down', timeoutSec: 5 }));
+  check('browser_scroll brings an element into view, and the page scrolls', !scrolledTo.isError && /appeared after \d+ ms/.test(seen), seen.slice(0, 200));
+
+  await tool(id, 'browser_goto', { url: FIXTURE });
+  const back = textOf(await tool(id, 'browser_navigate', { how: 'back' }));
+  const forward = textOf(await tool(id, 'browser_navigate', { how: 'forward' }));
+  const reloaded = textOf(await tool(id, 'browser_navigate', { how: 'reload' }));
+  check(
+    'browser_navigate goes back, forward and reloads',
+    back.startsWith(`now at ${FIXTURE}tools.html`) && forward.startsWith(`now at ${FIXTURE}`) && !forward.includes('tools.html') && reloaded.startsWith(`now at ${FIXTURE}`),
+    `${back.slice(0, 80)} | ${forward.slice(0, 80)} | ${reloaded.slice(0, 80)}`,
+  );
+
+  const was = /^\* (\S+)/m.exec(textOf(await tool(id, 'browser_tabs')))?.[1];
+  const opened = textOf(await tool(id, 'browser_tabs', { open: `${FIXTURE}tools.html` }));
+  const tab = /opened and switched to (\S+)/.exec(opened)?.[1];
+  const listed = textOf(await tool(id, 'browser_tabs'));
+  const returned = textOf(await tool(id, 'browser_tabs', { switchTo: was }));
+  check(
+    'browser_tabs lists, opens and switches tabs',
+    Boolean(was && tab) && new RegExp(`^\\* ${tab} `, 'm').test(listed) && returned.startsWith(`switched to ${FIXTURE}`),
+    `${opened.slice(0, 80)} | ${returned.slice(0, 80)}`,
+  );
+
+  const shot = await tool(id, 'browser_screenshot', { path: '/work/shot.png' });
+  const magic = textOf(await tool(id, 'shell', { command: 'head -c 8 /work/shot.png | od -An -tx1' }));
+  check(
+    'browser_screenshot writes a PNG into the computer and shows it',
+    /wrote a viewport screenshot to \/work\/shot\.png/.test(textOf(shot)) && (shot.content ?? []).some((c) => c.type === 'image') && /89 50 4e 47/.test(magic),
+    `${textOf(shot).slice(0, 120)} | ${magic.trim()}`,
+  );
+}
+
+/**
  * Fewer turns (J3-f): every browser result says where the page is, a snapshot
  * can be of one part of the page, and a click can carry its wait, watched from
  * just before it, so a toast that comes and goes as the click settles is caught.
@@ -1200,6 +1276,7 @@ try {
   await checkBrowserRecovers(id);
   await checkPolicyBelowTheTool(id);
   await checkFewerTurns(id);
+  await checkEveryBrowserTool(id);
 
   // 8d. Taking over stops the AI where it is, scripts included.
   await checkTakeover(id);
