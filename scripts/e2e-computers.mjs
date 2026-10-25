@@ -805,20 +805,25 @@ async function benchmarkAgainstPlaywright(id, container) {
       for (let i = 0; i < RUNS; i++) {
         let calls = 0;
         let bytes = 0;
+        // Why a task was not done: the first call that failed, else the last reply.
+        let why = '';
+        let last = '';
         const t = async (name, args) => {
           calls++;
           const r = await call(name, args);
           bytes += r.text.length;
+          last = `${name}: ${r.text}`;
+          if (r.isError && !why) why = last;
           return r;
         };
         const started = performance.now();
         let ok = false;
         try {
           ok = await plan(t);
-        } catch {
-          ok = false;
+        } catch (err) {
+          why ||= `threw: ${err.message}`;
         }
-        runs.push({ ok, calls, bytes, ms: Math.round(performance.now() - started) });
+        runs.push({ ok, calls, bytes, ms: Math.round(performance.now() - started), ...(ok ? {} : { why: (why || last).replace(/\s+/g, ' ').slice(0, 300) }) });
       }
       out[task] = runs;
     }
@@ -882,7 +887,18 @@ async function benchmarkAgainstPlaywright(id, container) {
     lines.push(`${task.padEnd(10)} ${cell(h).padEnd(62)} ${p ? cell(p) : 'not measured'}`);
     rows.push({ task, husk: h, playwright: p ?? null });
   }
-  console.log(`\nHusk against ${PLAYWRIGHT_MCP}, same computer, same Chromium, scripted plans, ${RUNS} runs each\n${lines.join('\n')}${pwWhy ? `\nPlaywright MCP not measured: ${pwWhy}` : ''}\n`);
+  // What a task that was not done last said, once per tool set and task.
+  const notDone = [];
+  for (const [who, runs] of [['Husk', huskRuns], ['Playwright MCP', pwRuns ?? {}]]) {
+    for (const [task, rs] of Object.entries(runs)) {
+      const failed = rs.find((r) => !r.ok);
+      if (failed) notDone.push(`${who}, ${task}: ${failed.why}`);
+    }
+  }
+  console.log(
+    `\nHusk against ${PLAYWRIGHT_MCP}, same computer, same Chromium, scripted plans, ${RUNS} runs each\n${lines.join('\n')}` +
+      `${pwWhy ? `\nPlaywright MCP not measured: ${pwWhy}` : ''}${notDone.length ? `\nnot done, and why:\n${notDone.map((l) => `  ${l}`).join('\n')}` : ''}\n`,
+  );
   if (process.env.GITHUB_STEP_SUMMARY) {
     const { appendFileSync } = await import('node:fs');
     const md = (s) => (s ? `${s.done}/${RUNS} | ${s.calls} | ${s.median} / ${s.worst} | ${s.bytes}` : 'not measured | | |');
@@ -891,7 +907,8 @@ async function benchmarkAgainstPlaywright(id, container) {
       `### Husk against Playwright MCP\n\nThe same tasks on the same computer and the same Chromium binary (${PLAYWRIGHT_MCP} over --cdp-endpoint, on a second Chromium), each driven by a scripted plan that uses its own tools as economically as it can -- not a model. ${RUNS} runs each; ms is median / worst; bytes is what the plan read back.\n\n` +
         '| Task | Husk done | calls | ms | bytes | Playwright MCP done | calls | ms | bytes |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n' +
         rows.map((r) => `| ${r.task} | ${md(r.husk)} | ${md(r.playwright)} |`).join('\n') +
-        `${pwWhy ? `\n\nPlaywright MCP was not measured: ${pwWhy}` : ''}\n`,
+        `${pwWhy ? `\n\nPlaywright MCP was not measured: ${pwWhy}` : ''}` +
+        `${notDone.length ? `\n\nNot done, and why (the first such run):\n\n${notDone.map((l) => `- ${l.replace(/\|/g, '\\|')}`).join('\n')}` : ''}\n`,
     );
   }
   if (process.env.E2E_SHOTS) {
