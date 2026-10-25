@@ -1,5 +1,6 @@
+import { spawnSync } from 'node:child_process';
 import { connectChatApp, detectChatApps, disconnectChatApp, huskLaunch, readDaemonRecord } from '@husk-ai/core';
-import type { ChatApp, ChatAppId, ConnectResult } from '@husk-ai/core';
+import type { ChatApp, ChatAppId, ConnectResult, Flavor } from '@husk-ai/core';
 import { collect, type DoctorProbes, type DoctorReport, type ProviderRow } from './doctor.js';
 import { ask, confirm, interactive } from '../lib/prompt.js';
 import { UsageError, parse } from '../args.js';
@@ -82,8 +83,11 @@ export async function run(argv: string[], probes?: DoctorProbes): Promise<number
   for (const id of chosen) results.push(await connectChatApp(id, launch));
   for (const r of results) report1(r, apps);
 
-  // 3. Husk itself, so the console can show every chat from the first call.
+  // 3. The computer's image, now rather than in a chat's first call, which
+  // cannot show a download's progress. Then Husk itself, so the console can
+  // show every chat from the first call. `--no-start` starts and pulls nothing.
   let consoleUrl: string | undefined;
+  if (values['no-start'] !== true) await pullImage(provider, flavor, values.json === true);
   if (values['no-start'] !== true) {
     const started = ui.spinner('starting Husk');
     try {
@@ -107,6 +111,20 @@ export async function run(argv: string[], probes?: DoctorProbes): Promise<number
   else if (values['no-start'] !== true) ui.print(`  ${ui.dim('console ')} ${ui.yellow('Husk did not start')} ${ui.dim('-- chats still work; see ~/.husk/daemon.log')}`);
   ui.print(`  ${ui.dim('try it  ')} ask your chat: "Use Husk to tell me what OS your computer runs."`);
   return results.every((r) => r.ok) ? EXIT_OK : 1;
+}
+
+/**
+ * Pull a container computer's image with the engine's own progress, unless it
+ * is already here. Not fatal: a chat's first call pulls it if this could not.
+ */
+async function pullImage(provider: string, flavor: string | undefined, quiet: boolean): Promise<void> {
+  if (!CONTAINERS.has(provider)) return;
+  const { resolveImage } = await import('@husk-ai/runtime');
+  const image = resolveImage({ flavor: (flavor ?? 'base') as Flavor }).primary;
+  if (spawnSync(provider, ['image', 'inspect', image], { stdio: 'ignore', windowsHide: true }).status === 0) return;
+  if (!quiet) ui.print(`  ${ui.dim('getting the computer image, once:')} ${image}${flavor === 'full' ? ui.dim(' (about 2 GB, with the browser)') : ''}`);
+  const pulled = spawnSync(provider, ['pull', image], { stdio: quiet ? 'ignore' : ['ignore', 'inherit', 'inherit'], windowsHide: true });
+  if (pulled.status !== 0 && !quiet) ui.warn(`could not get ${image} now; the first chat will get it instead`);
 }
 
 async function chooseComputer(providers: ProviderRow[], flag: string | undefined): Promise<string | undefined> {
@@ -148,7 +166,9 @@ async function chooseFlavor(provider: string): Promise<string | undefined> {
   // Only container images come in flavours; the local and ssh providers use
   // what the machine already has.
   if (!CONTAINERS.has(provider)) return undefined;
-  if (!interactive()) return undefined;
+  // Nobody to ask (the README's paste-into-chat setup): the chats are offered
+  // the browser tools, so the image that runs the browser.
+  if (!interactive()) return 'full';
   const browser = await confirm('Include a browser? The image is larger, and pages render like in Chrome.', { defaultYes: true });
   return browser ? 'full' : undefined;
 }

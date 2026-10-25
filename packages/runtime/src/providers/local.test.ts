@@ -107,6 +107,24 @@ describe.skipIf(process.platform === 'win32')('local provider /work contract', (
     expect(Buffer.from(await c.readFile('/work/out.txt')).toString('utf8')).toBe('shell-made');
   });
 
+  it('reads no further than it was asked to, and refuses a whole file over its limit', async () => {
+    const c = await freshComputer();
+    expect((await c.exec({ cmd: 'head -c 200000 /dev/zero | tr "\\0" a > /work/big.txt' })).exitCode).toBe(0);
+    await expect(c.readFile('/work/big.txt', { maxBytes: 1000 })).rejects.toMatchObject({ code: 'E_QUOTA' });
+    const head = await c.readTextFile('/work/big.txt', 10);
+    expect(head.startsWith('aaaaaaaaaa\n')).toBe(true);
+    expect(head).toContain('goes on past 10 bytes');
+    expect((await c.readFile('/work/big.txt')).byteLength).toBe(200000);
+  });
+
+  it('refuses a pipe at once instead of waiting for a writer that never comes', async () => {
+    const c = await freshComputer();
+    expect((await c.exec({ cmd: 'mkfifo /work/pipe' })).exitCode).toBe(0);
+    const started = Date.now();
+    await expect(c.readFile('/work/pipe')).rejects.toMatchObject({ code: 'E_FS_DENIED', message: expect.stringContaining('not a regular file') });
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
   it('maps /tmp to the computer tmp the file tools use', async () => {
     const c = await freshComputer();
     await c.writeFile('/tmp/setup.sh', 'echo tmp-marker\n');

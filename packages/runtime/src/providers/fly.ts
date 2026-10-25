@@ -1,6 +1,6 @@
 import { readFile as readHostFile, mkdir, writeFile as writeHostFile } from 'node:fs/promises';
 import { dirname, posix } from 'node:path';
-import { HuskError, clampText, id as newId } from '@husk-ai/core';
+import { HuskError, READ_FILE_MAX_BYTES, clampText, fileTooLarge, headText, id as newId } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -459,10 +459,24 @@ class FlyComputer implements Computer {
     this.touch();
   }
 
-  async readFile(path: string): Promise<Uint8Array> {
+  async readFile(path: string, opts: { maxBytes?: number } = {}): Promise<Uint8Array> {
+    const max = opts.maxBytes ?? READ_FILE_MAX_BYTES;
+    const bytes = await this.readHead(path, max);
+    if (bytes.byteLength > max) throw fileTooLarge(normaliseGuestPath(path, this.info.workdir), max);
+    return bytes;
+  }
+
+  async readTextFile(path: string, maxBytes = 1024 * 1024): Promise<string> {
+    return headText(await this.readHead(path, maxBytes), maxBytes);
+  }
+
+  /** At most `maxBytes + 1` bytes from the start, stopped in the machine: one past tells the caller there was more. */
+  private async readHead(path: string, maxBytes: number): Promise<Uint8Array> {
     this.assertLive();
     const target = normaliseGuestPath(path, this.info.workdir);
-    const r = await this.raw(`base64 ${shellQuote([target])} | tr -d '\\n'`, 120);
+    const q = shellQuote([target]);
+    // A pipeline answers with its last command's status, so a missing file is caught first.
+    const r = await this.raw(`test -r ${q} && ! test -d ${q} || { echo "cannot read ${target}" >&2; exit 1; }; head -c ${maxBytes + 1} -- ${q} | base64 | tr -d '\\n'`, 120);
     if ((r.exit_code ?? 1) !== 0) {
       throw new HuskError('E_FS_DENIED', `cannot read ${target}: ${(r.stderr ?? '').trim()}`, {
         hint: 'check the path exists inside the machine',
@@ -470,11 +484,6 @@ class FlyComputer implements Computer {
     }
     this.touch();
     return new Uint8Array(Buffer.from((r.stdout ?? '').trim(), 'base64'));
-  }
-
-  async readTextFile(path: string, maxBytes = 1024 * 1024): Promise<string> {
-    const buf = await this.readFile(path);
-    return clampText(Buffer.from(buf).toString('utf8'), maxBytes).text;
   }
 
   async listDir(path: string): Promise<DirEntry[]> {

@@ -20,7 +20,7 @@ options
   --profile <name>    starter (saved workspaces) | computer (all tools; default)
   --session <key>     reuse a named machine (default: unique to this server process)
   --provider <name>   docker | podman | local | ssh | fly  (default: best available)
-  --flavor <name>     base | python | node | full          (default: base)
+  --flavor <name>     base | python | node | full          (default: full, which runs the browser)
   --network <mode>    none | egress | full                 (default: full, minus internal addresses)
   --memory <mb>       memory ceiling
   --cpus <n>          cpu ceiling
@@ -73,7 +73,9 @@ async function main(): Promise<void> {
   const spec: ComputerSpec = {};
   if (values.profile !== 'starter' && values.profile !== 'computer') throw new Error('--profile must be starter or computer');
   if (values.provider) spec.provider = values.provider;
-  if (values.flavor) spec.flavor = values.flavor as Flavor;
+  // Every chat is offered the browser tools, and only `full` runs the browser
+  // (images.ts). Providers without flavours (local, ssh) ignore it.
+  spec.flavor = (values.flavor ?? 'full') as Flavor;
   if (values.network) spec.network = { mode: values.network as 'none' | 'egress' | 'full' };
   if (values.memory) spec.memoryMb = Number(values.memory);
   if (values.cpus) spec.cpus = Number(values.cpus);

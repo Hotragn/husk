@@ -188,7 +188,13 @@ export interface Computer {
   exec(req: ExecRequest): Promise<ExecResult>;
 
   writeFile(path: string, content: string | Uint8Array, opts?: WriteFileOptions): Promise<void>;
-  readFile(path: string): Promise<Uint8Array>;
+  /**
+   * The whole file. Over `maxBytes` (READ_FILE_MAX_BYTES unless asked for
+   * more) it is refused with E_QUOTA, and the read stops at the limit where it
+   * runs: one `read_file /dev/zero` must not exhaust the shared Husk.
+   */
+  readFile(path: string, opts?: { maxBytes?: number }): Promise<Uint8Array>;
+  /** The file as text: at most `maxBytes` from the start, read no further, with a note when there is more. */
   readTextFile(path: string, maxBytes?: number): Promise<string>;
   listDir(path: string): Promise<DirEntry[]>;
   stat(path: string): Promise<DirEntry | null>;

@@ -5,7 +5,7 @@ import { createServer, connect as tcpConnect, type Server, type Socket } from 'n
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { HuskError, ensurePaths, id as newId } from '@husk-ai/core';
+import { HuskError, READ_FILE_MAX_BYTES, ensurePaths, fileTooLarge, headText, id as newId } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -318,6 +318,9 @@ export function parseStatsLine(line: string): ComputerUsage {
   return out;
 }
 
+/** How long one file read may take in the computer before it is stopped: a pipe nobody writes to never ends. */
+const READ_TIMEOUT_SEC = 60;
+
 export class OciComputer implements Computer {
   readonly info: ComputerInfo;
   protected readonly cfg: OciConfig;
@@ -626,39 +629,58 @@ export class OciComputer implements Computer {
    * Every path husk actually uses is on one of those mounts, so this failed for
    * everything that mattered while looking like a missing-file problem.
    */
-  async readFile(path: string): Promise<Uint8Array> {
+  async readFile(path: string, opts: { maxBytes?: number } = {}): Promise<Uint8Array> {
+    const max = opts.maxBytes ?? READ_FILE_MAX_BYTES;
+    const bytes = await this.readHead(path, max);
+    if (bytes.byteLength > max) throw fileTooLarge(path, max);
+    return bytes;
+  }
+
+  /**
+   * At most `maxBytes + 1` bytes from the start of a file, stopped where it is
+   * read: one past the limit tells the caller the file was longer. `timeout`
+   * ends a read that never would, such as a pipe nobody writes to.
+   */
+  private async readHead(path: string, maxBytes: number): Promise<Uint8Array> {
     try {
-      return await this.execCapture(['exec', this.native, 'cat', path]);
+      const args = ['exec', this.native, 'timeout', String(READ_TIMEOUT_SEC), 'head', '-c', String(maxBytes + 1), '--', path];
+      return await this.execCapture(args, maxBytes + 1);
     } catch (e) {
-      throw new HuskError('E_FS_DENIED', `cannot read ${path}`, {
-        hint: 'check the path exists inside the computer',
+      const stuck = (e as Error).message === 'exit 124';
+      throw new HuskError('E_FS_DENIED', stuck ? `reading ${path} did not finish in ${READ_TIMEOUT_SEC}s` : `cannot read ${path}`, {
+        hint: stuck ? 'it is probably a pipe or a device that never ends; read it with a command you can stop' : 'check the path exists inside the computer',
         cause: e,
       });
     }
   }
 
-  /** Run the CLI and collect stdout as raw bytes, so binaries survive intact. */
-  protected execCapture(args: string[]): Promise<Uint8Array> {
+  /** Run the CLI and collect stdout as raw bytes, so binaries survive intact. Past `limit` bytes it stops reading. */
+  protected execCapture(args: string[], limit = Number.POSITIVE_INFINITY): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
       const child = spawn(this.cfg.binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
       const chunks: Buffer[] = [];
+      let got = 0;
       let stderr = '';
-      child.stdout?.on('data', (b: Buffer) => chunks.push(b));
+      child.stdout?.on('data', (b: Buffer) => {
+        if (got >= limit) return;
+        chunks.push(b);
+        got += b.byteLength;
+        // The read in the computer bounds itself; this is the backstop for one that does not.
+        if (got >= limit) child.kill();
+      });
       child.stderr?.on('data', (b: Buffer) => {
         stderr += b.toString('utf8');
       });
       child.on('error', reject);
       child.on('close', (code) => {
-        if (code === 0) return resolve(new Uint8Array(Buffer.concat(chunks)));
+        if (code === 0 || got >= limit) return resolve(new Uint8Array(Buffer.concat(chunks).subarray(0, Math.min(got, limit))));
         reject(new Error(stderr.trim() || `exit ${code}`));
       });
     });
   }
 
-  async readTextFile(path: string, maxBytes?: number): Promise<string> {
-    const buf = await this.readFile(path);
-    const text = new TextDecoder().decode(buf);
-    return maxBytes && text.length > maxBytes ? text.slice(0, maxBytes) : text;
+  async readTextFile(path: string, maxBytes = 1024 * 1024): Promise<string> {
+    return headText(await this.readHead(path, maxBytes), maxBytes);
   }
 
   async listDir(path: string): Promise<DirEntry[]> {
