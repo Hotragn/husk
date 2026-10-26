@@ -42,6 +42,12 @@ export interface DesktopState {
   window: 'open' | 'minimized' | 'closed';
   /** The window stays on top of other windows. */
   pinned: boolean;
+  /**
+   * False while the shared Husk is not answering: a banner says so, the screens
+   * are cleared rather than left frozen on their last frame, and nothing that
+   * needs Husk is offered. Absent from an older app: then it is answering.
+   */
+  connected?: boolean;
   /** A Mac with a notch: the pill wraps it, its logos left and right of `gap` pixels. */
   notch?: { gap: number; height: number };
 }
@@ -58,6 +64,8 @@ export type DesktopAct =
   | { type: 'select'; id: string }
   | { type: 'console'; id: string }
   | { type: 'interactive'; on: boolean }
+  /** The corner or the notch gives the keyboard back to whatever had it before the app's shortcut. */
+  | { type: 'release' }
   | { type: 'window'; op: 'close' | 'minimize' | 'maximize' | 'pin' }
   | { type: 'refresh' };
 
@@ -76,6 +84,21 @@ export function useDesktopState(): DesktopState | null {
   const [state, setState] = useState<DesktopState | null>(null);
   useEffect(() => desktopBridge()?.onState(setState), []);
   return state;
+}
+
+/**
+ * The keyboard arriving from the app's shortcut, for the corner and the notch,
+ * which take it from nothing else: their window gets focus, `then` runs, and
+ * the first button in `within` takes it, unless one there has it already.
+ * Returns the listener's cleanup, for an effect.
+ */
+export function arrive(within: { current: HTMLElement | null }, then?: () => void): () => void {
+  const on = () => {
+    then?.();
+    if (!within.current?.contains(document.activeElement)) within.current?.querySelector('button')?.focus();
+  };
+  window.addEventListener('focus', on);
+  return () => window.removeEventListener('focus', on);
 }
 
 /** "3s ago", "4 min ago": how long since a chat's last call, for a status line. */
@@ -110,8 +133,9 @@ export function tabName(c: DesktopComputer, all: DesktopComputer[]): string {
   return twin && time ? `${c.platform} ${time}` : c.platform;
 }
 
-/** What a computer is doing, in a few words. */
-export function doing(c: DesktopComputer): string {
+/** What a computer is doing, in a few words: nothing anyone can tell while Husk is `away`. */
+export function doing(c: DesktopComputer, away = false): string {
+  if (away) return 'Husk is not answering';
   if (c.held) return 'You have it';
   if (c.waiting) return `Waiting for you · ${c.waiting}`;
   if (c.state !== 'running') return c.state === 'stopped' ? 'Stopped' : c.state;

@@ -11,7 +11,7 @@ import { spawn } from 'node:child_process';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { app, BrowserWindow, Menu, Notification, Tray, desktopCapturer, dialog, nativeImage, screen, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, Menu, Notification, Tray, desktopCapturer, dialog, globalShortcut, nativeImage, screen, shell, systemPreferences } from 'electron';
 import { Computers } from './computers.mjs';
 import {
   consoleUrl,
@@ -22,13 +22,17 @@ import {
   launchFor,
   newlyWaiting,
   readDaemonRecord,
+  restartDelay,
   runtimeBin,
   sameOrigin,
+  trayComputers,
   trayStatus,
 } from './lib.mjs';
 
 const ICON = join(import.meta.dirname, '..', 'assets', 'icon.png');
 const POLL_MS = 2000;
+/** The keyboard's way to the corner and the notch, from anywhere: four keys, so another app is unlikely to want them. */
+const ROW_KEYS = 'CommandOrControl+Alt+Shift+H';
 // `HUSK_DESKTOP_SMOKE=1`: start hidden, load the console on a panel that asks
 // no provider anything, put two made-up computers on the screen and check
 // their windows, print what loaded, stop the Husk it started, and quit.
@@ -77,9 +81,17 @@ let waiting = [];
 let held = [];
 let recovering;
 let computers;
+/** Whether the shared Husk answered the last reading. */
+let answering = true;
+/** When Husk may next be started, and how long the last wait was: the restarts back off (restartDelay). */
+let restartAt = 0;
+let restartWait = 0;
 /** The latest call the shared Husk said had started, and whether its events are coming in. */
 let lastCall;
 let eventsReady = false;
+/** The events socket's next try while it is closed, and how long that wait is. */
+let eventsRetry;
+let eventsWait = 0;
 
 /** Version of the Husk this app carries. */
 function bundledVersion() {
@@ -275,6 +287,8 @@ async function quit(stopHusk) {
 
 function refreshTray(status) {
   const atLogin = app.getLoginItemSettings().openAtLogin;
+  // An item per computer, as the corner shows them: the tray is where a keyboard and a screen reader find them.
+  const shown = computers ? trayComputers(computers.computers()) : [];
   tray.setToolTip(`Husk · ${status.label}`);
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -286,6 +300,13 @@ function refreshTray(status) {
           if (!(await giveBack(h.handoffId))) dialog.showErrorBox('Could not give it back', 'Husk did not answer. Try Give back in the Husk window.');
         },
       })),
+      ...(shown.length
+        ? [
+            { type: 'separator' },
+            ...shown.map((c) => ({ label: c.label, click: () => computers.open(c.id, { focus: true }) })),
+            { label: 'Go to the computers', accelerator: ROW_KEYS, registerAccelerator: false, click: () => computers.focusRow() },
+          ]
+        : []),
       { type: 'separator' },
       { label: 'Open Husk', click: () => openWindow() },
       { label: 'Connect chat apps', click: () => openWindow('connect') },
@@ -305,14 +326,28 @@ function refreshTray(status) {
   );
 }
 
-/** Husk restarted (new token) or stopped: find it, or start it, and point the window at it. */
+/**
+ * Husk restarted (new token) or stopped: find it, or start it, and point the
+ * window at it. Finding it is a file and one request, every time; starting it
+ * backs off, so a Husk that dies as it starts is not started again every second.
+ */
 async function recover() {
   recovering ??= (async () => {
     const next = readDaemonRecord();
-    const fresh = next && (await health(next)) ? next : await ensureHusk().catch((err) => {
-      log(`Husk could not be restarted: ${err.message}`);
-      return undefined;
-    });
+    let fresh = next && (await health(next)) ? next : undefined;
+    if (!fresh && Date.now() >= restartAt) {
+      // Counted from the failure: a start that fails can take 20 s on its own.
+      fresh = await ensureHusk().catch((err) => {
+        restartWait = restartDelay(restartWait);
+        restartAt = Date.now() + restartWait;
+        log(`Husk could not be restarted: ${err.message}; trying again in ${Math.round(restartWait / 1000)}s`);
+        return undefined;
+      });
+    }
+    if (fresh) {
+      restartWait = 0;
+      restartAt = 0;
+    }
     if (fresh && (fresh.pid !== rec?.pid || fresh.token !== rec?.token)) {
       rec = fresh;
       if (win && !win.isDestroyed()) void win.loadURL(consoleUrl(rec));
@@ -326,33 +361,54 @@ async function recover() {
 
 async function poll() {
   let overview;
+  let res;
   try {
-    const res = await fetch(`${rec.url}/v1/overview`, { headers: rec.token ? { authorization: `Bearer ${rec.token}` } : {} });
+    // A Husk that accepts and never answers is not answering either.
+    res = await fetch(`${rec.url}/v1/overview`, {
+      headers: rec.token ? { authorization: `Bearer ${rec.token}` } : {},
+      signal: AbortSignal.timeout(5_000),
+    });
     if (res.ok) overview = await res.json();
-    else if (res.status === 401) await recover();
   } catch {
-    await recover();
+    // Not answering: said before Husk is looked for or started again, which can take a while.
   }
   // The made-up computers of a smoke run are not in Husk: a reading would take them off the screen.
   if (overview && !SMOKE) computers?.update(overview);
-  const status = trayStatus(overview);
-  for (const h of newlyWaiting(waiting, status.waiting)) {
-    const n = new Notification({ title: 'Waiting for you', body: h.reason, icon: ICON });
-    n.on('click', () => (h.computerId && computers?.settings.onScreen ? computers.open(h.computerId, { focus: true }) : openWindow('handoffs')));
-    n.show();
+  setAnswering(Boolean(res));
+  const status = trayStatus(overview, answering);
+  // What is waiting and held is kept from the last reading while Husk is away, so it is not announced again on its return.
+  if (overview) {
+    for (const h of newlyWaiting(waiting, status.waiting)) {
+      const n = new Notification({ title: 'Waiting for you', body: h.reason, icon: ICON });
+      n.on('click', () => (h.computerId && computers?.settings.onScreen ? computers.open(h.computerId, { focus: true }) : openWindow('handoffs')));
+      n.show();
+    }
+    waiting = status.waiting;
+    held = status.held;
   }
-  waiting = status.waiting;
-  held = status.held;
   refreshTray(status);
+  if (!res || res.status === 401) await recover();
+}
+
+/** The shared Husk stopped answering, or answers again: the windows clear their screens and say so. */
+function setAnswering(on) {
+  if (on === answering) return;
+  answering = on;
+  log(on ? 'Husk is answering again' : 'Husk is not answering');
+  computers?.setConnected(on);
+  if (on && eventsRetry) watchCalls();
 }
 
 /**
  * The shared Husk's events, so with "open by itself" on a chat's computer opens
  * as its first call starts, not at the next reading. The readings stay the
- * source of truth: an event only asks for one now.
+ * source of truth: an event only asks for one now. A closed socket is tried
+ * again after the waits a restart backs off by, and at once when Husk answers again.
  */
 function watchCalls() {
-  if (!rec) return void setTimeout(watchCalls, POLL_MS);
+  clearTimeout(eventsRetry);
+  eventsRetry = undefined;
+  if (!rec) return void (eventsRetry = setTimeout(watchCalls, POLL_MS));
   const ws = new WebSocket(`${rec.url.replace(/^http/, 'ws')}/v1/events${rec.token ? `?token=${encodeURIComponent(rec.token)}` : ''}`);
   ws.onopen = () => ws.send(JSON.stringify({ type: 'subscribe', topics: ['computers'] }));
   ws.onmessage = (event) => {
@@ -362,7 +418,10 @@ function watchCalls() {
     } catch {
       return;
     }
-    if (msg.type === 'subscribed') eventsReady = true;
+    if (msg.type === 'subscribed') {
+      eventsReady = true;
+      eventsWait = 0;
+    }
     if (msg.type !== 'tool_started') return;
     lastCall = msg.payload;
     const id = msg.payload?.computerId;
@@ -375,7 +434,8 @@ function watchCalls() {
   // A Husk that restarted has a new token; `rec` names it again by the time this reconnects.
   ws.onclose = () => {
     eventsReady = false;
-    setTimeout(watchCalls, POLL_MS);
+    eventsWait = restartDelay(eventsWait);
+    eventsRetry = setTimeout(watchCalls, eventsWait);
   };
 }
 
@@ -578,6 +638,10 @@ async function liveSmoke() {
   check('a chat’s running computer stands in the corner', id, id);
   if (id) {
     await walkComputers(check, [id], 'live');
+    // The keyboard's way in, the app's shortcut: on Linux, where the corner cannot take the keyboard, it opens the window.
+    computers.close();
+    computers.focusRow();
+    check('the keyboard shortcut brings the computers to the keyboard (on Linux, their window)', await until(() => computers.win?.isVisible(), 5000));
     const width = await until(
       () => computers.run('window', `(() => { const i = document.querySelector('.cw-screen img'); return i && i.naturalWidth > 0 ? i.naturalWidth : 0; })()`),
       30_000,
@@ -596,6 +660,21 @@ async function liveSmoke() {
     await poll();
     check('and then the tray holds nothing', held.length === 0, JSON.stringify(held));
     await sleep(8000); // the chat browses on in the window, for the film
+
+    // Husk dies under the app: the window says so over a cleared screen, and the app starts Husk again.
+    const gone = rec.pid;
+    process.kill(gone, 'SIGKILL');
+    const away = await until(
+      () => !answering && computers.run('window', `!!document.querySelector('.cw-banner-away') && !document.querySelector('.cw-screen img')`),
+      15_000,
+    );
+    check('when Husk stops answering, the window says so over a cleared screen', away);
+    if (SHOTS) await computers.capture('window', join(SHOTS, 'live-away.png'));
+    const back = await until(
+      () => answering && rec.pid !== gone && computers.run('window', `!document.querySelector('.cw-banner-away') && document.querySelectorAll('.cw-tab').length > 0`),
+      60_000,
+    );
+    check('the app starts Husk again, and the window comes back', back, `pid ${gone} -> ${rec.pid}`);
   }
   app.exit(passed() ? 0 : 1);
 }
@@ -647,6 +726,8 @@ async function startApp() {
     return;
   }
   computers = new Computers({ rec: () => rec, icon: ICON, onConsole: () => openWindow(), onRefresh: () => void poll(), giveBack });
+  if (!globalShortcut.register(ROW_KEYS, () => computers.focusRow())) log(`${ROW_KEYS} belongs to another app: the tray lists the computers instead`);
+  app.on('will-quit', () => globalShortcut.unregisterAll());
   watchCalls();
   if (LIVE) {
     void liveSmoke();

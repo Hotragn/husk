@@ -83,7 +83,9 @@ export function external(url) {
 }
 
 /** The tray's one line, what waits for the person, and what they hold, from GET /v1/overview. */
-export function trayStatus(overview) {
+export function trayStatus(overview, answering = true) {
+  // Not answering is not starting: say which, so a person knows to wait or to look.
+  if (!answering) return { label: 'Husk is not answering · trying again', waiting: [], held: [] };
   if (!overview) return { label: 'Husk is starting', waiting: [], held: [] };
   const running = overview.computers.filter((c) => c.state === 'running').length;
   const handoffs = overview.handoffs ?? [];
@@ -99,6 +101,21 @@ export function trayStatus(overview) {
   if (held.length) parts.push(`you hold ${held.length}`);
   if (waiting.length) parts.push(`${waiting.length} waiting for you`);
   return { label: parts.join(' · '), waiting, held };
+}
+
+/**
+ * How long to wait before starting the shared Husk again, after waiting
+ * `previous` ms the last time: two seconds, doubling to a minute. Finding a Husk
+ * someone else started is not held back, only starting one: a Husk that dies
+ * as it starts must not be started again every second.
+ */
+export function restartDelay(previous) {
+  return previous ? Math.min(previous * 2, 60_000) : 2_000;
+}
+
+/** The tray's item for each computer on the screen, which opens its window: its chat, and whether it needs the person. */
+export function trayComputers(list) {
+  return list.map((c) => ({ id: c.id, label: `${c.label}${c.held ? ' · you have it' : c.waiting ? ' · waiting for you' : ''}` }));
 }
 
 /** Handoffs that were not waiting last time: one notification each. */
@@ -156,16 +173,17 @@ export const PUSHED_SCREEN = new Set(['docker', 'podman', 'local']);
 /**
  * The computers on the screen, from GET /v1/overview: every running one (the
  * corner row, and the Computers window's tabs), and the tab being shown even
- * once it stops. Each says who holds it and what it last did.
+ * once it stops. Each says who holds it and what it last did, and what it is
+ * running now, unless Husk is not `answering`: then nothing is known to be running.
  */
-export function desktopComputers(overview, active, icons = {}) {
+export function desktopComputers(overview, active, icons = {}, answering = true) {
   if (!overview) return [];
   return overview.computers
     .filter((c) => c.state === 'running' || (c.id === active && c.state !== 'destroyed'))
     .map((c) => {
       const handoff = (overview.handoffs ?? []).find((h) => h.computerId === c.id);
       const last = overview.activity?.[c.id];
-      const calling = overview.running?.[c.id];
+      const calling = answering && overview.running?.[c.id];
       const platform = c.platform;
       return {
         id: c.id,

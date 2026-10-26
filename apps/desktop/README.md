@@ -12,8 +12,15 @@ that tells you when a chat is waiting for you.
   click Connect next to each chat app. When the app connects one, the chat app is pointed
   at the app's own binary (`Husk.exe` with `ELECTRON_RUN_AS_NODE=1`), not at `npx`.
 - **Sits in the tray.** It shows how many computers are running and how many chats are
-  waiting for you, and raises a notification when a chat hands you the computer. Closing
-  the window leaves Husk running; your chats keep their computers.
+  waiting for you, and raises a notification when a chat hands you the computer. It lists
+  each computer too, and choosing one opens its window. Closing the window leaves Husk
+  running; your chats keep their computers.
+- **Works by keyboard.** Ctrl+Alt+Shift+H (Cmd+Option+Shift+H on a Mac) brings the
+  keyboard to your computers: the notch while the window is minimized, else the corner.
+  Tab moves between them, Enter opens one, and Escape goes back to where you were. On
+  Linux, where the corner cannot take the keyboard, it opens the Computers window. A
+  held screen shows a second ring while your keys go to the page. With reduced motion
+  on, nothing in the corner, the notch or the window moves.
 - **Keeps each chat's computer one click away.** A very small 3D iMac for each computer
   a chat is using stands on a small frosted tray in the bottom-right corner, facing you,
   its screen white. It never moves or shows a picture, so it never distracts: it glows
@@ -29,6 +36,11 @@ that tells you when a chat is waiting for you.
 - **Says what you hold.** While you hold a computer, the tray says so ("you hold 1"), with
   **Give back** for each. Closing the window or quitting while you hold one asks first,
   keeping the hold unless you choose to give it back; its chat stays paused until you do.
+- **Says when Husk stops answering.** The tray says "Husk is not answering · trying again",
+  and the Computers window says so over a cleared screen, offering nothing that needs Husk.
+  The app starts Husk again, and after a start that fails waits two seconds before the
+  next, twice as long each time after that, up to a minute. Everything comes back when
+  Husk does.
 - **Minimizes to the notch.** The minimized window becomes its computers' logos in a black
   capsule hanging from the top of the screen: around the notch on a Mac that has one,
   centred on Windows and Linux. Click a logo to open that tab; hover to see what each

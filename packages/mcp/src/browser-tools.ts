@@ -3,6 +3,7 @@ import { browserFor, describeHappened, describeWaited, inspectBrowserCapability,
 import type { ActionOutcome, PageAction, SnapshotNode, WaitTarget } from '@husk-ai/browser';
 import type { Computer } from '@husk-ai/core';
 import { redact } from '@husk-ai/core';
+import { commandRulesOf, evaluateScript } from '@husk-ai/runtime';
 import type { ToolDef, ToolResult } from './tools.js';
 
 /**
@@ -108,7 +109,8 @@ export const BROWSER_TOOLS: ToolDef[] = [
     description:
       'Run a short Python script against the current page when the next steps depend on what ' +
       'the page shows -- branch, loop over results, retry -- all in ONE call. It runs in its own ' +
-      'process inside your computer, not on the host, and is stopped at timeoutSec. `page` has: ' +
+      'process in your computer -- on the local provider that is this machine, as with shell -- and is stopped ' +
+      'at timeoutSec; a command it hands a shell (os.system, subprocess) is held to the rules shell is. `page` has: ' +
       'goto(url), click(ref= or role=, name=, force=, dialog=), fill(text, ref= or role=, name=, submit=), ' +
       'wait_for_text(text, timeout=) / wait_for_url(part) / wait_for_selector(css) -> True or False, ' +
       'has_text(text), snapshot() -> list of {ref, role, name}, text(ref= or selector=), url(), title(); ' +
@@ -499,6 +501,11 @@ async function browserTool(computer: Computer, name: string, args: Record<string
       const script = typeof args.script === 'string' ? args.script : '';
       if (!script.trim()) return bad('script is empty');
       if (script.length > 100_000) return bad('script is over 100 KB; keep it to the steps that need deciding');
+      // What it hands a shell is held to the rules shell is: the driver only ever sees Python.
+      const denied = evaluateScript(script, commandRulesOf(computer.info.spec.labels));
+      if (!denied.allowed) {
+        return bad(`refused: ${denied.reason}: a command this script runs is one shell would refuse. Add a pattern to guardrails.allowCommands in husk.yaml if it is intentional.`);
+      }
       const out = await session.script(script, secondsArg(args.timeoutSec, 60));
       // What happened and where the page is come first, so the result stays last, whole JSON to the end.
       const parts = [`${out.error ? 'failed' : 'finished'} in ${out.ms} ms`];

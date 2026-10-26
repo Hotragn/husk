@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { HuskApi } from '../api/client';
 import { desktopView } from '../state/viewerToken';
 import { AppGlyph } from './AppGlyph';
@@ -30,6 +30,7 @@ const desk = (computers: DesktopComputer[], extra: Partial<DesktopState> = {}): 
 let acts: unknown[];
 let requests: string[];
 let sockets: string[];
+let feeds: Array<{ onmessage: ((ev: { data: string }) => void) | null; closed: boolean }>;
 let push: (s: DesktopState) => void;
 
 function bridge(state: DesktopState, platform = 'darwin') {
@@ -52,16 +53,21 @@ beforeEach(() => {
   acts = [];
   requests = [];
   sockets = [];
+  feeds = [];
   vi.stubGlobal(
     'WebSocket',
     class {
       onmessage = null;
       onclose = null;
+      closed = false;
       constructor(url: string) {
         const u = new URL(url);
         sockets.push(u.pathname + u.search.replace(/[?&]token=[^&]*/, ''));
+        feeds.push(this);
       }
-      close() {}
+      close() {
+        this.closed = true;
+      }
     },
   );
   vi.stubGlobal(
@@ -177,6 +183,29 @@ describe('the Computers window', () => {
     expect(screen.getByText('No chat is using a computer right now.')).toBeTruthy();
   });
 
+  it('says when Husk is not answering, clears the screen and offers nothing that needs Husk, until it answers again', async () => {
+    const answering = desk([computer('cmp_a01')], { active: 'cmp_a01' });
+    bridge(answering);
+    render(<ComputersWindow />);
+    const live = 'The browser on Claude Code · chat started 09:01, live';
+    act(() => feeds[0]!.onmessage?.({ data: JSON.stringify({ type: 'frame', data: 'AAAA', width: 4, height: 3 }) }));
+    expect(screen.getByAltText(live)).toBeTruthy();
+
+    act(() => push({ ...answering, connected: false }));
+    expect(screen.getByRole('alert').textContent).toContain('Husk is not answering.');
+    expect(screen.queryByAltText(live)).toBeNull();
+    expect(feeds[0]!.closed).toBe(true);
+    expect(document.querySelector('.cw-status')?.textContent).toContain('Husk is not answering');
+    expect(screen.getByRole('button', { name: 'Take over' }).hasAttribute('disabled')).toBe(true);
+
+    act(() => push(answering));
+    expect(screen.queryByRole('alert')).toBeNull();
+    // The screen is asked for again, with nothing on it from before Husk went away.
+    await waitFor(() => expect(sockets).toEqual(['/v1/computers/cmp_a01/screen', '/v1/computers/cmp_a01/screen']));
+    expect(screen.queryByAltText(live)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Take over' }).hasAttribute('disabled')).toBe(false);
+  });
+
   it('names two computers of one app apart by when their chats started', () => {
     const all = [computer('cmp_a01'), computer('cmp_a07'), computer('cmp_b01', { platform: 'Zed', label: 'Zed · chat started 08:00' })];
     expect(all.map((c) => tabName(c, all))).toEqual(['Claude Code 09:01', 'Claude Code 09:07', 'Zed']);
@@ -254,6 +283,30 @@ describe('the notch', () => {
   });
 });
 
+describe('the keyboard', () => {
+  it('reaches the corner from the app’s shortcut, on the first computer, and Escape gives it back', async () => {
+    bridge(desk([computer('cmp_a01'), computer('cmp_a02', { platform: 'Cursor', label: 'Cursor · chat started 09:02' })]));
+    const { container } = render(<Dock />);
+    await waitFor(() => expect(container.querySelector('.dock-flat')).not.toBeNull());
+    act(() => void window.dispatchEvent(new FocusEvent('focus')));
+    expect(document.activeElement?.getAttribute('aria-label')).toMatch(/^Claude Code · chat started 09:01: /);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(acts).toContainEqual({ type: 'release' });
+  });
+
+  it('reaches the notch from the app’s shortcut, opening its list on the first computer; Escape closes it and gives it back', () => {
+    bridge(desk([computer('cmp_a01'), computer('cmp_a02', { platform: 'Zed' })], { window: 'minimized' }));
+    render(<Pill />);
+    expect(screen.queryByRole('list', { name: 'Computers' })).toBeNull();
+    act(() => void window.dispatchEvent(new FocusEvent('focus')));
+    expect(screen.getByRole('list', { name: 'Computers' })).toBeTruthy();
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Open Claude Code · chat started 09:01');
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(screen.queryByRole('list', { name: 'Computers' })).toBeNull();
+    expect(acts).toEqual([{ type: 'release' }]);
+  });
+});
+
 describe('the chat apps’ marks', () => {
   it('draws a real mark where Husk has one, the installed icon first, and a monogram otherwise', () => {
     expect(logoOf('Claude Code')?.title).toBe('Claude');
@@ -298,6 +351,7 @@ describe('the words for a computer', () => {
     expect(statusOf(computer('cmp_a01', { state: 'stopped', held: true }), NOW)).toBe('stopped');
     expect(doing(computer('cmp_a01'))).toBe('browser_goto https://example.com');
     expect(doing(computer('cmp_a01', { held: true }))).toBe('You have it');
+    expect(doing(computer('cmp_a01', { held: true }), true)).toBe('Husk is not answering');
     // A long call is still work: the light stays on until it ends.
     expect(statusOf(computer('cmp_a01', { calling: 'shell', last: { tool: 'shell', at: new Date(NOW - 60_000).toISOString() } }), NOW)).toBe('active');
     expect(doing(computer('cmp_a01', { calling: 'shell' }))).toBe('shell…');

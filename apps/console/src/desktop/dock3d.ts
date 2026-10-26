@@ -88,6 +88,11 @@ const TILT_HOVER = 0.03;
 const BUILD_MS = 900;
 const LEAVE_MS = 260;
 
+/** How bright a glow is at `now`: a pulsing one breathes, unless the person asked for less motion (`calm`). */
+export function brightness(pulse: boolean, now: number, calm: boolean): number {
+  return pulse && !calm ? 0.65 + 0.35 * Math.sin(now / 260) : 1;
+}
+
 interface Look {
   body: MeshPhysicalMaterial;
   chin: MeshStandardMaterial;
@@ -167,6 +172,8 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
   let hovered: string | null = null;
   let raf = 0;
   let width = 1;
+  // Less motion, when the person asked for it: computers arrive, lift and leave at once, and glows do not breathe.
+  const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)');
 
   const slotX = (index: number) => width - (index + 0.5) * SLOT_W;
 
@@ -209,7 +216,8 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
   /** One frame of one model's animation. True while it still moves. */
   function step(m: Model, now: number): boolean {
     let moving = false;
-    const age = now - m.born;
+    const still = calm?.matches === true;
+    const age = still ? Infinity : now - m.born;
     if (age < BUILD_MS) moving = true;
     // Arriving: the foot, then the blade, then the display settles on and lights up.
     const foot = ease(clamp01(age / 260));
@@ -223,12 +231,12 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
     m.screen.material.opacity = (m.status === 'stopped' ? 0.35 : 1) * light;
 
     // Hover: lift a little, grow a little, sit up straighter. Always facing front.
-    m.hover += (m.hoverTo - m.hover) * 0.22;
+    m.hover += (m.hoverTo - m.hover) * (still ? 1 : 0.22);
     if (Math.abs(m.hoverTo - m.hover) > 0.002) moving = true;
     else m.hover = m.hoverTo;
     let scale = 1 + 0.06 * m.hover;
     if (m.leaving !== undefined) {
-      const out = clamp01((now - m.leaving) / LEAVE_MS);
+      const out = still ? 1 : clamp01((now - m.leaving) / LEAVE_MS);
       scale *= 1 - ease(out);
       moving = out < 1;
     } else {
@@ -236,16 +244,15 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
     }
     m.group.scale.setScalar(Math.max(0.001, scale * SIZE));
     m.group.rotation.x = TILT + (TILT_HOVER - TILT) * m.hover;
-    m.x += (slotX(m.index) - m.x) * 0.25;
+    m.x += (slotX(m.index) - m.x) * (still ? 1 : 0.25);
     if (Math.abs(slotX(m.index) - m.x) > 0.3) moving = true;
     else m.x = slotX(m.index);
     m.group.position.set(m.x, BASE_Y + 2 * m.hover, 0);
 
     const g = GLOW[m.status];
-    const pulse = g.pulse ? 0.65 + 0.35 * Math.sin(now / 260) : 1;
     m.glow.material.color.setHex(g.color);
-    m.glow.material.opacity = g.strength * pulse * light;
-    if (g.pulse && g.strength > 0) moving = true;
+    m.glow.material.opacity = g.strength * brightness(g.pulse, now, still) * light;
+    if (g.pulse && g.strength > 0 && !still) moving = true;
     return moving;
   }
 
@@ -285,6 +292,8 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
   const observer = new ResizeObserver(resize);
   observer.observe(canvas);
   resize();
+  // Asking for less motion, or no longer, takes effect at once: a breathing glow settles, or starts.
+  calm?.addEventListener('change', kick);
 
   return {
     setItems(items) {
@@ -312,6 +321,7 @@ export function createDockStage(canvas: HTMLCanvasElement): DockStage {
     dispose() {
       if (raf) cancelAnimationFrame(raf);
       observer.disconnect();
+      calm?.removeEventListener('change', kick);
       for (const m of models.values()) {
         m.screen.material.dispose();
         m.glow.material.dispose();

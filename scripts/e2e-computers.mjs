@@ -690,11 +690,13 @@ const PLAYWRIGHT_MCP = '@playwright/mcp@0.0.83';
 /**
  * Husk against Playwright MCP on the same computer and the same Chromium
  * (J3-f). The same tasks on the same fixture pages, each tool set driven by a
- * scripted plan that uses its own tools as economically as it can: not a
- * model, which would need an API key that CI does not have. Playwright MCP runs
- * inside the computer over --cdp-endpoint, on a second Chromium started from
- * the same binary, so Husk's driver neither answers its dialogs nor polices its
- * loads. Measured: whether each plan did the task, its calls, its wall time
+ * scripted plan that uses its own tools as economically as it can and still
+ * does the task: not a model, which would need an API key that CI does not
+ * have. Playwright MCP runs inside the computer and launches the same Chromium
+ * binary itself, as it does by default (attached over --cdp-endpoint instead,
+ * it never hears of a download), so Husk's driver neither answers its dialogs
+ * nor polices its loads. The tab task runs last: both tool sets leave the tabs
+ * it opens. Measured: whether each plan did the task, its calls, its wall time
  * (median and worst of RUNS) and the bytes it read back. Published to the job
  * summary as measured; a measurement, so it never fails the run.
  */
@@ -748,13 +750,13 @@ async function benchmarkAgainstPlaywright(id, container) {
       const ref = /(f\d+e\d+) {2}textbox "Name"/.exec(snap)?.[1];
       return Boolean(ref) && /it appeared after/.test((await t('browser_type', { ref, text: 'Ada', waitFor: { text: 'Hello, Ada' } })).text);
     },
+    download: async (t) =>
+      /downloaded report\.txt/.test((await t('browser_run', { actions: [{ do: 'goto', url: `${BENCH}files.html` }, { do: 'click', role: 'link', name: 'Report' }] })).text),
     tab: async (t) => {
       const clicked = (await t('browser_run', { actions: [{ do: 'goto', url: `${BENCH}tab.html` }, { do: 'click', role: 'link', name: 'Open' }] })).text;
       const tab = /switchTo "([^"]+)"/.exec(clicked)?.[1];
       return Boolean(tab) && /heading "Second page"/.test((await t('browser_tabs', { switchTo: tab })).text);
     },
-    download: async (t) =>
-      /downloaded report\.txt/.test((await t('browser_run', { actions: [{ do: 'goto', url: `${BENCH}files.html` }, { do: 'click', role: 'link', name: 'Report' }] })).text),
   };
   const playwright = {
     read: async (t) => {
@@ -774,8 +776,12 @@ async function benchmarkAgainstPlaywright(id, container) {
     },
     toast: async (t) => {
       await t('browser_navigate', { url: `${BENCH}toast.html` });
+      // Gone 150 ms after the click, before a wait could start: watched from before the click instead.
+      await t('browser_evaluate', {
+        function: "() => { window.seen = false; new MutationObserver(() => { window.seen ||= document.body.innerText.includes('Saved!'); }).observe(document.body, { childList: true, subtree: true }); }",
+      });
       await t('browser_click', { element: 'Save button', target: 'button' });
-      return !(await t('browser_wait_for', { text: 'Saved!' })).isError;
+      return /\btrue\b/.test((await t('browser_evaluate', { function: '() => window.seen' })).text);
     },
     frame: async (t) => {
       await t('browser_navigate', { url: `${BENCH}frame.html` });
@@ -784,6 +790,12 @@ async function benchmarkAgainstPlaywright(id, container) {
       await t('browser_type', { element: 'Name field', target: ref, text: 'Ada' });
       return /Hello, Ada/.test((await t('browser_snapshot', {})).text);
     },
+    download: async (t) => {
+      await t('browser_navigate', { url: `${BENCH}files.html` });
+      const done = /Downloaded file report\.txt to/;
+      // A download still going when the click returns is said finished in the next reply.
+      return done.test((await t('browser_click', { element: 'Report link', target: 'a' })).text) || done.test((await t('browser_snapshot', {})).text);
+    },
     tab: async (t) => {
       await t('browser_navigate', { url: `${BENCH}tab.html` });
       const clicked = (await t('browser_click', { element: 'Open link', target: 'a' })).text;
@@ -791,10 +803,6 @@ async function benchmarkAgainstPlaywright(id, container) {
       if (index === undefined) return false;
       await t('browser_tabs', { action: 'select', index: Number(index) });
       return /Second page/.test((await t('browser_snapshot', {})).text);
-    },
-    download: async (t) => {
-      await t('browser_navigate', { url: `${BENCH}files.html` });
-      return /report\.txt/.test((await t('browser_click', { element: 'Report link', target: 'a' })).text);
     },
   };
 
@@ -848,22 +856,20 @@ async function benchmarkAgainstPlaywright(id, container) {
   });
   if (was) await tool(id, 'browser_tabs', { switchTo: was });
 
-  // Playwright MCP's own Chromium: a second process of the same binary, in the same computer.
+  // Playwright MCP launches its own Chromium, as it does by default: the same binary, in the same computer.
   let pwRuns;
   let pwWhy = '';
   const binary = /already installed: (\S+)/.exec(textOf(await tool(id, 'browser_status')))?.[1];
   let pw;
   try {
-    if (!binary) throw new Error('no Chromium binary to start a second one from');
-    const started = await tool(id, 'shell', {
-      command:
-        `(setsid ${binary} --headless --no-sandbox --disable-gpu --remote-debugging-port=9333 --user-data-dir=/tmp/pw-profile about:blank >/tmp/pw-chrome.log 2>&1 &) ; ` +
-        'for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:9333/json/version && exit 0; sleep 0.5; done; exit 1',
-    });
-    if (started.isError) throw new Error(`the second Chromium did not start: ${textOf(started).slice(0, 200)}`);
+    if (!binary) throw new Error('no Chromium binary for Playwright MCP to launch');
+    // The computer's user has no home directory, and Playwright MCP keeps a cache in one: /tmp is its home here.
     pw = mcpSession([], {
       command: 'docker',
-      args: ['exec', '-i', '-e', 'npm_config_cache=/tmp/.npm', '-e', 'npm_config_update_notifier=false', '-w', '/tmp', container, 'npx', '-y', PLAYWRIGHT_MCP, '--cdp-endpoint', 'http://127.0.0.1:9333', '--output-dir', '/tmp/pwmcp'],
+      args: [
+        'exec', '-i', '-e', 'HOME=/tmp', '-e', 'npm_config_cache=/tmp/.npm', '-e', 'npm_config_update_notifier=false', '-w', '/tmp', container,
+        'npx', '-y', PLAYWRIGHT_MCP, '--executable-path', binary, '--headless', '--isolated', '--no-sandbox', '--output-dir', '/tmp/pwmcp',
+      ],
     });
     await pw.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'husk-e2e', version: '0' } });
     pw.notify('notifications/initialized');
@@ -875,7 +881,8 @@ async function benchmarkAgainstPlaywright(id, container) {
     pwWhy = err.message;
   } finally {
     pw?.child.kill();
-    await tool(id, 'shell', { command: "pkill -f -- '--remote-debugging-port=933[3]' || true" }).catch(() => undefined);
+    // Playwright MCP and the Chromium it launched (its profile is playwright_chromiumdev_profile-*), should either outlive the session.
+    await tool(id, 'shell', { command: "pkill -f -- 'playwrigh[t]' || true" }).catch(() => undefined);
   }
 
   const cell = (s) => `${s.done}/${RUNS} done, ${s.calls} call${s.calls === 1 ? '' : 's'}, ${s.median} ms (worst ${s.worst}), ${s.bytes} bytes`;
@@ -1609,6 +1616,8 @@ try {
   // CI sets E2E_DESKTOP=1, installs apps/desktop and runs it under xvfb.
   if (process.env.E2E_DESKTOP === '1') await walkDesktop(id);
   else console.log('skip the desktop app (set E2E_DESKTOP=1 with apps/desktop installed and xvfb-run)');
+  // The desktop app's walk ends by killing the shared Husk and starting it again: talk to the new one.
+  rec = readDaemon() ?? rec;
 
   // 10. The chat setup connected goes on when the shared Husk dies under it. Last:
   // what came before ran on the first shared Husk.

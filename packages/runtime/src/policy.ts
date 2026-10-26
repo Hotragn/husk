@@ -468,6 +468,43 @@ export function evaluateCommand(
   return { allowed: true };
 }
 
+/** A computer's own command rules, from its labels: the husk's allow and deny lists, NUL-separated, as every provider reads them. */
+export function commandRulesOf(labels: Record<string, string> | undefined): { deny?: string[]; allow?: string[] } {
+  const list = (v: string | undefined): string[] | undefined => (v ? v.split('\u0000').filter(Boolean) : undefined);
+  const deny = list(labels?.['husk.denyCommands']);
+  const allow = list(labels?.['husk.allowCommands']);
+  return { ...(deny ? { deny } : {}), ...(allow ? { allow } : {}) };
+}
+
+/** A Python string literal, any prefix (r, b, f) and any quotes. */
+const PY_STRING = String.raw`(?:[rRbBuUfF]{1,2})?(?:'''[\s\S]*?'''|"""[\s\S]*?"""|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*")`;
+/** A Python call that hands a shell or a program a command, its first argument written out: a string, or a list of strings. */
+const SHELL_CALL = new RegExp(
+  String.raw`\b(?:os\.(?:system|popen)|subprocess\.(?:run|call|check_call|check_output|Popen|getoutput|getstatusoutput))\s*\(\s*(\[[^\]]*\]|${PY_STRING})`,
+  'g',
+);
+const STRING_TEXT = new RegExp(String.raw`(?:[rRbBuUfF]{1,2})?(?:'''([\s\S]*?)'''|"""([\s\S]*?)"""|'((?:\\.|[^'\\\n])*)'|"((?:\\.|[^"\\\n])*)")`, 'g');
+
+/**
+ * Whether a browser script may run, by the rules `shell` gets.
+ *
+ * Those rules read shell command lines, and a script is Python: read as one,
+ * `halt = False` would be a power-off, and so would `print("shutdown
+ * complete")`. So what is checked is what a script hands a shell or a
+ * program where it is written out -- `os.system("...")`,
+ * `subprocess.run(["rm", "-rf", "/"])` -- each read as the command line it is.
+ * A guardrail, as the rules are for `shell`: a command a script builds from
+ * pieces is not read, and the computer stays the boundary.
+ */
+export function evaluateScript(source: string, opts: Parameters<typeof evaluateCommand>[1] = {}): PolicyDecision {
+  for (const call of source.matchAll(SHELL_CALL)) {
+    const words = [...(call[1] ?? '').matchAll(STRING_TEXT)].map((m) => m[1] ?? m[2] ?? m[3] ?? m[4] ?? '');
+    const decision = evaluateCommand(words.join(' '), opts);
+    if (!decision.allowed) return decision;
+  }
+  return { allowed: true };
+}
+
 /** Throwing wrapper, for call sites that have nothing useful to do with a `false`. */
 export function assertCommandAllowed(
   cmd: string | string[],
