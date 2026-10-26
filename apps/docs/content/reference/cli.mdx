@@ -179,27 +179,31 @@ Piped output is tab-separated with no colour and no truncation, so
 ### `husk rm`
 
 ```bash
-husk rm <name|id> [--all] [--yes]
+husk rm <name|id> [--all] [--erase] [--yes] [--force]
 ```
 
 | Flag | Effect |
 | --- | --- |
 | `--all` | Destroy every computer |
+| `--erase` | Also erase what a chat's or bot's computer keeps on Docker and Podman: its files and browser logins |
 | `-y`, `--yes` | Skip the confirmation |
-| `-f`, `--force` | The same as `--yes` |
+| `-f`, `--force` | Skip the confirmation, and with `--all` destroy computers used in the last minute too |
 
 <Danger>
-Destructive and not recoverable. The filesystem goes with the machine.
+Destructive and not recoverable. The filesystem goes with the machine, except that on
+Docker and Podman a chat's or a bot's computer keeps its files and browser logins for its
+next computer. `--erase` takes those too, as the console's Delete does.
 </Danger>
 
-Asks first unless `--yes`, `--force` or `--json` is given. On a non-interactive stdin
-without one of those it refuses rather than guessing:
+Asks first unless `--yes` or `--force` is given; `--json` does not skip the question. On
+a non-interactive stdin without one of those it refuses rather than guessing:
 
 ```text
 error refusing to destroy 3 computers without confirmation on a non-interactive stdin
 ```
 
-`-f`/`--force` is parsed but is not in `husk help rm`.
+`--all --yes` still refuses computers used in the last minute, since one may belong to a
+run in another terminal; `--force` destroys them too.
 
 ### `husk stop` and `husk start`
 

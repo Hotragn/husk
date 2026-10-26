@@ -350,11 +350,11 @@ export class ComputerManager {
     return true;
   }
 
-  async destroyAll(): Promise<number> {
+  async destroyAll(opts: { erase?: boolean } = {}): Promise<number> {
     const all = await this.list();
     let n = 0;
     for (const info of all) {
-      if (await this.destroy(info.id)) n++;
+      if (await this.destroy(info.id, opts)) n++;
     }
     return n;
   }

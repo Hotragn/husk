@@ -146,6 +146,9 @@ not here.
     install.
   - The guide is *Chat apps on the web* in the docs. The Fly provider now also takes its
     token from `HUSK_FLY_TOKEN`.
+- **`husk rm --erase`** erases what a chat's or a bot's computer keeps on Docker and
+  Podman, its files and browser logins, as the console's Delete does
+  ([#259](https://github.com/Hotragn/husk/pull/259)).
 
 ### Changed
 
@@ -259,6 +262,17 @@ not here.
   command, or a bot on Claude Code or Codex waiting for a person to give its computer
   back, got `fetch failed` while the work went on. A long call now keeps its answer alive
   ([#242](https://github.com/Hotragn/husk/pull/242)).
+- **`~/.husk/config.json` and `~/.husk/.env` are read**, as the docs said. Nothing
+  opened either file. `config.json` takes `modelAliases`, `maxCostUsd`, `maxComputers`,
+  `provider` and `model`, the last two being what `auto` means on this machine. A file
+  that is not JSON, a value of the wrong type or a key it does not know stops Husk with
+  its name. `.env` fills in the keys the environment does not set
+  ([#259](https://github.com/Hotragn/husk/pull/259)).
+- **`packages` install on Docker and Podman.** A container computer's read-only root
+  refused every install; the packages are now built into an image of the computer's
+  own, `FROM` its image, and reused for the same list. A package name with a space, a
+  quote, `$`, a backtick or a backslash is refused. SSH and Fly computers refuse
+  `packages` rather than ignore them ([#259](https://github.com/Hotragn/husk/pull/259)).
 
 ### Security
 

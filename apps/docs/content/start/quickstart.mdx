@@ -142,8 +142,8 @@ husk rm scratch --yes
 
 <Danger>
 `husk rm` destroys the machine and its filesystem. There is no undo and no snapshot
-taken on your behalf. Without `--yes` it asks first; with `--json` set it does not ask,
-because there is nobody at the terminal to answer.
+taken on your behalf. Without `--yes` it asks first, and in a script it refuses rather
+than guess.
 </Danger>
 
 ## Then: a whole agent, for zero dollars
