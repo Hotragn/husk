@@ -329,14 +329,15 @@ export class ComputerManager {
     );
   }
 
-  async destroy(id: string): Promise<boolean> {
+  /** Remove a computer. `erase` takes what it keeps for its chat or bot with it (Computer.destroy). */
+  async destroy(id: string, opts: { erase?: boolean } = {}): Promise<boolean> {
     const c = await this.get(id);
     if (!c) return false;
     const key = c.info.spec.labels?.['husk.key'];
     // Before the machine goes, not after: a browser's `close()` runs a `pkill`
     // *inside* the computer, which only works while the computer still exists.
     await notifyComputerDestroyed(id);
-    await c.destroy();
+    await c.destroy(opts);
     if (key) await clearBinding(key);
     return true;
   }

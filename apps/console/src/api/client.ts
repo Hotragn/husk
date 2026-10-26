@@ -170,12 +170,13 @@ export class HuskApi {
   }
 
   /**
-   * `DELETE /v1/computers/:id?confirm=<id>`. Call only after the person has
-   * confirmed: a chat's computer is refused without the id typed back.
+   * `DELETE /v1/computers/:id?confirm=<id>&erase=true`: the computer, its files
+   * and its browser's logins, even those a chat's computer keeps for its next
+   * one. Call only after the person has confirmed: the id is typed back.
    */
   destroyComputer(id: string): Promise<void> {
     return this.client.http.request<void>('DELETE', `/v1/computers/${enc(id)}`, {
-      query: { confirm: id },
+      query: { confirm: id, erase: 'true' },
       timeoutMs: 60_000,
     });
   }

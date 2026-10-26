@@ -37,7 +37,8 @@ export interface ManagerLike {
   create(spec?: ComputerSpec): Promise<Computer>;
   get(id: string): Promise<Computer | null>;
   list(): Promise<ComputerInfo[]>;
-  destroy(id: string): Promise<boolean>;
+  /** `erase`: what it keeps for its chat or bot goes too (Computer.destroy). */
+  destroy(id: string, opts?: { erase?: boolean }): Promise<boolean>;
   ensure?(key: string, spec?: ComputerSpec): Promise<Computer>;
   reap?(): Promise<string[]>;
   startReaper?(intervalMs?: number): void;

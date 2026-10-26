@@ -836,18 +836,20 @@ export class OciComputer implements Computer {
   /**
    * Remove the container; keep the workspace only if it belongs to someone.
    *
-   * A keyed machine is a bot's, and `husk rm` on it is "stop this for now" --
-   * the next `ensure` with the same key reattaches to the same volume and finds
-   * its files. An anonymous machine has nothing to come back to, so its volume
-   * goes with it; `rm -f` without `-v` was leaving those behind forever.
+   * A keyed machine is a chat's or a bot's, and `husk rm` on it is "stop this
+   * for now" -- the next `ensure` with the same key reattaches to the same
+   * volume and finds its files. An anonymous machine has nothing to come back
+   * to, so its volume goes with it; `rm -f` without `-v` was leaving those
+   * behind forever. `erase` is the console's delete: the volume goes even when
+   * keyed, and with it the browser profile and the logins in it.
    */
-  async destroy(): Promise<void> {
+  async destroy(opts: { erase?: boolean } = {}): Promise<void> {
     this.closeForwarders();
-    const keyed = Boolean(this.info.spec.labels?.['husk.key']);
-    const args = keyed ? ['rm', '-f', this.native] : ['rm', '-f', '-v', this.native];
+    const keep = Boolean(this.info.spec.labels?.['husk.key']) && !opts.erase;
+    const args = keep ? ['rm', '-f', this.native] : ['rm', '-f', '-v', this.native];
     await this.cli(args, 120_000);
     // Docker's rm -v removes anonymous volumes, not our named /work volume.
-    if (!keyed && this.info.spec.persist) {
+    if (!keep && this.info.spec.persist) {
       await this.cli(['volume', 'rm', volumeName(this.info.id, this.info.spec)]);
     }
     // The last-use record outlives the container otherwise, and ids are

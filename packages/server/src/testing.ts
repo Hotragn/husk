@@ -151,6 +151,8 @@ export class FakeComputer implements Computer {
 
 export class FakeManager implements ManagerLike {
   readonly computers = new Map<string, FakeComputer>();
+  /** Computers destroyed with `erase`. */
+  readonly erased = new Set<string>();
   reaperStarted = false;
   private seq = 0;
 
@@ -185,9 +187,10 @@ export class FakeManager implements ManagerLike {
     return [...this.computers.values()].map((c) => c.info);
   }
 
-  async destroy(id: string): Promise<boolean> {
+  async destroy(id: string, opts: { erase?: boolean } = {}): Promise<boolean> {
     const c = this.computers.get(id);
     if (!c) return false;
+    if (opts.erase) this.erased.add(id);
     await c.destroy();
     this.computers.delete(id);
     return true;

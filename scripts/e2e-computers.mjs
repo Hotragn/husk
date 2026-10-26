@@ -1451,6 +1451,21 @@ async function checkSignIn(computerId) {
   mcp.child.stdin.end();
 }
 
+/**
+ * Delete means delete (J4-e): a chat's computer keeps its files and browser
+ * profile in a volume for its next computer, and the console's Delete, once
+ * the person confirms, takes that volume with it.
+ */
+async function checkDeleteErases(id) {
+  const info = (await api('GET', `/v1/computers/${id}`)).body;
+  const mounts = spawnSync('docker', ['inspect', '-f', `{{range .Mounts}}{{if eq .Destination "${info.workdir}"}}{{.Name}}{{end}}{{end}}`, info.nativeId], { encoding: 'utf8' });
+  const volume = mounts.stdout.trim();
+  check('a chat’s computer keeps its files and browser profile in a volume of its own', volume.startsWith('husk-key-'), volume || mounts.stderr);
+  const deleted = await api('DELETE', `/v1/computers/${id}?confirm=${id}&erase=true`, undefined, rec.token, { 'x-husk-as': 'person' });
+  check('the console’s Delete removes it once the person confirms', deleted.status === 204, String(deleted.status));
+  check('and its volume is gone: delete means delete', Boolean(volume) && spawnSync('docker', ['volume', 'inspect', volume], { stdio: 'ignore' }).status !== 0, volume);
+}
+
 try {
   // 1. A fresh home and a non-interactive setup, as the README's line runs it:
   // Husk added to one chat app on the computer chosen, the image with the
@@ -1625,6 +1640,9 @@ try {
 
   // 11. Sign in for me, across another restart, mid-login (the J2 gate).
   await checkSignIn(signingIn);
+
+  // 12. Delete means delete: the console's Delete erases a chat's computer and its volume.
+  await checkDeleteErases(signingIn);
 
   console.log(`\n${steps.length} checks passed`);
 } catch (err) {

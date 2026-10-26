@@ -106,9 +106,12 @@ export const COMMANDS: HelpEntry[] = [
   {
     name: 'rm',
     group: 'computers',
-    summary: 'Destroy a computer and its filesystem',
+    summary: 'Destroy a computer; a chat’s or bot’s stops for now',
     usage: 'husk rm <name|id> [--all] [--yes]',
-    details: 'Destructive and not recoverable. Asks first unless --yes is given or --json is set.',
+    details:
+      'Destructive and not recoverable, except that on docker and podman a chat’s or a bot’s computer keeps its ' +
+      'files and browser logins for its next computer: for those it means "stop for now". The console’s Delete ' +
+      'erases them too. Asks first unless --yes is given or --json is set.',
     flags: [
       ['--all', 'destroy every computer'],
       ['--yes, -y', 'skip the confirmation'],
