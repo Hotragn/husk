@@ -10,10 +10,8 @@ import { mkdtempSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import type { ElicitResult } from '@modelcontextprotocol/sdk/types.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import type { ElicitResult } from '@modelcontextprotocol/client';
 import type { Computer, Logger } from '@husk-ai/core';
 import type { ComputerManager } from '@husk-ai/runtime';
 import { WorkspaceStore } from '@husk-ai/workspaces';
@@ -62,7 +60,7 @@ async function session(elicit?: Elicit, clientName = 'claude-code') {
   const client = new Client({ name: clientName, version: '0' }, { capabilities: elicit ? { elicitation: {} } : {} });
   const asked: string[] = [];
   if (elicit) {
-    client.setRequestHandler(ElicitRequestSchema, async (req) => {
+    client.setRequestHandler('elicitation/create', async (req) => {
       const message = String((req.params as { message?: string }).message);
       asked.push(message);
       return elicit(message);

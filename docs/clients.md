@@ -25,11 +25,19 @@ it can; the console's Connect page does the same.
 
 Every file setup edits is backed up first, and only Husk's own `husk` entry changes.
 
+Husk speaks both protocol eras on one stdio connection, through the MCP SDK's
+`serveStdio`:
+- **2025-11-25 and before.** The app opens with `initialize` and is served as before.
+- **2026-07-28.** There is no handshake: the app opens with `server/discover`, and every
+  request says which app sent it. Husk reads the app's name and capabilities from each
+  request. Its "Done?" comes back as an `input_required` result, and the app calls
+  again with the person's answer.
+
 What each app does with Husk once it is connected:
 
 | App | Calls itself | Protocol | "Done?" in the chat | Limit on one tool call | Husk answers within |
 | --- | --- | --- | --- | --- | --- |
-| Claude Code | `claude-code` | asks for 2026-07-28, falls back | yes | about 28 hours, but a stdio call quiet for 30 minutes ends | 25 minutes |
+| Claude Code | `claude-code` | 2026-07-28 from its v2 runtime, 2025-11-25 before it or with `MCP_PROTOCOL_NEGOTIATION=legacy` | yes, by `input_required` on 2026-07-28 | about 28 hours, but a stdio call quiet for 30 minutes ends | 25 minutes |
 | Claude Desktop | `claude-ai` (community) | 2025-11-25 (community) | no: declared, not shown | 240 s, progress or not | 220 s |
 | Claude Desktop's Code tab | `local-agent-mode-<server>` (community) | not documented | no: not declared | 60 s (community) | 50 s |
 | Codex | `codex-mcp-client` | 2025-06-18 | no: declared, not known to be shown | 300 s in its source; 60 s in its docs and before June 2026 | 50 s |
@@ -64,13 +72,15 @@ app's limits:
    comments, which must survive.
 2. Each app's chat starts Husk from the entry setup wrote. Claude Code and Codex, whose
    CLIs CI does not have, use the same launch line. The chat opens with the app's own
-   name, protocol version and capabilities from the table.
+   name, protocol version and capabilities from the table. Claude Code opens twice:
+   on 2026-07-28 with `server/discover`, and on 2025-11-25 with `initialize`.
 3. Husk must:
    - answer in a protocol version the app speaks;
    - list tools within every app's limits, with `job_wait` only where the app has a limit;
    - give the chat a computer labelled with the app's name;
    - ask "Done?" in the chat only where the app shows it, and give a link to relay
-     everywhere else.
+     everywhere else. On 2026-07-28 it asks by `input_required`, and the app's second
+     call, with the answer, hands the computer back.
 4. In Zed's chat, a 58 s command answers "still running" before Zed's 60 s, and
    `job_wait` collects the rest.
 
