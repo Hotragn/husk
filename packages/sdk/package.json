@@ -46,7 +46,7 @@
     "@husk-ai/runtime": "0.2.0",
     "@husk-ai/server": "0.2.0",
     "@types/ws": "^8.18.1",
-    "fastify": "^5.12.3",
+    "fastify": "^5.12.7",
     "vitest": "^5.0.1",
     "ws": "^8.21.3"
   }
