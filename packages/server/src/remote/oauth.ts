@@ -73,8 +73,11 @@ function room<T extends { expiresAt: number }>(map: Map<string, T>, now: number)
   return map.size < MAX_IN_FLIGHT;
 }
 
-/** Where the chat apps Husk knows send the owner back: claude.ai, ChatGPT, or an app on their own device (http is loopback only). */
-const KNOWN_RETURNS = new Set(['claude.ai', 'chatgpt.com']);
+/**
+ * Where the chat apps Husk knows send the owner back: claude.ai, ChatGPT,
+ * Perplexity, or an app on their own device (http is loopback only).
+ */
+const KNOWN_RETURNS = new Set(['claude.ai', 'chatgpt.com', 'www.perplexity.ai', 'enterprise.perplexity.ai']);
 const knownReturn = (redirect: string): boolean => {
   const u = new URL(redirect);
   return u.protocol === 'http:' || KNOWN_RETURNS.has(u.hostname);

@@ -214,8 +214,8 @@ in the guide (`apps/docs/content/guides/remote-access.mdx`); the routes are in
   can its provider: Tailscale Funnel and ngrok with TLS ended at the agent cannot,
   Cloudflare and Fly can. The guide has the table.
 
-Two security reviews of remote access, in October 2026, found these. Each is fixed and
-has a test:
+Two security reviews of remote access in October 2026, and the work on what they found,
+turned up these. Each is fixed and has a test:
 
 | Found | Now |
 | --- | --- |

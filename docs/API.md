@@ -263,7 +263,7 @@ GET  /health                                         { ok: true } and nothing mo
 - **The sign-in.** Nothing is sent back to an app before the owner has signed in: an
   authorization request in error is shown as a page, not redirected, since anyone can
   register an app. The page names where it sends the owner back, and says plainly when
-  that is not claude.ai, ChatGPT or an app on the owner's own device. Every answer sent
+  that is not claude.ai, ChatGPT, Perplexity or an app on the owner's own device. Every answer sent
   back carries `iss` (RFC 9207, advertised in the metadata).
 - **Links a remote chat gives its person** (a handoff, a look at a computer) are under
   the public URL, at `/oauth/link#handoff=…&token=…`. The chat holds the link too, and so
