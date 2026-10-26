@@ -258,7 +258,8 @@ describe('advisories, and a new public URL', () => {
   });
   afterEach(async () => {
     vi.useRealTimers();
-    await rm(dir, { recursive: true, force: true });
+    // An off that a timer started may still be saving the state as the test ends.
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
   const advisory = (severity: Advisory['severity']): Advisory => ({
     name: 'fastify', version: '5.12.5', title: 'a hole', severity, url: 'https://github.com/advisories/GHSA-0000-0000-0000', vulnerable: '<5.12.6',
