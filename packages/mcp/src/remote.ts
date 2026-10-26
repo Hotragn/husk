@@ -25,7 +25,9 @@ export function createRemoteMcp(opts: { provider: string; logger?: Logger; /** F
     if (!husk) {
       husk = new HuskMcpServer({
         ...opts.husk,
-        spec: { provider: opts.provider },
+        // The chat is offered the browser tools, and only `full` runs the browser,
+        // as on this machine's chats; `base` has no Python for one to be fetched.
+        spec: { provider: opts.provider, flavor: 'full' },
         ephemeral: false,
         remote: { owner: who.owner, platform: platformName(who.name), approve: who.approve, origin: who.origin, client: who.client },
         ...(opts.logger ? { logger: opts.logger } : {}),
