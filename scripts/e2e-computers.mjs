@@ -1888,6 +1888,12 @@ function softwarePasskey(rpId, origin) {
       const authData = Buffer.concat([rpHash, Buffer.from([0x45]), counter(), Buffer.alloc(16), Buffer.from([0, id.length]), id, cbor(cose)]);
       return { clientDataJSON: clientData('webauthn.create', challenge), attestationObject: cbor(new Map([['fmt', 'none'], ['attStmt', new Map()], ['authData', authData]])).toString('base64url') };
     },
+    get(challenge) {
+      const clientDataJSON = clientData('webauthn.get', challenge);
+      const authData = Buffer.concat([rpHash, Buffer.from([0x05]), counter()]);
+      const signed = Buffer.concat([authData, createHash('sha256').update(Buffer.from(clientDataJSON, 'base64url')).digest()]);
+      return { id: id.toString('base64url'), clientDataJSON, authenticatorData: authData.toString('base64url'), signature: sign('sha256', signed, privateKey).toString('base64url') };
+    },
   };
 }
 
@@ -1959,15 +1965,34 @@ async function checkRemoteAccess() {
     const signed = (url, init = {}) => f(url, { ...init, headers: { ...Object.fromEntries(new Headers(init.headers ?? {})), authorization: `Bearer ${tokens.access_token}` } });
     const app = new Client({ name: 'e2e-app', version: '0' }, { versionNegotiation: { mode: { pin: '2026-07-28' } } });
     await app.connect(new StreamableHTTPClientTransport(new URL(`${PUBLIC}/mcp`), { fetch: signed }));
-    const ran = await app.callTool({ name: 'shell', arguments: { computer: 'new', command: 'echo remote-ok; uname -s' } });
-    const text = (ran.content ?? []).map((c) => c.text ?? '').join('\n');
+    const textOfCall = (r) => (r.content ?? []).map((c) => c.text ?? '').join('\n');
+    const command = 'echo remote-ok; uname -s';
+    // A command waits for the owner's word: the first call answers with the page, and runs nothing.
+    const asked = textOfCall(await app.callTool({ name: 'shell', arguments: { computer: 'new', command } }));
+    const link = /(https:\/\/e2e\.husk\.test\/oauth\/approve\?id=[\w-]+)/.exec(asked)?.[1];
+    const id = /computer: "(cmp_\w+)"/.exec(asked)?.[1];
+    check('a command from the web waits for the owner’s approval, and nothing runs', Boolean(link && id) && !/remote-ok/.test(asked), asked.slice(0, 240));
+    const approval = new URL(link).searchParams.get('id');
+    const pageOk = (await f(link)).status === 200;
+    const step = await json('/oauth/approve/start', { id: approval });
+    const approved = await json('/oauth/approve', { id: approval, allow: true, credential: passkey.get(step.body.publicKey?.challenge) });
+    check('the owner approves it with their passkey, at its page under the public URL', pageOk && approved.status === 200, JSON.stringify(approved.body));
+    const text = textOfCall(await app.callTool({ name: 'shell', arguments: { computer: id, command } }));
     const overview = await (await fetch(`${ownRec.url}/v1/overview`, { headers: { authorization: `Bearer ${ownRec.token}` } })).json();
     computer = overview.computers.find((c) => c.spec?.labels?.['husk.platform'] === 'e2e-app');
     check(
-      'a chat on the web runs a command on a docker computer of its own, named for its app',
-      app.getProtocolEra() === 'modern' && /remote-ok/.test(text) && /Linux/.test(text) && computer?.provider === 'docker',
+      'then it runs, on a docker computer of the chat’s own, named for its app',
+      app.getProtocolEra() === 'modern' && /remote-ok/.test(text) && /Linux/.test(text) && computer?.provider === 'docker' && computer.id === id,
       `${text.slice(0, 200)}; ${computer?.provider}`,
     );
+
+    // Sign in for me, from wherever the person is: the handoff's link is under the public URL.
+    const handed = textOfCall(await app.callTool({ name: 'hand_off', arguments: { computer: id, reason: 'e2e: sign in from the web.' } }));
+    const view = /(https:\/\/e2e\.husk\.test\/#handoff=([\w-]+)&token=([\w.-]+))/.exec(handed);
+    const opened = view ? await f(`${PUBLIC}/v1/handoffs/${view[2]}`, { headers: { authorization: `Bearer ${decodeURIComponent(view[3])}` } }) : undefined;
+    check('a remote chat’s handoff link opens its handoff under the public URL', opened?.status === 200, `${handed.slice(0, 200)}; ${opened?.status}`);
+    const handoff = /^Handoff (\S+) is open/m.exec(handed)?.[1];
+    if (handoff) await app.callTool({ name: 'hand_off_done', arguments: { handoff } });
     await app.close();
   } finally {
     if (computer && ownRec) {

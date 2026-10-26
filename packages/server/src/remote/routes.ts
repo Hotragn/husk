@@ -1,6 +1,8 @@
 import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { huskError } from '../errors.js';
+import type { Verdict } from './approvals.js';
+import { LIMITS } from './limits.js';
 import { accessTokenOf } from './oauth.js';
 import type { Remote } from './oauth.js';
 
@@ -9,7 +11,19 @@ import type { Remote } from './oauth.js';
  * eras, as `@husk-ai/mcp` builds it (`createRemoteMcp`). Handed in, as the
  * chat tools are, because that package sits above this one.
  */
-export type RemoteMcp = (request: Request, who: { owner: string; client: string; name: string }) => Promise<Response>;
+export type RemoteMcp = (request: Request, who: RemoteApp) => Promise<Response>;
+
+/** A signed-in app, as `/mcp` hands it to the MCP side. */
+export interface RemoteApp {
+  owner: string;
+  client: string;
+  /** What it registered as, for the computers it makes. */
+  name: string;
+  /** The public URL: links the app's person opens (a handoff, a look at the computer) are under it. */
+  origin: string;
+  /** Whether a call that changes things may run now, or the page that asks the owner (approvals.ts). */
+  approve: (tool: string, summary: string, digest: string) => Verdict;
+}
 
 /** The request as a web-standard one, for the MCP SDK's fetch-shaped handler. It aborts when the app goes away. */
 function webRequest(req: FastifyRequest, url: string, signal: AbortSignal): Request {
@@ -30,16 +44,21 @@ export async function remoteRoutes(app: FastifyInstance, remote: Remote, mcp: Re
     method: ['GET', 'POST', 'DELETE'],
     url: '/mcp',
     handler: async (req, reply) => {
+      if (!remote.allow(reply, ['mcp', LIMITS.mcp])) return reply;
       const token = accessTokenOf(req);
       const claims = token ? await remote.verify(token) : undefined;
       if (!claims) return remote.challenge(reply, Boolean(token));
+      if (!remote.allow(reply, [`app:${claims.sub}:${claims.client_id}`, LIMITS.app])) return reply;
       if (!mcp) throw huskError('E_NOT_IMPLEMENTED', 'this Husk was started without the chat tools', { hint: 'start it with `husk serve --remote`' });
       const gone = new AbortController();
       reply.raw.on('close', () => {
         if (!reply.raw.writableFinished) gone.abort();
       });
-      const name = remote.store.current.clients[claims.client_id]?.name ?? 'A chat app';
-      const res = await mcp(webRequest(req, remote.resource, gone.signal), { owner: claims.sub, client: claims.client_id, name });
+      const app = { owner: claims.sub, client: claims.client_id, name: remote.store.current.clients[claims.client_id]?.name ?? 'A chat app', origin: remote.origin };
+      const res = await mcp(webRequest(req, remote.resource, gone.signal), {
+        ...app,
+        approve: (tool, summary, digest) => remote.approvals.check({ owner: app.owner, client: app.client, app: app.name, tool, summary, digest }),
+      });
       reply.hijack();
       reply.raw.writeHead(res.status, Object.fromEntries(res.headers));
       if (!res.body) {
@@ -60,9 +79,5 @@ export async function remoteRoutes(app: FastifyInstance, remote: Remote, mcp: Re
     apps: Object.entries(remote.store.current.clients).map(([id, c]) => ({ id, name: c.name, createdAt: c.createdAt })),
   }));
   app.post('/v1/remote/claim', async () => ({ code: await remote.newClaimCode() }));
-  app.post('/v1/remote/reset', async () => {
-    await remote.store.reset();
-    await remote.store.load();
-    return { code: await remote.newClaimCode() };
-  });
+  app.post('/v1/remote/reset', async () => ({ code: await remote.reset() }));
 }

@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import type { Computer, ComputerSpec, Logger } from '@husk-ai/core';
+import type { RemoteApp } from '@husk-ai/server';
 import type { ComputerManager } from '@husk-ai/runtime';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { describe, expect, it } from 'vitest';
@@ -51,10 +52,13 @@ function fakeManager() {
   return { manager, bindings, made };
 }
 
-/** A chat app signed in as `client`, talking to /mcp, on 2026-07-28 unless `legacy`. */
-async function app(remote: ReturnType<typeof createRemoteMcp>, client: string, legacy = false) {
+type Approve = RemoteApp['approve'];
+
+/** A chat app signed in as `client`, talking to /mcp, on 2026-07-28 unless `legacy`. The owner approves everything unless `approve` says otherwise. */
+async function app(remote: ReturnType<typeof createRemoteMcp>, client: string, legacy = false, approve: Approve = () => ({ ok: true })) {
   const transport = new StreamableHTTPClientTransport(new URL('https://box.tail1234.ts.net/mcp'), {
-    fetch: (url, init) => remote(new Request(url, init), { owner: 'owner-1', client, name: client === 'c1' ? 'Claude' : 'ChatGPT' }),
+    fetch: (url, init) =>
+      remote(new Request(url, init), { owner: 'owner-1', client, name: client === 'c1' ? 'Claude' : 'ChatGPT', approve, origin: 'https://box.tail1234.ts.net' }),
   });
   const c = new Client({ name: 'web-app', version: '0' }, legacy ? {} : { versionNegotiation: { mode: { pin: '2026-07-28' } } });
   await c.connect(transport);
@@ -93,6 +97,35 @@ describe('/mcp for a signed-in app', () => {
     expect([...bindings.keys()][0]).toMatch(/^remote:owner-1:/);
     expect(made[0]?.spec).toMatchObject({ provider: 'docker', labels: { 'husk.platform': 'Claude' } });
     expect((await call('shell', { computer: id, command: 'echo again' })).text).toContain('on cmp_1');
+  });
+
+  it('runs a call that changes things only once the owner approves that very call', async () => {
+    const { remote, made } = setup();
+    const asked: Array<{ tool: string; summary: string; digest: string }> = [];
+    let approved = '';
+    const approve: Approve = (tool, summary, digest) => {
+      asked.push({ tool, summary, digest });
+      if (digest === approved) return { ok: true };
+      return { ok: false, state: 'asked', link: 'https://box.tail1234.ts.net/oauth/approve?id=a1' };
+    };
+    const { call } = await app(remote, 'c1', false, approve);
+    // computer_info changes nothing: no approval, and it makes the chat's computer.
+    const info = await call('computer_info', { computer: 'new' });
+    const id = /computer: "(cmp_\w+)"/.exec(info.text)?.[1];
+    expect(asked).toEqual([]);
+
+    const first = await call('shell', { computer: id, command: 'rm -rf /work/old' });
+    expect(first.text).toContain('Nothing has run yet');
+    expect(first.text).toContain('https://box.tail1234.ts.net/oauth/approve?id=a1');
+    // The computer to call again on, so a first call's computer: "new" makes no second one.
+    expect(first.text).toContain(`computer: "${id}"`);
+    expect(asked[0]).toMatchObject({ tool: 'shell', summary: '$ rm -rf /work/old' });
+    expect(made).toHaveLength(1);
+
+    approved = asked[0]!.digest;
+    // Another command is another call: the approval was for that one.
+    expect((await call('shell', { computer: id, command: 'rm -rf /' })).text).toContain('Nothing has run yet');
+    expect((await call('shell', { computer: id, command: 'rm -rf /work/old' })).text).toContain(`on ${id}`);
   });
 
   it('offers no workspace tools, which work on this machine’s own files and network', async () => {

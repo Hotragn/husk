@@ -218,8 +218,8 @@ describe('remote access, from a chat app to a call', () => {
     harness = await buildTestApp({
       token: 'local-token',
       remote,
-      remoteMcp: async (request, who) => {
-        calls.push({ ...who, body: await request.json() });
+      remoteMcp: async (request, { owner, client, name }) => {
+        calls.push({ owner, client, name, body: await request.json() });
         return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { ok: true } }), { headers: { 'content-type': 'application/json' } });
       },
     });
@@ -378,9 +378,64 @@ describe('remote access, from a chat app to a call', () => {
     expect((await pub('POST', '/oauth/register', { json: { redirect_uris: ['http://evil.example/cb'] } })).statusCode).toBe(400);
   });
 
-  it('keeps the console and the API off the public URL, and the remote paths off this machine’s', async () => {
+  it('lets the owner approve one call with the passkey, at a page under the public URL', async () => {
+    const { device } = await claimAndSignIn();
+    const ask = { owner: remote.store.current.owner!.id, client: 'c1', app: 'Claude', tool: 'shell', summary: '$ make deploy', digest: 'd1' };
+    const first = remote.approvals.check(ask);
+    expect(first).toMatchObject({ ok: false, state: 'asked' });
+    const id = new URL((first as { link: string }).link).searchParams.get('id')!;
+    expect(remote.approvals.check(ask)).toMatchObject({ ok: false, state: 'waiting' });
+    const page = await pub('GET', `/oauth/approve?id=${id}`);
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('$ make deploy');
+    // Not without the owner's passkey: a stranger's, well formed, is refused.
+    const options = (await pub('POST', '/oauth/approve/start', { json: { id }, origin: ORIGIN })).json() as { publicKey: { challenge: string } };
+    const stranger = authenticator();
+    expect((await pub('POST', '/oauth/approve', { json: { id, allow: true, credential: stranger.get(options.publicKey.challenge) }, origin: ORIGIN })).statusCode).toBe(403);
+    const again = (await pub('POST', '/oauth/approve/start', { json: { id }, origin: ORIGIN })).json() as { publicKey: { challenge: string } };
+    expect((await pub('POST', '/oauth/approve', { json: { id, allow: true, credential: device.get(again.publicKey.challenge) }, origin: ORIGIN })).statusCode).toBe(200);
+    // Approved once, for that call once.
+    expect(remote.approvals.check(ask)).toEqual({ ok: true });
+    expect(remote.approvals.check(ask)).toMatchObject({ ok: false, state: 'asked' });
+  });
+
+  it('takes a no without the passkey, and asks afresh next time', async () => {
+    await claimAndSignIn();
+    const ask = { owner: remote.store.current.owner!.id, client: 'c1', app: 'Claude', tool: 'browser_type', summary: 'type 8 characters into e12', digest: 'd2' };
+    const id = new URL((remote.approvals.check(ask) as { link: string }).link).searchParams.get('id')!;
+    expect((await pub('POST', '/oauth/approve', { json: { id, allow: false }, origin: ORIGIN })).statusCode).toBe(200);
+    expect(remote.approvals.check(ask)).toMatchObject({ ok: false, state: 'denied' });
+    expect(remote.approvals.check(ask)).toMatchObject({ ok: false, state: 'asked' });
+    // Ten minutes unanswered is a no too: the page is gone.
+    const late = new URL((remote.approvals.check({ ...ask, digest: 'd3' }) as { link: string }).link).searchParams.get('id')!;
+    now += 10 * 60_000;
+    expect((await pub('GET', `/oauth/approve?id=${late}`)).statusCode).toBe(404);
+  });
+
+  it('limits a flood by what a tunnel does not hide, never the address', async () => {
+    let last = 0;
+    for (let i = 0; i < 21; i++) last = (await pub('POST', '/oauth/register', { json: { redirect_uris: [CALLBACK] } })).statusCode;
+    expect(last).toBe(429);
+    now += 60_000;
+    expect((await pub('POST', '/oauth/register', { json: { redirect_uris: [CALLBACK] } })).statusCode).toBe(201);
+  });
+
+  it('opens a handoff link under the public URL, with its own token in the header alone', async () => {
+    const local = (url: string, payload: object) => harness.app.inject({ method: 'POST', url, headers: { authorization: 'Bearer local-token' }, payload });
+    const computer = (await local('/v1/computers', {})).json() as { id: string };
+    const handoff = (await local(`/v1/computers/${computer.id}/handoffs`, { reason: 'Sign in to your bank.' })).json() as { handoffId: string; token: string };
+    expect((await pub('GET', `/v1/handoffs/${handoff.handoffId}`, { token: handoff.token })).statusCode).toBe(200);
+    // Not this machine's own token, not a token in the URL, and not another route.
+    expect((await pub('GET', `/v1/handoffs/${handoff.handoffId}`, { token: 'local-token' })).statusCode).toBe(401);
+    expect((await pub('GET', `/v1/handoffs/${handoff.handoffId}?token=${handoff.token}`)).statusCode).toBe(401);
+    expect((await pub('GET', '/v1/handoffs', { token: handoff.token })).statusCode).toBe(404);
+  });
+
+  it('keeps the console’s API off the public URL, and the remote paths off this machine’s', async () => {
     expect((await pub('GET', '/v1/computers', { token: 'local-token' })).statusCode).toBe(404);
-    expect((await pub('GET', '/')).statusCode).toBe(404);
+    expect((await pub('GET', '/v1/overview', { token: 'local-token' })).statusCode).toBe(404);
+    // The page a link opens holds nothing: it is served, and can do nothing without that link's token.
+    expect((await pub('GET', '/')).statusCode).toBe(200);
     const local = (url: string) => harness.app.inject({ method: 'GET', url, headers: { authorization: 'Bearer local-token' } });
     expect((await local('/.well-known/oauth-authorization-server')).statusCode).toBe(404);
     expect((await local('/v1/remote')).json()).toMatchObject({ on: true, publicUrl: ORIGIN, owner: false });

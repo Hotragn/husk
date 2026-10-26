@@ -1,10 +1,12 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { huskError } from '../errors.js';
+import { Approvals } from './approvals.js';
 import { checkClaim, formatClaim, newClaim } from './claim.js';
 import { signAccessToken, verifyAccessToken } from './jwt.js';
 import type { AccessClaims } from './jwt.js';
-import { authorizePage, errorPage } from './page.js';
+import { LIMITS, Limits } from './limits.js';
+import { approvalPage, authorizePage, errorPage } from './page.js';
 import { RemoteStore } from './state.js';
 import { ALGORITHMS, WebAuthnError, verifyAssertion, verifyRegistration } from './webauthn.js';
 
@@ -96,6 +98,8 @@ export class Remote {
   readonly host: string;
   readonly resource: string;
   readonly store: RemoteStore;
+  readonly approvals: Approvals;
+  readonly limits: Limits;
   private readonly now: () => number;
   private readonly pending = new Map<string, Pending>();
   private readonly codes = new Map<string, { client: string; redirectUri: string; challenge: string; owner: string; expiresAt: number }>();
@@ -107,6 +111,25 @@ export class Remote {
     this.resource = `${url.origin}/mcp`;
     this.store = new RemoteStore(opts.dir);
     this.now = opts.now ?? Date.now;
+    this.approvals = new Approvals(url.origin, this.now);
+    this.limits = new Limits(this.now);
+  }
+
+  /** No owner, no apps, no tokens, nothing approved: `husk remote reset`. A claim code for whoever comes next. */
+  async reset(): Promise<string> {
+    await this.store.reset();
+    await this.store.load();
+    this.approvals.clear();
+    this.pending.clear();
+    this.codes.clear();
+    return this.newClaimCode();
+  }
+
+  /** Whether `key` may make another request this minute; if not, the 429 is sent. */
+  allow(reply: FastifyReply, ...keys: Array<[string, number]>): boolean {
+    if (keys.every(([k, max]) => this.limits.take(k, max))) return true;
+    void reply.code(429).header('retry-after', '60').send({ error: 'too_many_requests', error_description: 'too many requests: try again in a minute' });
+    return false;
   }
 
   /** Load the state. With no owner yet, a fresh claim code to print where the person can see it. */
@@ -215,6 +238,7 @@ export class Remote {
     }));
 
     app.post('/oauth/register', async (req, reply) => {
+      if (!this.allow(reply, ['register', LIMITS.register])) return reply;
       const body = (req.body ?? {}) as Record<string, unknown>;
       const uris = body.redirect_uris;
       if (!Array.isArray(uris) || uris.length === 0 || uris.length > 10 || !uris.every(allowedRedirect)) {
@@ -247,6 +271,7 @@ export class Remote {
     });
 
     app.get('/oauth/authorize', async (req, reply) => {
+      if (!this.allow(reply, ['sign-in', LIMITS.signIn])) return reply;
       const q = (req.query ?? {}) as Record<string, string | undefined>;
       const client = q.client_id ? this.store.current.clients[q.client_id] : undefined;
       // Only to a redirect the app registered; anything else is shown here, never sent on.
@@ -282,12 +307,14 @@ export class Remote {
 
     // The owner's sign-in options: the passkey to use.
     app.post('/oauth/start', async (req, reply) => {
+      if (!this.allow(reply, ['sign-in', LIMITS.signIn])) return reply;
       const p = this.live((req.body as { request?: unknown } | undefined)?.request);
       if (!p || !this.store.current.owner) return reply.code(400).send({ error: 'invalid_request', error_description: 'this sign-in has expired: start again from the chat app' });
       return this.passkeyOptions(p);
     });
 
     app.post('/oauth/claim', async (req, reply) => {
+      if (!this.allow(reply, ['sign-in', LIMITS.signIn])) return reply;
       const body = (req.body ?? {}) as { request?: unknown; code?: unknown };
       const p = this.live(body.request);
       const state = this.store.current;
@@ -307,6 +334,7 @@ export class Remote {
     });
 
     app.post('/oauth/passkey', async (req, reply) => {
+      if (!this.allow(reply, ['sign-in', LIMITS.signIn])) return reply;
       const body = (req.body ?? {}) as { request?: unknown; credential?: Record<string, unknown> };
       const p = this.live(body.request);
       const challenge = p?.webauthn;
@@ -339,6 +367,7 @@ export class Remote {
     });
 
     app.post('/oauth/consent', async (req, reply) => {
+      if (!this.allow(reply, ['sign-in', LIMITS.signIn])) return reply;
       const body = (req.body ?? {}) as { request?: unknown; allow?: unknown };
       const p = this.live(body.request);
       if (!p || !p.owner) return reply.code(400).send({ error: 'invalid_request', error_description: 'sign in first' });
@@ -356,11 +385,64 @@ export class Remote {
       return { redirect: u.toString() };
     });
 
+    // A remote chat's tool call waiting for the owner's word (approvals.ts).
+    app.get('/oauth/approve', async (req, reply) => {
+      if (!this.allow(reply, ['sign-in', LIMITS.signIn])) return reply;
+      const a = this.approvals.pending((req.query as { id?: unknown } | undefined)?.id);
+      if (!a) return reply.code(404).type('text/html').send(errorPage('This approval has expired, or was already answered. Ask the chat to try again.'));
+      const { html, csp } = approvalPage({ id: a.id, app: a.app, tool: a.tool, summary: a.summary });
+      return reply.header('content-security-policy', csp).header('cache-control', 'no-store').header('x-frame-options', 'DENY').type('text/html').send(html);
+    });
+
+    app.post('/oauth/approve/start', async (req, reply) => {
+      if (!this.allow(reply, ['sign-in', LIMITS.signIn])) return reply;
+      const a = this.approvals.pending((req.body as { id?: unknown } | undefined)?.id);
+      const owner = this.store.current.owner;
+      if (!a || !owner) return reply.code(404).send({ error: 'invalid_request', error_description: 'this approval has expired, or was already answered' });
+      a.challenge = randomBytes(32).toString('base64url');
+      return {
+        create: false,
+        publicKey: { challenge: a.challenge, rpId: this.host, allowCredentials: [{ type: 'public-key', id: owner.credential.id }], userVerification: 'required', timeout: 120_000 },
+      };
+    });
+
+    app.post('/oauth/approve', async (req, reply) => {
+      if (!this.allow(reply, ['sign-in', LIMITS.signIn])) return reply;
+      const body = (req.body ?? {}) as { id?: unknown; allow?: unknown; hour?: unknown; credential?: Record<string, unknown> };
+      const a = this.approvals.pending(body.id);
+      const owner = this.store.current.owner;
+      if (!a || !owner) return reply.code(404).send({ error: 'invalid_request', error_description: 'this approval has expired, or was already answered' });
+      // Saying no needs nothing: whoever holds the link can only stop a call.
+      if (body.allow !== true) {
+        this.approvals.decide(a, false, false);
+        return { ok: true };
+      }
+      const challenge = a.challenge;
+      delete a.challenge;
+      if (!challenge) return reply.code(400).send({ error: 'invalid_request', error_description: 'start with the passkey' });
+      const c = body.credential ?? {};
+      const str = (k: string) => (typeof c[k] === 'string' ? (c[k] as string) : '');
+      try {
+        owner.credential.signCount = verifyAssertion(
+          { id: str('id'), clientDataJSON: str('clientDataJSON'), authenticatorData: str('authenticatorData'), signature: str('signature') },
+          owner.credential,
+          { challenge, origin: this.origin, rpId: this.host },
+        );
+      } catch (err) {
+        if (err instanceof WebAuthnError) return reply.code(403).send({ error: 'access_denied', error_description: err.message });
+        throw err;
+      }
+      await this.store.save();
+      this.approvals.decide(a, true, body.hour === true);
+      return { ok: true };
+    });
+
     app.post('/oauth/token', async (req, reply) => {
       void reply.header('cache-control', 'no-store').header('pragma', 'no-cache');
       const form = new URLSearchParams(typeof req.body === 'string' ? req.body : '');
       const deny = (error: string, why: string, status = 400) => reply.code(status).send({ error, error_description: why });
       const client = form.get('client_id') ?? '';
+      if (!this.allow(reply, ['tokens', LIMITS.tokens], [`token:${client}`, LIMITS.token])) return reply;
       if (!this.store.current.clients[client]) return deny('invalid_client', 'unknown client_id', 401);
       const resource = form.get('resource');
       if (resource && resource.replace(/\/$/, '') !== this.resource) return deny('invalid_target', `tokens here are for ${this.resource}`);
