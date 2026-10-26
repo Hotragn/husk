@@ -119,8 +119,8 @@ export function ComputersPanel({
     (c: ComputerInfo) => {
       const whose = c.chatLabel ? ` (${c.chatLabel})` : '';
       const ok = window.confirm(
-        `Delete ${c.id}${whose}? Its files at ${c.nativeId ?? c.workdir} and everything installed on it go with it. ` +
-          'This cannot be undone.',
+        `Delete ${c.id}${whose}? Its files at ${c.nativeId ?? c.workdir}, everything installed on it and its ` +
+          'browser’s logins go with it. This cannot be undone.',
       );
       if (ok) void act(c.id, () => api.destroyComputer(c.id));
     },

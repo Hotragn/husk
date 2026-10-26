@@ -113,7 +113,7 @@ is `null` when the provider could not be probed at all; `isolationKind` is
 GET    /v1/computers            -> { "computers": ComputerInfo[] }
 POST   /v1/computers            body: ComputerSpec -> 201 ComputerInfo
 GET    /v1/computers/:id        -> ComputerInfo
-DELETE /v1/computers/:id        -> 204   (a chat's computer needs ?confirm=<id>)
+DELETE /v1/computers/:id        -> 204   (a chat's computer, or ?erase=true, needs ?confirm=<id>)
 GET    /v1/computers/:id/disk   -> { "bytes": number | null, "note"?: string }
 GET    /v1/computers/:id/stats  -> { cpuPercent, memoryBytes, memoryLimitBytes, diskBytes, notes? }
 GET    /v1/computers/:id/thumbnail -> image/jpeg of an already-open browser, else 404
@@ -140,7 +140,10 @@ They come from the client's own name and the start time, never from chat titles 
 chat content.
 
 Husk never deletes a chat's computer on its own: it has no idle or lifetime limit, and
-`DELETE` refuses one (422) unless `?confirm=` repeats its id. `GET .../disk` measures the
+`DELETE` refuses one (422) unless `?confirm=` repeats its id. On docker and podman, a
+chat's or bot's computer keeps its files, browser profile included, for its next
+computer, as `husk rm` does; `?erase=true` (with `?confirm=`) takes them too, as the
+console's Delete does. `GET .../disk` measures the
 workspace from the host, so it works on a stopped computer and does not count as use.
 Local computers report bytes; for other providers, or a workspace inside WSL, `bytes` is
 null and `note` says why.

@@ -217,7 +217,13 @@ export interface Computer {
 
   stop(): Promise<void>;
   start(): Promise<void>;
-  destroy(): Promise<void>;
+  /**
+   * Remove the machine. A keyed one (a chat's or a bot's) keeps the files it
+   * persists for the next machine with its key, unless `erase` is set: then
+   * they go too, browser profile and logins included. Providers that keep
+   * nothing for a key delete everything either way.
+   */
+  destroy(opts?: { erase?: boolean }): Promise<void>;
 
   /** Optional capabilities -- callers must feature-detect. */
   /** Start a process with stdin held open. Absent where the provider cannot keep one. */

@@ -145,14 +145,18 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete('/v1/computers/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
+    const query = req.query as { confirm?: unknown; erase?: unknown };
     // A chat's computer holds that chat's work, and Husk never removes one on
     // its own. Deleting it takes the id typed back as ?confirm=, which the
-    // console sends only after the person confirms.
+    // console sends only after the person confirms. So does ?erase=true, which
+    // takes the files and the browser's logins a chat's or bot's computer keeps
+    // for its next one (`husk rm` keeps them: it means "stop for now").
+    const erase = query.erase === 'true';
     const target = await manager.get(id);
-    if (target?.info.spec?.labels?.['husk.via'] === 'mcp' && (req.query as { confirm?: unknown }).confirm !== id) {
-      throw invalidSpec([`confirm: deleting a chat's computer needs ?confirm=${id}`]);
+    if ((erase || target?.info.spec?.labels?.['husk.via'] === 'mcp') && query.confirm !== id) {
+      throw invalidSpec([`confirm: ${erase ? 'erasing a computer' : "deleting a chat's computer"} needs ?confirm=${id}`]);
     }
-    const removed = await manager.destroy(id);
+    const removed = await manager.destroy(id, { erase });
     if (!removed) throw notFound('computer', id);
     ctx.bus.emit('computers', 'computer_destroyed', { id });
     return reply.code(204).send();

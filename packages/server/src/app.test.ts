@@ -215,6 +215,19 @@ describe('computers', () => {
     expect((await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}` })).statusCode).toBe(200);
     expect((await del(`?confirm=${id}`)).statusCode).toBe(204);
     expect((await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}` })).statusCode).toBe(404);
+    // A plain delete, like `husk rm`, leaves what the chat keeps for its next computer.
+    expect(harness.manager.erased.has(id)).toBe(false);
+  });
+
+  it('erases a computer, files and browser logins, only with the id typed back as confirm', async () => {
+    const created = await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: { provider: 'local' } });
+    const id = created.json().id as string;
+    const del = (query: string) => harness.app.inject({ method: 'DELETE', url: `/v1/computers/${id}${query}` });
+
+    expect((await del('?erase=true')).statusCode).toBe(422);
+    expect(harness.manager.erased.size).toBe(0);
+    expect((await del(`?erase=true&confirm=${id}`)).statusCode).toBe(204);
+    expect(harness.manager.erased).toEqual(new Set([id]));
   });
 
   it('reports disk use without running anything in the computer', async () => {
