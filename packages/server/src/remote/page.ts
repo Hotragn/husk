@@ -91,7 +91,7 @@ export function authorizePage(data: { request: string; client: string; redirectH
     `<h1>Allow <span id="client"></span> at <span class="host" id="host-title"></span> to use Husk?</h1>
 <p>It will be able to run commands and use the browser on the computers of the Husk on this machine,
 and it sees what those return. It sends you back to <span class="host" id="host"></span>.</p>
-<p class="warn" id="unknown" hidden><strong>Careful:</strong> <span class="host" id="host-warn"></span> is not claude.ai, ChatGPT or an app
+<p class="warn" id="unknown" hidden><strong>Careful:</strong> <span class="host" id="host-warn"></span> is not claude.ai, ChatGPT, Perplexity or an app
 on this device. Allow it only if you added this Husk to an app there yourself, just now. If someone sent you this link, deny it.</p>
 <section id="claim" hidden>
   <p>This Husk has no owner yet. Type the claim code it printed where it runs, then make a passkey.

@@ -547,6 +547,11 @@ describe('remote access, from a chat app to a call', () => {
     expect(page.body).toContain('"knownReturn":false');
     expect(page.body).toContain('If someone sent you this link, deny it.');
     expect((await authorize(await register(), 'v'.repeat(43))).page.body).toContain('"knownReturn":true');
+    // Perplexity's documented return address is one Husk knows too.
+    const PPLX = 'https://www.perplexity.ai/rest/connections/oauth_callback';
+    const pplx = (await pub('POST', '/oauth/register', { json: { redirect_uris: [PPLX], client_name: 'Perplexity' } })).json() as { client_id: string };
+    const pq = new URLSearchParams({ client_id: pplx.client_id, redirect_uri: PPLX, response_type: 'code', code_challenge: 'c'.repeat(43), code_challenge_method: 'S256' });
+    expect((await pub('GET', `/oauth/authorize?${pq}`)).body).toContain('"knownReturn":true');
     const meta = (await pub('GET', '/.well-known/oauth-authorization-server')).json() as Record<string, unknown>;
     expect(meta.authorization_response_iss_parameter_supported).toBe(true);
   });
