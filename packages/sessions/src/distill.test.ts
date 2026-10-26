@@ -144,6 +144,12 @@ describe('observedTools', () => {
     expect(tools.needsComputer).toBe(false);
   });
 
+  it("reads a chat's MCP tools by their own names: one that used Husk's needs the computer", () => {
+    const tools = observedTools(t([], { meta: { tools: ['mcp__husk__shell', 'mcp__husk__browser_goto', 'mcp__husk__read_file'] } }));
+    expect(tools.suggested).toEqual(['computer', 'files', 'web']);
+    expect(tools.needsComputer).toBe(true);
+  });
+
   it('includes tools that only a sidechain revealed', () => {
     const tools = observedTools(t([], { meta: { tools: ['Bash'], sidechainTools: ['WebSearch'] } }));
     expect(tools.suggested).toEqual(['computer', 'web']);

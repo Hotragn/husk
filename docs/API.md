@@ -119,8 +119,7 @@ GET    /v1/computers/:id/stats  -> { cpuPercent, memoryBytes, memoryLimitBytes, 
 GET    /v1/computers/:id/thumbnail -> image/jpeg of an already-open browser, else 404
 GET    /v1/overview             -> { computers: ComputerInfo[], activeRuns: ActiveRun[], handoffs: PendingHandoff[], activity: { [id]: ActivityEntry }, running: { [id]: { tool, since } }, inChat: string[] }
 GET    /v1/computers/:id/activity -> { "entries": ActivityEntry[] }   (oldest first, the last 200)
-POST   /v1/computers/:id/bot    body: { "useModel"?: boolean, "engine"?: "claude-code" | "builtin" } -> { transcriptId, spec, yaml, distilled, claudeCode }
-                                (the draft runs on the person's Claude Code, going on with the chat, when `claudeCode` says it is installed)
+POST   /v1/computers/:id/bot    body: { "useModel"?: boolean, "engine"?: "claude-code" | "codex" | "builtin" } -> { transcriptId, spec, yaml, distilled, engines }
 POST   /v1/computers/:id/stop   -> ComputerInfo
 POST   /v1/computers/:id/start  -> ComputerInfo
 GET    /v1/computers/:id/browser/status     -> whether a browser can run here (never installs one)
@@ -164,10 +163,12 @@ memory and starts empty when the server restarts.
 
 `bot` distills the chat that owns a computer into a husk draft, for the console's "Make
 this a bot". It is a draft: nothing is saved until the caller `PUT`s the YAML to
-`/v1/husks/:name`. Only a Claude Code chat can be read back, because Husk records its
-session id (`husk.session`) and Claude Code names the transcript after it; for any
-other computer it answers `E_IMPORT_FAILED`, and the hint says to export the chat and
-import it.
+`/v1/husks/:name`. A Claude Code chat is read back by the session id Husk records
+(`husk.session`), which Claude Code names the transcript after; a Codex chat by its
+rollout under `~/.codex/sessions`, the newest written since the computer was that names
+the computer. For any other computer it answers `E_IMPORT_FAILED`, and the hint says to
+export the chat and use the console's Make a bot from a chat. The answer has `engines`,
+as `distill` does below, and `engine` in the body picks one.
 
 ### Chat tools
 
@@ -519,13 +520,25 @@ GET  /v1/sessions/discover?source=claude-code
   -> { "sessions": [{ id, source, title, messageCount, updatedAt, origin }] }
 
 POST /v1/sessions/import
-body: { path?: string, content?: string, source?: TranscriptSource }
+body: { path?: string, content?: string, source?: TranscriptSource, pick?: string }
   -> { "transcript": Transcript }
+   | { "source": TranscriptSource, "choices": [{ id, title, messages, updatedAt? }] }
 
 POST /v1/sessions/distill
-body: { transcriptId?: string, transcript?: Transcript, useModel?: boolean, model?: string }
-  -> { "distilled": DistilledAgent, "spec": HuskSpec, "yaml": string }
+body: { transcriptId?: string, transcript?: Transcript, useModel?: boolean, model?: string,
+        engine?: "claude-code" | "codex" | "builtin" }
+  -> { "transcriptId", "distilled": DistilledAgent, "spec": HuskSpec, "yaml": string, "engines": [...], "continues": boolean }
 ```
+
+`discover` looks where each app keeps its chats: Claude Code's projects, Codex's
+`~/.codex/sessions` (`$CODEX_HOME`), Cursor's `state.vscdb` and Gemini CLI's
+checkpoints. A file that holds many chats, such as a ChatGPT export or Cursor's
+`state.vscdb`, makes `import` answer with `choices`, newest first and nothing kept; ask
+again with `pick` set to a choice's `id`. `engines` lists what the draft can run on,
+best first: the chat's own app's CLI when it is installed (a Claude Code chat goes on as
+itself, with `engine.resume`), any other installed CLI, then Husk's own engine. `engine`
+picks one of them, and `continues` says whether Claude Code would go on with the chat
+rather than start from the draft.
 
 `/v1/sessions/distill/stream` emits `{"type":"progress","stage":"scanning|extracting|merging","pct":0.4}`
 then one `{"type":"done","spec":{...},"distilled":{...},"yaml":"..."}`.

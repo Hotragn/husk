@@ -13,6 +13,8 @@ export interface HuskSummary {
   displayName: string;
   description: string;
   model: string;
+  /** What runs it: `builtin`, or the person's own `claude-code` or `codex`. */
+  engine: string;
   version: string;
   tools: string[];
   triggers: string[];
@@ -249,6 +251,7 @@ export class Store {
       displayName: spec.displayName ?? spec.name,
       description: spec.description,
       model: spec.model,
+      engine: spec.engine.type,
       version: spec.version,
       tools: spec.tools,
       triggers: spec.triggers.map((t) => t.type),

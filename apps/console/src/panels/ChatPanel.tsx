@@ -14,14 +14,15 @@
 import { useCallback, useState } from 'react';
 import { toDisplayError } from '../api/client';
 import type { DisplayError } from '../api/client';
-import type { ActivityEntry, BotDraft, BotEngine, ComputerInfo, HandoffInput, HandoffKey, Overview, PendingHandoff } from '../api/wire';
-import { Button, ErrorBlock, Field, Icon, StatusDot, formatWhen } from '../components/primitives';
+import type { ActivityEntry, BotEngine, ComputerInfo, HandoffInput, HandoffKey, Overview, PendingHandoff } from '../api/wire';
+import { Button, ErrorBlock, Icon, StatusDot, formatWhen } from '../components/primitives';
 import { Screen, useInputQueue } from '../components/Screen';
 import { ON_DEMAND_NOTE, PUSHED_SCREEN, useLook, useScreenFeed } from '../components/useScreenFeed';
 import { AppBadge } from '../desktop/AppGlyph';
 import { takingText } from '../desktop/bridge';
 import { useConnection } from '../state/connection';
 import { useResource } from '../state/useResource';
+import { DraftReview, useBotDraft } from './BotDraft';
 import { stateTone } from './ComputersPanel';
 import type { OverviewTarget } from './OverviewPanel';
 
@@ -367,59 +368,11 @@ function timeOf(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
 }
 
-/**
- * Turn the chat into a bot: a husk.yaml distilled from the conversation, shown
- * before anything is saved, because a draft with a 16% confidence is a draft.
- */
+/** Turn the chat into a bot: a husk.yaml distilled from the conversation, reviewed before it is saved. */
 function MakeBot({ computer }: { computer: ComputerInfo }) {
   const { api } = useConnection();
-  const [draft, setDraft] = useState<BotDraft | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<DisplayError | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
-  /** A bot by this name already exists: saving would replace it, so the person decides. */
-  const [clash, setClash] = useState(false);
-
-  const make = async (engine?: BotEngine) => {
-    setBusy(true);
-    setError(null);
-    setSaved(null);
-    setClash(false);
-    try {
-      setDraft(await api.makeBot(computer.id, engine ? { engine } : {}));
-    } catch (err) {
-      setError(toDisplayError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const save = async (replace: boolean) => {
-    if (!draft) return;
-    setBusy(true);
-    setError(null);
-    try {
-      if (!replace) {
-        const exists = await api.getHusk(draft.spec.name).then(
-          () => true,
-          () => false,
-        );
-        if (exists) {
-          setClash(true);
-          return;
-        }
-      }
-      const summary = await api.createHusk(draft.yaml);
-      setClash(false);
-      setSaved(summary.name);
-    } catch (err) {
-      setError(toDisplayError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const confidence = draft?.distilled.confidence;
-  const engine: BotEngine = draft?.spec.engine?.type === 'claude-code' ? 'claude-code' : 'builtin';
+  const bot = useBotDraft();
+  const make = (engine?: BotEngine) => bot.make(() => api.makeBot(computer.id, engine ? { engine } : {}));
   return (
     <div className="card chat-bot">
       <div className="chat-head">
@@ -428,57 +381,17 @@ function MakeBot({ computer }: { computer: ComputerInfo }) {
           <p className="field-note">A husk.yaml from this chat, to run on a schedule, a webhook or in Discord, Slack and Telegram.</p>
         </div>
         <div className="btn-row">
-          <Button size="sm" loading={busy && !draft} onClick={() => void make(draft ? engine : undefined)}>
-            {draft ? 'Distill again' : 'Make this a bot'}
+          <Button size="sm" loading={bot.busy && !bot.draft} onClick={() => void make(bot.draft ? bot.engine : undefined)}>
+            {bot.draft ? 'Distill again' : 'Make this a bot'}
           </Button>
-          {draft && !saved ? (
-            <Button size="sm" variant="primary" loading={busy} onClick={() => void save(clash)}>
-              {clash ? `Replace ${draft.spec.name}` : 'Save as a bot'}
+          {bot.draft && !bot.saved ? (
+            <Button size="sm" variant="primary" loading={bot.busy} onClick={() => void bot.save()}>
+              {bot.clash ? `Replace ${bot.draft.spec.name}` : 'Save as a bot'}
             </Button>
           ) : null}
         </div>
       </div>
-      {error ? <ErrorBlock error={error} /> : null}
-      {draft ? (
-        <div className="chat-bot-body">
-          {draft.claudeCode ? (
-            <Field
-              label="Runs on"
-              htmlFor="bot-engine"
-              note={
-                engine === 'claude-code'
-                  ? "Your own Claude Code, on your own login, goes on with this chat on this computer, with Husk's tools only."
-                  : "Husk's own engine, on any model you have set up, a local Ollama included."
-              }
-            >
-              <select id="bot-engine" className="select" value={engine} disabled={busy} onChange={(e) => void make(e.target.value as BotEngine)}>
-                <option value="claude-code">Your Claude Code, continuing this chat</option>
-                <option value="builtin">Husk's own engine, on any model</option>
-              </select>
-            </Field>
-          ) : (
-            <p className="field-note">Runs on Husk's own engine. With Claude Code installed where Husk can find it, the bot could go on with this chat on your own login.</p>
-          )}
-          <p className="field-note">
-            Draft for <strong>{draft.spec.name}</strong>
-            {confidence !== undefined ? ` · confidence ${Math.round(confidence * 100)}%` : ''}. Read it before saving.
-          </p>
-          {draft.distilled.notes?.length ? (
-            <ul className="field-note">
-              {draft.distilled.notes.map((n) => (
-                <li key={n}>{n}</li>
-              ))}
-            </ul>
-          ) : null}
-          <pre className="mono chat-yaml">{draft.yaml}</pre>
-        </div>
-      ) : null}
-      {saved ? <p role="status">Saved as {saved}. Run it from Husks.</p> : null}
-      {clash && draft ? (
-        <p role="alert">
-          A bot called <strong>{draft.spec.name}</strong> already exists. Saving replaces it.
-        </p>
-      ) : null}
+      <DraftReview state={bot} onEngine={(engine) => void make(engine)} />
     </div>
   );
 }
