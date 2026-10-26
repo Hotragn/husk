@@ -1071,6 +1071,12 @@ export class SshProvider implements ComputerProvider {
   }
 
   async create(spec: ComputerSpec): Promise<Computer> {
+    // Said, not dropped: the box is someone's, and installing on it is theirs to do.
+    if (spec.packages?.length) {
+      throw new HuskError('E_SPEC_INVALID', 'ssh computers do not install packages', {
+        hint: 'install them on that host yourself, or use docker or podman, which build them into the computer',
+      });
+    }
     const settings = resolveSshSettings(spec, this.env);
     if (!settings) {
       throw new HuskError('E_PROVIDER_UNAVAILABLE', 'no ssh target is configured', {

@@ -1553,6 +1553,24 @@ async function checkSignIn(computerId) {
  * profile in a volume for its next computer, and the console's Delete, once
  * the person confirms, takes that volume with it.
  */
+/**
+ * `packages` on a docker computer, which can install nothing itself: its root
+ * is read-only and it holds no capabilities. They are built into an image of
+ * its own, FROM the computer's, and it runs that.
+ */
+async function checkPackages() {
+  const made = await api('POST', '/v1/computers', { name: `e2e-pkgs-${process.pid}`, provider: 'docker', packages: ['jq'] });
+  check('a docker computer asked for packages is made', made.status === 201, JSON.stringify(made.body).slice(0, 300));
+  if (made.status !== 201) return;
+  created.push(made.body.id);
+  const ran = await api('POST', `/v1/computers/${made.body.id}/exec`, { cmd: 'jq --version' });
+  check(
+    'its packages are in it, built into an image of its own',
+    /^jq-1\./.test(ran.body?.stdout ?? '') && /^husk-packages:/.test(made.body.image ?? ''),
+    `${made.body.image}: ${JSON.stringify(ran.body).slice(0, 200)}`,
+  );
+}
+
 async function checkDeleteErases(id) {
   const info = (await api('GET', `/v1/computers/${id}`)).body;
   const mounts = spawnSync('docker', ['inspect', '-f', `{{range .Mounts}}{{if eq .Destination "${info.workdir}"}}{{.Name}}{{end}}{{end}}`, info.nativeId], { encoding: 'utf8' });
@@ -2141,6 +2159,9 @@ try {
 
   // 1g. A chat app on the web, through a tunnel: remote access (J6-c).
   await checkRemoteAccess();
+
+  // 1h. Packages on a docker computer, which cannot install them itself.
+  await checkPackages();
 
   // 2. A Docker computer with a browser.
   // Unique: the name is the container's, and another `e2e` container would clash.
