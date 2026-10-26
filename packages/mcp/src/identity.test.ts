@@ -6,8 +6,7 @@
  * chat makes its computer and the chat passes the id back; anything ambiguous
  * creates nothing and asks.
  */
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { Computer, ComputerSpec, Logger } from '@husk-ai/core';
 import type { ComputerManager } from '@husk-ai/runtime';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';

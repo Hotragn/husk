@@ -1,15 +1,16 @@
-import { randomUUID } from 'node:crypto';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { randomBytes, randomUUID } from 'node:crypto';
 import {
-  CallToolRequestSchema,
-  GetPromptRequestSchema,
-  ListPromptsRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+  CLIENT_CAPABILITIES_META_KEY,
+  CLIENT_INFO_META_KEY,
+  PROTOCOL_VERSION_META_KEY,
+  Server,
+  acceptedContent,
+  createRequestStateCodec,
+  inputRequired,
+} from '@modelcontextprotocol/server';
+import type { CallToolResult, ClientCapabilities, Implementation, InputRequiredResult, ServerContext, Tool } from '@modelcontextprotocol/server';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
+import type { StdioServerHandle } from '@modelcontextprotocol/server/stdio';
 import { HUSK_VERSION, IDENTITY_LABELS, chatClient, chatLabel, createLogger, networkEnforcement, platformName, quiet, redact } from '@husk-ai/core';
 import type { IdentitySource } from '@husk-ai/core';
 import type { Computer, ComputerInfo, ComputerSpec, Logger } from '@husk-ai/core';
@@ -118,6 +119,14 @@ export const JOB_WAIT_TOOL: ToolDef = {
   },
 };
 
+/**
+ * A 2026-07-28 request's own `_meta` envelope, empty on the older protocol.
+ * Keyed by the SDK's constants, which its published type leaves out.
+ */
+function envelopeOf(ctx: ServerContext): Record<string, unknown> {
+  return (ctx.mcpReq.envelope ?? {}) as Record<string, unknown>;
+}
+
 /** A call that outlasted its app's wait, still running or not yet collected. */
 interface Job {
   tool: string;
@@ -194,6 +203,23 @@ export class HuskMcpServer {
   /** Ended from the viewer, so a later hand_off_done for one is an answer, not an error. */
   private readonly handedBack = new Set<string>();
   private confirmedProvider?: string;
+  /** Who the app says it is and what it shows: each request's own on 2026-07-28, its `initialize` before. */
+  private clientInfo?: Implementation;
+  private clientCaps?: ClientCapabilities;
+  /**
+   * The handoff an in-chat "Done?" is about, sealed into the request state the
+   * app echoes back with its answer (2026-07-28). Signed with a key of this
+   * process's own: only it holds the handoff, so only it can finish one.
+   */
+  private readonly asked = createRequestStateCodec<{ handoff: string }>({
+    key: randomBytes(32),
+    // A login can take a while, and an answer to an expired "Done?" is refused.
+    ttlSeconds: 86_400,
+    bind: (ctx) => ctx.mcpReq.method,
+  });
+  /** Each open handoff's link, to give again when the person answers "not yet". */
+  private readonly handoffLinks = new Map<string, string>();
+  private stdio?: StdioServerHandle;
 
   constructor(opts: HuskMcpOptions = {}) {
     this.manager = opts.manager ?? new ComputerManager();
@@ -227,6 +253,7 @@ export class HuskMcpServer {
           ? 'This session starts with workspace tools only. The user can enable computer tools in the viewer Advanced settings after reviewing the environment.'
           :
           COMPUTER_INSTRUCTIONS),
+        requestState: { verify: this.asked.verify },
       },
     );
 
@@ -234,24 +261,28 @@ export class HuskMcpServer {
   }
 
   private registerHandlers(): void {
-    this.mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [...WORKSPACE_TOOLS, ...(this.profile === 'computer' ? this.computerTools() : [])],
-    }));
+    this.mcp.setRequestHandler('tools/list', async (_request, ctx) => {
+      this.noteClient(ctx);
+      // Plain JSON Schema objects, each with `type: 'object'`, which ToolDef does not spell out.
+      return { tools: [...WORKSPACE_TOOLS, ...(this.profile === 'computer' ? this.computerTools() : [])] as Tool[] };
+    });
 
     // The computer card, for clients that render MCP Apps. CSP is left empty on
     // purpose: the card makes no network requests, so the host's restrictive default fits.
-    this.mcp.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    this.mcp.setRequestHandler('resources/list', async () => ({
       resources: [{ uri: CARD_URI, name: 'Husk computer card', mimeType: CARD_MIME }],
     }));
-    this.mcp.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    this.mcp.setRequestHandler('resources/read', async (request) => {
       if (request.params.uri !== CARD_URI) throw new Error(`Unknown resource ${request.params.uri}`);
       return { contents: [{ uri: CARD_URI, mimeType: CARD_MIME, text: CARD_HTML, _meta: { ui: { csp: {} } } }] };
     });
 
-    this.mcp.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: this.profile === 'computer' ? PROMPTS : [] }));
-    this.mcp.setRequestHandler(GetPromptRequestSchema, async (request) => getPrompt(request.params.name, request.params.arguments));
+    this.mcp.setRequestHandler('prompts/list', async () => ({ prompts: this.profile === 'computer' ? PROMPTS : [] }));
+    this.mcp.setRequestHandler('prompts/get', async (request) => getPrompt(request.params.name, request.params.arguments));
 
-    this.mcp.setRequestHandler(CallToolRequestSchema, async (request, extra): Promise<CallToolResult> => {
+    this.mcp.setRequestHandler('tools/call', async (request, ctx): Promise<CallToolResult | InputRequiredResult> => {
+      this.noteClient(ctx);
+      const extra = ctx.mcpReq;
       const { name, arguments: args } = request.params;
       if (WORKSPACE_TOOL_NAMES.has(name)) return this.workspaceTools.call(name, (args ?? {}) as Record<string, unknown>);
       if (this.profile !== 'computer') return { isError: true, content: [{ type: 'text', text: 'Computer tools are disabled. The user can enable them from Advanced in the workspace viewer after reviewing the environment.' }] };
@@ -266,7 +297,7 @@ export class HuskMcpServer {
           const wanted = a.computer === 'new' ? undefined : a.computer;
           const target = wanted !== undefined || this.computers.size === 1 ? await this.resolve(wanted) : undefined;
           if (typeof target === 'string') return { isError: true, content: [{ type: 'text', text: target }] };
-          return await this.handOff(a, extra.signal, target);
+          return await this.handOff(a, extra.signal, target, ctx);
         } catch (err) {
           return { isError: true, content: [{ type: 'text', text: redact((err as Error).message) }] };
         }
@@ -339,7 +370,29 @@ export class HuskMcpServer {
 
   /** How long a call is held before it answers "still running"; 0 where the app waits as long as a call takes. */
   private waitMs(): number {
-    return this.callWaitMs ?? (chatClient(this.mcp.getClientVersion()?.name).waitSec ?? 0) * 1000;
+    return this.callWaitMs ?? (chatClient(this.clientName()).waitSec ?? 0) * 1000;
+  }
+
+  /**
+   * Keep what a 2026-07-28 request says of the app sending it: that revision has
+   * no `initialize`, so each request carries it. One stdio process serves one
+   * app, so the latest word holds for the calls that follow.
+   */
+  private noteClient(ctx: ServerContext): void {
+    const envelope = envelopeOf(ctx);
+    const info = envelope[CLIENT_INFO_META_KEY] as Implementation | undefined;
+    const caps = envelope[CLIENT_CAPABILITIES_META_KEY] as ClientCapabilities | undefined;
+    if (info) this.clientInfo = info;
+    if (caps) this.clientCaps = caps;
+  }
+
+  private clientName(): string {
+    // Its `initialize` on a 2025-era connection, which the SDK still keeps.
+    return (this.clientInfo ?? this.mcp.getClientVersion())?.name ?? '';
+  }
+
+  private clientCapabilities(): ClientCapabilities | undefined {
+    return this.clientCaps ?? this.mcp.getClientCapabilities();
   }
 
   /**
@@ -589,7 +642,7 @@ export class HuskMcpServer {
   }
 
   private async createComputer(): Promise<Computer> {
-    const platform = platformName(this.mcp.getClientVersion()?.name);
+    const platform = platformName(this.clientName());
     const n = this.computers.size;
     const spec = {
       name: n === 0 ? `mcp-${this.sessionKey}` : `mcp-${this.sessionKey}-${n + 1}`,
@@ -653,8 +706,9 @@ export class HuskMcpServer {
   }
 
   async connectStdio(): Promise<void> {
-    const transport = new StdioServerTransport();
-    await this.mcp.connect(transport);
+    // Both protocol eras, one instance for the connection: an app that opens with
+    // `initialize` (2025-11-25 and before), or with 2026-07-28's per-request envelope.
+    this.stdio = serveStdio(() => this.mcp, { onerror: (err) => this.log.warn(`mcp: ${err.message}`) });
     this.log.info(`husk mcp ready (session "${this.sessionKey}")`);
   }
 
@@ -669,7 +723,15 @@ export class HuskMcpServer {
    * out, errors or is dismissed leaves the handoff open, and the model is told
    * to wait for the person's own word.
    */
-  private async handOff(args: Record<string, unknown>, callSignal: AbortSignal, computer?: Computer): Promise<CallToolResult> {
+  private async handOff(
+    args: Record<string, unknown>,
+    callSignal: AbortSignal,
+    computer?: Computer,
+    ctx?: ServerContext,
+  ): Promise<CallToolResult | InputRequiredResult> {
+    // 2026-07-28: the app asked "Done?" and calls again with the person's answer.
+    const asked = ctx?.mcpReq.requestState<{ handoff: string }>();
+    if (asked?.handoff) return this.answeredInChat(asked.handoff, ctx!);
     const text = typeof args.reason === 'string' ? args.reason.trim() : '';
     if (!text) throw new Error('hand_off needs a reason the user can read.');
     if (text.length > MAX_REASON) throw new Error(`hand_off reason is over ${MAX_REASON} characters.`);
@@ -713,28 +775,35 @@ export class HuskMcpServer {
       if (outcome === 'done') this.handedBack.add(handoffId);
       // A link minted for this handoff alone dies with it.
       this.tokens.revoke(`handoff:${handoffId}`);
+      this.handoffLinks.delete(handoffId);
     });
     const link = remote
       ? handoffLink(origin, remote.handoffId, remote.token)
       : handoffLink(origin, handoffId, this.tokens.mint(computer ? `computer:${computer.id}` : `handoff:${handoffId}`));
+    this.handoffLinks.set(handoffId, link);
 
     // In-chat "Done?" where the client shows it; a link everywhere else.
-    if (asksInChat(this.mcp.getClientVersion()?.name ?? '', this.mcp.getClientCapabilities()?.elicitation)) {
+    if (asksInChat(this.clientName(), this.clientCapabilities()?.elicitation)) {
+      const done = {
+        mode: 'form' as const,
+        message: `${reason}\n\nOpen ${link} on this device to see and use the computer's browser. Answer here when you are done.`,
+        requestedSchema: {
+          type: 'object' as const,
+          properties: { done: { type: 'boolean' as const, title: "I'm done", description: 'Hand the computer back to the AI.' } },
+          required: ['done'],
+        },
+      };
+      // 2026-07-28 has no server-to-client request: the app asks, then calls again with the answer.
+      if (ctx && envelopeOf(ctx)[PROTOCOL_VERSION_META_KEY]) {
+        return inputRequired({ inputRequests: { done: inputRequired.elicit(done) }, requestState: await this.asked.mint({ handoff: handoffId }, ctx) });
+      }
       const stop = new AbortController();
       const onCallAbort = (): void => stop.abort();
       callSignal.addEventListener('abort', onCallAbort, { once: true });
       try {
         const asked = this.mcp
           .elicitInput(
-            {
-              mode: 'form',
-              message: `${reason}\n\nOpen ${link} on this device to see and use the computer's browser. Answer here when you are done.`,
-              requestedSchema: {
-                type: 'object',
-                properties: { done: { type: 'boolean', title: "I'm done", description: 'Hand the computer back to the AI.' } },
-                required: ['done'],
-              },
-            },
+            done,
             // Under the app's own limit on a call, so the model still gets the
             // link back. When this fires the handoff stays open.
             { signal: stop.signal, timeout: Math.min(ELICIT_WAIT_MS, this.waitMs() || ELICIT_WAIT_MS) },
@@ -756,9 +825,26 @@ export class HuskMcpServer {
     return { content: [{ type: 'text', text: relayText(handoffId, reason, link) }], ...card };
   }
 
+  /**
+   * The person's answer to the in-chat "Done?" (2026-07-28). Done hands the
+   * computer back; anything else leaves the handoff open and gives the model
+   * the link to relay, as a dismissed prompt does on the older protocol.
+   */
+  private async answeredInChat(handoffId: string, ctx: ServerContext): Promise<CallToolResult> {
+    // Done in the viewer while the prompt was up.
+    if (this.handedBack.has(handoffId)) return { content: [{ type: 'text', text: HANDED_BACK }] };
+    const open = this.handoffs.list().find((h) => h.handoffId === handoffId);
+    if (!open) return { isError: true, content: [{ type: 'text', text: `There is no open handoff "${handoffId}".` }] };
+    if (acceptedContent(ctx.mcpReq.inputResponses, 'done')?.done === true) {
+      await this.completeHandoff(handoffId);
+      return { content: [{ type: 'text', text: HANDED_BACK }] };
+    }
+    return { content: [{ type: 'text', text: relayText(handoffId, open.reason, this.handoffLinks.get(handoffId) ?? '') }] };
+  }
+
   /** Whether the client renders MCP Apps cards: it lists the UI extension with our MIME type. */
   private rendersCards(): boolean {
-    const caps = this.mcp.getClientCapabilities() as { extensions?: Record<string, { mimeTypes?: unknown }> } | undefined;
+    const caps = this.clientCapabilities() as { extensions?: Record<string, { mimeTypes?: unknown }> } | undefined;
     const mimeTypes = caps?.extensions?.[UI_EXTENSION]?.mimeTypes;
     return Array.isArray(mimeTypes) && mimeTypes.includes(CARD_MIME);
   }
@@ -970,6 +1056,7 @@ export class HuskMcpServer {
     this.closing.abort();
     if (this.viewer) await quiet(async () => (await this.viewer!).close());
     await quiet(() => this.mcp.close());
+    if (this.stdio) await quiet(() => this.stdio!.close());
     for (const t of this.idleTimers.values()) clearTimeout(t);
     this.idleTimers.clear();
     // Stopped, never destroyed: the chat may come back after a restart, and only

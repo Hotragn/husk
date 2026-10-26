@@ -6,8 +6,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { Computer, Logger } from '@husk-ai/core';
 import type { ComputerManager } from '@husk-ai/runtime';
 import { WorkspaceStore } from '@husk-ai/workspaces';

@@ -1722,7 +1722,9 @@ const DESKTOP = { app: 'claude-desktop', file: ['.config', 'Claude', 'claude_des
 const CLIENTS = [
   { label: 'Claude Desktop', ...DESKTOP, name: 'claude-ai', protocol: '2025-11-25', caps: UI, platform: 'Claude Desktop' },
   { label: 'Claude Desktop’s Code tab', ...DESKTOP, name: 'local-agent-mode-husk', protocol: '2025-11-25', caps: { roots: {}, ...UI }, platform: 'Claude Desktop' },
-  { label: 'Claude Code', name: 'claude-code', protocol: '2026-07-28', caps: { elicitation: {} }, session: `e2e-${process.pid}`, platform: 'Claude Code', inChat: true },
+  // Its v2 runtime opens on 2026-07-28, with no initialize; an older one, or MCP_PROTOCOL_NEGOTIATION=legacy, on 2025-11-25.
+  { label: 'Claude Code', name: 'claude-code', protocol: '2026-07-28', modern: true, caps: { elicitation: {} }, session: `e2e-${process.pid}`, platform: 'Claude Code', inChat: true },
+  { label: 'Claude Code on 2025-11-25', name: 'claude-code', protocol: '2025-11-25', caps: { elicitation: {} }, session: `e2e-legacy-${process.pid}`, platform: 'Claude Code', inChat: true },
   { label: 'Codex', name: 'codex-mcp-client', protocol: '2025-06-18', caps: { elicitation: {} }, platform: 'Codex' },
   { label: 'Cursor', app: 'cursor', file: ['.cursor', 'mcp.json'], key: 'mcpServers', name: 'cursor-vscode', protocol: '2025-06-18', caps: { elicitation: {} }, platform: 'Cursor', inChat: true },
   { label: 'VS Code', app: 'vscode', file: ['.config', 'Code', 'User', 'mcp.json'], key: 'servers', name: 'Visual Studio Code', protocol: '2025-11-25', caps: { elicitation: { form: {} } }, platform: 'VS Code', inChat: true, waits: true },
@@ -1775,14 +1777,24 @@ async function checkClient(c, entry, fromFile) {
     env: chatEnv,
     answer: (msg) => (msg.method === 'elicitation/create' ? (asked++, { action: 'accept', content: { done: true } }) : undefined),
   });
+  // 2026-07-28 has no initialize: the app opens with server/discover, and every request says who is asking.
+  const envelope = {
+    'io.modelcontextprotocol/protocolVersion': c.protocol,
+    'io.modelcontextprotocol/clientInfo': { name: c.name, version: '0' },
+    'io.modelcontextprotocol/clientCapabilities': c.caps ?? {},
+  };
+  const ask = (method, params = {}) => chat.request(method, c.modern ? { ...params, _meta: envelope } : params);
   let mine;
   try {
-    const init = await chat.request('initialize', { protocolVersion: c.protocol, capabilities: c.caps ?? {}, clientInfo: { name: c.name, version: '0' } });
-    // MCP's negotiation: the version asked for when Husk serves it, else Husk's newest.
-    const answered = c.protocol === '2026-07-28' ? '2025-11-25' : c.protocol;
-    check(say(`Husk answers in ${answered}`), init.result?.protocolVersion === answered, JSON.stringify(init.result?.protocolVersion ?? init.error));
-    chat.notify('notifications/initialized');
-    const names = ((await chat.request('tools/list', {})).result?.tools ?? []).map((t) => t.name);
+    if (c.modern) {
+      const found = await ask('server/discover');
+      check(say('Husk answers server/discover, offering 2026-07-28'), found.result?.supportedVersions?.includes(c.protocol), JSON.stringify(found.result?.supportedVersions ?? found.error));
+    } else {
+      const init = await chat.request('initialize', { protocolVersion: c.protocol, capabilities: c.caps ?? {}, clientInfo: { name: c.name, version: '0' } });
+      check(say(`Husk answers in ${c.protocol}`), init.result?.protocolVersion === c.protocol, JSON.stringify(init.result?.protocolVersion ?? init.error));
+      chat.notify('notifications/initialized');
+    }
+    const names = ((await ask('tools/list')).result?.tools ?? []).map((t) => t.name);
     // The strictest of each limit: Cascade's 100 tools, Cursor's 60 characters for
     // server and tool together, Gemini CLI's 63 for mcp_<server>_<tool>.
     const fits = names.length <= 100 && names.every((n) => /^[a-z][a-z0-9_]*$/.test(n) && `husk${n}`.length <= 60 && `mcp_husk_${n}`.length <= 63);
@@ -1790,7 +1802,7 @@ async function checkClient(c, entry, fromFile) {
 
     const known = new Set((await api('GET', '/v1/overview')).body.computers.map((x) => x.id));
     const target = (id) => (c.session ? {} : { computer: id });
-    const hello = textOf((await chat.request('tools/call', { name: 'shell', arguments: { ...target('new'), command: 'echo from-the-app' } })).result ?? {});
+    const hello = textOf((await ask('tools/call', { name: 'shell', arguments: { ...target('new'), command: 'echo from-the-app' } })).result ?? {});
     mine = (await api('GET', '/v1/overview')).body.computers.find((x) => !known.has(x.id));
     if (mine) created.push(mine.id);
     const platform = mine?.spec?.labels?.['husk.platform'];
@@ -1798,21 +1810,30 @@ async function checkClient(c, entry, fromFile) {
 
     if (c.long) {
       const started = Date.now();
-      const first = textOf((await chat.request('tools/call', { name: 'shell', arguments: { ...target(mine.id), command: 'sleep 58; echo after-the-wait' } })).result ?? {});
+      const first = textOf((await ask('tools/call', { name: 'shell', arguments: { ...target(mine.id), command: 'sleep 58; echo after-the-wait' } })).result ?? {});
       const secs = Math.round((Date.now() - started) / 1000);
       const job = /job_wait with job "([\w-]+)"/.exec(first)?.[1];
       check(say(`a call longer than its 60 s answers "still running" in time (${secs}s)`), Boolean(job) && secs < 58, first.slice(0, 200));
-      const rest = textOf((await chat.request('tools/call', { name: 'job_wait', arguments: { job } })).result ?? {});
+      const rest = textOf((await ask('tools/call', { name: 'job_wait', arguments: { job } })).result ?? {});
       check(say('job_wait collects the rest'), /after-the-wait/.test(rest), rest.slice(0, 200));
     }
 
-    const handed = textOf((await chat.request('tools/call', { name: 'hand_off', arguments: { ...target(mine.id), reason: 'e2e: the per-app check.' } })).result ?? {});
+    const handOff = { name: 'hand_off', arguments: { ...target(mine.id), reason: 'e2e: the per-app check.' } };
+    let reply = await ask('tools/call', handOff);
+    // On 2026-07-28 the "Done?" comes back as input_required, and the app calls again with the answer.
+    const round = reply.result?.resultType === 'input_required' ? reply.result : undefined;
+    if (round?.inputRequests?.done?.method === 'elicitation/create') {
+      asked++;
+      reply = await ask('tools/call', { ...handOff, inputResponses: { done: { action: 'accept', content: { done: true } } }, requestState: round.requestState });
+    }
+    const handed = textOf(reply.result ?? {});
     if (c.inChat) {
-      check(say('asks "Done?" in the chat, and the computer is the AI’s again'), asked === 1 && /computer is yours again/.test(handed), handed.slice(0, 200));
+      const how = c.modern ? 'by input_required' : 'in the chat';
+      check(say(`asks "Done?" ${how}, and the computer is the AI’s again`), asked === 1 && Boolean(round) === Boolean(c.modern) && /computer is yours again/.test(handed), handed.slice(0, 200));
     } else {
       const handoff = /^Handoff (\S+) is open/.exec(handed)?.[1];
       check(say('gives a link to relay instead'), asked === 0 && Boolean(handoff) && /#handoff=/.test(handed), handed.slice(0, 200));
-      await chat.request('tools/call', { name: 'hand_off_done', arguments: { handoff } });
+      await ask('tools/call', { name: 'hand_off_done', arguments: { handoff } });
     }
   } finally {
     chat.child.stdin.end();

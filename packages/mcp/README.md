@@ -22,6 +22,9 @@ has each app's file, what it supports, and how Husk is checked against it.
 }
 ```
 
+It speaks MCP 2026-07-28 and the 2025 revisions before it, on the same stdio
+connection, so an app on either one works unchanged.
+
 ## Tools
 
 | tool | what it does |
