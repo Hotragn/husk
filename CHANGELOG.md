@@ -259,6 +259,17 @@ not here.
   command, or a bot on Claude Code or Codex waiting for a person to give its computer
   back, got `fetch failed` while the work went on. A long call now keeps its answer alive
   ([#242](https://github.com/Hotragn/husk/pull/242)).
+- **Runs on Mistral, Cerebras and LM Studio are counted.** Their streams report no usage,
+  so a run cost $0 and its budget never grew. Husk now counts them by its own estimate,
+  priced, as the docs said ([#260](https://github.com/Hotragn/husk/pull/260)).
+- **`--model llama`, `qwen` and `gemma` find the model you pulled.** Ollama lists it as
+  `llama3.2:latest`, and `husk run` never matched that
+  ([#260](https://github.com/Hotragn/husk/pull/260)).
+- **A run over the API falls back through `fallbackModels`**, as `husk run` does, and its
+  `maxSteps` can lower the husk's own limit but no longer raise it
+  ([#260](https://github.com/Hotragn/husk/pull/260)).
+- **`fs/write` with a JSON body writes that JSON**, exactly as sent, not
+  `[object Object]` ([#260](https://github.com/Hotragn/husk/pull/260)).
 
 ### Security
 

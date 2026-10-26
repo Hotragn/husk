@@ -467,13 +467,14 @@ computer: { enabled, flavor }, updatedAt, runCount }`.
 ```
 POST /v1/husks/:name/run
 body: { input: string | ModelMessage[], history?, model?, vars?, maxSteps?,
-        maxCostUsd?, approvalMode? }
+        maxCostUsd?, approvalMode?, computerId? }
  ->  RunResult
 ```
 
 `input` is required and must be non-empty; anything else is `E_SPEC_INVALID`.
-`maxCostUsd` is clamped down to the husk's own `limits.maxCostUsd` — a request
-can lower the ceiling, never raise it.
+`maxSteps` and `maxCostUsd` are clamped down to the husk's own `limits.maxSteps` and
+`limits.maxCostUsd`: a request can lower a limit, never raise it. `computerId` runs the
+husk on a computer that already exists. The router gets the husk's `fallbackModels`.
 
 Streaming, same body, SSE carrying `RunEvent` objects verbatim from `@husk-ai/core`:
 

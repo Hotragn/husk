@@ -50,7 +50,10 @@ export async function resolveModel(ref: string): Promise<ResolvedModel> {
 
   const wanted = ALIASES[ref] ?? [ref];
 
-  for (const candidate of wanted) {
+  // Ollama lists `llama3.2:latest`, and `llama3.2` is that model: the `llama`,
+  // `qwen` and `gemma` aliases name it so, and never matched.
+  const plain = (s: string) => s.replace(/:latest$/, '');
+  for (const candidate of wanted.map(plain)) {
     const [maybeProvider, ...restParts] = candidate.split('/');
     const bare = restParts.join('/');
 
@@ -58,9 +61,9 @@ export async function resolveModel(ref: string): Promise<ResolvedModel> {
       if (bare && provider.id !== maybeProvider) continue;
       const target = bare || candidate;
       const hit =
-        models.find((m) => m.id === candidate) ??
-        models.find((m) => m.name === target) ??
-        models.find((m) => m.id.endsWith(`/${target}`));
+        models.find((m) => plain(m.id) === candidate) ??
+        models.find((m) => plain(m.name) === target) ??
+        models.find((m) => plain(m.id).endsWith(`/${target}`));
       if (hit) return { provider, info: hit };
     }
   }

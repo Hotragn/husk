@@ -220,9 +220,9 @@ PUT    /v1/computers/:id/fs/write?path=/work/a.txt           body: raw bytes -> 
 DELETE /v1/computers/:id/fs?path=/work/a.txt&recursive=true  -> 204
 ```
 
-`fs/read` responds `application/octet-stream`. `fs/write` takes the raw request body —
-send `content-type: application/octet-stream` and the bytes; a JSON body would be
-written as its serialised form. A missing `path` is a 422 naming the parameter.
+`fs/read` responds `application/octet-stream`. `fs/write` writes the request body exactly
+as sent, whatever its content type, so a JSON body is a file of that JSON. A missing
+`path` is a 422 naming the parameter.
 
 ```text
 POST /v1/computers/:id/fs/upload?path=/work    body: a tar.gz -> { path, bytes, entries }
@@ -315,9 +315,10 @@ body: { input, history?, model?, vars?, maxSteps?, maxCostUsd?, approvalMode?, c
                  "hint": "POST { \"input\": \"your prompt\" } or an array of ModelMessage" } }
 ```
 
-`maxCostUsd` is clamped against the husk file — `Math.min(body.maxCostUsd ?? spec, spec)`
-— so a caller can lower the ceiling and cannot raise it. `maxTokens` and `timeoutSec`
-always come from the spec and are not accepted from the body.
+`maxSteps` and `maxCostUsd` are clamped against the husk file —
+`Math.min(body.maxSteps ?? spec, spec)`, and the same for the cost — so a caller can
+lower a limit and cannot raise it. `maxTokens` and `timeoutSec` always come from the spec
+and are not accepted from the body. The run's router gets the husk's `fallbackModels`.
 
 <Note>
 `computerId` pins the run to a machine that already exists -- a checkout you set up by
