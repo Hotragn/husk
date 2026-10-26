@@ -9,8 +9,11 @@ export interface CommandRule {
  *
  * Without this anchor, `grep -r "sudo" .` and `echo "shutdown" >> notes.txt` get
  * refused — and a deny list that cries wolf is a deny list users switch off.
+ *
+ * A lookbehind, so a match starts at the command and not at the separator
+ * before it: that is the part an allow entry has to cover to lift the rule.
  */
-const CMD = String.raw`(?:^|[\n;|&]\s*|\$\(\s*|\bthen\s+|\bdo\s+)`;
+const CMD = String.raw`(?<=^|[\n;|&]\s*|\$\(\s*|\bthen\s+|\bdo\s+)`;
 
 function atCommandStart(body: string): RegExp {
   return new RegExp(CMD + body);

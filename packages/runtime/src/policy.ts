@@ -1,6 +1,6 @@
 import { realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, posix, resolve, sep } from 'node:path';
-import { HuskError, completeCharEnd } from '@husk-ai/core';
+import { HuskError, completeCharEnd, matchesOutside } from '@husk-ai/core';
 import { DEFAULT_DENY, type CommandRule } from './deny.js';
 
 /**
@@ -433,36 +433,23 @@ export interface PolicyDecision {
  * Decide whether a command may run.
  *
  * `allow` wins over `deny`: an explicit allow-list entry is the user telling us
- * they know better about their own machine, and they do.
+ * they know better about their own machine, and they do. It wins where it
+ * matches, not over the whole line (`matchesOutside`), so an allowed command
+ * does not carry a refused one chained after it.
  */
 export function evaluateCommand(
   cmd: string | string[],
   opts: { deny?: string[]; allow?: string[]; extraRules?: CommandRule[] } = {},
 ): PolicyDecision {
   const text = Array.isArray(cmd) ? cmd.join(' ') : cmd;
-
-  for (const a of opts.allow ?? []) {
-    try {
-      if (new RegExp(a).test(text)) return { allowed: true };
-    } catch {
-      if (text.includes(a)) return { allowed: true };
-    }
-  }
+  const allow = opts.allow ?? [];
 
   for (const d of opts.deny ?? []) {
-    try {
-      if (new RegExp(d).test(text)) {
-        return { allowed: false, reason: 'matched a deny rule from this husk', rule: d };
-      }
-    } catch {
-      if (text.includes(d)) return { allowed: false, reason: 'matched a deny rule from this husk', rule: d };
-    }
+    if (matchesOutside(d, text, allow)) return { allowed: false, reason: 'matched a deny rule from this husk', rule: d };
   }
 
   for (const rule of [...DEFAULT_DENY, ...(opts.extraRules ?? [])]) {
-    if (rule.pattern.test(text)) {
-      return { allowed: false, reason: rule.reason, rule: String(rule.pattern) };
-    }
+    if (matchesOutside(rule.pattern, text, allow)) return { allowed: false, reason: rule.reason, rule: String(rule.pattern) };
   }
 
   return { allowed: true };

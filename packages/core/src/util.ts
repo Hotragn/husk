@@ -240,6 +240,33 @@ export function expandEnvRefs(value: string, env: NodeJS.ProcessEnv, where: stri
   });
 }
 
+/** Where `pattern` matches `text`, as [start, end] pairs: a regex, or a literal when it is not valid regex. */
+function matchSpans(pattern: string | RegExp, text: string): Array<[number, number]> {
+  let re: RegExp;
+  try {
+    re = typeof pattern === 'string' ? new RegExp(pattern, 'g') : new RegExp(pattern.source, pattern.flags.replace('g', '') + 'g');
+  } catch {
+    // A user who typed a literal rather than a regex still meant something.
+    const out: Array<[number, number]> = [];
+    const literal = String(pattern);
+    for (let i = text.indexOf(literal); i !== -1; i = text.indexOf(literal, i + 1)) out.push([i, i + literal.length]);
+    return out;
+  }
+  return [...text.matchAll(re)].map((m) => [m.index, m.index + m[0].length]);
+}
+
+/**
+ * Whether a command rule matches `text` anywhere an allow entry does not.
+ *
+ * An allow entry lifts what it matches, not the whole line:
+ * `^sudo apt-get install` lets the `sudo` in `sudo apt-get install jq` through,
+ * and not an `rm -rf /` chained after it.
+ */
+export function matchesOutside(pattern: string | RegExp, text: string, allow: readonly string[]): boolean {
+  const allowed = allow.flatMap((a) => matchSpans(a, text));
+  return matchSpans(pattern, text).some(([s, e]) => !allowed.some(([as, ae]) => as <= s && e <= ae));
+}
+
 /** Approximate token count. Good enough for budgeting; never for billing. */
 export function estimateTokens(text: string): number {
   if (!text) return 0;

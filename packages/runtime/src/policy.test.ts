@@ -292,6 +292,19 @@ describe('evaluateCommand', () => {
     expect(evaluateCommand('sudo apt install jq', { allow: ['^sudo apt install'] }).allowed).toBe(true);
   });
 
+  it('lifts a rule only where the allow entry matches, never for a command chained after it', () => {
+    const allow = ['^sudo apt-get install'];
+    expect(evaluateCommand('sudo apt-get install -y jq', { allow }).allowed).toBe(true);
+    expect(evaluateCommand('sudo apt-get install -y jq; rm -rf /', { allow })).toMatchObject({ allowed: false, reason: 'recursive delete of /' });
+    expect(evaluateCommand('sudo apt-get install -y jq > /etc/passwd', { allow })).toMatchObject({ allowed: false, reason: 'overwriting a system file' });
+    expect(evaluateCommand('sudo apt-get install jq && sudo reboot', { allow })).toMatchObject({ allowed: false, reason: 'privilege escalation' });
+    // Not anchored, an entry covers each place it matches.
+    expect(evaluateCommand('sudo apt-get install jq && sudo apt-get install curl', { allow: ['sudo apt-get install'] }).allowed).toBe(true);
+    const own = { allow: ['git push --force origin scratch'], deny: ['push\\s+--force'] };
+    expect(evaluateCommand('git push --force origin scratch', own).allowed).toBe(true);
+    expect(evaluateCommand('git push --force origin scratch && git push --force origin main', own).allowed).toBe(false);
+  });
+
   it('applies husk-specific deny rules', () => {
     const d = evaluateCommand('terraform apply', { deny: ['terraform\\s+(apply|destroy)'] });
     expect(d.allowed).toBe(false);

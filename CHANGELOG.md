@@ -284,7 +284,9 @@ not here.
   is made, and the webhook is not mounted ([#257](https://github.com/Hotragn/husk/pull/257)).
 - **`guardrails.allowCommands` lifts a built-in refusal**, as documented. The lists never
   reached the computer, so `sudo apt-get install` stayed refused whatever the husk.yaml
-  allowed ([#257](https://github.com/Hotragn/husk/pull/257)).
+  allowed. An entry now lifts what it matches, not the whole line: a command chained
+  after an allowed one, such as `; rm -rf /`, is checked on its own
+  ([#257](https://github.com/Hotragn/husk/pull/257)).
 - **`systemctl stop <unit>` is refused**, as the docs said. The rule caught only the
   `service <name> stop` order ([#257](https://github.com/Hotragn/husk/pull/257)).
 
