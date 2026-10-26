@@ -32,9 +32,11 @@ final class NotchPillController {
     }
 
     /// Re-find the notch each time: the built-in display may not be the main
-    /// one, and an external display has none.
+    /// one, and an external display has none. While the Husk desktop app runs,
+    /// its own notch shows the computers, and this one makes way.
     private func place() {
-        guard model.summary.pillText != nil, let notch = currentNotch() else {
+        let desktopApp = !NSRunningApplication.runningApplications(withBundleIdentifier: desktopAppBundleID).isEmpty
+        guard showsPill(model.summary, desktopAppRunning: desktopApp), let notch = currentNotch() else {
             panel.orderOut(nil)
             return
         }
