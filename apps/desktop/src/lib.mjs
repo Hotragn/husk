@@ -161,6 +161,34 @@ export function pillBounds(display, rows) {
   return { x: Math.round(display.bounds.x + (display.bounds.width - width) / 2), y: display.bounds.y, width, height };
 }
 
+/**
+ * Where a corner or notch page says it draws, as `setShape` takes it: at most
+ * eight whole-pixel boxes, each cut to the window's own `size`, and none that
+ * is empty. Undefined when the page sent anything else, or nothing to draw.
+ */
+export function shapeOf(rects, size) {
+  if (!Array.isArray(rects) || rects.length > 8 || !size) return undefined;
+  const out = [];
+  for (const r of rects) {
+    if (!r || ![r.x, r.y, r.width, r.height].every(Number.isFinite)) return undefined;
+    const x = Math.max(0, Math.floor(r.x));
+    const y = Math.max(0, Math.floor(r.y));
+    const width = Math.min(size.width, Math.ceil(r.x + r.width)) - x;
+    const height = Math.min(size.height, Math.ceil(r.y + r.height)) - y;
+    if (width > 0 && height > 0) out.push({ x, y, width, height });
+  }
+  return out.length ? out : undefined;
+}
+
+/** Whether a person can still reach a window at `bounds`: a 40-pixel square of it on one of the screens' work `areas`. */
+export function reachable(bounds, areas) {
+  return areas.some((a) => {
+    const w = Math.min(bounds.x + bounds.width, a.x + a.width) - Math.max(bounds.x, a.x);
+    const h = Math.min(bounds.y + bounds.height, a.y + a.height) - Math.max(bounds.y, a.y);
+    return w >= 40 && h >= 40;
+  });
+}
+
 /** A Mac whose menu bar is notch-tall has a notch: the pill wraps it. Elsewhere it hangs alone. */
 export function notchOf(platform, display) {
   const bar = display.workArea.y - display.bounds.y;

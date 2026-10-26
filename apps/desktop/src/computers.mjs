@@ -13,7 +13,20 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { BrowserWindow, app, dialog, ipcMain, screen, shell } from 'electron';
-import { appIconPaths, computersWindowBounds, desktopComputers, desktopUrl, dockBounds, external, notchOf, pillBounds, sameOrigin, toOpen } from './lib.mjs';
+import {
+  appIconPaths,
+  computersWindowBounds,
+  desktopComputers,
+  desktopUrl,
+  dockBounds,
+  external,
+  notchOf,
+  pillBounds,
+  reachable,
+  sameOrigin,
+  shapeOf,
+  toOpen,
+} from './lib.mjs';
 
 const PRELOAD = join(import.meta.dirname, 'preload.cjs');
 const ID = /^cmp_[a-z0-9]{1,40}$/i;
@@ -53,6 +66,8 @@ export class Computers {
     this.pill = undefined;
     /** Overlays that have drawn a first frame. Shown before it, a transparent window flashes black. */
     this.drawn = new WeakSet();
+    /** Where each overlay last said it draws (Linux): the rest of its window lets clicks through. */
+    this.shapes = new Map();
     // Closing the window only hides it, except when the app itself is quitting (Cmd+Q, logout).
     this.quitting = false;
     app.on('before-quit', () => {
@@ -61,6 +76,8 @@ export class Computers {
     this.file = join(app.getPath('userData'), 'computers.json');
     this.settings = { ...DEFAULTS, ...readJson(this.file) };
     ipcMain.handle('husk:act', (event, msg) => this.act(event.sender, msg));
+    // Screens come and go and change size: the corner and the notch follow the main one, and the window stays on one.
+    for (const e of ['display-added', 'display-removed', 'display-metrics-changed']) screen.on(e, () => this.screensChanged());
     ipcMain.on('husk:hello', (event) => {
       if (this.whose(event.sender)) event.sender.send('husk:state', this.snapshot());
     });
@@ -146,6 +163,16 @@ export class Computers {
         if (w && typeof msg.on === 'boolean' && FORWARDS) w.setIgnoreMouseEvents(!msg.on, { forward: true });
         return;
       }
+      case 'shape': {
+        // Linux cannot pass clicks through a window's clear parts, only outside its shape: where the page draws.
+        const w = from === 'dock' ? this.dock : from === 'pill' ? this.pill : undefined;
+        const rects = w && !FORWARDS ? shapeOf(msg.rects, w.getBounds()) : undefined;
+        if (rects) {
+          w.setShape(rects);
+          this.shapes.set(from, rects);
+        }
+        return;
+      }
       case 'release':
         if (from === 'dock' || from === 'pill') this.release(from === 'dock' ? this.dock : this.pill);
         return;
@@ -189,7 +216,8 @@ export class Computers {
     this.state = 'open';
     this.pending = focus ? 'show' : 'inactive';
     if (this.ready) {
-      if (this.win.isMinimized()) this.win.restore();
+      // Windows activates a window it restores; shown inactive, it is restored without taking focus.
+      if (this.win.isMinimized() && (focus || process.platform !== 'win32')) this.win.restore();
       if (focus) {
         this.win.show();
         this.win.focus();
@@ -328,6 +356,20 @@ export class Computers {
     if (id) this.open(id, { focus: true });
   }
 
+  /**
+   * A screen was added, removed or resized: a window left on no screen comes
+   * back, its size kept, and the corner and the notch move with the main screen.
+   */
+  screensChanged() {
+    const win = this.win && !this.win.isDestroyed() ? this.win : undefined;
+    if (win && !reachable(win.getBounds(), screen.getAllDisplays().map((d) => d.workArea))) {
+      const { width, height } = win.getBounds();
+      win.setBounds(computersWindowBounds(screen.getPrimaryDisplay().workArea, { width, height }));
+    }
+    this.layout();
+    this.broadcast();
+  }
+
   /** The corner or the notch gives the keyboard back to whatever had it. */
   release(w) {
     if (!w || w.isDestroyed() || !FOCUSES) return;
@@ -389,7 +431,10 @@ export class Computers {
       webPreferences,
     });
     w.setAlwaysOnTop(true, top ? 'screen-saver' : 'floating');
-    w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: top });
+    // Without skipTransformProcessType, a Mac hides the app's Dock icon and Cmd-Tab entry to float a window over
+    // full-screen apps, and shows them again for the next window that does not: the notch took them away. A
+    // panel floats over full-screen apps by itself.
+    w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: top, skipTransformProcessType: true });
     if (FORWARDS) w.setIgnoreMouseEvents(true, { forward: true });
     // Given the keyboard by the shortcut, it keeps it only until the person goes elsewhere.
     if (FOCUSES) w.on('blur', () => w.setFocusable(false));

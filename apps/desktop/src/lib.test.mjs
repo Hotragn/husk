@@ -19,10 +19,12 @@ import {
   newlyWaiting,
   notchOf,
   pillBounds,
+  reachable,
   readDaemonRecord,
   restartDelay,
   runtimeBin,
   sameOrigin,
+  shapeOf,
   toOpen,
   trayComputers,
   trayStatus,
@@ -216,6 +218,27 @@ test('Husk is started again two seconds after the first try, the wait doubling t
   let wait = 0;
   for (let i = 0; i < 8; i++) waits.push((wait = restartDelay(wait)));
   assert.deepEqual(waits, [2_000, 4_000, 8_000, 16_000, 32_000, 60_000, 60_000, 60_000]);
+});
+
+test('a corner or notch page shapes only its own window, in whole pixels, and nothing it sends is taken as is', () => {
+  const size = { width: 420, height: 360 };
+  assert.deepEqual(shapeOf([{ x: 20.4, y: 0, width: 380.2, height: 32.5 }], size), [{ x: 20, y: 0, width: 381, height: 33 }]);
+  assert.deepEqual(shapeOf([{ x: -10, y: 300, width: 500, height: 100 }], size), [{ x: 0, y: 300, width: 420, height: 60 }], 'cut to the window');
+  assert.deepEqual(shapeOf([{ x: 0, y: 0, width: 0, height: 10 }, { x: 5, y: 5, width: 10, height: 10 }], size), [{ x: 5, y: 5, width: 10, height: 10 }]);
+  assert.equal(shapeOf([{ x: 0, y: 0, width: 0, height: 0 }], size), undefined, 'nothing to draw is not an empty shape: Electron reads that as the whole window');
+  assert.equal(shapeOf([{ x: 'a', y: 0, width: 1, height: 1 }], size), undefined);
+  assert.equal(shapeOf(Array.from({ length: 9 }, () => ({ x: 0, y: 0, width: 1, height: 1 })), size), undefined);
+  assert.equal(shapeOf('everything', size), undefined);
+});
+
+test('a window is still reachable while a 40-pixel square of it is on a screen', () => {
+  const laptop = { x: 0, y: 0, width: 1440, height: 875 };
+  const monitor = { x: 1440, y: 0, width: 2560, height: 1415 };
+  assert.equal(reachable({ x: 1900, y: 400, width: 480, height: 330 }, [laptop, monitor]), true);
+  assert.equal(reachable({ x: 1900, y: 400, width: 480, height: 330 }, [laptop]), false, 'its monitor was unplugged');
+  assert.equal(reachable({ x: 1420, y: 400, width: 480, height: 330 }, [laptop]), false, 'a 20-pixel sliver is not enough to grab');
+  assert.equal(reachable({ x: 1380, y: 845, width: 480, height: 330 }, [laptop]), false);
+  assert.equal(reachable({ x: 1380, y: 800, width: 480, height: 330 }, [laptop]), true);
 });
 
 test('the tray has an item per computer on the screen, saying which need the person', () => {
