@@ -85,6 +85,9 @@ async function main(): Promise<void> {
   // Every chat is offered the browser tools, and only `full` runs the browser
   // (images.ts). Providers without flavours (local, ssh) ignore it.
   spec.flavor = (values.flavor ?? 'full') as Flavor;
+  // Strict refuses a provider that cannot hold every process to a mode. With no
+  // --network there is no mode, and it used to be dropped without a word.
+  if (values['network-strict'] && !values.network) throw new Error('--network-strict needs --network: it refuses a provider that cannot hold every process to that mode');
   if (values.network) {
     spec.network = { mode: values.network as 'none' | 'egress' | 'full', ...(values['network-strict'] ? { strict: true } : {}) };
   }

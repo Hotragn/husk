@@ -259,6 +259,22 @@ not here.
   command, or a bot on Claude Code or Codex waiting for a person to give its computer
   back, got `fetch failed` while the work went on. A long call now keeps its answer alive
   ([#242](https://github.com/Hotragn/husk/pull/242)).
+- **`husk exec` on Docker and Podman stops a command after 120 s**, as the docs say and the
+  other providers already did. Without `--timeout`, a command that never ended held the
+  call open forever ([#258](https://github.com/Hotragn/husk/pull/258)).
+- **`husk serve` reads `HUSK_HOST` and `HUSK_PORT`**, as documented, for a service whose
+  unit file sets them. The flags still win ([#258](https://github.com/Hotragn/husk/pull/258)).
+- **`husk setup --computer auto` gets the image before the first chat**, for the computer
+  auto will use, as the README's setup line expects. Answering no to the browser question
+  now gives chats the smaller image; it changed nothing before
+  ([#258](https://github.com/Hotragn/husk/pull/258)).
+- **`husk mcp` gives chats the image that runs the browser**, as `npx @husk-ai/mcp` does,
+  and takes `--flavor`. It offered the browser tools on the base image
+  ([#258](https://github.com/Hotragn/husk/pull/258)).
+- **`husk-mcp --network-strict` without `--network` is refused**, saying why, instead of
+  being dropped without a word ([#258](https://github.com/Hotragn/husk/pull/258)).
+- **`husk doctor` warns below Node 20.10**, the supported floor, not only below 20
+  ([#258](https://github.com/Hotragn/husk/pull/258)).
 
 ### Security
 

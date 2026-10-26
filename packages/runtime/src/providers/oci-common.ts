@@ -477,7 +477,9 @@ export class OciComputer implements Computer {
       if (req.signal?.aborted) onAbort();
       else req.signal?.addEventListener('abort', onAbort, { once: true });
 
-      const ms = timerMs(req.timeoutSec);
+      // 120 s when none is given, as on every other provider: a command that
+      // never ends must not hold the call open forever.
+      const ms = timerMs(req.timeoutSec ?? 120);
       if (ms !== undefined) {
         timer = setTimeout(() => {
           timedOut = true;
@@ -908,7 +910,7 @@ export class OciComputer implements Computer {
   async restore(snapshotId: string): Promise<void> {
     if (!this.recreate) {
       throw new HuskError('E_NOT_IMPLEMENTED', 'this computer was not created by a provider that can rebuild it', {
-        hint: 'restore from `husk up --snapshot <id>` instead',
+        hint: 'get the computer again from its provider (ComputerManager.get), which can rebuild it, and restore that',
       });
     }
     const dir = snapshotDir();
