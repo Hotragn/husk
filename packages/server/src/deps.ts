@@ -1,6 +1,6 @@
 import { createAdapter } from '@husk-ai/adapters';
 import type { Adapter, SlackAdapterOptions, TelegramAdapterOptions } from '@husk-ai/adapters';
-import { DEFAULT_CONFIG, createLogger } from '@husk-ai/core';
+import { DEFAULT_CONFIG, createLogger, loadConfig } from '@husk-ai/core';
 import type {
   Availability,
   ChatRequest,
@@ -186,7 +186,7 @@ export function resolveConfig(partial: Partial<ServerConfig> = {}): ServerConfig
     host: partial.host ?? env['HUSK_HOST'] ?? DEFAULT_CONFIG.host,
     port: Number.isFinite(port) ? port : DEFAULT_CONFIG.port,
     token: partial.token ?? (env['HUSK_TOKEN'] || undefined),
-    maxComputers: partial.maxComputers ?? DEFAULT_CONFIG.maxComputers,
+    maxComputers: partial.maxComputers ?? loadConfig().maxComputers,
     consoleDir: partial.consoleDir,
     corsOrigins: partial.corsOrigins ?? false,
     triggers: partial.triggers ?? true,

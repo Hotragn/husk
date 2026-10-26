@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { HuskMcpServer } from './server.js';
+import { loadEnvFile } from '@husk-ai/core';
 import type { ComputerSpec, Flavor } from '@husk-ai/core';
 
 /**
@@ -69,6 +70,9 @@ async function main(): Promise<void> {
     process.stderr.write(HELP);
     process.exit(0);
   }
+  // ~/.husk/.env, for the shared Husk, the job host and a chat's own process
+  // alike. The environment the chat app started this with wins over the file.
+  loadEnvFile();
 
   if (values.daemon) {
     await runDaemon();
