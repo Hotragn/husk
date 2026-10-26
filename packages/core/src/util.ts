@@ -218,6 +218,28 @@ function mask(s: string): string {
   return `${s.slice(0, keep)}...[redacted]`;
 }
 
+/**
+ * `${NAME}` in a husk.yaml value, as NAME from `env`.
+ *
+ * Expanded where the value is used, never when the file is read, so a spec
+ * written back to disk keeps the placeholder and not the secret. A NAME that is
+ * unset or empty is refused: a webhook secret left as the text `${...}` is one
+ * anyone can read in the docs, and an empty one is no secret. `$${NAME}` is
+ * the text `${NAME}` itself.
+ */
+export function expandEnvRefs(value: string, env: NodeJS.ProcessEnv, where: string): string {
+  return value.replace(/\$(\$?)\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, escaped: string, name: string) => {
+    if (escaped) return `\${${name}}`;
+    const found = env[name];
+    if (!found) {
+      throw new HuskError('E_CONFIG', `${where} uses \${${name}}, which is ${found === undefined ? 'not set' : 'empty'}`, {
+        hint: `set ${name} where Husk runs, or write $\${${name}} for the text itself`,
+      });
+    }
+    return found;
+  });
+}
+
 /** Approximate token count. Good enough for budgeting; never for billing. */
 export function estimateTokens(text: string): number {
   if (!text) return 0;

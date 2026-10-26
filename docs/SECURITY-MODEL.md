@@ -200,9 +200,14 @@ in the guide (`apps/docs/content/guides/remote-access.mdx`); the routes are in
 - **What a remote chat runs on.** Computers from an isolated provider only, bound apart
   from this machine's own chats. The workspace tools, which work on this machine's files,
   are not offered.
-- **What runs without you.** Nothing that changes anything. Commands, file changes and
-  browser actions wait for the owner's passkey, on a page that shows every argument
-  exactly; a call too big to show is never put to them.
+- **What runs without you.** Reading: opening and moving around a page, snapshots and
+  screenshots, `browse`, `read_file` and `list_dir`. Commands, file changes, an exposed
+  port, and the browser's clicks, typing, choices, uploads, steps and scripts wait for
+  the owner's passkey (`DANGEROUS_TOOLS` in `packages/mcp/src/approvals.ts`), on a page
+  that shows every argument exactly; a call too big to show is never put to them. Opening
+  a page can still act on a site the computer's browser is signed in to, as any link
+  can. After a passkey, the owner may let one app use one tool unasked for an hour; that
+  grant is for the tool, whatever its arguments.
 - **Off.** One switch revokes every token and makes the public URL a 404.
 - **Advisories.** Husk will not serve remotely while a high or critical security advisory
   stands against the packages it runs (checked at start and daily), and switches itself

@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CronScheduler } from '../cron.js';
 import { buildTestApp, sampleSpec } from '../testing.js';
 import type { TestApp } from '../testing.js';
@@ -13,6 +13,7 @@ import type { AdapterFactory } from '../deps.js';
 let harness: TestApp;
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await harness?.cleanup();
 });
 
@@ -269,6 +270,31 @@ describe('mounted triggers', { timeout: 30_000 }, () => {
       payload: body,
     });
     expect(forged.statusCode).toBe(403);
+  });
+
+  it('takes a webhook secret written as ${NAME} from where Husk runs, and mounts nothing when NAME is not set', async () => {
+    vi.stubEnv('HUSK_TEST_HOOK_SECRET', 'shhh');
+    harness = await buildTestApp({ triggers: true });
+    const hook = (path: string, name: string) => ({ type: 'webhook', path, secret: `\${${name}}` });
+    await harness.app.inject({
+      method: 'POST',
+      url: '/v1/husks',
+      payload: { spec: { ...sampleSpec(), triggers: [hook('/set', 'HUSK_TEST_HOOK_SECRET'), hook('/unset', 'HUSK_TEST_NEVER_SET')] } },
+    });
+    const body = JSON.stringify({ input: 'ship it' });
+    const post = (path: string, secret: string) =>
+      harness.app.inject({
+        method: 'POST',
+        url: `/v1/w/triage${path}`,
+        headers: { 'content-type': 'application/json', 'x-husk-signature': sign(secret, body) },
+        payload: body,
+      });
+
+    expect((await post('/set', 'shhh')).statusCode).toBe(200);
+    // The placeholder's own text, as printed in the docs, signs nothing.
+    expect((await post('/set', '${HUSK_TEST_HOOK_SECRET}')).statusCode).toBe(403);
+    expect((await post('/unset', '${HUSK_TEST_NEVER_SET}')).statusCode).toBe(404);
+    expect((await harness.app.inject({ method: 'GET', url: '/v1/husks/triage' })).body).toContain('${HUSK_TEST_HOOK_SECRET}');
   });
 
   it('signs over the exact bytes received, not a re-serialised object', async () => {

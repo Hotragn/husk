@@ -252,6 +252,12 @@ computer:
 
 Explicit beats implicit, and now it is in the file where a reviewer can see it.
 
+`${NAME}` is read from the environment Husk runs in (your shell for `husk run`, the
+server's for `husk serve`) when the computer is made, never when the file is read, so
+the file keeps the placeholder and not the secret. A `NAME` that is unset or empty is an
+error, and no computer is made. Write `$${NAME}` for the text `${NAME}` itself. The same
+goes for a webhook trigger's `secret`.
+
 ## limits
 
 ```yaml

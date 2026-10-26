@@ -11,8 +11,8 @@ the internet. Remote access is how: `husk serve --remote` serves Husk's tools at
 `https://<your name>/mcp`, for one person, its owner.
 
 **What you will have at the end:** claude.ai or ChatGPT running commands and a browser
-on computers of yours, with every command, file change and browser action waiting for
-your passkey first.
+on computers of yours, with every command, file change, click, typed text, upload and
+script waiting for your passkey first. Reading pages and files does not wait.
 
 **Prerequisites**
 
@@ -178,8 +178,22 @@ sent you the link, deny it.
 
 ## Approving calls
 
-A command, a file change, or a click, typed text, an upload or a script in the browser
-waits for you. The chat gives you a link instead of running it:
+These calls wait for you:
+
+- a command (`shell`), a file change (`write_file`, `edit_file`), and a port opened to
+  the internet (`expose_port`);
+- in the browser, a click, typed text, a choice from a list, an upload, several steps at
+  once, and a script (`browser_click`, `browser_type`, `browser_select`, `browser_upload`,
+  `browser_run`, `browser_script`).
+
+Everything else runs without asking: opening and moving around a page (`browser_goto`,
+`browser_navigate`, `browser_hover`, `browser_scroll`, `browser_tabs`,
+`browser_wait_for`), snapshots and screenshots, `browse`, `read_file` and `list_dir`.
+Opening a page can still do something on a site where the computer's browser is signed
+in, as following any link can, so sign that browser in only where you want the chat to
+act.
+
+For a call that waits, the chat gives you a link instead of running it:
 
 1. Open the link, wherever you are.
 2. Read what the call sends: the page shows every argument, exactly as it will run.

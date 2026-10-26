@@ -490,7 +490,9 @@ describe('remote access, from a chat app to a call', () => {
     const local = (method: 'GET' | 'POST', url: string) => harness.app.inject({ method, url, headers: { authorization: 'Bearer local-token' } });
     expect((await local('POST', '/v1/remote/off')).json()).toMatchObject({ on: false, offReason: expect.stringContaining('Switched off'), apps: [] });
     expect((await pub('POST', '/mcp', { token: access_token, json: {} })).statusCode).toBe(404);
-    expect((await pub('GET', '/.well-known/oauth-authorization-server')).statusCode).toBe(404);
+    const gone = await pub('GET', '/.well-known/oauth-authorization-server');
+    // A code the API declares, so the SDK and the docs know it.
+    expect([gone.statusCode, gone.json().error.code]).toEqual([404, 'E_ROUTE_NOT_FOUND']);
     expect((await local('POST', '/v1/remote/on')).json()).toMatchObject({ on: true });
     // On again, nothing from before works: the key that signed it is gone, and so are the refresh tokens.
     expect((await pub('POST', '/mcp', { token: access_token, json: {} })).statusCode).toBe(401);

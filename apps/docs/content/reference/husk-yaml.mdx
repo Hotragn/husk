@@ -85,7 +85,7 @@ the block exists.
 | `computer.maxLifetimeSec` | integer | ≥ 0; `0` disables | `0` |
 | `computer.packages` | string[] | — | `[]` |
 | `computer.setup` | string | — | — |
-| `computer.env` | record of string | — | `{}` |
+| `computer.env` | record of string | `${NAME}` is read from Husk's environment | `{}` |
 | `computer.workdir` | string | — | `/work` |
 | `computer.persist` | boolean | — | `false` |
 | `computer.network.mode` | enum | `none` \| `egress` \| `full` | `egress` |

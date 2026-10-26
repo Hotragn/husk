@@ -40,7 +40,8 @@ export const DEFAULT_DENY: CommandRule[] = [
   { pattern: atCommandStart(String.raw`(?:shutdown|reboot|halt|poweroff)\b`), reason: 'host power control' },
   { pattern: atCommandStart(String.raw`init\s+0\b`), reason: 'host power control' },
   {
-    pattern: atCommandStart(String.raw`(?:systemctl|service)\s+\S+\s+(?:stop|disable|mask)\b`),
+    // `systemctl [options] stop <unit>`, and `service <name> stop`.
+    pattern: atCommandStart(String.raw`(?:systemctl\s+(?:-\S+\s+)*|service\s+\S+\s+)(?:stop|disable|mask)\b`),
     reason: 'stopping host services',
   },
   { pattern: /(?:^|[^>])>>?\s*\/etc\/(?:passwd|shadow|sudoers|hosts)\b/, reason: 'overwriting a system file' },

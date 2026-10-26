@@ -468,9 +468,24 @@ export function evaluateCommand(
   return { allowed: true };
 }
 
-/** A computer's own command rules, from its labels: the husk's allow and deny lists, NUL-separated, as every provider reads them. */
+/**
+ * A computer's own command rules, from its labels: the husk's allow and deny
+ * lists, as every provider reads them. `computerSpecFor` writes each as a JSON
+ * array, because Docker gets every label as an argument, where a NUL cannot
+ * go, and a pattern may hold any other character. A label that is not a JSON
+ * array is one pattern.
+ */
 export function commandRulesOf(labels: Record<string, string> | undefined): { deny?: string[]; allow?: string[] } {
-  const list = (v: string | undefined): string[] | undefined => (v ? v.split('\u0000').filter(Boolean) : undefined);
+  const list = (v: string | undefined): string[] | undefined => {
+    if (!v) return undefined;
+    try {
+      const parsed: unknown = JSON.parse(v);
+      if (Array.isArray(parsed)) return parsed.filter((p): p is string => typeof p === 'string' && p !== '');
+    } catch {
+      // Not JSON: written by hand, as one pattern.
+    }
+    return [v];
+  };
   const deny = list(labels?.['husk.denyCommands']);
   const allow = list(labels?.['husk.allowCommands']);
   return { ...(deny ? { deny } : {}), ...(allow ? { allow } : {}) };
