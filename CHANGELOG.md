@@ -167,6 +167,10 @@ not here.
   of the file keeps its layout. Windsurf is listed as Windsurf (Devin Desktop), whose two
   agents read the same file. Codex, Gemini CLI and Claude Desktop's Code tab are named on
   the computers they make ([#243](https://github.com/Hotragn/husk/pull/243)).
+- **Husk speaks MCP 2026-07-28**, and the 2025 revisions before it, on the same stdio
+  connection. An app on 2026-07-28, such as Claude Code's v2 runtime, gets "Done?" in the
+  chat in that revision's own way. Every older app works as before. `@husk-ai/mcp` now
+  runs on the MCP SDK v2 ([#244](https://github.com/Hotragn/husk/pull/244)).
 
 ### Fixed
 
