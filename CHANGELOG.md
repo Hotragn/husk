@@ -67,6 +67,21 @@ not here.
   the Dock icon; on Windows, a chat reopening the window no longer takes focus from what
   you are typing. Closing the console window keeps its Terminal running
   ([#227](https://github.com/Hotragn/husk/pull/227)).
+- **Bots on your own Claude Code or Codex.** A husk's `engine` is `builtin`, `claude-code`
+  or `codex`. A CLI engine runs your installed CLI headless, under your own login, with
+  Husk's tools and nothing else: no built-in shell or file tools, no other MCP server, no
+  project's settings, and for Codex a read-only sandbox. A Claude Code bot can go on with a
+  chat (`engine.resume`): each run is a fork of it, on the chat's own computer, and the chat
+  itself is never written to ([#238](https://github.com/Hotragn/husk/pull/238)).
+- **Every chat app can become a bot.** Make this a bot reads Claude Code and Codex chats
+  back by themselves. **Husks › Make a bot from a chat** takes a chat found on this
+  computer, an export or pasted text, and asks which chat when a file holds many. Codex
+  rollouts import, and a draft runs on the chat's own app when it is installed
+  ([#239](https://github.com/Hotragn/husk/pull/239)).
+- **A job host for bots' triggers.** Schedules, webhooks and chat-app triggers run in a
+  process of their own, which the shared Husk starts when a bot has a trigger and which
+  leaves once none has; a trigger keeps the shared Husk's address and token
+  ([#235](https://github.com/Hotragn/husk/pull/235)).
 - **Take over at any moment**, from the console, the desktop app or a chat's link
   ([#180](https://github.com/Hotragn/husk/pull/180),
   [#182](https://github.com/Hotragn/husk/pull/182)).
@@ -131,6 +146,14 @@ not here.
   on the computer, which kept it awake: **Look** shows it for a minute, and a computer you
   hold shows all the time. Docker, Podman and local push their screen as before
   ([#228](https://github.com/Hotragn/husk/pull/228)).
+- **Bots wait out a take-over.** A chat is told to stop when you take its computer; a bot,
+  with nobody to tell, waits until you give it back, says so once in its run, and goes on.
+  A cancel or its timeout still ends it ([#240](https://github.com/Hotragn/husk/pull/240)).
+- **The built-in engine ships with every install**, the desktop app included, so a bot
+  runs on any model, a local Ollama among them, with no CLI install
+  ([#234](https://github.com/Hotragn/husk/pull/234)).
+- **The desktop app gives its Husk your login shell's PATH**, so a Mac app opened from the
+  Finder finds `docker`, `claude` and `codex` ([#238](https://github.com/Hotragn/husk/pull/238)).
 
 ### Fixed
 
@@ -156,6 +179,15 @@ not here.
   Husk makes its own. It now reads `~/.husk/daemon.json` on every poll, as the desktop app
   does, and its pill makes way while the desktop app's notch shows the computers
   ([#230](https://github.com/Hotragn/husk/pull/230)).
+- **A run's first computer call could ignore a hold**: a run scheduled on a computer you
+  had already taken ran its first command anyway ([#240](https://github.com/Hotragn/husk/pull/240)).
+- **On Windows, saving a bot could fail with `EPERM`** while something read the file, the
+  console's list of husks among them ([#234](https://github.com/Hotragn/husk/pull/234)).
+- **A file of many chats imported only the first** over the API, so a ChatGPT export of
+  hundreds of chats became its first one ([#239](https://github.com/Hotragn/husk/pull/239)).
+- **A bot made from a chat that used Husk lost the computer**: Husk's own tool names did
+  not count as the computer's, and Cursor's chats were looked for where Cursor does not
+  keep them ([#239](https://github.com/Hotragn/husk/pull/239)).
 - **A take-over from a computer's link could flick back** to Take over for a few seconds,
   when a reading sent before it answered after it
   ([#233](https://github.com/Hotragn/husk/pull/233)).
