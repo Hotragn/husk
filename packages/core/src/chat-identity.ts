@@ -43,27 +43,62 @@ export function chatIdentityOf(labels: Record<string, string> | undefined): Chat
   return out;
 }
 
+/** What Husk knows of a chat app, from the name it gives itself. */
+export interface ChatClient {
+  /** The product's name: "Claude Desktop", "Cursor", ... */
+  name: string;
+  /**
+   * How long Husk holds a tool call open before it answers that the call is
+   * still running, so the chat collects it with `job_wait` instead of the app
+   * giving up on it. Under the app's own limit on a call; none where the app
+   * waits as long as a call takes.
+   */
+  waitSec?: number;
+  /** The app shows a form elicitation, so a handoff asks "Done?" in the chat. */
+  asksInChat: boolean;
+}
+
 /**
- * A display name for an MCP client from its self-reported `clientInfo.name`.
- *
- * That name is the client's own text, so it is cut to a short run of plain
- * characters before it is stored or shown. Known names map to the product name;
- * `claude-ai` is Claude Desktop here because Husk's MCP server speaks stdio,
- * which only the desktop app runs.
+ * Each app's facts, by the start of its `clientInfo.name`. docs/clients.md has
+ * the sources. A wrong `asksInChat` costs the in-chat prompt, never safety; a
+ * wrong `waitSec` costs a timeout, so where an app's limit is unknown or
+ * differs between its versions, Husk takes the shortest.
  */
-export function platformName(clientName: string | undefined): string {
+const CLIENTS: Array<{ match: RegExp } & ChatClient> = [
+  // A stdio call quiet for 30 minutes is ended (CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT).
+  { match: /^claude-code$/i, name: 'Claude Code', waitSec: 1500, asksInChat: true },
+  // `claude-ai` is Claude Desktop here: Husk's MCP server speaks stdio, which only
+  // the desktop app runs. 240 s for a whole call, progress or not.
+  { match: /^claude-(ai|desktop)$/i, name: 'Claude Desktop', waitSec: 220, asksInChat: false },
+  // The desktop app's Code tab, on the MCP SDK's 60 s.
+  { match: /^local-agent-mode-/i, name: 'Claude Desktop', waitSec: 50, asksInChat: false },
+  // 300 s since mid-2026; 60 s before, which its docs still say.
+  { match: /^codex/i, name: 'Codex', waitSec: 50, asksInChat: false },
+  // About an hour in the editor, 60 s in its CLI, which Husk cannot tell apart.
+  { match: /^cursor/i, name: 'Cursor', waitSec: 50, asksInChat: true },
+  { match: /^(visual studio code|vscode)/i, name: 'VS Code', asksInChat: true },
+  { match: /^windsurf/i, name: 'Windsurf', waitSec: 50, asksInChat: false },
+  // 60 s, unless the person's entry sets its own `timeout`.
+  { match: /^zed/i, name: 'Zed', waitSec: 50, asksInChat: false },
+  { match: /^gemini-cli/i, name: 'Gemini CLI', waitSec: 540, asksInChat: false },
+];
+
+/**
+ * A chat app from its self-reported `clientInfo.name`. That name is the
+ * client's own text, so an app Husk does not know is named by a short run of
+ * its plain characters, and gets the MCP SDK's default 60 s as its limit.
+ */
+export function chatClient(clientName: string | undefined): ChatClient {
   const raw = (clientName ?? '').trim();
-  const known: Array<[RegExp, string]> = [
-    [/^claude-code$/i, 'Claude Code'],
-    [/^claude-(ai|desktop)$/i, 'Claude Desktop'],
-    [/^cursor/i, 'Cursor'],
-    [/^(visual studio code|vscode)/i, 'VS Code'],
-    [/^windsurf/i, 'Windsurf'],
-    [/^zed/i, 'Zed'],
-  ];
-  for (const [re, name] of known) if (re.test(raw)) return name;
+  const known = CLIENTS.find((c) => c.match.test(raw));
+  if (known) return { name: known.name, ...(known.waitSec ? { waitSec: known.waitSec } : {}), asksInChat: known.asksInChat };
   const clean = raw.replace(/[^\w .()-]/g, '').trim().slice(0, 40);
-  return clean || 'MCP client';
+  return { name: clean || 'MCP client', waitSec: 50, asksInChat: false };
+}
+
+/** A display name for an MCP client, from its self-reported `clientInfo.name`. */
+export function platformName(clientName: string | undefined): string {
+  return chatClient(clientName).name;
 }
 
 /** "Claude Desktop · chat started 10:42", in the machine's local time. */

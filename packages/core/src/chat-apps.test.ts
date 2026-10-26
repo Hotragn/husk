@@ -70,6 +70,31 @@ describe('chat apps', () => {
     expect(JSON.parse(readFileSync(fileOf('vscode'), 'utf8'))).toEqual({ servers: { husk: { type: 'stdio', command: 'npx', args: ['-y', `@husk-ai/mcp@${HUSK_RANGE}`] } } });
   });
 
+  it('writes Zed its own shape, in place, keeping the comments its settings start with', async () => {
+    fresh();
+    mkdirSync(dirOf('zed'), { recursive: true });
+    const settings = '// Zed settings\n//\n// See https://zed.dev/docs/configuring-zed\n{\n  "ui_font_size": 16, // big\n  "theme": "One Dark",\n}\n';
+    writeFileSync(fileOf('zed'), settings);
+    expect((await connectChatApp('zed', huskLaunch(), { home })).ok).toBe(true);
+    const text = readFileSync(fileOf('zed'), 'utf8');
+    expect(text.startsWith('// Zed settings\n//\n')).toBe(true);
+    expect(text).toContain('"ui_font_size": 16, // big\n  "theme": "One Dark",\n}');
+    expect(detectChatApps(home).find((a) => a.id === 'zed')).toMatchObject({ found: true, connected: true });
+    expect((await disconnectChatApp('zed', { home })).ok).toBe(true);
+    expect(readFileSync(fileOf('zed'), 'utf8')).toContain('// See https://zed.dev/docs/configuring-zed\n{');
+    expect(detectChatApps(home).find((a) => a.id === 'zed')?.connected).toBe(false);
+  });
+
+  it('keeps the rest of a plain JSON file as the person laid it out', async () => {
+    fresh();
+    mkdirSync(dirOf('cursor'), { recursive: true });
+    writeFileSync(fileOf('cursor'), '{\n    "mcpServers": {\n        "other": {"command": "x"}\n    }\n}\n');
+    await connectChatApp('cursor', huskLaunch(), { home });
+    const text = readFileSync(fileOf('cursor'), 'utf8');
+    expect(text).toContain('        "other": {"command": "x"}\n    }\n}\n');
+    expect(JSON.parse(text).mcpServers.husk.command).toBe('npx');
+  });
+
   it('refuses to edit a file it cannot parse, and leaves it exactly as it was', async () => {
     fresh();
     mkdirSync(dirOf('cursor'), { recursive: true });

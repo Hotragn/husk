@@ -180,6 +180,7 @@ describe('which chat apps get "Done" in the chat, and which a link', () => {
     ['Cursor', 'cursor-vscode', true],
     ['VS Code', 'Visual Studio Code', true],
     ['Claude Desktop, which declares the form but never shows it', 'claude-ai', false],
+    ['Claude Desktop’s Code tab', 'local-agent-mode-husk', false],
     ['Codex', 'codex-mcp-client', false],
     ['Gemini CLI', 'gemini-cli-mcp-client', false],
     ['Windsurf', 'windsurf-client', false],

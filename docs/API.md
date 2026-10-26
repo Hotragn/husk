@@ -308,13 +308,15 @@ POST   /v1/setup/test          body: { provider?, flavor? } -> { ok, provider, o
 POST   /v1/setup/follow        body: { launch } -> { moved: ConnectResult[] }
 ```
 
-`:app` is one of `claude-desktop`, `claude-code`, `cursor`, `vscode`, `windsurf`,
+`:app` is one of `claude-desktop`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`,
 `codex`, `gemini`. A `ChatApp` is `{ id, name, found, connected, where, after }`:
 whether it is on this machine, whether Husk is already in it, the file Husk edits or
 the command it runs, and what to do next (usually restart the app). Connecting writes
 the launch line `npx -y @husk-ai/mcp [--provider p] [--flavor f]`. For an app with a
-JSON config, the file is backed up first (`ConnectResult.backup`), only the `husk`
-entry changes, and a file that is not plain JSON is refused and left untouched.
+JSON config, the file is backed up first (`ConnectResult.backup`), and only the `husk`
+entry changes, in place: the rest of the file keeps its layout and comments. A file
+that is not JSON as that app reads it is refused and left untouched: Zed's settings may
+have comments, the other apps' files may not.
 Claude Code and Codex are changed through their own `mcp add` / `mcp remove`
 commands. `test` makes a throwaway computer, runs `uname -sr`, and removes it.
 

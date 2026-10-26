@@ -124,6 +124,15 @@ not here.
 - **Strict network enforcement.** `strict: true` under `computer.network`, or
   `husk-mcp --network-strict`, refuses a provider that cannot enforce the policy for every
   process. Without it, Husk says what is not enforced ([#219](https://github.com/Hotragn/husk/pull/219)).
+- **Zed.** `husk setup` and the Connect page connect it, keeping the comments its settings
+  start with ([#243](https://github.com/Hotragn/husk/pull/243)).
+- **Long calls in every chat app.** Most apps give up on a tool call after a while, such as
+  Claude Desktop after 240 s and Zed after 60 s. Husk now answers first: the call says it
+  is still running and goes on in the computer, and `job_wait` collects its result
+  ([#243](https://github.com/Hotragn/husk/pull/243)).
+- **The chat apps' support matrix**, in [docs/clients.md](docs/clients.md). For each app,
+  it gives how the app gets Husk, what it supports and its limits, with sources. The e2e
+  run checks every app ([#243](https://github.com/Hotragn/husk/pull/243)).
 
 ### Changed
 
@@ -154,6 +163,10 @@ not here.
   ([#234](https://github.com/Hotragn/husk/pull/234)).
 - **The desktop app gives its Husk your login shell's PATH**, so a Mac app opened from the
   Finder finds `docker`, `claude` and `codex` ([#238](https://github.com/Hotragn/husk/pull/238)).
+- **Setup changes a chat app's file in place.** Only Husk's own entry changes, and the rest
+  of the file keeps its layout. Windsurf is listed as Windsurf (Devin Desktop), whose two
+  agents read the same file. Codex, Gemini CLI and Claude Desktop's Code tab are named on
+  the computers they make ([#243](https://github.com/Hotragn/husk/pull/243)).
 
 ### Fixed
 

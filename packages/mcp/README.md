@@ -10,7 +10,9 @@ That is the whole setup. No account, no config file, no API key. Claude Code now
 shell, a filesystem and ports on a real Linux machine, and the filesystem persists for
 the whole conversation.
 
-Works the same in Cursor, Zed, or anything else that speaks MCP:
+Works the same in Cursor, Gemini CLI, or anything else that speaks MCP. Zed names the
+key `context_servers`, and VS Code `servers`; [docs/clients.md](../../docs/clients.md)
+has each app's file, what it supports, and how Husk is checked against it.
 
 ```json
 {
@@ -37,12 +39,17 @@ Works the same in Cursor, Zed, or anything else that speaks MCP:
 | `hand_off_done` | take it back once the user says they are done |
 | `computer_open_ui` | a link the chat can give you to watch the computer and take it over |
 
-The `computer` profile (the default) lists these 26 tools plus eight workspace tools; apps that render the computer card also get its two app-only tools. `--profile starter` lists the workspace tools only.
+The `computer` profile (the default) lists these 26 tools plus eight workspace tools; apps that render the computer card also get its two app-only tools, and apps that give up on a long call get `job_wait`. `--profile starter` lists the workspace tools only.
 
 While a handoff is open every other computer tool refuses, so the model cannot type into
 the page you are signing in on. Clients that support MCP form elicitation (Claude Code,
 Cursor, VS Code) ask "I'm done" in the chat; others get a link to relay, and the model
 waits for your word. Nothing resumes on a timeout.
+
+Most apps give up on a tool call after a while: Claude Desktop after 240 s, Zed after
+60 s. Husk answers first. A call still running by then says so, with a job id, and goes
+on in the computer; `job_wait` collects its result. An app that waits as long as a call
+takes, such as VS Code, never sees `job_wait`.
 
 Three prompts ship as one-click starters: **Set up a project**, **Research a topic with
 sources** and **Fill out a web form with me**. Claude Code lists them as `/husk:<name>`.
