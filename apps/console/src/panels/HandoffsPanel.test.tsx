@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { HuskApi } from '../api/client';
 import { HandoffsPanel, LinkedComputer, LinkedHandoff } from './HandoffsPanel';
 
@@ -191,6 +191,27 @@ describe('a computer opened from its in-chat card', () => {
     expect(await screen.findByText('Handed back to the chat')).toBeTruthy();
     expect(posts).toEqual(['/v1/scoped/computer/takeover', '/v1/handoffs/hnd_me/done']);
     expect(screen.getByRole('button', { name: 'Take over' })).toBeTruthy();
+  });
+
+  it('keeps a take-over that a reading already on its way answers after, with the computer still free', async () => {
+    scoped = () => Response.json({ computerId: 'cmp_1', state: 'running', handoff: null });
+    const realFetch = globalThis.fetch as unknown as (input: string, init?: RequestInit) => Promise<Response>;
+    let release: (() => void) | undefined;
+    let readings = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: string, init: RequestInit = {}) => {
+      // The second reading leaves before the take-over and answers after it.
+      if (new URL(input).pathname === '/v1/scoped/computer' && ++readings === 2) await new Promise<void>((r) => (release = r));
+      return realFetch(input, init);
+    }));
+    render(<LinkedComputer />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Take over' }));
+    expect(await screen.findByText('You have this computer')).toBeTruthy();
+    expect(release).toBeDefined();
+    await act(async () => {
+      release!();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(screen.getByText('You have this computer')).toBeTruthy();
   });
 
   it('says plainly when the link has expired', async () => {
