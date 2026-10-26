@@ -200,6 +200,51 @@ POST /v1/shutdown   -> 202 { stopping: true }
 Stops the process cleanly. It refuses (403) while a run or a handoff is in progress. A
 newer Husk uses it to replace an older one after an upgrade.
 
+### Remote access
+
+Off unless the server was started with `husk serve --remote --public-url https://<host>`.
+
+- **Where it listens.** On loopback, where a tunnel connects. The public URL is the
+  tunnel's fixed name, with no path.
+- **The public URL's own paths.** Requests whose `Host` is the public URL's host reach
+  only the routes below that are not under `/v1`. Anything else there is a 404, and
+  those routes answer only under that name.
+- **Computers.** Remote chats get them only from an isolated provider (`--provider`,
+  Docker by default); the server refuses to start if it is not one. They are bound
+  apart from this machine's own chats, so neither side can reach the other's by id.
+
+```
+POST|GET|DELETE /mcp                                 MCP over Streamable HTTP, both protocol eras
+GET  /.well-known/oauth-protected-resource           RFC 9728 metadata (also at .../mcp)
+GET  /.well-known/oauth-protected-resource/mcp
+GET  /.well-known/oauth-authorization-server         RFC 8414 metadata
+POST /oauth/register                                 RFC 7591 registration (public clients only)
+GET  /oauth/authorize                                the sign-in page
+POST /oauth/start | /oauth/claim | /oauth/passkey | /oauth/consent   the page's own steps
+POST /oauth/token                                    authorization_code (PKCE S256) or refresh_token
+```
+
+- **`/mcp`.** It takes a bearer access token in `Authorization`, never in a URL. Without
+  a good one it answers 401 with
+  `WWW-Authenticate: Bearer resource_metadata="<public URL>/.well-known/oauth-protected-resource/mcp"`.
+- **Access tokens.** EdDSA JWTs for one hour. Their `iss` is the public URL and their
+  `aud` is `<public URL>/mcp`. Any other algorithm or key id is refused, and so is a
+  token for another URL.
+- **Refresh tokens.** They last 30 days and change on every use. Using one twice ends
+  its whole family.
+- **Who signs in.** Only the owner: whoever first types the claim code the server prints
+  (80 bits, 15 minutes, 5 tries), registering a passkey as they do. Every later sign-in
+  needs that passkey.
+- **Redirects.** Only ones the app registered, https or loopback http.
+
+On this machine, with the server's token:
+
+```
+GET  /v1/remote          -> { on, publicUrl, endpoint, owner, apps: [{ id, name, createdAt }] }
+POST /v1/remote/claim    -> { code }   a new claim code, while there is no owner
+POST /v1/remote/reset    -> { code }   no owner, no apps, no tokens; a code for a new owner
+```
+
 ### Exec
 
 ```

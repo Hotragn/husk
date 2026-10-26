@@ -49,6 +49,7 @@ const ROUTES: Record<string, () => Promise<{ run: (argv: string[]) => Promise<nu
   distill: () => import('./commands/distill.js'),
   run: () => import('./commands/run.js'),
   serve: () => import('./commands/serve.js'),
+  remote: () => import('./commands/remote.js'),
   mcp: () => import('./commands/mcp.js'),
   models: () => import('./commands/models.js'),
   validate: () => import('./commands/validate.js'),

@@ -22,6 +22,8 @@ import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
 import type { JobsLink } from './jobs.js';
 import type { AdapterFactory, AgentFactory, ToolRunner, AgentLike, ManagerLike, RouterLike, ServerRunOptions } from './deps.js';
+import type { Remote } from './remote/oauth.js';
+import type { RemoteMcp } from './remote/routes.js';
 import { Store } from './store.js';
 
 /**
@@ -378,6 +380,9 @@ export async function buildTestApp(
     holdsFile?: string;
     /** Be the Husk chats start: no trigger of its own, the job host's link instead (jobs.ts). */
     jobs?: (store: Store) => JobsLink;
+    /** Remote access on, started (remote/oauth.ts), and what serves its `/mcp`. */
+    remote?: Remote;
+    remoteMcp?: RemoteMcp;
   } = {},
 ): Promise<TestApp> {
   const { store, root, cleanup } = await tempStore();
@@ -406,6 +411,8 @@ export async function buildTestApp(
     ...(overrides.chatAppsHome ? { chatAppsHome: overrides.chatAppsHome } : {}),
     ...(overrides.holdsFile ? { holdsFile: overrides.holdsFile } : {}),
     ...(overrides.jobs ? { jobs: overrides.jobs(store) } : {}),
+    ...(overrides.remote ? { remote: overrides.remote } : {}),
+    ...(overrides.remoteMcp ? { remoteMcp: overrides.remoteMcp } : {}),
   });
 
   return {

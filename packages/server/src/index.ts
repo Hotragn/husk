@@ -64,6 +64,10 @@ export type { ErrorBody, ServerErrorCode } from './errors.js';
 export { assertBindIsSafe, bearerToken, installAuth, isLoopbackHost } from './auth.js';
 export type { AuthOptions } from './auth.js';
 
+export { Remote, parsePublicUrl } from './remote/oauth.js';
+export type { RemoteOptions } from './remote/oauth.js';
+export type { RemoteMcp } from './remote/routes.js';
+
 export { CronScheduler, nextFireTime, nextFireTimes, parseCron } from './cron.js';
 export type { CronExpression, CronJob } from './cron.js';
 

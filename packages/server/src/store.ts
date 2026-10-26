@@ -93,7 +93,7 @@ class WriteQueue {
   }
 }
 
-async function writeAtomic(file: string, data: string | Uint8Array): Promise<void> {
+export async function writeAtomic(file: string, data: string | Uint8Array): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
   try {
