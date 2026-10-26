@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { ctxOf } from './context.js';
+import { keepAlive } from './routes/tools.js';
 import { buildTestApp } from './testing.js';
 import type { TestApp } from './testing.js';
 import type { ToolRunner } from './deps.js';
@@ -80,6 +81,54 @@ describe('a chat cancelling a tool call', { timeout: 30_000 }, () => {
     await harness.app.inject({ method: 'POST', url: `/v1/handoffs/${handoffId}/done`, headers: { 'x-husk-as': 'person' } });
     await new Promise((r) => setTimeout(r, 600));
     expect(ran).toEqual([]);
+  });
+});
+
+/**
+ * fetch gives up on an answer whose headers take 300 s, or whose body goes
+ * quiet that long: a long call answers at once and keeps saying so.
+ */
+describe('a call that outlasts fetch’s timeouts', { timeout: 30_000 }, () => {
+  afterEach(() => {
+    keepAlive.ms = 20_000;
+  });
+  const slow = (ms: number, then: () => unknown) => async () => {
+    await new Promise((r) => setTimeout(r, ms));
+    return then() as { content: Array<{ type: 'text'; text: string }> };
+  };
+
+  it('answers at once, then the same JSON after the spaces that kept it alive', async () => {
+    keepAlive.ms = 50;
+    const { base, id } = await listen(slow(400, () => ({ content: [{ type: 'text', text: 'done' }] })));
+    const res = await post(`${base}/v1/computers/${id}/tools/shell`, { args: {} });
+    const text = await res.text();
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    expect(text).toMatch(/^ +\{/);
+    expect(JSON.parse(text)).toEqual({ content: [{ type: 'text', text: 'done' }] });
+  });
+
+  it('puts an error that comes after the 200 in the body', async () => {
+    keepAlive.ms = 50;
+    const { base, id } = await listen(
+      slow(400, () => {
+        throw new Error('the provider went away');
+      }),
+    );
+    const res = await post(`${base}/v1/computers/${id}/tools/shell`, { args: {} });
+    expect(JSON.parse(await res.text())).toMatchObject({ error: { code: 'E_INTERNAL', message: 'the provider went away' } });
+  });
+
+  it('still stops when the chat cancels after the answer began', async () => {
+    keepAlive.ms = 50;
+    let seen: AbortSignal | undefined;
+    const { base, id } = await listen(async (_c, _name, _args, signal) => {
+      seen = signal;
+      if (signal) await abortedWithin(signal, 10_000);
+      return { content: [{ type: 'text', text: 'done' }] };
+    });
+    await cancelledAfter(400, `${base}/v1/computers/${id}/tools/shell`, { args: {} });
+    expect(await abortedWithin(seen!, 2_000)).toBe(true);
   });
 });
 

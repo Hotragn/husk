@@ -1,14 +1,45 @@
+import { PassThrough } from 'node:stream';
 import { audited } from '@husk-ai/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { summarise } from '../activity.js';
 import { ctxOf } from '../context.js';
-import { huskError, invalidSpec, notFound } from '../errors.js';
+import { errorBody, huskError, invalidSpec, notFound } from '../errors.js';
 import { PERSON_RUN, refusalText } from '../handoffs.js';
 import { closedEarly } from '../sse.js';
 import { givenBack, underControl } from '../control.js';
 
 /** How long a chat's call waits for a person to give back a computer they took. Tests shorten it. */
 export const takeover = { waitMs: 45_000 };
+
+/** How often a long call's answer says it is still coming. Tests shorten it. */
+export const keepAlive = { ms: 20_000 };
+
+/**
+ * A call's answer, as usual unless the call outlasts `keepAlive.ms`: then a 200
+ * goes out at once, a space every `keepAlive.ms` after it, and the JSON last.
+ * A chat's fetch gives up on headers that take 300 s, or a body quiet that
+ * long, and a call can outlast both: an hour-long command, or a bot waiting
+ * for its computer back. JSON allows the leading spaces, so the answer reads
+ * the same; an error that comes after the 200 is in the body.
+ */
+async function keptAlive(reply: FastifyReply, work: () => Promise<unknown>): Promise<unknown> {
+  let body: PassThrough | undefined;
+  const beat = setInterval(() => {
+    if (!body) void reply.type('application/json').send((body = new PassThrough()));
+    body.write(' ');
+  }, keepAlive.ms);
+  try {
+    const result = await work();
+    if (!body) return result;
+    body.end(JSON.stringify(result));
+  } catch (err) {
+    if (!body) throw err;
+    body.end(JSON.stringify(errorBody(err)));
+  } finally {
+    clearInterval(beat);
+  }
+  return reply;
+}
 
 function parseBody(body: unknown): { args: Record<string, unknown>; via: string } {
   const b = (body ?? {}) as { args?: unknown; via?: unknown };
@@ -47,39 +78,41 @@ export async function toolRoutes(app: FastifyInstance): Promise<void> {
     const found = await ctx.deps.manager.get(id);
     if (!found || found.info.state === 'destroyed') throw notFound('computer', id);
 
-    // A person holds this computer until they say done; the model must not type
-    // into the page they are signing in on, or run commands under them.
-    const heldNow = () => (name === 'computer_info' ? undefined : ctx.runner.handoffs.list().find((h) => h.computerId === id));
-    let held = heldNow();
-    // Taken from the console: the call waits a while for the person to give it
-    // back, so a short look-in pauses the chat instead of ending its turn. A
-    // bot's call (via `bot`, J5-e) waits until they do: nobody is there to tell.
-    if (held?.runId === PERSON_RUN) {
-      await givenBack(ctx.runner.handoffs, id, signal, via === 'bot' ? Infinity : Date.now() + takeover.waitMs);
-      held = heldNow();
-    }
-    if (held) {
-      return { isError: true, content: [{ type: 'text', text: refusalText(held) }] };
-    }
+    return keptAlive(reply, async () => {
+      // A person holds this computer until they say done; the model must not type
+      // into the page they are signing in on, or run commands under them.
+      const heldNow = () => (name === 'computer_info' ? undefined : ctx.runner.handoffs.list().find((h) => h.computerId === id));
+      let held = heldNow();
+      // Taken from the console: the call waits a while for the person to give it
+      // back, so a short look-in pauses the chat instead of ending its turn. A
+      // bot's call (via `bot`, J5-e) waits until they do: nobody is there to tell.
+      if (held?.runId === PERSON_RUN) {
+        await givenBack(ctx.runner.handoffs, id, signal, via === 'bot' ? Infinity : Date.now() + takeover.waitMs);
+        held = heldNow();
+      }
+      if (held) {
+        return { isError: true, content: [{ type: 'text', text: refusalText(held) }] };
+      }
 
-    // Cancelled while it waited for the person: nothing runs that nobody asked for any more.
-    if (signal.aborted) return { isError: true, content: [{ type: 'text', text: 'the call was cancelled before it ran' }] };
+      // Cancelled while it waited for the person: nothing runs that nobody asked for any more.
+      if (signal.aborted) return { isError: true, content: [{ type: 'text', text: 'the call was cancelled before it ran' }] };
 
-    const started = Date.now();
-    // As it starts, not as it ends: the desktop app opens the computer's window on this.
-    ctx.bus.emit('computers', 'tool_started', { computerId: id, tool: name, via, at: new Date(started).toISOString() });
-    // A take-over stops it part-way, and a stale page action is refused (handoffs.ts).
-    const result = await underControl(ctx.runner.handoffs, id, name, signal, (stop) =>
-      audited(
-        { computerId: id, via, tool: name, args },
-        () => runTool(found, name, args, stop),
-        (r) => (r.isError ? (r.content.find((c) => c.type === 'text') as { text?: string } | undefined)?.text : undefined),
-      ),
-    );
-    const summary = summarise(name, args);
-    const entry = { at: new Date(started).toISOString(), tool: name, ok: !result.isError, ms: Date.now() - started, via, ...(summary ? { summary } : {}) };
-    ctx.activity.record(id, entry);
-    ctx.bus.emit('computers', 'tool_called', { computerId: id, ...entry });
-    return result;
+      const started = Date.now();
+      // As it starts, not as it ends: the desktop app opens the computer's window on this.
+      ctx.bus.emit('computers', 'tool_started', { computerId: id, tool: name, via, at: new Date(started).toISOString() });
+      // A take-over stops it part-way, and a stale page action is refused (handoffs.ts).
+      const result = await underControl(ctx.runner.handoffs, id, name, signal, (stop) =>
+        audited(
+          { computerId: id, via, tool: name, args },
+          () => runTool(found, name, args, stop),
+          (r) => (r.isError ? (r.content.find((c) => c.type === 'text') as { text?: string } | undefined)?.text : undefined),
+        ),
+      );
+      const summary = summarise(name, args);
+      const entry = { at: new Date(started).toISOString(), tool: name, ok: !result.isError, ms: Date.now() - started, via, ...(summary ? { summary } : {}) };
+      ctx.activity.record(id, entry);
+      ctx.bus.emit('computers', 'tool_called', { computerId: id, ...entry });
+      return result;
+    });
   });
 }
