@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, Menu, Notification, Tray, desktopCapturer, dialog, globalShortcut, nativeImage, screen, shell, systemPreferences } from 'electron';
 import { Computers } from './computers.mjs';
+import { isSignedBuild, restartToUpdate, watchUpdates } from './updates.mjs';
 import {
   consoleUrl,
   daemonCommand,
@@ -94,6 +95,8 @@ let eventsReady = false;
 /** The events socket's next try while it is closed, and how long that wait is. */
 let eventsRetry;
 let eventsWait = 0;
+/** A newer version of this app: `{ version, ready }` once it installs on restart, `{ version, page }` to download. */
+let news;
 
 /** Version of the Husk this app carries. */
 function bundledVersion() {
@@ -304,6 +307,13 @@ function refreshTray(status) {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: status.label, enabled: false },
+      ...(news
+        ? [
+            news.ready
+              ? { label: `Restart to update to Husk ${news.version}`, click: () => restartToUpdate() }
+              : { label: `Download Husk ${news.version}`, click: () => void shell.openExternal(news.page) },
+          ]
+        : []),
       ...status.waiting.map((h) => ({ label: `Take over: ${h.reason.slice(0, 60)}`, click: () => openWindow('handoffs') })),
       ...status.held.map((h) => ({
         label: `Give back: ${h.label.slice(0, 60)}`,
@@ -362,6 +372,7 @@ async function recover() {
     if (fresh && (fresh.pid !== rec?.pid || fresh.token !== rec?.token)) {
       rec = fresh;
       if (win && !win.isDestroyed()) void win.loadURL(consoleUrl(rec));
+      if (!SMOKE && !LIVE) void followApp();
       computers?.reload();
     }
   })().finally(() => {
@@ -408,6 +419,39 @@ function setAnswering(on) {
   log(on ? 'Husk is answering again' : 'Husk is not answering');
   computers?.setConnected(on);
   if (on && eventsRetry) watchCalls();
+}
+
+/**
+ * The chat apps connected to an older copy of this app (it updated, or moved)
+ * start this one, keeping their own flags. Husk does it only while it runs
+ * this app's own launch line, which is sent to compare, and says what moved.
+ */
+async function followApp() {
+  const res = await fetch(`${rec.url}/v1/setup/follow`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(rec.token ? { authorization: `Bearer ${rec.token}` } : {}) },
+    body: JSON.stringify({ launch: launchFor(process.execPath, BIN, process.env) }),
+    signal: AbortSignal.timeout(120_000),
+  }).catch(() => undefined);
+  const moved = res?.ok ? ((await res.json().catch(() => ({}))).moved ?? []) : [];
+  for (const m of moved) log(`chat app ${m.id}: ${m.ok ? 'now starts this Husk' : m.message}`);
+  const n = moved.filter((m) => m.ok).length;
+  if (n) new Notification({ title: 'Your chat apps start this Husk now', body: `${n === 1 ? 'One chat app' : `${n} chat apps`} moved to this version. Restart them to use it.`, icon: ICON }).show();
+}
+
+/** What updates.mjs found, said once per version: in the tray until it is installed, and once as a notification. */
+function hearNews(next) {
+  const said = news && news.version === next.version && Boolean(news.ready) === Boolean(next.ready);
+  news = next;
+  void poll();
+  if (said) return;
+  const n = new Notification({
+    title: next.ready ? `Husk ${next.version} is ready` : `Husk ${next.version} is out`,
+    body: next.ready ? 'Restart Husk from the tray to update. Your chats keep their computers.' : 'Download it from its release page.',
+    icon: ICON,
+  });
+  n.on('click', () => (next.ready ? restartToUpdate() : void shell.openExternal(next.page)));
+  n.show();
 }
 
 /**
@@ -589,6 +633,11 @@ async function smokeComputers() {
   // Closing the console window hides it: a command running in its Terminal keeps running.
   win?.close();
   check('closing the console window hides it, so its Terminal keeps running', win && !win.isDestroyed() && !win.isVisible());
+  // Updates: a packaged app knows where they come from, and installs one only where its signature is checked.
+  if (app.isPackaged) {
+    check('the packaged app knows where its updates come from', existsSync(join(process.resourcesPath, 'app-update.yml')));
+    check('it would only announce an update on this unsigned CI build, not install one', (await isSignedBuild()) === false);
+  }
   return passed();
 }
 
@@ -755,7 +804,11 @@ async function startApp() {
   if (!globalShortcut.register(ROW_KEYS, () => computers.focusRow())) log(`${ROW_KEYS} belongs to another app: the tray lists the computers instead`);
   app.on('will-quit', () => globalShortcut.unregisterAll());
   // A Mac's Dock icon, or Cmd-Tab, with no window showing: the console comes back. (A Mac activates the app as it launches too.)
-  if (!SMOKE && !LIVE) app.on('activate', () => openWindow());
+  if (!SMOKE && !LIVE) {
+    app.on('activate', () => openWindow());
+    void followApp();
+    if (app.isPackaged) void watchUpdates({ log, onNews: hearNews });
+  }
   watchCalls();
   if (LIVE) {
     void liveSmoke();

@@ -25,6 +25,7 @@ import {
   runtimeBin,
   sameOrigin,
   shapeOf,
+  signedBuild,
   toOpen,
   trayComputers,
   trayStatus,
@@ -252,4 +253,14 @@ test('the tray has an item per computer on the screen, saying which need the per
     { id: 'cmp_b', label: 'Cursor · chat started 09:44 · you have it' },
     { id: 'cmp_c', label: 'Zed · chat started 09:50 · waiting for you' },
   ]);
+});
+
+test('an update installs itself only on a build whose signature it is checked against', () => {
+  const appUpdate = 'owner: Hotragn\nrepo: husk\nprovider: github\nupdaterCacheDirName: husk-desktop-updater\n';
+  assert.equal(signedBuild('win32', { appUpdate }), false, 'unsigned: no publisher to check a new installer against');
+  assert.equal(signedBuild('win32', { appUpdate: `${appUpdate}publisherName:\n  - Hotragn\n` }), true);
+  const mac = 'Executable=/Applications/Husk.app/Contents/MacOS/Husk\nIdentifier=dev.husk.desktop\n';
+  assert.equal(signedBuild('darwin', { codesign: `${mac}Signature=adhoc\n` }), false, 'an ad-hoc signature does not count');
+  assert.equal(signedBuild('darwin', { codesign: `${mac}Authority=Developer ID Application: Ada Lovelace (ABCDE12345)\nAuthority=Apple Root CA\n` }), true);
+  assert.equal(signedBuild('linux', { appUpdate: 'publisherName: x' }), false);
 });

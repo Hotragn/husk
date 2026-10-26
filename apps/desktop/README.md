@@ -57,13 +57,22 @@ that tells you when a chat is waiting for you.
   (`src/preload.cjs`) that exposes a state stream and a short list of requests, each
   checked against the window that sent it (`src/computers.mjs`). The tray turns each part
   on or off.
+- **Updates itself.** It looks for a new version on GitHub Releases as it starts, and
+  every six hours. Where the platform checks the new version's signature against this
+  one's, it downloads in the background, and **Restart to update** in the tray installs
+  it; your chats keep their computers. That is a signed Windows build, or a Mac app with
+  a Developer ID. Elsewhere, an unsigned build or Linux, the tray and a notification
+  say a new version is out, with its page.
 - **Start at login** is a tray menu option, off by default.
 - **Quit** leaves Husk running for your chats. **Quit and stop Husk** stops it too.
   Closing the Husk window only hides it, so a command running in its Terminal keeps
   running. On a Mac, the Dock icon brings it back.
 
-It never edits a chat app's settings on its own. That happens only on the Connect page,
-when you click.
+It never adds Husk to a chat app on its own: that happens only on the Connect page, when
+you click. The one edit it makes by itself keeps those entries pointing at the app. When
+the app updates or moves, a chat app whose entry starts an older copy of it starts the
+new one, keeping the flags you gave it. An entry you pointed elsewhere, such as `npx`,
+is never touched.
 
 The window shows only the console. Any other link opens in your default browser, if it is
 a web link at all. The window has no Node access (`contextIsolation`, `sandbox`).
@@ -111,3 +120,8 @@ and a chat app connected to the installed app's binary. Nor these, which CI cann
   main screen; the corner and the notch move with the main screen.
 - **The Terminal:** start `sleep 60; echo done` in the console's Terminal, close the window,
   open it from the tray, and `done` arrives.
+- **Updates, on Windows and macOS:**
+  - install a signed build of the previous release, then publish the next one;
+  - the tray offers **Restart to update**, the app comes back as the new version, and a
+    chat it connected still gets its computer;
+  - an unsigned build only says the new version is out.

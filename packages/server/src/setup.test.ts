@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HUSK_RANGE } from '@husk-ai/core';
 import { buildTestApp } from './testing.js';
 import type { TestApp } from './testing.js';
@@ -51,6 +51,29 @@ describe('the Connect page routes', { timeout: 30_000 }, () => {
     const r = (await harness.app.inject({ method: 'POST', url: '/v1/setup/test', payload: {} })).json();
     expect(r).toMatchObject({ ok: true });
     expect(harness.manager.computers.size).toBe(0);
+  });
+});
+
+describe('the desktop app, once it updated or moved', { timeout: 30_000 }, () => {
+  const app = (dir: string) => ({ command: `${dir}/Husk`, args: [`${dir}/resources/runtime/node_modules/@husk-ai/mcp/dist/bin.js`], env: { ELECTRON_RUN_AS_NODE: '1' } });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('moves its chat apps to the Husk it runs, and never writes a line a request names', async () => {
+    home = mkdtempSync(join(tmpdir(), 'husk-connect-'));
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    const file = join(home, '.cursor', 'mcp.json');
+    const [old, now] = [app('/old'), app('/new')];
+    writeFileSync(file, JSON.stringify({ mcpServers: { husk: old } }));
+    // The Husk the desktop app started runs the app's own line.
+    vi.stubEnv('HUSK_LAUNCH', JSON.stringify(now));
+    harness = await buildTestApp({ chatAppsHome: home });
+    const follow = (launch: unknown) => harness!.app.inject({ method: 'POST', url: '/v1/setup/follow', payload: { launch } });
+
+    expect((await follow({ command: '/tmp/anything', args: ['--husk-mcp'] })).json()).toEqual({ moved: [] });
+    expect((await follow(undefined)).json()).toEqual({ moved: [] });
+    expect(JSON.parse(readFileSync(file, 'utf8')).mcpServers.husk).toEqual(old);
+    expect((await follow(now)).json().moved.map((m: { id: string }) => m.id)).toEqual(['cursor']);
+    expect(JSON.parse(readFileSync(file, 'utf8')).mcpServers.husk).toEqual(now);
   });
 });
 

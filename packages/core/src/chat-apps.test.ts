@@ -2,7 +2,18 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { baseLaunch, chatAppDefs, connectChatApp, detectChatApps, disconnectChatApp, huskLaunch, keepingTheirs, shellSafe } from './chat-apps.js';
+import {
+  baseLaunch,
+  chatAppDefs,
+  connectChatApp,
+  detectChatApps,
+  disconnectChatApp,
+  followDesktopApp,
+  huskLaunch,
+  keepingTheirs,
+  sameLaunch,
+  shellSafe,
+} from './chat-apps.js';
 import { HUSK_RANGE } from './identity.js';
 
 let home = '';
@@ -134,6 +145,48 @@ type CliDef = {
   add: (l: unknown, scope?: string) => string[];
 };
 const cliDef = (id: string) => chatAppDefs(home).find((d) => d.id === id) as unknown as CliDef;
+
+describe('after the desktop app updates or moves', () => {
+  const app = (dir: string) => ({ command: `${dir}/Husk`, args: [`${dir}/resources/runtime/node_modules/@husk-ai/mcp/dist/bin.js`], env: { ELECTRON_RUN_AS_NODE: '1' } });
+  const old = app('/Users/ada/Downloads');
+  const now = app('/Applications/Husk.app/Contents/MacOS');
+
+  it('moves a chat app that starts an older copy of the app, computer choice and all, and leaves an npx entry alone', async () => {
+    fresh();
+    mkdirSync(dirOf('claude-desktop'), { recursive: true });
+    writeFileSync(fileOf('claude-desktop'), JSON.stringify({ mcpServers: { husk: { ...old, args: [...old.args, '--provider', 'docker', '--session', 'proj'] } } }));
+    mkdirSync(dirOf('cursor'), { recursive: true });
+    const theirs = { command: 'npx', args: ['-y', `@husk-ai/mcp@${HUSK_RANGE}`] };
+    writeFileSync(fileOf('cursor'), JSON.stringify({ mcpServers: { husk: theirs } }));
+
+    const moved = await followDesktopApp(now, { home });
+    expect(moved.map((m) => [m.id, m.ok])).toEqual([['claude-desktop', true]]);
+    expect(JSON.parse(readFileSync(fileOf('claude-desktop'), 'utf8')).mcpServers.husk).toEqual({
+      command: now.command,
+      args: [...now.args, '--provider', 'docker', '--session', 'proj'],
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+    });
+    expect(JSON.parse(readFileSync(fileOf('cursor'), 'utf8')).mcpServers.husk).toEqual(theirs);
+  });
+
+  it('moves nothing already current, and nothing for a Husk that is not the desktop app’s', async () => {
+    fresh();
+    mkdirSync(dirOf('claude-desktop'), { recursive: true });
+    writeFileSync(fileOf('claude-desktop'), JSON.stringify({ mcpServers: { husk: old } }));
+    expect(await followDesktopApp(huskLaunch(), { home })).toEqual([]);
+    await followDesktopApp(now, { home });
+    expect(await followDesktopApp(now, { home })).toEqual([]);
+  });
+
+  it('knows the same launch line, env included, and nothing else', () => {
+    expect(sameLaunch(now, JSON.parse(JSON.stringify(now)))).toBe(true);
+    expect(sameLaunch(now, { ...now, env: {} })).toBe(false);
+    expect(sameLaunch(now, { ...now, args: [...now.args, '--provider', 'docker'] })).toBe(false);
+    expect(sameLaunch(now, old)).toBe(false);
+    expect(sameLaunch(now, 'npx')).toBe(false);
+    expect(sameLaunch(now, null)).toBe(false);
+  });
+});
 
 describe('coming from 0.1.4', () => {
   // The line 0.1.4 told people to add, with flags and env a person put on it.

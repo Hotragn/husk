@@ -113,6 +113,19 @@ export function restartDelay(previous) {
   return previous ? Math.min(previous * 2, 60_000) : 2_000;
 }
 
+/**
+ * Whether this build is signed the way an update's signature is checked
+ * against it: on Windows its app-update.yml names the certificate's
+ * publisher, which a downloaded installer must match; on a Mac `codesign -dv`
+ * names a Developer ID, which Squirrel checks a new version against. An
+ * ad-hoc signature does not count, and Linux has none.
+ */
+export function signedBuild(platform, { appUpdate = '', codesign = '' } = {}) {
+  if (platform === 'win32') return /^publisherName:/m.test(appUpdate);
+  if (platform === 'darwin') return /^Authority=Developer ID Application: /m.test(codesign);
+  return false;
+}
+
 /** The tray's item for each computer on the screen, which opens its window: its chat, and whether it needs the person. */
 export function trayComputers(list) {
   return list.map((c) => ({ id: c.id, label: `${c.label}${c.held ? ' · you have it' : c.waiting ? ' · waiting for you' : ''}` }));

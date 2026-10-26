@@ -1,4 +1,4 @@
-import { connectChatApp, detectChatApps, disconnectChatApp, huskLaunch } from '@husk-ai/core';
+import { connectChatApp, detectChatApps, disconnectChatApp, followDesktopApp, huskLaunch, sameLaunch } from '@husk-ai/core';
 import type { ChatAppId } from '@husk-ai/core';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -52,6 +52,16 @@ export async function setupRoutes(app: FastifyInstance): Promise<void> {
   app.post('/v1/setup/apps/:app', async (req: FastifyRequest) => {
     const { app: id } = req.params as { app: string };
     return connectChatApp(known(id), huskLaunch(parseChoice(req.body)), home ? { home } : {});
+  });
+
+  // The desktop app, once it updated or moved: chat apps that start an older
+  // copy of it start this one, keeping their own flags. Only while this Husk
+  // runs that app's own launch line, which the app sends to compare. Husk
+  // writes its own line, never one from a request.
+  app.post('/v1/setup/follow', async (req: FastifyRequest) => {
+    const ours = huskLaunch();
+    if (!sameLaunch(ours, (req.body as { launch?: unknown } | null)?.launch)) return { moved: [] };
+    return { moved: await followDesktopApp(ours, home ? { home } : {}) };
   });
 
   app.delete('/v1/setup/apps/:app', async (req: FastifyRequest) => {
