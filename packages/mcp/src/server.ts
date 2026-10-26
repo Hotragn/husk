@@ -28,7 +28,7 @@ import type { WorkspaceProfile } from '@husk-ai/server/workspace-viewer';
 import { PROMPTS, getPrompt } from './prompts.js';
 import { HANDED_BACK, HANDOFF_TOOLS, HANDOFF_TOOL_NAMES, MAX_REASON, heldText, relayText } from './handoff-tools.js';
 import { WORKSPACE_TOOLS, WORKSPACE_TOOL_NAMES, WORKSPACE_INSTRUCTIONS, WorkspaceTools } from './workspace-tools.js';
-import { DANGEROUS_TOOLS, approvalText, digestOf, summarize } from './approvals.js';
+import { DANGEROUS_TOOLS, MAX_SHOWN, approvalText, digestOf, exactly, summarize, tooBigText } from './approvals.js';
 import type { RemoteApp } from '@husk-ai/server';
 
 export interface HuskMcpOptions {
@@ -357,9 +357,12 @@ export class HuskMcpServer {
       // Taken from a link, not handed off by the model: only the person's Give back ends it.
       return { isError: true, content: [{ type: 'text', text: refusalText(held) }] };
     }
-    // Remotely, a call that changes things waits for the owner's word, every time.
+    // Remotely, a call that changes things waits for the owner's word, every
+    // time, on a page that shows all of it; one too big to show never runs.
     if (this.remote?.approve && DANGEROUS_TOOLS.has(name)) {
-      const verdict = this.remote.approve(name, summarize(name, toolArgs), digestOf(name, computer.id, toolArgs));
+      const detail = exactly(toolArgs);
+      if (detail.length > MAX_SHOWN) return { isError: true, content: [{ type: 'text', text: tooBigText(name, detail.length) }] };
+      const verdict = this.remote.approve({ tool: name, summary: summarize(name, toolArgs), detail, digest: digestOf(name, computer.id, toolArgs) });
       if (!verdict.ok) return { content: [{ type: 'text', text: approvalText(name, verdict, computer.id) }], ...(verdict.state === 'denied' ? { isError: true } : {}) };
     }
 
@@ -784,7 +787,8 @@ export class HuskMcpServer {
     let remote: { handoffId: string; token: string } | undefined;
     if (daemon && computer) {
       try {
-        remote = await daemon.openHandoff(computer.id, reason, computer.info.spec.labels?.[IDENTITY_LABELS.chat]);
+        // A remote chat's person opens it under the public URL, which takes only links minted for it.
+        remote = await daemon.openHandoff(computer.id, reason, computer.info.spec.labels?.[IDENTITY_LABELS.chat], Boolean(this.remote));
       } catch (err) {
         if (err instanceof RunLocally) this.localComputers.add(computer.id);
         this.log.warn(`handing off in this process: ${(err as Error).message}`);
@@ -941,7 +945,7 @@ export class HuskMcpServer {
     const daemon = this.localComputers.has(computerId) ? undefined : await this.shared();
     if (daemon) {
       try {
-        const token = await daemon.linkToken(computerId);
+        const token = await daemon.linkToken(computerId, Boolean(this.remote));
         const held = this.handoffs.list().find((h) => h.computerId === computerId);
         const remoteId = held ? this.remoteHandoffs.get(held.handoffId) : undefined;
         // A remote chat's person is wherever they are: the link is under the public URL.

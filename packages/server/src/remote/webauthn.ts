@@ -203,8 +203,9 @@ export function verifyAssertion(
     const signature = Buffer.from(input.signature, 'base64url');
     const ok = credential.alg === -8 ? verify(null, signed, key, signature) : verify('sha256', signed, key, signature);
     if (!ok) fail('the signature does not match the owner’s passkey');
-    // A counter that goes backwards means a cloned authenticator. Zero means it keeps none.
-    if (auth.signCount !== 0 && auth.signCount <= credential.signCount) fail('the passkey’s counter went backwards');
+    // A counter that does not go up means a cloned authenticator. Zero both times means it keeps
+    // none (synced passkeys); zero after a count is a copy trying to start again (WebAuthn §7.2).
+    if ((auth.signCount !== 0 || credential.signCount !== 0) && auth.signCount <= credential.signCount) fail('the passkey’s counter went backwards');
     return auth.signCount;
   } catch (err) {
     throw err instanceof WebAuthnError ? err : new WebAuthnError(`the sign-in could not be read: ${(err as Error).message}`);

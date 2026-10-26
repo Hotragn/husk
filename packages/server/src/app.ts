@@ -71,6 +71,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     deps,
     options.approvalTimeoutMs === undefined ? {} : { approvalTimeoutMs: options.approvalTimeoutMs },
   );
+  if (options.remote) ctx.remote = options.remote;
   app.decorate('husk', ctx);
 
   installErrorHandling(app);
@@ -92,9 +93,9 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   installAuth(app, {
     token: config.token,
     publicPrefixes: ['/assets/', '/favicon', '/v1/a/'],
-    scopeOf: (t) => ctx.scoped.verify(t),
+    scopeOf: (t, o) => ctx.scoped.verify(t, o),
     loopbackOnly: isLoopbackHost(config.host),
-    ...(remote ? { remote: { host: remote.host, origin: remote.origin, paths: isRemotePath } } : {}),
+    ...(remote ? { remote: { mark: remote.mark, origin: remote.origin, paths: isRemotePath, on: () => remote.offReason === undefined } } : {}),
   });
 
   app.addHook('onSend', async (_req, reply, payload) => {

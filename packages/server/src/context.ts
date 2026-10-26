@@ -5,6 +5,7 @@ import type { ResolvedDeps } from './deps.js';
 import { EventBus } from './events.js';
 import { Runner } from './runner.js';
 import { CronScheduler } from './cron.js';
+import type { Remote } from './remote/oauth.js';
 
 /** What mounts the husks' triggers: a TriggerHost in this process, or the link to the job host that does (jobs.ts). */
 export interface TriggerSync {
@@ -26,6 +27,8 @@ export interface ServerContext {
   shutdown?: () => Promise<void>;
   /** Computers a chat runs in its own process, which this Husk cannot reach: no take-over here. */
   inChat: Set<string>;
+  /** Remote access, when this Husk serves it (remote/oauth.ts). */
+  remote?: Remote;
 }
 
 export function createContext(deps: ResolvedDeps, opts: { approvalTimeoutMs?: number } = {}): ServerContext {

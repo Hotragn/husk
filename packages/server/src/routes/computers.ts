@@ -120,6 +120,8 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
       running: ctx.runner.handoffs.control.inFlight(),
       // Run by a chat in its own process: watched and taken over from the chat's own link.
       inChat: [...ctx.inChat],
+      // Remote access whenever this Husk serves it, for Husk Bar: on, or off and why.
+      ...(ctx.remote ? { remote: ctx.remote.brief() } : {}),
     };
   });
 

@@ -1285,6 +1285,13 @@ pre.code {
   color: var(--color-text-muted);
 }
 
+.conn-remote {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
 .disconnected {
   max-width: var(--container-sm);
 }
@@ -2001,11 +2008,17 @@ fieldset.found-chats {
   margin: 0;
 }
 
-/* Connect: the prompt a chat sets Husk up with. */
-.connect-prompt {
+/* Connect: the prompt a chat sets Husk up with, and chat apps on the web. */
+.connect-prompt,
+.connect-remote {
   display: grid;
   gap: var(--space-3);
   margin-top: var(--space-4);
+}
+
+.connect-told {
+  margin: 0;
+  padding-left: var(--space-4);
 }
 
 .connect-prompt-app {

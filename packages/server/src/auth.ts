@@ -66,15 +66,27 @@ export interface AuthOptions {
    * SCOPED_PREFIXES, and the routes there check it against the one computer or
    * handoff it names (`req.huskScope`).
    */
-  scopeOf?: (token: string) => string | undefined;
+  scopeOf?: (token: string, opts?: { public?: boolean }) => string | undefined;
   /** The server is bound to a loopback address: answer only loopback Host names, even with a token. */
   loopbackOnly?: boolean;
   /**
-   * Remote access is on (remote/oauth.ts): requests named for the public URL's
-   * host reach the remote paths, which check their own credentials, and
-   * nothing else. The console and the API stay on this machine.
+   * Remote access (remote/oauth.ts). Requests that came in on its own port,
+   * which the tunnel publishes, carry `PUBLIC_HEADER` set to `mark` (see
+   * `servePublic`): they reach the remote paths, which check their own
+   * credentials, and nothing else, and nothing at all while it is off. Never
+   * decided by the Host header, which a tunnel passes on as the caller wrote it.
+   * The console and the API stay on this machine.
    */
-  remote?: { host: string; origin: string; paths: (route: string) => boolean };
+  remote?: { mark: string; origin: string; paths: (route: string) => boolean; on: () => boolean };
+}
+
+/** Set by remote access's own port on every request it takes, to a secret of this process. */
+export const PUBLIC_HEADER = 'x-husk-public';
+
+/** Whether this request came in on remote access's port. */
+export function fromPublic(req: FastifyRequest, mark: string | undefined): boolean {
+  const v = req.headers[PUBLIC_HEADER];
+  return typeof v === 'string' && mark !== undefined && constantTimeEquals(v, mark);
 }
 
 /** The only routes a link token reaches. The handoff list is not among them. */
@@ -98,10 +110,12 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
   app.addHook('onRequest', async (req, reply) => {
     const remote = opts.remote;
     const route = req.routeOptions?.url;
-    // Named for the public URL: its own paths only, each with its own check.
+    // From the public URL: its own paths only, each with its own check.
     // The sign-in page's posts come from that origin and nowhere else; /mcp
     // takes a bearer token, never a cookie, so a page elsewhere gains nothing.
-    if (remote && hostnameOf(req.headers.host).toLowerCase() === remote.host) {
+    if (remote && fromPublic(req, remote.mark)) {
+      // Switched off: as if nothing were there, until it is switched on again.
+      if (!remote.on()) return reply.code(404).send({ error: { code: 'E_NOT_FOUND', message: 'not found' } });
       const from = req.headers.origin;
       if (route && remote.paths(route)) {
         if (route.startsWith('/oauth/') && from && from !== remote.origin) {
@@ -117,7 +131,7 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
       if (read && (route === '/' || route === '/*')) return;
       if (route && SCOPED_PREFIXES.some((p) => route.startsWith(p)) && (!from || from === remote.origin)) {
         const supplied = bearerToken(req);
-        const scope = supplied && !(token && constantTimeEquals(supplied, token)) ? opts.scopeOf?.(supplied) : undefined;
+        const scope = supplied && !(token && constantTimeEquals(supplied, token)) ? opts.scopeOf?.(supplied, { public: true }) : undefined;
         if (scope) {
           req.huskScope = scope;
           return;
@@ -126,7 +140,7 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
       }
       return reply.code(404).send({ error: { code: 'E_NOT_FOUND', message: 'not found' } });
     }
-    // The remote paths answer only under the public URL's name.
+    // The remote paths answer only on remote access's own port.
     if (remote && route && remote.paths(route)) return reply.code(404).send({ error: { code: 'E_NOT_FOUND', message: 'not found' } });
 
     // A web page may not drive this server, token or not. A browser sends

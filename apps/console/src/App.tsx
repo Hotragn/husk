@@ -11,6 +11,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { ConnectionProvider, useConnection } from './state/connection';
 import { ComputersProvider, useComputers } from './state/computers';
 import { useTheme } from './state/theme';
+import { useResource } from './state/useResource';
+import type { RemoteStatus } from './api/wire';
 import { Button, Icon, StatusDot } from './components/primitives';
 import { ComputersPanel } from './panels/ComputersPanel';
 import { TerminalPanel } from './panels/TerminalPanel';
@@ -83,8 +85,10 @@ function ThemeToggle({ theme, toggle }: { theme: 'dark' | 'light'; toggle: () =>
 }
 
 function Shell() {
-  const { status, health, baseUrl } = useConnection();
+  const { api, revision, status, health, baseUrl } = useConnection();
   const { list: rows } = useComputers();
+  // Remote access, whenever this Husk was started with it: on, or off and why.
+  const remote = useResource<RemoteStatus | null>((signal) => api.remoteStatus(signal), [api, revision], true, { refreshMs: 30_000 }).data;
   // A computer the person took themselves is not waiting on them.
   const waiting = useHandoffs().list.filter((h) => h.runId !== 'person');
   const { theme, toggle } = useTheme();
@@ -138,6 +142,11 @@ function Shell() {
           <span className="conn" title={baseUrl}>
             <StatusDot pill tone={connTone} label={connLabel} />
           </span>
+          {remote ? (
+            <button type="button" className="conn conn-remote" title={remote.offReason ?? remote.publicUrl} onClick={() => go('connect')}>
+              <StatusDot pill tone={remote.on ? 'info' : 'warn'} label={remote.on ? 'Remote access on' : 'Remote access off'} />
+            </button>
+          ) : null}
           <ThemeToggle theme={theme} toggle={toggle} />
         </header>
 

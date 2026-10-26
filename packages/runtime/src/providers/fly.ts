@@ -103,7 +103,8 @@ function mapState(state: string | undefined): ComputerInfo['state'] {
 export function resolveFlyConfig(opts: FlyOptions = {}, spec?: ComputerSpec): Partial<FlyConfig> {
   const env = opts.env ?? process.env;
   return {
-    token: opts.token ?? env.FLY_API_TOKEN ?? env.FLY_ACCESS_TOKEN ?? '',
+    // HUSK_FLY_TOKEN first: a Husk that itself runs on Fly keeps the computers' app token in a secret of its own name.
+    token: opts.token ?? env.HUSK_FLY_TOKEN ?? env.FLY_API_TOKEN ?? env.FLY_ACCESS_TOKEN ?? '',
     app: opts.app ?? spec?.labels?.['husk.fly.app'] ?? env.HUSK_FLY_APP ?? env.FLY_APP_NAME ?? '',
     region: opts.region ?? spec?.labels?.['husk.fly.region'] ?? env.HUSK_FLY_REGION ?? env.FLY_REGION,
     baseUrl: opts.baseUrl ?? env.HUSK_FLY_API ?? FLY_API,

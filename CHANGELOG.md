@@ -133,6 +133,19 @@ not here.
 - **The chat apps' support matrix**, in [docs/clients.md](docs/clients.md). For each app,
   it gives how the app gets Husk, what it supports and its limits, with sources. The e2e
   run checks every app ([#243](https://github.com/Hotragn/husk/pull/243)).
+- **Chat apps on the web.** `husk serve --remote --public-url https://<name>` lets claude.ai
+  and ChatGPT use Husk through a tunnel you run, or from a Fly app of your own
+  ([#245](https://github.com/Hotragn/husk/pull/245), [#247](https://github.com/Hotragn/husk/pull/247)).
+  - It is for one owner, who claims it once with a code printed on the machine and signs
+    in with a passkey after that.
+  - Commands, file changes and browser actions wait for the owner's passkey, on a page
+    that shows exactly what they send.
+  - The console's Connect page and header, and Husk Bar, show whether it is on. The
+    Connect page and `husk remote` switch it off and sign apps out.
+  - It will not start while a high or critical security advisory stands against the
+    install.
+  - The guide is *Chat apps on the web* in the docs. The Fly provider now also takes its
+    token from `HUSK_FLY_TOKEN`.
 
 ### Changed
 

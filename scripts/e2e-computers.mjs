@@ -1897,39 +1897,91 @@ function softwarePasskey(rpId, origin) {
   };
 }
 
+/** A free port on loopback, for a server this run starts. */
+const freePort = () =>
+  new Promise((r) => {
+    const probe = createServer().listen(0, '127.0.0.1', () => {
+      const p = probe.address().port;
+      probe.close(() => r(p));
+    });
+  });
+
 /**
  * Remote access (J6-c), as a chat app on the web reaches it: `husk serve
- * --remote` on a home and port of its own, requests on loopback named for the
- * public URL, as Tailscale Funnel delivers them, the owner's first sign-in with
- * the claim code and a new passkey, then MCP over HTTP on 2026-07-28 to a real
- * Docker computer, which remote chats alone can reach.
+ * --remote` on a home of its own, a tunnel's requests on remote access's own
+ * port named for the public URL, as Tailscale Funnel delivers them, the
+ * owner's first sign-in with the claim code and a new passkey, then MCP over
+ * HTTP on 2026-07-28 to a real Docker computer, which remote chats alone can
+ * reach. The advisory check asks a registry of this run's, so the run does
+ * not turn on the advisories of the day; the real registry's answer is read
+ * once, as a note.
  */
 async function checkRemoteAccess() {
   const NAME = 'e2e.husk.test';
   const PUBLIC = `https://${NAME}`;
   const own = join(home, 'remote');
   mkdirSync(own, { recursive: true });
-  const port = await new Promise((r) => {
-    const probe = createServer().listen(0, '127.0.0.1', () => {
-      const p = probe.address().port;
-      probe.close(() => r(p));
+  const port = await freePort();
+  const remotePort = await freePort();
+
+  try {
+    const res = await fetch('https://registry.npmjs.org/-/npm/v1/security/advisories/bulk', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ minimist: ['1.2.5'] }),
+      signal: AbortSignal.timeout(15_000),
     });
+    const found = (await res.json()).minimist ?? [];
+    note(
+      'the npm registry’s bulk advisory endpoint answers in the shape Husk reads',
+      found.some((a) => a.severity === 'critical' && /^https:\/\//.test(a.url) && typeof a.vulnerable_versions === 'string' && a.title),
+      JSON.stringify(found[0] ?? {}).slice(0, 200),
+    );
+  } catch (err) {
+    note('the npm registry’s bulk advisory endpoint answers in the shape Husk reads', false, `not reached: ${err.message}`);
+  }
+  let answer = {};
+  const registry = createServer((_req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(answer));
   });
-  const serving = spawn(process.execPath, [cli, 'serve', '--remote', '--public-url', PUBLIC, '--port', String(port), '--provider', 'docker'], {
-    env: { ...env, HUSK_HOME: own, NO_COLOR: '1' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  await new Promise((r) => registry.listen(0, '127.0.0.1', r));
+  const serveEnv = { ...env, HUSK_HOME: own, NO_COLOR: '1', HUSK_ADVISORY_ENDPOINT: `http://127.0.0.1:${registry.address().port}/` };
+  const args = [cli, 'serve', '--remote', '--public-url', PUBLIC, '--port', String(port), '--remote-port', String(remotePort), '--provider', 'docker'];
+
+  // A critical advisory against this install: it will not start, and says which and where to read it.
+  answer = { minimist: [{ title: 'Prototype Pollution in minimist', severity: 'critical', url: 'https://github.com/advisories/GHSA-xvch-5gv4-984h', vulnerable_versions: '<1.2.6' }] };
+  const refused = spawnSync(process.execPath, args, { env: serveEnv, encoding: 'utf8', timeout: 60_000 });
+  check(
+    'a high or critical advisory stops husk serve --remote from starting, and names it',
+    refused.status !== 0 && /will not start/.test(refused.stderr + refused.stdout) && /GHSA-xvch-5gv4-984h/.test(refused.stderr + refused.stdout),
+    `${refused.status}: ${(refused.stderr + refused.stdout).slice(-300)}`,
+  );
+  answer = {};
+
+  const serving = spawn(process.execPath, args, { env: serveEnv, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   serving.stdout.on('data', (c) => (out += c));
   serving.stderr.on('data', (c) => (out += c));
   let computer;
   let ownRec;
   try {
-    for (let i = 0; i < 240 && !/claim code/.test(out) && serving.exitCode === null; i++) await sleep(250);
-    const claim = /claim code ([0-9A-Z-]{19})/.exec(out)?.[1];
-    check('husk serve --remote starts on docker computers, and prints the claim code', Boolean(claim), out.slice(-400));
+    for (let i = 0; i < 240 && !/no owner yet/.test(out) && serving.exitCode === null; i++) await sleep(250);
+    // Its output here is a pipe, as a service's is a log: the claim code is asked for, never written there.
+    const claimed = spawnSync(process.execPath, [cli, 'remote', 'claim', '--json'], { env: serveEnv, encoding: 'utf8', timeout: 30_000 });
+    const claim = /"code":\s*"([0-9A-Z-]{19})"/.exec(claimed.stdout)?.[1];
+    check(
+      'husk serve --remote starts on docker computers, keeps the claim code out of its output, and husk remote claim gives one',
+      Boolean(claim) && /husk remote claim/.test(out) && !/[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}/.test(out),
+      `${out.slice(-300)} | ${claimed.stdout.slice(0, 80)}`,
+    );
+    check('it names remote access’s own port as the one to publish', out.includes(`publish port ${remotePort}`), out.slice(-400));
     ownRec = JSON.parse(readFileSync(join(own, 'daemon.json'), 'utf8'));
-    const f = tunnelFetch(port, NAME);
+    const f = tunnelFetch(remotePort, NAME);
+    // Whatever Host a tunnel passes on, its port is remote access alone, and the API's port serves none of it.
+    const spoofed = await tunnelFetch(remotePort, '127.0.0.1')(`${PUBLIC}/v1/computers`, { headers: { authorization: `Bearer ${ownRec.token}` } });
+    const wrongPort = await tunnelFetch(port, NAME)(`${PUBLIC}/.well-known/oauth-authorization-server`);
+    check('a tunnel’s Host decides nothing: the API is not on its port, and remote access is not on the API’s', spoofed.status === 404 && wrongPort.status === 404, `${spoofed.status}, ${wrongPort.status}`);
     const json = async (path, body, extra = {}) => {
       const r = await f(`${PUBLIC}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', origin: PUBLIC, ...extra }, body: JSON.stringify(body) });
       return { status: r.status, body: await r.json().catch(() => ({})) };
@@ -1994,11 +2046,25 @@ async function checkRemoteAccess() {
     const handoff = /^Handoff (\S+) is open/m.exec(handed)?.[1];
     if (handoff) await app.callTool({ name: 'hand_off_done', arguments: { handoff } });
     await app.close();
+
+    // The owner's switch, on this machine: off signs every app out and makes the public URL a 404.
+    const here = (method, path) => fetch(`${ownRec.url}${path}`, { method, headers: { authorization: `Bearer ${ownRec.token}` } }).then((r) => r.json());
+    const mcpStatus = async () => (await signed(`${PUBLIC}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status;
+    const off = await here('POST', '/v1/remote/off');
+    const whileOff = await mcpStatus();
+    const on = await here('POST', '/v1/remote/on');
+    const afterOn = await mcpStatus();
+    check(
+      'switched off, the public URL is a 404 and every app signed out; on again, the old token is no good',
+      off.on === false && off.apps?.length === 0 && whileOff === 404 && on.on === true && afterOn === 401,
+      JSON.stringify({ off: off.on, apps: off.apps?.length, whileOff, on: on.on, afterOn }),
+    );
   } finally {
     if (computer && ownRec) {
       await fetch(`${ownRec.url}/v1/computers/${computer.id}?confirm=${computer.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${ownRec.token}`, 'x-husk-as': 'person' } }).catch(() => undefined);
     }
     serving.kill('SIGTERM');
+    registry.close();
   }
 }
 

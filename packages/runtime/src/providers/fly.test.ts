@@ -105,6 +105,12 @@ describe('FlyProvider.isAvailable', () => {
     expect(calls[0]?.headers.Authorization).toBe('Bearer fo1_secret');
   });
 
+  it('takes HUSK_FLY_TOKEN before FLY_API_TOKEN, as a Husk running on Fly keeps it', async () => {
+    const { fn, calls } = fakeFetch([{ body: { name: 'husk-test', organization: { slug: 'acme' } } }]);
+    await new FlyProvider({ fetch: fn, env: { ...ENV, HUSK_FLY_TOKEN: 'fo1_computers' } }).isAvailable();
+    expect(calls[0]?.headers.Authorization).toBe('Bearer fo1_computers');
+  });
+
   it('turns a 401 into "the token is wrong", not "fly is down"', async () => {
     const { fn } = fakeFetch([{ status: 401, body: { error: 'unauthorized' } }]);
     const a = await new FlyProvider({ fetch: fn, env: ENV }).isAvailable();

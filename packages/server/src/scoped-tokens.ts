@@ -7,9 +7,12 @@ import { randomBytes } from 'node:crypto';
  * A token dies after `idleMs` without use -- a link nobody opened is worth
  * nothing ten minutes later -- and is kept alive while a viewer is using it,
  * up to `maxMs`, so a long login is not cut off halfway.
+ *
+ * Only a token minted `public` (for a remote chat's person) opens anything
+ * under remote access's public URL: a link made on this machine stays on it.
  */
 export class ScopedTokens {
-  private readonly tokens = new Map<string, { scope: string; idleUntil: number; deadline: number }>();
+  private readonly tokens = new Map<string, { scope: string; idleUntil: number; deadline: number; public: boolean }>();
 
   constructor(
     private readonly idleMs = 10 * 60 * 1000,
@@ -17,11 +20,11 @@ export class ScopedTokens {
     private readonly now: () => number = Date.now,
   ) {}
 
-  mint(scope: string): string {
+  mint(scope: string, opts: { public?: boolean } = {}): string {
     this.sweep();
     const token = randomBytes(32).toString('hex');
     const t = this.now();
-    this.tokens.set(token, { scope, idleUntil: t + this.idleMs, deadline: t + this.maxMs });
+    this.tokens.set(token, { scope, idleUntil: t + this.idleMs, deadline: t + this.maxMs, public: opts.public === true });
     return token;
   }
 
@@ -30,9 +33,9 @@ export class ScopedTokens {
    * A map lookup is fine here: tokens are 256 random bits, so timing a lookup
    * tells a guesser nothing that would narrow the search.
    */
-  verify(token: string): string | undefined {
+  verify(token: string, opts: { public?: boolean } = {}): string | undefined {
     const entry = this.tokens.get(token);
-    if (!entry) return undefined;
+    if (!entry || (opts.public && !entry.public)) return undefined;
     const t = this.now();
     if (t > entry.idleUntil || t > entry.deadline) {
       this.tokens.delete(token);

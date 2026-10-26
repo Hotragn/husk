@@ -64,7 +64,19 @@ final class ServerConfigTests: XCTestCase {
         let o = decodeOverview(Data(json.utf8))
         XCTAssertEqual(o?.computers.first?.title, "Cursor · chat started 09:12")
         XCTAssertEqual(o?.handoffs.count, 1)
+        XCTAssertNil(o?.remote)
         XCTAssertNil(decodeOverview(Data("not json".utf8)))
+    }
+
+    func testSaysWhenRemoteAccessIsOnAndWhyItIsOff() {
+        let json = """
+        {"computers":[],"activeRuns":[],"handoffs":[],"remote":{"on":true,"publicUrl":"https://box.tail1234.ts.net","apps":1,"warning":"1 advisory against this install: upgrade Husk"}}
+        """
+        let remote = decodeOverview(Data(json.utf8))?.remote
+        XCTAssertEqual(remote?.line, "Remote access on · https://box.tail1234.ts.net · 1 app")
+        XCTAssertEqual(remote?.warning, "1 advisory against this install: upgrade Husk")
+        let off = RemoteAccess(on: false, publicUrl: "https://box.tail1234.ts.net", apps: 0, offReason: "a critical advisory against fastify")
+        XCTAssertEqual(off.line, "Remote access off: a critical advisory against fastify")
     }
 }
 

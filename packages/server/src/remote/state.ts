@@ -12,15 +12,21 @@ import type { Credential } from './webauthn.js';
  * that registered, and refresh tokens by hash, never the tokens themselves.
  */
 export interface RemoteState {
+  /** The public URL all of it is for: the passkey's relying party and the tokens' issuer. */
+  origin?: string;
   key?: { kid: string; pem: string };
   owner?: { id: string; credential: Credential; createdAt: string };
   claim?: StoredClaim;
-  /** `signedIn`: when the owner first let it in. One that never was can make way for another. */
+  /** `signedIn`: when the owner let it in, until it is signed out. One never let in can make way for another. */
   clients: Record<string, { name: string; redirectUris: string[]; createdAt: string; signedIn?: string }>;
   refresh: Record<string, { family: string; clientId: string; owner: string; expiresAt: number; used: boolean }>;
+  /** Families a reused refresh token ended, until their tokens would have expired: none is minted in again. */
+  revoked?: Record<string, number>;
 }
 
 export const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex');
+
+const REFRESH_TTL_MS = 30 * 24 * 3600_000;
 
 export class RemoteStore {
   private state: RemoteState = { clients: {}, refresh: {} };
@@ -67,12 +73,22 @@ export class RemoteStore {
     return this.keys;
   }
 
-  /** Remote access off: no key, so no token it signed is good any more, and no refresh token either. */
+  /** Remote access off: no key, so no token it signed is good any more, no refresh token either, and no app signed in. */
   async revokeAll(): Promise<void> {
     delete this.state.key;
     this.state.refresh = {};
+    for (const c of Object.values(this.state.clients)) delete c.signedIn;
     this.keys = undefined;
     await this.save();
+  }
+
+  /** One app signed out from the console: forgotten, with every token it holds. */
+  async forget(clientId: string): Promise<boolean> {
+    if (!this.state.clients[clientId]) return false;
+    delete this.state.clients[clientId];
+    for (const [h, e] of Object.entries(this.state.refresh)) if (e.clientId === clientId) delete this.state.refresh[h];
+    await this.save();
+    return true;
   }
 
   /** `husk remote reset`: no owner, no apps, no tokens. A new claim is needed. */
@@ -82,19 +98,27 @@ export class RemoteStore {
     await rm(this.file, { force: true });
   }
 
-  /** A new refresh token in `family`, for 30 days. */
-  async mintRefresh(family: string, clientId: string, owner: string, now: number): Promise<string> {
+  /**
+   * A new refresh token in `family`, for 30 days, or none when a reused token
+   * ended that family. Nothing awaits in here, so a reuse found by a request
+   * running at the same time cannot slip in between the check and the mint.
+   * The caller saves.
+   */
+  mintRefresh(family: string, clientId: string, owner: string, now: number): string | undefined {
+    const revoked = (this.state.revoked ??= {});
+    for (const [f, until] of Object.entries(revoked)) if (now >= until) delete revoked[f];
+    if (revoked[family]) return undefined;
     // Spent ones stay, to catch a copy used again, until they would have expired anyway.
     for (const [h, e] of Object.entries(this.state.refresh)) if (now >= e.expiresAt) delete this.state.refresh[h];
     const token = randomBytes(32).toString('base64url');
-    this.state.refresh[hashToken(token)] = { family, clientId, owner, expiresAt: now + 30 * 24 * 3600_000, used: false };
-    await this.save();
+    this.state.refresh[hashToken(token)] = { family, clientId, owner, expiresAt: now + REFRESH_TTL_MS, used: false };
     return token;
   }
 
   /**
    * Spend a refresh token. One used before means it was copied: its whole
-   * family is revoked, so the copy and the original both stop working.
+   * family is revoked, so the copy and the original both stop working, and
+   * so does any token a request still in flight would mint in it.
    */
   async spendRefresh(token: string, clientId: string, now: number): Promise<{ family: string; owner: string } | undefined> {
     const hash = hashToken(token);
@@ -102,6 +126,7 @@ export class RemoteStore {
     if (!entry || entry.clientId !== clientId) return undefined;
     if (entry.used || now >= entry.expiresAt) {
       const family = entry.used ? entry.family : undefined;
+      if (family) (this.state.revoked ??= {})[family] = now + REFRESH_TTL_MS;
       for (const [h, e] of Object.entries(this.state.refresh)) if (h === hash || e.family === family) delete this.state.refresh[h];
       await this.save();
       return undefined;

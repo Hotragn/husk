@@ -1,0 +1,250 @@
+---
+title: Chat apps on the web
+navTitle: Remote access
+description: Let claude.ai and ChatGPT use Husk through a tunnel you run, or from a Fly app of your own. Who can read what, signing in with a passkey, approving calls, and switching it off.
+order: 5
+---
+
+Chat apps on your computer (Claude Desktop, Cursor, Claude Code) start Husk themselves.
+claude.ai and ChatGPT run in someone else's data centre, so they have to reach Husk over
+the internet. Remote access is how: `husk serve --remote` serves Husk's tools at
+`https://<your name>/mcp`, for one person, its owner.
+
+**What you will have at the end:** claude.ai or ChatGPT running commands and a browser
+on computers of yours, with every command, file change and browser action waiting for
+your passkey first.
+
+**Prerequisites**
+
+- Husk on a computer with Docker running, or Podman, or Fly or SSH computers. Remote
+  chats never get the computer Husk runs on; Husk will not start remote access without
+  one of these.
+- A phone, a laptop or a security key that can hold a passkey.
+- A tunnel with a **fixed** public name. The name is part of your passkey and of every
+  sign-in, so a name that changes each run (ngrok's or Cloudflare's temporary ones) would
+  lose them every time.
+
+## What the chat app, and your tunnel, can see
+
+Read this before the commands.
+
+- **The chat app sees everything the tools return.** Shell output, file contents, page
+  text and screenshots go to ChatGPT or Claude as tool results, and are handled under
+  that app's own policies. This is just as true when Husk runs locally, and it is why a
+  hand-off exists: what you type during a hand-off goes to the browser on the computer,
+  not to the chat.
+- **Your tunnel may see it too.** Where TLS ends decides who can read the traffic,
+  including anything you type during a hand-off:
+
+| Tunnel | Where TLS ends | Can the provider read it? |
+| --- | --- | --- |
+| **Tailscale Funnel** (recommended) | On your computer | No: Funnel's relays "do not decrypt the traffic" |
+| ngrok, with TLS ended at the agent | On your computer | No. Needs a paid plan, your own domain and its certificate |
+| ngrok, `ngrok http` | ngrok's cloud | Yes |
+| Cloudflare Tunnel | Cloudflare's network | Yes. **Cloudflare can read everything Husk sends and receives.** |
+| Fly, your own cloud | Fly's edge | Yes; Fly also runs the computers |
+
+- **You can see when it is on.** The console's header and its Connect page, and Husk Bar
+  on a Mac, show "Remote access on" with the public URL and the apps signed in.
+
+## Step 1: A fixed name
+
+Pick a tunnel and publish port **7378**. That is remote access's own port: the console
+and Husk's API stay on 7377, on loopback, and the tunnel reaches remote access and
+nothing else. (`husk serve --remote-port` changes it.)
+
+### Tailscale Funnel
+
+Funnel ends TLS on your computer, needs no certificate of yours, and its name does not
+change. You need [MagicDNS](https://tailscale.com/docs/features/magicdns), HTTPS
+certificates and the `funnel` attribute in your tailnet's policy; the first `tailscale
+funnel` walks you through turning them on.
+
+```bash
+tailscale funnel --bg 7378
+```
+
+It stays on in the background, across restarts, and prints your name:
+`https://<machine>.<tailnet>.ts.net`. Funnel only listens on ports 443, 8443 and 10000,
+and the default, 443, is the one you want. To stop it: `tailscale funnel --https=443 off`,
+or `tailscale funnel reset`. See [Tailscale Funnel](https://tailscale.com/docs/features/tailscale-funnel).
+
+### ngrok, with TLS ended on your computer
+
+This needs ngrok's Pay-as-you-go plan, a domain of yours pointed at ngrok, and a
+certificate for it that browsers trust. Put this in ngrok's configuration file
+(`ngrok config edit`):
+
+```yaml
+version: 3
+agent:
+  authtoken: <your authtoken>
+endpoints:
+  - name: husk
+    url: tls://husk.example.com
+    upstream:
+      url: 7378
+    agent_tls_termination:
+      server_certificate: /path/to/husk.example.com.crt.pem
+      server_private_key: /path/to/husk.example.com.key.pem
+```
+
+Then `ngrok start husk`. See [agent TLS termination](https://ngrok.com/docs/agent/agent-tls-termination).
+
+<Warning>
+`ngrok http 7378` also works with a domain you reserved, but TLS then ends in ngrok's
+cloud, which can read the traffic. On the free plan, ngrok puts a warning page in front
+of browser traffic, and that page breaks Husk's sign-in.
+</Warning>
+
+### Cloudflare Tunnel
+
+Only a **named** tunnel, on a domain you have on Cloudflare: a quick tunnel's name changes
+every time. Cloudflare can read everything Husk sends and receives.
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create husk
+cloudflared tunnel route dns husk husk.example.com
+```
+
+Then, in `~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: <the tunnel's UUID>
+credentials-file: /home/you/.cloudflared/<the tunnel's UUID>.json
+ingress:
+  - hostname: husk.example.com
+    service: http://localhost:7378
+  - service: http_status:404
+```
+
+and `cloudflared tunnel run husk`. See [Cloudflare's tunnel guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/local-management/create-local-tunnel/).
+
+## Step 2: Start Husk with remote access
+
+```bash
+husk serve --remote --public-url https://box.tail1234.ts.net
+```
+
+Use your own name, with no path. Husk checks for security advisories first:
+
+<Terminal>
+{`✓ control plane on http://127.0.0.1:7377
+✓ remote access on https://box.tail1234.ts.net/mcp, for its owner only, on docker computers
+  publish port 7378 at that name with your tunnel, e.g. tailscale funnel --bg 7378
+  then add https://box.tail1234.ts.net/mcp to your chat app as a custom connector, and sign in when it asks
+  claim code 7KQ2-M9XA-P4TD-WZ3E  good for 15 minutes; \`husk remote claim\` makes a new one`}
+</Terminal>
+
+The claim code makes whoever types it first the owner. It is printed on a terminal only,
+never into a log: when Husk runs as a service, run `husk remote claim` on the same computer
+for one. It is good for 15 minutes and 5 tries.
+
+<Note>
+Husk sends the npm registry the names and versions of its packages and of everything they
+run on, nothing else, and asks for advisories: before it serves, and every day after. It
+will not start while a high or critical advisory stands against this install, and there
+is no flag to make it. One that appears while it runs switches remote access off, and the
+console says why. The fix is to upgrade Husk. A lesser advisory, or a registry that cannot
+be reached, only gets a warning.
+</Note>
+
+## Step 3: Add Husk to your chat app
+
+The address is your name with `/mcp` after it: `https://box.tail1234.ts.net/mcp`.
+
+- **claude.ai:** Customize, then Connectors. Click **+ Add**, then **Add custom
+  connector**, and give it the address. On the Free plan you can have one custom
+  connector. See [custom connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
+- **ChatGPT:** at [chatgpt.com/plugins](https://chatgpt.com/plugins), click the plus
+  button, then **Add custom MCP server**. Give it the address, choose OAuth, read the
+  warning, then **Create as a plugin**, install it, and @-mention it in a chat. Which plans
+  can add one is up to OpenAI: check its help pages for yours. See
+  [connecting an MCP server](https://developers.openai.com/api/docs/guides/custom-mcp-server).
+
+## Step 4: Sign in as the owner
+
+The chat app opens Husk's sign-in page, on your name.
+
+1. The first time, type the claim code, then make a passkey. You are now the owner, and
+   the claim code is spent.
+2. Allow the app.
+
+After that, letting an app in takes your passkey and nothing else. The page names where
+it will send you back. If that is not claude.ai, ChatGPT or an app on your own device,
+it says so in red: allow it only if you added Husk there yourself, just now. If someone
+sent you the link, deny it.
+
+## Approving calls
+
+A command, a file change, or a click, typed text, an upload or a script in the browser
+waits for you. The chat gives you a link instead of running it:
+
+1. Open the link, wherever you are.
+2. Read what the call sends: the page shows every argument, exactly as it will run.
+3. Approve with your passkey, or deny.
+4. Tell the chat, and it calls again.
+
+An approval is for that one call. Ten minutes without an answer is a no. A call too big
+to show on the page is never put to you, and never runs; the chat is told to split it.
+The box "Also let … for the next hour" lets that app make any call of that one tool, on
+any of its computers, without asking, for an hour. It is never ticked for you.
+
+## Switching it off, signing an app out, starting over
+
+From the console's **Connect** page, or with `husk remote` on the same computer:
+
+| | Console | Command |
+| --- | --- | --- |
+| Off: every app signed out, every token revoked, the public URL a 404 | Switch off | `husk remote off` |
+| On again: apps sign back in with your passkey | Switch on | `husk remote on` |
+| One app signed out, its tokens with it | Sign out | |
+| No owner, no apps, no tokens, and a new claim code | Start over | `husk remote reset` |
+
+Switching on is refused while a high or critical advisory stands. Starting Husk with
+another `--public-url` forgets the owner, the apps and the tokens, since they belonged to
+the old name, and gives a new claim code.
+
+## When your computer is off
+
+The chat app's calls fail with a connection error, and the model should tell you Husk is
+unreachable. Your computers keep their state: they are stopped, never destroyed. When
+Husk is back, the same chats find the same computers.
+
+## Your own cloud: Fly
+
+For a Husk that is always on, run it on [Fly.io](https://fly.io). Husk runs in one Fly app,
+and its computers are Fly machines in a second app, which stop when idle and start on the
+next call. You pay Fly directly: see [Fly's pricing](https://fly.io/docs/about/pricing/).
+TLS ends at Fly's edge, and Fly runs the computers, so Fly is inside what you trust.
+
+The two files are in [`deploy/fly/`](https://github.com/Hotragn/husk/tree/main/deploy/fly)
+in Husk's repository: a `Dockerfile` that installs Husk from npm, and a `fly.toml`. Copy
+that folder, then replace `my-husk`, `my-husk-computers` and the region in `fly.toml` with
+your own. From that folder:
+
+```bash
+fly apps create my-husk                 # Husk itself
+fly apps create my-husk-computers       # its computers
+fly volumes create husk_data --app my-husk --region ord --size 1
+fly secrets set --app my-husk HUSK_FLY_TOKEN="$(fly tokens create deploy --app my-husk-computers)"
+fly deploy
+```
+
+Husk checks for advisories as it starts, as on your own computer. Then ask it for a claim
+code. Its output on Fly is a log, so it never prints one there:
+
+```bash
+fly ssh console --app my-husk -C "husk remote claim"
+```
+
+Add `https://my-husk.fly.dev/mcp` to your chat app (step 3) and sign in (step 4).
+`fly ssh console --app my-husk -C "husk remote off"` switches it off.
+
+<Note>
+The token in `HUSK_FLY_TOKEN` can manage only the computers' app, not Husk's own. Husk's
+state (your passkey's public key, the apps signed in, the key that signs their tokens)
+lives on the `husk_data` volume. `fly.toml` keeps one machine always on: sign-ins in
+progress live in its memory, and a chat app gives up on a slow start.
+</Note>

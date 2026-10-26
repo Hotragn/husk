@@ -16,8 +16,10 @@ export interface ApprovalAsk {
   /** The app's name, for the page. */
   app: string;
   tool: string;
-  /** What the call would do, in a line the owner can judge, never a secret it carries. */
+  /** What the call would do, in a line. */
   summary: string;
+  /** Every argument it sends, exactly, so nothing runs that the owner did not see. */
+  detail: string;
   /** The call itself, hashed: a retry with other arguments is another call. */
   digest: string;
 }
@@ -91,5 +93,11 @@ export class Approvals {
   clear(): void {
     this.byId.clear();
     this.allowed.clear();
+  }
+
+  /** One app signed out: nothing waits for it or holds for it any more. */
+  forget(client: string): void {
+    for (const [id, a] of this.byId) if (a.client === client) this.byId.delete(id);
+    for (const k of this.allowed.keys()) if (k.split('\n')[1] === client) this.allowed.delete(k);
   }
 }

@@ -16,6 +16,8 @@ interface RunningServer {
   host: string;
   port: number;
   claimCode?: string;
+  remotePort?: number;
+  warnings?: string[];
   close(): Promise<void>;
 }
 
@@ -25,7 +27,7 @@ interface ServerModule {
     port: number;
     daemon?: boolean;
     deps?: { runTool?: unknown; remoteMcp?: unknown };
-    remote?: { publicUrl: string; provider: string };
+    remote?: { publicUrl: string; provider: string; port?: number; host?: string };
   }): Promise<RunningServer>;
   parsePublicUrl(raw: string): URL;
 }
@@ -33,7 +35,15 @@ interface ServerModule {
 export async function run(argv: string[]): Promise<number> {
   const { values } = parse(
     argv,
-    { port: { type: 'string' }, host: { type: 'string' }, remote: { type: 'boolean' }, 'public-url': { type: 'string' }, provider: { type: 'string' } },
+    {
+      port: { type: 'string' },
+      host: { type: 'string' },
+      remote: { type: 'boolean' },
+      'public-url': { type: 'string' },
+      provider: { type: 'string' },
+      'remote-port': { type: 'string' },
+      'remote-host': { type: 'string' },
+    },
     'serve',
   );
   ui.configure(values);
@@ -48,6 +58,11 @@ export async function run(argv: string[]): Promise<number> {
     });
   }
   const provider = (values.provider as string | undefined) ?? 'docker';
+  const remotePort = parseCount(values['remote-port'] as string | undefined, '--remote-port', 'serve');
+  const remoteHost = values['remote-host'] as string | undefined;
+  if ((remotePort !== undefined || remoteHost !== undefined) && values.remote !== true) {
+    throw new HuskError('E_CONFIG', '--remote-port and --remote-host are for remote access', { hint: 'add --remote --public-url https://<name>' });
+  }
 
   let mod: ServerModule;
   try {
@@ -70,7 +85,13 @@ export async function run(argv: string[]): Promise<number> {
     if (values.remote === true && publicUrl) {
       mod.parsePublicUrl(publicUrl);
       const { createRemoteMcp } = await import('@husk-ai/mcp/remote');
-      server = await mod.serve({ host, port, daemon: true, deps: { runTool, remoteMcp: createRemoteMcp({ provider }) }, remote: { publicUrl, provider } });
+      server = await mod.serve({
+        host,
+        port,
+        daemon: true,
+        deps: { runTool, remoteMcp: createRemoteMcp({ provider }) },
+        remote: { publicUrl, provider, ...(remotePort !== undefined ? { port: remotePort } : {}), ...(remoteHost ? { host: remoteHost } : {}) },
+      });
     } else {
       server = await mod.serve({ host, port, daemon: true, deps: { runTool } });
     }
@@ -97,13 +118,19 @@ export async function run(argv: string[]): Promise<number> {
   ui.print(ui.dim(`  clients  new HuskClient({ baseUrl: "${server.url}" })  // @husk-ai/sdk`));
   if (publicUrl && values.remote === true) {
     const origin = new URL(publicUrl).origin;
+    const published = server.remotePort ?? port + 1;
     ui.print('');
     ui.print(`${ui.green('✓')} remote access on ${ui.bold(`${origin}/mcp`)}, for its owner only, on ${provider} computers`);
-    ui.print(`  publish port ${port} at that name with your tunnel, e.g. ${ui.cyan(`tailscale funnel ${port}`)}`);
+    // Its own port, never the console's: the tunnel reaches remote access and nothing else.
+    ui.print(`  publish port ${published} at that name with your tunnel, e.g. ${ui.cyan(`tailscale funnel --bg ${published}`)}`);
     ui.print(`  then add ${origin}/mcp to your chat app as a custom connector, and sign in when it asks`);
-    // Shown here, never logged: whoever types it first becomes the owner.
-    if (server.claimCode) {
+    for (const w of server.warnings ?? []) ui.warn(w);
+    // Shown on a terminal, never written to a log: whoever types it first becomes the owner,
+    // and a service's output (systemd, a container, Fly) is a log someone else may read.
+    if (server.claimCode && process.stdout.isTTY) {
       ui.print(`  claim code ${ui.bold(server.claimCode)}  ${ui.dim('good for 15 minutes; `husk remote claim` makes a new one')}`);
+    } else if (server.claimCode) {
+      ui.print('  no owner yet: run `husk remote claim` on this machine for a claim code (it is not written here, which may be a log)');
     }
   }
   ui.note('');

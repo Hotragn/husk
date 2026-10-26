@@ -26,7 +26,11 @@ const text = (v: unknown, max = 300) => {
   return redact(s.length > max ? `${s.slice(0, max)}…` : s);
 };
 
-/** One line the owner can judge the call by. Never what it would type: that may be a secret. */
+/**
+ * One line saying what the call does, at the top of its approval page. Short,
+ * so it is cut and redacted; the page shows every argument in full below it
+ * (`exactly`), and that is what the owner approves.
+ */
 export function summarize(tool: string, args: Record<string, unknown>): string {
   const where = text(args.ref ?? args.selector ?? args.element ?? args.target ?? '', 120);
   switch (tool) {
@@ -55,9 +59,51 @@ export function summarize(tool: string, args: Record<string, unknown>): string {
   }
 }
 
+/**
+ * The most an approval page shows. A call bigger than this is not put to the
+ * owner at all: nothing may run that they could not see in full.
+ */
+export const MAX_SHOWN = 20_000;
+
+/** Characters that can hide text or reorder it on screen: controls, bidi marks, zero-width and tag characters. */
+const HIDDEN = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F­؜ᅟᅠ឴឵᠎​-‏‪-‮⁠-⁯ㅤ︀-️﻿ﾠ￰-￻\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+
+/**
+ * Every argument the call sends, for the approval page: nothing cut short and
+ * nothing redacted, since the owner approves what they see. Strings show as
+ * they are, so a script reads as a script; what could hide or reorder text
+ * shows as an escape instead.
+ */
+export function exactly(args: Record<string, unknown>): string {
+  return Object.keys(args)
+    .sort()
+    .map((k) => {
+      const v = args[k];
+      const s = typeof v === 'string' ? v : (JSON.stringify(v, null, 2) ?? String(v));
+      return `${k}: ${s.replace(HIDDEN, (c) => `\\u{${c.codePointAt(0)!.toString(16)}}`)}`;
+    })
+    .join('\n');
+}
+
+/** JSON with keys in order, so the same call written twice in another key order is the same call. */
+const canonical = (v: unknown): string =>
+  Array.isArray(v)
+    ? `[${v.map(canonical).join(',')}]`
+    : v && typeof v === 'object'
+      ? `{${Object.keys(v)
+          .sort()
+          .map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`)
+          .join(',')}}`
+      : (JSON.stringify(v) ?? 'null');
+
 /** The call itself, so an approval covers that call alone: the same tool on the same computer with the same arguments. */
 export function digestOf(tool: string, computerId: string, args: Record<string, unknown>): string {
-  return createHash('sha256').update(JSON.stringify([tool, computerId, args])).digest('hex');
+  return createHash('sha256').update(canonical([tool, computerId, args])).digest('hex');
+}
+
+/** What the model is told when a call is too big to put to the owner, and so never runs. */
+export function tooBigText(tool: string, size: number): string {
+  return `Nothing ran: this ${tool} call is ${size} characters, and the owner can approve at most ${MAX_SHOWN}, so it was not put to them. Split it into smaller calls: write a file in parts with append: true, then run it.`;
 }
 
 /**

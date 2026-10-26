@@ -54,7 +54,9 @@ function page(title: string, data: unknown, body: string, script: string): { htm
 <style nonce="${nonce}">
   body { font: 16px/1.5 system-ui, sans-serif; max-width: 30rem; margin: 3rem auto; padding: 0 1rem; color: #1b1b1f; background: #fff; }
   @media (prefers-color-scheme: dark) { body { color: #e8e8ec; background: #141418; } input { background: #1f1f25; color: inherit; } }
-  h1 { font-size: 1.3rem; } .host, code { font-family: ui-monospace, monospace; word-break: break-all; }
+  h1 { font-size: 1.3rem; } .host, code, pre { font-family: ui-monospace, monospace; word-break: break-all; }
+  pre { white-space: pre-wrap; max-height: 50vh; overflow: auto; padding: .75rem; border: 1px solid #8884; border-radius: 6px; font-size: .85rem; }
+  .warn { border-left: 4px solid #c0392b; padding: .25rem .75rem; }
   input[type=text] { font: inherit; letter-spacing: .1em; padding: .5rem; width: 100%; box-sizing: border-box; text-transform: uppercase; }
   button { font: inherit; padding: .5rem 1rem; margin: .75rem .5rem 0 0; cursor: pointer; }
   .error { color: #c0392b; } [hidden] { display: none; }
@@ -77,13 +79,20 @@ ${script}
   return { html, csp };
 }
 
-export function authorizePage(data: { request: string; client: string; redirectHost: string; claimed: boolean }): { html: string; csp: string } {
+/**
+ * The sign-in. Anyone can register an app under any name, so the page names
+ * where it sends the owner back, and says plainly when that is not a chat app
+ * Husk knows: a link someone else sent is how a stranger would get in.
+ */
+export function authorizePage(data: { request: string; client: string; redirectHost: string; knownReturn: boolean; claimed: boolean }): { html: string; csp: string } {
   return page(
     `Husk: allow ${data.client}`,
     data,
-    `<h1>Allow <span id="client"></span> to use Husk?</h1>
+    `<h1>Allow <span id="client"></span> at <span class="host" id="host-title"></span> to use Husk?</h1>
 <p>It will be able to run commands and use the browser on the computers of the Husk on this machine,
-and it sees what those return. It answers to <span class="host" id="host"></span>.</p>
+and it sees what those return. It sends you back to <span class="host" id="host"></span>.</p>
+<p class="warn" id="unknown" hidden><strong>Careful:</strong> <span class="host" id="host-warn"></span> is not claude.ai, ChatGPT or an app
+on this device. Allow it only if you added this Husk to an app there yourself, just now. If someone sent you this link, deny it.</p>
 <section id="claim" hidden>
   <p>This Husk has no owner yet. Type the claim code it printed where it runs, then make a passkey.
   Only you, with that passkey, can let a chat app in after that.</p>
@@ -101,7 +110,8 @@ and it sees what those return. It answers to <span class="host" id="host"></span
 </section>`,
     `
   $('client').textContent = data.client;
-  $('host').textContent = data.redirectHost;
+  for (const id of ['host', 'host-title', 'host-warn']) $(id).textContent = data.redirectHost;
+  $('unknown').hidden = data.knownReturn;
   const show = (id) => { for (const s of ['claim', 'signin', 'consent']) $(s).hidden = s !== id; };
   const finish = async (step) => { await post('/oauth/passkey', { request: data.request, credential: await passkey(step) }); show('consent'); };
   $('claim-go').onclick = () => post('/oauth/claim', { request: data.request, code: $('code').value }).then(finish).catch(fail);
@@ -114,24 +124,31 @@ and it sees what those return. It answers to <span class="host" id="host"></span
   );
 }
 
-/** One tool call a remote chat wants to make, for the owner to approve with their passkey, or not. */
-export function approvalPage(data: { id: string; app: string; tool: string; summary: string }): { html: string; csp: string } {
+/**
+ * One tool call a remote chat wants to make, for the owner to approve with
+ * their passkey, or not: a line saying what it does, then every argument it
+ * sends, exactly as it will run.
+ */
+export function approvalPage(data: { id: string; app: string; tool: string; summary: string; detail: string }): { html: string; csp: string } {
   return page(
     `Husk: approve ${data.tool}`,
     data,
     `<h1><span id="app"></span> wants to run <code id="tool"></code></h1>
 <p><code id="summary"></code></p>
+<p>Exactly what it sends:</p>
+<pre id="detail"></pre>
 <p>It runs on a computer of this Husk's, not on the machine Husk runs on.</p>
-<label><input type="checkbox" id="hour"> Let this app use this tool without asking for the next hour</label>
+<label><input type="checkbox" id="hour"> Also let <span id="app-hour"></span> make any <code id="tool-hour"></code> call, on any of its computers, without asking, for the next hour</label>
 <section id="ask">
   <button id="allow">Approve with my passkey</button>
   <button id="deny">Deny</button>
 </section>
 <p id="done" hidden></p>`,
     `
-  $('app').textContent = data.app;
-  $('tool').textContent = data.tool;
+  $('app').textContent = $('app-hour').textContent = data.app;
+  $('tool').textContent = $('tool-hour').textContent = data.tool;
   $('summary').textContent = data.summary;
+  $('detail').textContent = data.detail;
   const done = (text) => { $('ask').hidden = true; $('done').hidden = false; $('done').textContent = text; };
   $('allow').onclick = async () => {
     try {

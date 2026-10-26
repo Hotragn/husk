@@ -4,23 +4,27 @@
  * The same choices as `husk setup`. The computer choice is written into each
  * app's launch line when it is connected, so changing it means connecting the
  * apps again; the page says so rather than pretending it applies by itself.
- * Every change names the file it edits and the backup it made.
+ * Every change names the file it edits and the backup it made. Below them:
+ * chat apps on the web, when this Husk was started with remote access.
  */
 
 import { useState } from 'react';
 import { toDisplayError } from '../api/client';
 import type { DisplayError } from '../api/client';
-import type { ChatApp, ComputerChoice, ConnectResult, SetupState } from '../api/wire';
+import type { ChatApp, ComputerChoice, ConnectResult, RemoteStatus, SetupState } from '../api/wire';
 import { Badge, Button, ErrorBlock, PanelHeader, StatusDot } from '../components/primitives';
 import { useConnection } from '../state/connection';
 import { useResource } from '../state/useResource';
+import type { Resource } from '../state/useResource';
 import { setupPrompt } from './setupPrompt';
 
 const CONTAINERS = new Set(['docker', 'podman']);
+const REMOTE_GUIDE = 'https://github.com/Hotragn/husk/blob/main/apps/docs/content/guides/remote-access.mdx';
 
 export function ConnectPanel() {
   const { api, revision } = useConnection();
   const state = useResource<SetupState>((signal) => api.setupState(signal), [api, revision]);
+  const remote = useResource<RemoteStatus | null>((signal) => api.remoteStatus(signal), [api, revision]);
   const [provider, setProvider] = useState<string | null>(null);
   const [browser, setBrowser] = useState(true);
   const [results, setResults] = useState<Record<string, ConnectResult>>({});
@@ -36,7 +40,7 @@ export function ConnectPanel() {
     ...(CONTAINERS.has(chosen) && browser ? { flavor: 'full' as const } : {}),
   };
 
-  const act = async (key: string, run: () => Promise<void>) => {
+  const act = async (key: string, run: () => Promise<unknown>) => {
     setBusy(key);
     setError(null);
     try {
@@ -167,7 +171,135 @@ export function ConnectPanel() {
       </div>
 
       <SetupFromChat apps={state.data?.apps ?? []} />
+      <RemoteAccess remote={remote} busy={busy} act={(key, run) => act(key, async () => { await run(); remote.reload(); })} />
     </section>
+  );
+}
+
+/**
+ * claude.ai and ChatGPT reaching this Husk through a public HTTPS name
+ * (`husk serve --remote`): whether it is on and why not, the one owner, the
+ * apps signed in, advisories against this install, and what those apps and
+ * the tunnel can see.
+ */
+function RemoteAccess({ remote, busy, act }: { remote: Resource<RemoteStatus | null>; busy: string | null; act: (key: string, run: () => Promise<unknown>) => Promise<void> }) {
+  const { api } = useConnection();
+  const [code, setCode] = useState<string | null>(null);
+  const s = remote.data;
+  if (remote.loading && !s) return null;
+  if (!s) {
+    return (
+      <div className="card connect-remote">
+        <h2 className="h-sub">Chat apps on the web</h2>
+        {remote.error ? <ErrorBlock error={remote.error} retry={remote.reload} /> : null}
+        <p className="field-note">
+          claude.ai and ChatGPT can use this Husk through a public HTTPS name you own. It is off: start Husk with{' '}
+          <code className="mono">husk serve --remote --public-url https://&lt;your name&gt;</code> behind a tunnel.{' '}
+          <a href={REMOTE_GUIDE} target="_blank" rel="noreferrer">How to set it up</a>
+        </p>
+      </div>
+    );
+  }
+  const severe = (a: RemoteStatus['advisories'][number]) => a.severity === 'high' || a.severity === 'critical';
+  const switchOff = () => {
+    if (window.confirm('Switch remote access off? Every chat app is signed out, and none can reach this Husk until you switch it on again.')) {
+      void act('remote-switch', () => api.remoteSwitch(false));
+    }
+  };
+  const startOver = () => {
+    if (window.confirm('Forget the owner, every app and every token? You get a new claim code.')) {
+      void act('remote-reset', async () => setCode((await api.remoteReset()).code));
+    }
+  };
+  return (
+    <div className="card connect-remote">
+      <h2 className="h-sub">Chat apps on the web</h2>
+      <div className="connect-row">
+        <StatusDot tone={s.on ? 'success' : 'warn'} label={s.on ? 'Remote access on' : 'Remote access off'} />
+        <code className="mono">{s.publicUrl}</code>
+        <div className="btn-row">
+          {s.on ? (
+            <Button size="sm" loading={busy === 'remote-switch'} onClick={switchOff}>
+              Switch off
+            </Button>
+          ) : (
+            <Button size="sm" variant="primary" loading={busy === 'remote-switch'} onClick={() => void act('remote-switch', () => api.remoteSwitch(true))}>
+              Switch on
+            </Button>
+          )}
+        </div>
+      </div>
+      {s.offReason ? <p role="status" className="field-note connect-failed">{s.offReason}</p> : null}
+      <p className="field-note">
+        Add <code className="mono">{s.endpoint}</code> as a custom connector in claude.ai, or as an MCP server in ChatGPT&rsquo;s developer mode.
+      </p>
+
+      {s.owner ? (
+        <p className="field-note">An owner has claimed this Husk and signs in with a passkey. Commands, file changes and browser actions wait for their passkey too.</p>
+      ) : (
+        <div className="btn-row">
+          <Button size="sm" variant="primary" loading={busy === 'remote-claim'} onClick={() => void act('remote-claim', async () => setCode((await api.remoteClaim()).code))}>
+            Make a claim code
+          </Button>
+          <span className="field-note">No owner yet. Whoever types the code first on the sign-in page a chat app opens becomes the owner.</span>
+        </div>
+      )}
+      {code && !s.owner ? (
+        <p role="status">
+          Claim code <strong className="mono">{code}</strong> <span className="field-note">good for 15 minutes and 5 tries</span>
+        </p>
+      ) : null}
+
+      {s.apps.length ? (
+        <ul className="connect-list" aria-label="Apps signed in">
+          {s.apps.map((a) => (
+            <li key={a.id}>
+              <div className="connect-row">
+                <StatusDot tone="success" label="signed in" />
+                <strong>{a.name}</strong>
+                <div className="btn-row">
+                  <Button size="sm" loading={busy === `remote-${a.id}`} onClick={() => void act(`remote-${a.id}`, () => api.remoteSignOut(a.id))} aria-label={`Sign out ${a.name}`}>
+                    Sign out
+                  </Button>
+                </div>
+              </div>
+              <span className="field-note">since {new Date(a.createdAt).toLocaleString()}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="field-note">No app is signed in.</p>
+      )}
+
+      {s.advisories.length ? (
+        <ul className="connect-list" aria-label="Advisories">
+          {s.advisories.map((a) => (
+            <li key={`${a.name} ${a.url} ${a.title}`}>
+              <span>
+                <Badge tone={severe(a) ? 'danger' : 'warn'}>{a.severity}</Badge>{' '}
+                {a.url.startsWith('https://') ? <a href={a.url} target="_blank" rel="noreferrer">{a.title}</a> : a.title}
+              </span>
+              <span className="field-note mono">
+                {a.name}@{a.version}
+                {a.vulnerable ? `, affected: ${a.vulnerable}` : ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {s.advisories.some(severe) ? <p className="field-note connect-failed">Remote access stays off until Husk is upgraded past these.</p> : null}
+      {s.checkError ? <p className="field-note">Husk could not check for advisories ({s.checkError}), and tries again every hour.</p> : null}
+
+      <ul className="field-note connect-told">
+        <li>The chat app sees everything the tools return: shell output, files, page text and screenshots, under that app&rsquo;s own policies. What you type during a hand-off goes to the browser on this computer, not to the chat.</li>
+        <li>Your tunnel can read it too, unless it is Tailscale Funnel or ngrok with agent termination.</li>
+      </ul>
+      <div className="btn-row">
+        <Button size="sm" loading={busy === 'remote-reset'} onClick={startOver}>
+          Start over
+        </Button>
+      </div>
+    </div>
   );
 }
 
