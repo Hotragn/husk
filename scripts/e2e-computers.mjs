@@ -1977,31 +1977,46 @@ async function checkRemoteAccess() {
   const serveEnv = { ...env, HUSK_HOME: own, NO_COLOR: '1', HUSK_ADVISORY_ENDPOINT: `http://127.0.0.1:${registry.address().port}/` };
   const args = [cli, 'serve', '--remote', '--public-url', PUBLIC, '--port', String(port), '--remote-port', String(remotePort), '--provider', 'docker'];
 
-  // A critical advisory against this install: it will not start, and says which and where to read it.
-  answer = { minimist: [{ title: 'Prototype Pollution in minimist', severity: 'critical', url: 'https://github.com/advisories/GHSA-xvch-5gv4-984h', vulnerable_versions: '<1.2.6' }] };
-  const refused = spawnSync(process.execPath, args, { env: serveEnv, encoding: 'utf8', timeout: 60_000 });
-  check(
-    'a high or critical advisory stops husk serve --remote from starting, and names it',
-    refused.status !== 0 && /will not start/.test(refused.stderr + refused.stdout) && /GHSA-xvch-5gv4-984h/.test(refused.stderr + refused.stdout),
-    `${refused.status}: ${(refused.stderr + refused.stdout).slice(-300)}`,
-  );
-  answer = {};
+  // Never spawnSync here: it would stop this process, and with it the registry the child asks.
+  const run = (argv, ms) =>
+    new Promise((resolveRun) => {
+      const child = spawn(process.execPath, argv, { env: serveEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+      let text = '';
+      child.stdout.on('data', (c) => (text += c));
+      child.stderr.on('data', (c) => (text += c));
+      const timer = setTimeout(() => child.kill('SIGTERM'), ms);
+      child.on('exit', (status) => {
+        clearTimeout(timer);
+        resolveRun({ status, text });
+      });
+    });
 
-  const serving = spawn(process.execPath, args, { env: serveEnv, stdio: ['ignore', 'pipe', 'pipe'] });
-  let out = '';
-  serving.stdout.on('data', (c) => (out += c));
-  serving.stderr.on('data', (c) => (out += c));
+  let serving;
   let computer;
   let ownRec;
   try {
+    // A critical advisory against this install: it will not start, and says which and where to read it.
+    answer = { minimist: [{ title: 'Prototype Pollution in minimist', severity: 'critical', url: 'https://github.com/advisories/GHSA-xvch-5gv4-984h', vulnerable_versions: '<1.2.6' }] };
+    const refused = await run(args, 60_000);
+    check(
+      'a high or critical advisory stops husk serve --remote from starting, and names it',
+      refused.status !== null && refused.status !== 0 && /will not start/.test(refused.text) && /GHSA-xvch-5gv4-984h/.test(refused.text),
+      `${refused.status}: ${refused.text.slice(-300)}`,
+    );
+    answer = {};
+
+    serving = spawn(process.execPath, args, { env: serveEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    serving.stdout.on('data', (c) => (out += c));
+    serving.stderr.on('data', (c) => (out += c));
     for (let i = 0; i < 240 && !/no owner yet/.test(out) && serving.exitCode === null; i++) await sleep(250);
     // Its output here is a pipe, as a service's is a log: the claim code is asked for, never written there.
-    const claimed = spawnSync(process.execPath, [cli, 'remote', 'claim', '--json'], { env: serveEnv, encoding: 'utf8', timeout: 30_000 });
-    const claim = /"code":\s*"([0-9A-Z-]{19})"/.exec(claimed.stdout)?.[1];
+    const claimed = await run([cli, 'remote', 'claim', '--json'], 30_000);
+    const claim = /"code":\s*"([0-9A-Z-]{19})"/.exec(claimed.text)?.[1];
     check(
       'husk serve --remote starts on docker computers, keeps the claim code out of its output, and husk remote claim gives one',
       Boolean(claim) && /husk remote claim/.test(out) && !/[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}/.test(out),
-      `${out.slice(-300)} | ${claimed.stdout.slice(0, 80)}`,
+      `${out.slice(-300)} | ${claimed.text.slice(0, 80)}`,
     );
     check('it names remote access’s own port as the one to publish', out.includes(`publish port ${remotePort}`), out.slice(-400));
     ownRec = JSON.parse(readFileSync(join(own, 'daemon.json'), 'utf8'));
@@ -2153,7 +2168,9 @@ async function checkRemoteAccess() {
     if (computer && ownRec) {
       await fetch(`${ownRec.url}/v1/computers/${computer.id}?confirm=${computer.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${ownRec.token}`, 'x-husk-as': 'person' } }).catch(() => undefined);
     }
-    serving.kill('SIGTERM');
+    serving?.kill('SIGTERM');
+    // Whatever failed above: a server left open here keeps the whole run alive until the job's timeout.
+    registry.closeAllConnections();
     registry.close();
     tlsFront.close();
     rmSync(certDir, { recursive: true, force: true });
@@ -2368,4 +2385,6 @@ try {
   process.exitCode = 1;
 } finally {
   await cleanup();
+  // The run is over: a server or timer something forgot to close must not hold it to the job's timeout.
+  setTimeout(() => process.exit(process.exitCode ?? 0), 5_000).unref();
 }
