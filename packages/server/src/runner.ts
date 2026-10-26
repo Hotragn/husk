@@ -207,8 +207,8 @@ export class Runner {
     // part-way when they take it. Where a chat's call is refused so it can tell
     // its person, a bot's waits, said once, until they give it back (J5-e):
     // nobody is there to tell. A cancel or the run's timeout still ends it.
-    opts.admitTool = async (call, runSignal) => {
-      const computerId = this.active.get(runId)?.computerId;
+    // The loop names the computer, so a run's very first call obeys a hold too.
+    opts.admitTool = async (call, runSignal, computerId = this.active.get(runId)?.computerId) => {
       if (!computerId) return { signal: runSignal, done: () => {}, stopped: () => undefined };
       const taken = () => this.handoffs.list().some((h) => h.computerId === computerId && h.runId === PERSON_RUN);
       for (let paused = false; ; paused = true) {

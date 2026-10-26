@@ -114,8 +114,9 @@ export interface RunOptions {
   /**
    * Lets each tool call that acts on the computer in, for a host that shares
    * the computer with a person. Absent means every call runs, as before.
+   * `computerId` is the computer the call goes to, once the run has one.
    */
-  admitTool?: (call: ToolCallPart, signal: AbortSignal) => Promise<AdmittedTool>;
+  admitTool?: (call: ToolCallPart, signal: AbortSignal, computerId?: string) => Promise<AdmittedTool>;
   /** Named values interpolated into the persona template. */
   vars?: Record<string, string>;
 }
