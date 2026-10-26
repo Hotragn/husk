@@ -32,7 +32,9 @@ that tells you when a chat is waiting for you.
   maximize it, or keep it on top (the pin). Closing it only hides it; the computers keep
   running. At first run Husk asks once whether to also open it by itself, without taking
   focus, the moment a chat starts using a computer; the tray changes that later. Taking
-  over while the chat's AI is mid-call says which call it waits for to stop.
+  over while the chat's AI is mid-call says which call it waits for to stop. On ssh and
+  Fly computers, where every picture is a command that keeps the computer awake, the
+  screen shows for a minute when you press **Look**, and all the time while you hold it.
 - **Says what you hold.** While you hold a computer, the tray says so ("you hold 1"), with
   **Give back** for each. Closing the window or quitting while you hold one asks first,
   keeping the hold unless you choose to give it back; its chat stays paused until you do.

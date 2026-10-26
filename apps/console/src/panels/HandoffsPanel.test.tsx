@@ -133,6 +133,17 @@ describe('a computer opened from its in-chat card', () => {
     expect(await screen.findByText('No browser is open on this computer.')).toBeTruthy();
   });
 
+  it('shows an ssh or fly computer’s screen only when asked, since every picture is a command on it', async () => {
+    scoped = () => Response.json({ computerId: 'cmp_1', state: 'running', provider: 'fly', handoff: null });
+    const screens = () => vi.mocked(globalThis.fetch).mock.calls.filter(([u]) => new URL(String(u)).pathname === '/v1/scoped/computer/screen').length;
+    render(<LinkedComputer />);
+    expect(await screen.findByText(/shows when you look/)).toBeTruthy();
+    expect(screens()).toBe(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Look' }));
+    expect(await screen.findByText('No browser is open on this computer.')).toBeTruthy();
+    expect(screens()).toBe(1);
+  });
+
   it('becomes the take-over view when a handoff is waiting on it', async () => {
     scoped = () => Response.json({ computerId: 'cmp_1', state: 'running', handoff });
     render(<LinkedComputer />);

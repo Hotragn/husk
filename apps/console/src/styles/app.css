@@ -1398,6 +1398,8 @@ pre.code {
 .screen-empty {
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: var(--space-3);
   aspect-ratio: 16 / 10;
   padding: var(--space-6);
   color: var(--color-text-subtle);

@@ -88,6 +88,20 @@ describe('Chat panel', () => {
     expect((screen.getByAltText('The browser on cmp_chat, live') as HTMLImageElement).src).toContain('data:image/jpeg;base64,AAAA');
   });
 
+  it('opens an ssh or fly computer’s screen only for a Look, since every picture is a command on it', async () => {
+    const was = overview.computers[0]!.provider;
+    overview.computers[0]!.provider = 'fly';
+    try {
+      render(<ChatPanel computerId="cmp_chat" onOpen={() => {}} />);
+      expect(await screen.findByText(/shows when you look/)).toBeTruthy();
+      expect(FakeSocket.last).toBeUndefined();
+      fireEvent.click(screen.getByRole('button', { name: 'Look' }));
+      await waitFor(() => expect(FakeSocket.last?.url).toBe('ws://localhost:7377/v1/computers/cmp_chat/screen?token=test-token'));
+    } finally {
+      overview.computers[0]!.provider = was;
+    }
+  });
+
   /** The page at 1280x800, drawn at half size. */
   async function frameShown() {
     await screen.findByText('Claude Code · chat started 10:42');

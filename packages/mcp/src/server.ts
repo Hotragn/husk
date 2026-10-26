@@ -929,7 +929,16 @@ export class HuskMcpServer {
   private openViewerServer(): Promise<{ url: string; origin: string; close: () => Promise<void> }> {
     this.viewer ??= startWorkspaceViewer({
       store: this.workspaceStore,
-      handoffs: { registry: this.handoffs, tokens: this.tokens, describe: (id) => this.describe(id) },
+      handoffs: {
+        registry: this.handoffs,
+        tokens: this.tokens,
+        // The link's view also needs where it runs: on ssh and fly it shows the screen only when asked.
+        describe: async (id) => {
+          const described = await this.describe(id);
+          const provider = this.computers.get(id)?.info.provider;
+          return described && provider ? { ...described, provider } : described;
+        },
+      },
       getProfile: () => this.profile,
       getCapabilities: async () => {
         const providers = await this.manager.status();

@@ -76,6 +76,7 @@ export function Screen({
   note,
   control,
   onTakeOver,
+  onLook,
   taking = false,
   className,
 }: {
@@ -87,6 +88,8 @@ export function Screen({
   control?: ((input: HandoffInput) => void) | undefined;
   /** Not held: Take over, offered when the screen is clicked. */
   onTakeOver?: (() => void) | undefined;
+  /** A screen shown on demand: Look, offered where the screen would be. */
+  onLook?: (() => void) | undefined;
   taking?: boolean;
   className?: string;
 }) {
@@ -177,8 +180,13 @@ export function Screen({
           }}
         />
       ) : (
-        <div className="screen-empty" role="status">
-          {note}
+        <div className="screen-empty">
+          <span role="status">{note}</span>
+          {onLook ? (
+            <Button size="sm" onClick={onLook}>
+              Look
+            </Button>
+          ) : null}
         </div>
       )}
 

@@ -56,3 +56,26 @@ export function useScreenFeed(id: string, { fps, enabled = true }: { fps?: numbe
 
   return { frame, note };
 }
+
+/** Providers whose screen a long-lived driver pushes. On the others (ssh, fly) every picture is a command on the computer. */
+export const PUSHED_SCREEN = new Set(['docker', 'podman', 'local']);
+
+/** How long one Look shows a screen that is shown on demand. */
+export const LOOK_MS = 60_000;
+
+export const ON_DEMAND_NOTE = 'Each picture of this screen is a command on the computer, which keeps it awake, so it shows when you look.';
+
+/**
+ * A screen shown on demand (ssh and fly, unless the person holds the
+ * computer): nothing until `look`, then the screen for LOOK_MS. Any other
+ * screen is always looking.
+ */
+export function useLook(onDemand: boolean): { looking: boolean; look: () => void } {
+  const [lookedAt, setLookedAt] = useState(0);
+  useEffect(() => {
+    if (!lookedAt) return;
+    const t = setTimeout(() => setLookedAt(0), LOOK_MS);
+    return () => clearTimeout(t);
+  }, [lookedAt]);
+  return { looking: !onDemand || lookedAt > 0, look: () => setLookedAt(Date.now()) };
+}

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { HuskApi } from '../api/client';
+import { LOOK_MS, useLook } from '../components/useScreenFeed';
 import { desktopView } from '../state/viewerToken';
 import { AppGlyph } from './AppGlyph';
 import { ago, doing, statusOf, tabName } from './bridge';
@@ -204,6 +205,37 @@ describe('the Computers window', () => {
     await waitFor(() => expect(sockets).toEqual(['/v1/computers/cmp_a01/screen', '/v1/computers/cmp_a01/screen']));
     expect(screen.queryByAltText(live)).toBeNull();
     expect(screen.getByRole('button', { name: 'Take over' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('shows an ssh or fly computer’s screen only for a Look, and a held one always', async () => {
+    bridge(desk([computer('cmp_a01', { live: false })], { active: 'cmp_a01' }));
+    const { unmount } = render(<ComputersWindow />);
+    expect(screen.getByText(/shows when you look/)).toBeTruthy();
+    expect(sockets).toEqual([]);
+    fireEvent.click(screen.getByRole('button', { name: 'Look' }));
+    await waitFor(() => expect(sockets).toEqual(['/v1/computers/cmp_a01/screen']));
+    unmount();
+    sockets = [];
+    bridge(desk([computer('cmp_a02', { live: false, held: true, handoffId: 'hnd_me' })], { active: 'cmp_a02' }));
+    render(<ComputersWindow />);
+    await waitFor(() => expect(sockets).toEqual(['/v1/computers/cmp_a02/screen']));
+  });
+
+  it('looks at a screen shown on demand for a minute at a time', () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useLook(true));
+      expect(result.current.looking).toBe(false);
+      act(() => result.current.look());
+      expect(result.current.looking).toBe(true);
+      act(() => void vi.advanceTimersByTime(LOOK_MS - 1));
+      expect(result.current.looking).toBe(true);
+      act(() => void vi.advanceTimersByTime(1));
+      expect(result.current.looking).toBe(false);
+      expect(renderHook(() => useLook(false)).result.current.looking).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('names two computers of one app apart by when their chats started', () => {
