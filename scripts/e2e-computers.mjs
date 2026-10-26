@@ -11,7 +11,7 @@
 //   node scripts/e2e-computers.mjs
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -609,6 +609,246 @@ async function checkFrames(id) {
   await tool(id, 'browser_click', { ref: inFrame('cross', 'link', 'Elsewhere') });
   const stale = await tool(id, 'browser_type', { ref: crossName, text: 'late' });
   check('a frame that loads another page takes its refs with it', stale.isError === true && /from an earlier page/.test(textOf(stale)), textOf(stale).slice(0, 200));
+}
+
+/** The Playwright MCP the benchmark measures Husk against: pinned, so two runs measure the same thing. */
+const PLAYWRIGHT_MCP = '@playwright/mcp@0.0.83';
+
+/**
+ * Husk against Playwright MCP on the same computer and the same Chromium
+ * (J3-f). The same tasks on the same fixture pages, each tool set driven by a
+ * scripted plan that uses its own tools as economically as it can and still
+ * does the task: not a model, which would need an API key that CI does not
+ * have. Playwright MCP runs inside the computer and launches the same Chromium
+ * binary itself, as it does by default (attached over --cdp-endpoint instead,
+ * it never hears of a download), so Husk's driver neither answers its dialogs
+ * nor polices its loads. The tab task runs last: both tool sets leave the tabs
+ * it opens. Measured: whether each plan did the task, its calls, its wall time
+ * (median and worst of RUNS) and the bytes it read back. Published to the job
+ * summary as measured; a measurement, so it never fails the run.
+ */
+async function benchmarkAgainstPlaywright(id, container) {
+  const RUNS = 5;
+  const BENCH = `${FIXTURE}bench/`;
+  const say = (text) => `const h = document.createElement('h1'); h.textContent = ${text}; document.body.replaceChildren(h)`;
+  const pages = {
+    'read.html': '<!doctype html><title>read</title><h1>Quarterly report</h1><p>Revenue grew 12% this quarter.</p>',
+    'form.html': `<!doctype html><title>form</title><form onsubmit="event.preventDefault(); ${say("'Signed in as ' + this.email.value")}"><label>Email <input name="email"></label> <button>Sign in</button></form>`,
+    'confirm.html': `<!doctype html><title>confirm</title><button onclick="if (confirm('Delete it?')) { ${say("'Deleted'")} }">Delete</button>`,
+    'toast.html':
+      "<!doctype html><title>toast</title><button onclick=\"const t = document.createElement('div'); t.textContent = 'Saved!'; document.body.append(t); setTimeout(() => t.remove(), 150)\">Save</button>",
+    'frame.html':
+      `<!doctype html><title>frame</title><iframe title="profile" src="http://localhost:${FIXTURE_PORT}/bench/inner.html" style="width:420px;height:100px"></iframe><h1 id="hello"></h1>` +
+      "<script>addEventListener('message', (e) => { document.getElementById('hello').textContent = String(e.data); })</script>",
+    'inner.html': "<!doctype html><title>inner</title><label>Name <input oninput=\"parent.postMessage('Hello, ' + this.value, '*')\"></label>",
+    'tab.html': '<!doctype html><title>tab</title><a href="/bench/second.html" target="_blank">Open</a>',
+    'second.html': '<!doctype html><title>second</title><h1>Second page</h1>',
+    'files.html': '<!doctype html><title>files</title><a href="/bench/report.txt" download>Report</a>',
+    'report.txt': 'quarterly numbers\n',
+  };
+  for (const [name, content] of Object.entries(pages)) await tool(id, 'write_file', { path: `/work/fixture/bench/${name}`, content });
+
+  // Each plan gets a call function that counts; it returns whether the task is done.
+  const husk = {
+    read: async (t) => /Quarterly report/.test((await t('browser_goto', { url: `${BENCH}read.html` })).text),
+    form: async (t) =>
+      /heading "Signed in as ada@example\.com"/.test(
+        (
+          await t('browser_run', {
+            actions: [
+              { do: 'goto', url: `${BENCH}form.html` },
+              { do: 'fill', role: 'textbox', name: 'Email', text: 'ada@example.com' },
+              { do: 'click', role: 'button', name: 'Sign in', waitFor: { text: 'Signed in as' } },
+              { do: 'snapshot' },
+            ],
+          })
+        ).text,
+      ),
+    confirm: async (t) =>
+      /it appeared after/.test(
+        (await t('browser_run', { actions: [{ do: 'goto', url: `${BENCH}confirm.html` }, { do: 'click', role: 'button', name: 'Delete', dialog: 'accept', waitFor: { text: 'Deleted' } }] })).text,
+      ),
+    toast: async (t) =>
+      /it appeared after/.test(
+        (await t('browser_run', { actions: [{ do: 'goto', url: `${BENCH}toast.html` }, { do: 'click', role: 'button', name: 'Save', waitFor: { text: 'Saved!' } }] })).text,
+      ),
+    frame: async (t) => {
+      const snap = (await t('browser_run', { actions: [{ do: 'goto', url: `${BENCH}frame.html` }, { do: 'snapshot' }] })).text;
+      const ref = /(f\d+e\d+) {2}textbox "Name"/.exec(snap)?.[1];
+      return Boolean(ref) && /it appeared after/.test((await t('browser_type', { ref, text: 'Ada', waitFor: { text: 'Hello, Ada' } })).text);
+    },
+    download: async (t) =>
+      /downloaded report\.txt/.test((await t('browser_run', { actions: [{ do: 'goto', url: `${BENCH}files.html` }, { do: 'click', role: 'link', name: 'Report' }] })).text),
+    tab: async (t) => {
+      const clicked = (await t('browser_run', { actions: [{ do: 'goto', url: `${BENCH}tab.html` }, { do: 'click', role: 'link', name: 'Open' }] })).text;
+      const tab = /switchTo "([^"]+)"/.exec(clicked)?.[1];
+      return Boolean(tab) && /heading "Second page"/.test((await t('browser_tabs', { switchTo: tab })).text);
+    },
+  };
+  const playwright = {
+    read: async (t) => {
+      await t('browser_navigate', { url: `${BENCH}read.html` });
+      return /Quarterly report/.test((await t('browser_snapshot', {})).text);
+    },
+    form: async (t) => {
+      await t('browser_navigate', { url: `${BENCH}form.html` });
+      await t('browser_type', { element: 'Email field', target: 'input[name=email]', text: 'ada@example.com', submit: true });
+      return /Signed in as ada@example\.com/.test((await t('browser_snapshot', {})).text);
+    },
+    confirm: async (t) => {
+      await t('browser_navigate', { url: `${BENCH}confirm.html` });
+      await t('browser_click', { element: 'Delete button', target: 'button' });
+      await t('browser_handle_dialog', { accept: true });
+      return /Deleted/.test((await t('browser_snapshot', {})).text);
+    },
+    toast: async (t) => {
+      await t('browser_navigate', { url: `${BENCH}toast.html` });
+      // Gone 150 ms after the click, before a wait could start: watched from before the click instead.
+      await t('browser_evaluate', {
+        function: "() => { window.seen = false; new MutationObserver(() => { window.seen ||= document.body.innerText.includes('Saved!'); }).observe(document.body, { childList: true, subtree: true }); }",
+      });
+      await t('browser_click', { element: 'Save button', target: 'button' });
+      return /\btrue\b/.test((await t('browser_evaluate', { function: '() => window.seen' })).text);
+    },
+    frame: async (t) => {
+      await t('browser_navigate', { url: `${BENCH}frame.html` });
+      const ref = /textbox "Name" \[ref=(\w+)\]/.exec((await t('browser_snapshot', {})).text)?.[1];
+      if (!ref) return false;
+      await t('browser_type', { element: 'Name field', target: ref, text: 'Ada' });
+      return /Hello, Ada/.test((await t('browser_snapshot', {})).text);
+    },
+    download: async (t) => {
+      await t('browser_navigate', { url: `${BENCH}files.html` });
+      const done = /Downloaded file report\.txt to/;
+      // A download still going when the click returns is said finished in the next reply.
+      return done.test((await t('browser_click', { element: 'Report link', target: 'a' })).text) || done.test((await t('browser_snapshot', {})).text);
+    },
+    tab: async (t) => {
+      await t('browser_navigate', { url: `${BENCH}tab.html` });
+      const clicked = (await t('browser_click', { element: 'Open link', target: 'a' })).text;
+      const index = /- (\d+): \[[^\]]*\]\(http:\/\/127\.0\.0\.1:\d+\/bench\/second\.html\)/.exec(clicked)?.[1];
+      if (index === undefined) return false;
+      await t('browser_tabs', { action: 'select', index: Number(index) });
+      return /Second page/.test((await t('browser_snapshot', {})).text);
+    },
+  };
+
+  const measure = async (plans, call) => {
+    const out = {};
+    for (const [task, plan] of Object.entries(plans)) {
+      const runs = [];
+      for (let i = 0; i < RUNS; i++) {
+        let calls = 0;
+        let bytes = 0;
+        // Why a task was not done: the first call that failed, else the last reply.
+        let why = '';
+        let last = '';
+        const t = async (name, args) => {
+          calls++;
+          const r = await call(name, args);
+          bytes += r.text.length;
+          last = `${name}: ${r.text}`;
+          if (r.isError && !why) why = last;
+          return r;
+        };
+        const started = performance.now();
+        let ok = false;
+        try {
+          ok = await plan(t);
+        } catch (err) {
+          why ||= `threw: ${err.message}`;
+        }
+        runs.push({ ok, calls, bytes, ms: Math.round(performance.now() - started), ...(ok ? {} : { why: (why || last).replace(/\s+/g, ' ').slice(0, 300) }) });
+      }
+      out[task] = runs;
+    }
+    return out;
+  };
+  const sum = (runs) => {
+    const sorted = (xs) => [...xs].sort((a, b) => a - b);
+    const ms = sorted(runs.map((r) => r.ms));
+    return {
+      done: runs.filter((r) => r.ok).length,
+      calls: sorted(runs.map((r) => r.calls))[Math.floor(runs.length / 2)],
+      median: ms[Math.floor(ms.length / 2)],
+      worst: ms.at(-1),
+      bytes: sorted(runs.map((r) => r.bytes))[Math.floor(runs.length / 2)],
+    };
+  };
+
+  const was = /^\* (\S+)/m.exec(textOf(await tool(id, 'browser_tabs')))?.[1];
+  const huskRuns = await measure(husk, async (name, args) => {
+    const r = await tool(id, name, args);
+    return { text: textOf(r), isError: r.isError === true };
+  });
+  if (was) await tool(id, 'browser_tabs', { switchTo: was });
+
+  // Playwright MCP launches its own Chromium, as it does by default: the same binary, in the same computer.
+  let pwRuns;
+  let pwWhy = '';
+  const binary = /already installed: (\S+)/.exec(textOf(await tool(id, 'browser_status')))?.[1];
+  let pw;
+  try {
+    if (!binary) throw new Error('no Chromium binary for Playwright MCP to launch');
+    // The computer's user has no home directory, and Playwright MCP keeps a cache in one: /tmp is its home here.
+    pw = mcpSession([], {
+      command: 'docker',
+      args: [
+        'exec', '-i', '-e', 'HOME=/tmp', '-e', 'npm_config_cache=/tmp/.npm', '-e', 'npm_config_update_notifier=false', '-w', '/tmp', container,
+        'npx', '-y', PLAYWRIGHT_MCP, '--executable-path', binary, '--headless', '--isolated', '--no-sandbox', '--output-dir', '/tmp/pwmcp',
+      ],
+    });
+    await pw.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'husk-e2e', version: '0' } });
+    pw.notify('notifications/initialized');
+    pwRuns = await measure(playwright, async (name, args) => {
+      const r = (await pw.request('tools/call', { name, arguments: args })).result ?? {};
+      return { text: textOf(r), isError: r.isError === true };
+    });
+  } catch (err) {
+    pwWhy = err.message;
+  } finally {
+    pw?.child.kill();
+    // Playwright MCP and the Chromium it launched (its profile is playwright_chromiumdev_profile-*), should either outlive the session.
+    await tool(id, 'shell', { command: "pkill -f -- 'playwrigh[t]' || true" }).catch(() => undefined);
+  }
+
+  const cell = (s) => `${s.done}/${RUNS} done, ${s.calls} call${s.calls === 1 ? '' : 's'}, ${s.median} ms (worst ${s.worst}), ${s.bytes} bytes`;
+  const lines = [`${'task'.padEnd(10)} ${'Husk'.padEnd(62)} Playwright MCP`];
+  const rows = [];
+  for (const task of Object.keys(husk)) {
+    const h = sum(huskRuns[task]);
+    const p = pwRuns ? sum(pwRuns[task]) : undefined;
+    lines.push(`${task.padEnd(10)} ${cell(h).padEnd(62)} ${p ? cell(p) : 'not measured'}`);
+    rows.push({ task, husk: h, playwright: p ?? null });
+  }
+  // What a task that was not done last said, once per tool set and task.
+  const notDone = [];
+  for (const [who, runs] of [['Husk', huskRuns], ['Playwright MCP', pwRuns ?? {}]]) {
+    for (const [task, rs] of Object.entries(runs)) {
+      const failed = rs.find((r) => !r.ok);
+      if (failed) notDone.push(`${who}, ${task}: ${failed.why}`);
+    }
+  }
+  console.log(
+    `\nHusk against ${PLAYWRIGHT_MCP}, same computer, same Chromium, scripted plans, ${RUNS} runs each\n${lines.join('\n')}` +
+      `${pwWhy ? `\nPlaywright MCP not measured: ${pwWhy}` : ''}${notDone.length ? `\nnot done, and why:\n${notDone.map((l) => `  ${l}`).join('\n')}` : ''}\n`,
+  );
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const { appendFileSync } = await import('node:fs');
+    const md = (s) => (s ? `${s.done}/${RUNS} | ${s.calls} | ${s.median} / ${s.worst} | ${s.bytes}` : 'not measured | | |');
+    appendFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      `### Husk against Playwright MCP\n\nThe same tasks on the same computer and the same Chromium binary (${PLAYWRIGHT_MCP} over --cdp-endpoint, on a second Chromium), each driven by a scripted plan that uses its own tools as economically as it can -- not a model. ${RUNS} runs each; ms is median / worst; bytes is what the plan read back.\n\n` +
+        '| Task | Husk done | calls | ms | bytes | Playwright MCP done | calls | ms | bytes |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n' +
+        rows.map((r) => `| ${r.task} | ${md(r.husk)} | ${md(r.playwright)} |`).join('\n') +
+        `${pwWhy ? `\n\nPlaywright MCP was not measured: ${pwWhy}` : ''}` +
+        `${notDone.length ? `\n\nNot done, and why (the first such run):\n\n${notDone.map((l) => `- ${l.replace(/\|/g, '\\|')}`).join('\n')}` : ''}\n`,
+    );
+  }
+  if (process.env.E2E_SHOTS) {
+    mkdirSync(process.env.E2E_SHOTS, { recursive: true });
+    writeFileSync(join(process.env.E2E_SHOTS, 'benchmark.json'), `${JSON.stringify({ against: PLAYWRIGHT_MCP, runs: RUNS, rows, husk: huskRuns, playwright: pwRuns ?? null, notMeasured: pwWhy || null }, null, 2)}\n`);
+  }
 }
 
 /**
@@ -1277,6 +1517,13 @@ try {
   await checkPolicyBelowTheTool(id);
   await checkFewerTurns(id);
   await checkEveryBrowserTool(id);
+
+  // 8e. Husk against Playwright MCP, measured; a measurement never fails the run.
+  try {
+    await benchmarkAgainstPlaywright(id, made.body.name);
+  } catch (err) {
+    console.log(`the benchmark was not measured: ${err.message}`);
+  }
 
   // 8d. Taking over stops the AI where it is, scripts included.
   await checkTakeover(id);

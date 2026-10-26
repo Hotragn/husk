@@ -20,7 +20,7 @@ describe('describeHappened', () => {
       'The page showed a confirm dialog: "Delete?". Husk dismissed it. To accept it instead, do this again with dialog: "accept".',
       'The page showed an alert dialog: "Saved". Husk accepted it.',
       'It downloaded report.pdf (1234 bytes) to /work/downloads/report.pdf.',
-      'It opened a new tab: https://example.com/ (browser_tabs lists it, to switch to it).',
+      'It opened a new tab: https://example.com/ (browser_tabs with switchTo "T2" goes there).',
       'The network policy stopped the page from loading http://169.254.169.254/: an internal address.',
     ]);
     expect(describeHappened({})).toEqual([]);
