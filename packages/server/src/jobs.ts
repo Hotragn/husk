@@ -91,8 +91,15 @@ export function remoteRunner(shared: () => Promise<SharedHusk>): Pick<Runner, 'r
     return res;
   };
   return {
+    // Streamed, though only the result is wanted: a run that waits out a person's
+    // take-over sends nothing for as long as they keep the computer, and fetch
+    // gives up on a response with no headers after five minutes. The stream's
+    // headers come at once, and its heartbeat keeps it open.
     async run(spec: HuskSpec, body: RunRequestBody, signal?: AbortSignal): Promise<RunResult> {
-      return (await (await call(spec, 'run', body, signal)).json()) as RunResult;
+      let result: RunResult | undefined;
+      for await (const e of events(await call(spec, 'run/stream', body, signal))) if (e.type === 'run_end') result = e.result;
+      if (!result) throw new HuskError('E_INTERNAL', 'the shared Husk ended the run without its result', { hint: '~/.husk/daemon.log says why' });
+      return result;
     },
     async *stream(spec: HuskSpec, body: RunRequestBody, signal: AbortSignal): AsyncGenerator<ServerRunEvent> {
       yield* events(await call(spec, 'run/stream', body, signal));

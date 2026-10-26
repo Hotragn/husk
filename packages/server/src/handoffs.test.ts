@@ -1,3 +1,4 @@
+import type { RunEvent } from '@husk-ai/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CHAT_RUN, ComputerControl, HandoffRegistry, PERSON_RUN, refusalText } from './handoffs.js';
 import { buildTestApp, fakeAgentFactory, sampleSpec, type TestApp } from './testing.js';
@@ -245,24 +246,46 @@ describe('a husk run on a computer a person holds', { timeout: 30_000 }, () => {
     harness = undefined;
   });
 
-  async function toolOutput(take: boolean): Promise<string> {
-    // The fake manager names its first computer cmp_1, so the run can be told it up front.
+  /** A run whose computer tool goes onto cmp_1, the fake manager's first computer, taken over first or not. */
+  async function run(take: boolean, signal = new AbortController().signal) {
     const h = (harness = await buildTestApp({ agent: fakeAgentFactory({ toolOn: { computerId: 'cmp_1', name: 'shell' } }) }));
     const { id } = (await h.app.inject({ method: 'POST', url: '/v1/computers', payload: {} })).json() as { id: string };
     expect(id).toBe('cmp_1');
-    if (take) await h.app.inject({ method: 'POST', url: `/v1/computers/${id}/takeover` });
-    for await (const e of h.app.husk.runner.stream(sampleSpec(), { input: 'go' }, new AbortController().signal)) {
-      if (e.type === 'tool_end') return e.output;
-    }
-    return 'no tool_end';
+    const handoffId = take ? ((await h.app.inject({ method: 'POST', url: `/v1/computers/${id}/takeover` })).json() as { handoffId: string }).handoffId : '';
+    const seen: RunEvent[] = [];
+    const done = (async () => {
+      for await (const e of h.app.husk.runner.stream(sampleSpec(), { input: 'go' }, signal)) seen.push(e);
+    })();
+    return { h, handoffId, seen, done };
   }
+  const paused = (seen: RunEvent[]) => seen.filter((e) => e.type === 'warning' && /^Paused: a person took over/.test(e.message));
 
-  it('has its computer tools refused, with who holds the computer', async () => {
-    expect(await toolOutput(true)).toContain('took over this computer');
+  it('pauses, says so once, and goes on when the person gives the computer back (J5-e)', async () => {
+    const { h, handoffId, seen, done } = await run(true);
+    await vi.waitFor(() => expect(paused(seen)).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 600));
+    expect(paused(seen)).toHaveLength(1);
+    expect(seen.some((e) => e.type === 'tool_end')).toBe(false);
+    await h.app.inject({ method: 'POST', url: `/v1/handoffs/${handoffId}/done`, headers: { 'x-husk-as': 'person' } });
+    await done;
+    expect(seen.find((e) => e.type === 'tool_end')).toMatchObject({ output: 'ran' });
+    expect(seen.at(-1)?.type).toBe('run_end');
   });
 
-  it('runs them as before when nobody holds it', async () => {
-    expect(await toolOutput(false)).toBe('ran');
+  it('ends, its tool never run, when the run is cancelled while it waits', async () => {
+    const abort = new AbortController();
+    const { seen, done } = await run(true, abort.signal);
+    await vi.waitFor(() => expect(paused(seen)).toHaveLength(1));
+    abort.abort();
+    await done;
+    expect(seen.some((e) => e.type === 'tool_end' && e.output === 'ran')).toBe(false);
+  });
+
+  it('runs its tools as before when nobody holds the computer', async () => {
+    const { seen, done } = await run(false);
+    await done;
+    expect(seen.find((e) => e.type === 'tool_end')).toMatchObject({ output: 'ran' });
+    expect(paused(seen)).toHaveLength(0);
   });
 });
 

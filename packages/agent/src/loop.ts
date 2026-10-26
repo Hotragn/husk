@@ -568,7 +568,10 @@ class Run {
     // stop it part-way through the signal it runs under.
     // The built-in computer tools say so; a host-supplied Tool may not touch the computer at all.
     const touchesComputer = (tool as { needsComputer?: boolean }).needsComputer === true;
-    const admitted = touchesComputer && this.opts.admitTool ? await this.opts.admitTool(call, this.abort.signal) : undefined;
+    // The computer first, so the host is asked about this computer even on the
+    // run's first call. A computer that will not come up fails in the handler, as before.
+    const computerId = touchesComputer && this.opts.admitTool ? (await this.acquireComputer().catch(() => undefined))?.id : undefined;
+    const admitted = touchesComputer && this.opts.admitTool ? await this.opts.admitTool(call, this.abort.signal, computerId) : undefined;
     if (admitted && 'refused' in admitted) return finish(admitted.refused, true);
     const signal = admitted?.signal ?? this.abort.signal;
     try {

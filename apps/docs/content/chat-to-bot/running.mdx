@@ -27,6 +27,13 @@ husk run husk.yaml "list the files" --json | jq -r .text
 Ctrl-C stops the run cleanly between steps and leaves the machine alone. Nothing is
 destroyed — you interrupted the agent, not the filesystem you were about to inspect.
 
+A bot whose computer you take over, from the console or the desktop app, pauses: a call
+it was running stops part-way, its next one waits until you press Give back, and the run
+says once that it paused. Then it goes on where it was. A chat is told to stop instead,
+because it has you to tell; a bot has nobody. Cancelling the run, or its
+`limits.timeoutSec`, still ends it while it waits. This holds on every engine: Husk's
+own, and your Claude Code or Codex.
+
 ## What a run looks like
 
 <Terminal title="husk run">

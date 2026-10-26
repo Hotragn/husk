@@ -1,5 +1,5 @@
 import { livePageFor } from '@husk-ai/browser';
-import { refusalText, stoppedText } from './handoffs.js';
+import { PERSON_RUN, refusalText, stoppedText } from './handoffs.js';
 import type { HandoffRegistry, PageMark } from './handoffs.js';
 
 /**
@@ -24,6 +24,18 @@ export async function pageMark(computerId: string): Promise<PageMark | undefined
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Wait for the person who took this computer over to give it back, until
+ * `signal` aborts or `until` passes; true once nobody holds it that way. How a
+ * call waits instead of being refused: a chat's a while (routes/tools.ts), so a
+ * short look-in pauses it; a bot's as long as its run, with nobody to tell.
+ */
+export async function givenBack(registry: HandoffRegistry, computerId: string, signal?: AbortSignal, until = Infinity): Promise<boolean> {
+  const taken = () => registry.list().some((h) => h.computerId === computerId && h.runId === PERSON_RUN);
+  while (taken() && Date.now() < until && !signal?.aborted) await new Promise((r) => setTimeout(r, 250));
+  return !taken();
 }
 
 /** A call let in, with the signal it runs under, or why it was not. */

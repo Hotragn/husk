@@ -236,7 +236,9 @@ function client(first: DaemonRecord, doFetch: typeof fetch, read: () => DaemonRe
       await call('POST', `/v1/computers/${id(computerId)}/stop`);
     },
     async callTool(computerId, name, args, signal) {
-      const res = await send('POST', `/v1/computers/${id(computerId)}/tools/${id(name)}`, { args, via: 'mcp' }, signal);
+      // A bot on a person's own CLI (HUSK_BOT, set by its engine) waits out a take-over; a chat is told to.
+      const via = process.env.HUSK_BOT ? 'bot' : 'mcp';
+      const res = await send('POST', `/v1/computers/${id(computerId)}/tools/${id(name)}`, { args, via }, signal);
       const body = (await res.json().catch(() => ({}))) as ToolResult & { error?: { code?: string; message?: string; hint?: string } };
       if (res.ok && Array.isArray(body.content)) return body;
       if (res.status === 404 && body.error?.code === 'E_COMPUTER_NOT_FOUND') {

@@ -145,6 +145,21 @@ describe('a person taking a computer from the console', { timeout: 30_000 }, () 
     // Taking it again while held hands back the same one; it has no lease to run out.
     expect((await harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/takeover` })).json().handoffId).toBe(handoffId);
   });
+
+  it("waits out the take-over for a bot's call, past a chat's wait, with nobody to tell (J5-e)", async () => {
+    const { id, handoffId } = await taken();
+    const before = takeover.waitMs;
+    takeover.waitMs = 300;
+    try {
+      const call = harness.app.inject({ method: 'POST', url: `/v1/computers/${id}/tools/shell`, payload: { args: {}, via: 'bot' } });
+      await new Promise((r) => setTimeout(r, 900));
+      expect(ran).toEqual([]);
+      await harness.app.inject({ method: 'POST', url: `/v1/handoffs/${handoffId}/done`, headers: { 'x-husk-as': 'person' } });
+      expect((await call).json().content[0].text).toBe('ran');
+    } finally {
+      takeover.waitMs = before;
+    }
+  });
 });
 
 describe('a chat handoff that ends', { timeout: 30_000 }, () => {
