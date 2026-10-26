@@ -22,6 +22,7 @@ const KEY_ORDER: Array<keyof HuskSpec> = [
   'description',
   'model',
   'fallbackModels',
+  'engine',
   'temperature',
   'persona',
   'knowledge',

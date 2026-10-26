@@ -236,7 +236,9 @@ export class Runner {
 
   private async begin(spec: HuskSpec, body: RunRequestBody): Promise<{ runId: string; model: string }> {
     const runId = this.deps.store.newRunId();
-    const model = body.model ?? spec.model;
+    const chosen = body.model ?? spec.model;
+    // A CLI engine's run is named for the CLI, and the model only when one was asked for.
+    const model = spec.engine.type === 'builtin' ? chosen : [spec.engine.type, chosen === 'auto' ? '' : chosen].filter(Boolean).join('/');
     await this.deps.store.startRun({
       runId,
       husk: spec.name,

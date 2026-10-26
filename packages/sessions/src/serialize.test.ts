@@ -41,6 +41,7 @@ describe('stringifySpec', () => {
       'description',
       'model',
       'fallbackModels',
+      'engine',
       'persona',
       'knowledge',
       'examples',

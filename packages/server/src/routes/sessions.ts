@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { mapLimit, slug } from '@husk-ai/core';
+import { findCli, mapLimit, parseSpec, slug } from '@husk-ai/core';
 import type { DistilledAgent, HuskSpec, Transcript, TranscriptImporter, TranscriptSource } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { stringify as stringifyYaml } from 'yaml';
@@ -16,11 +16,13 @@ import { SseStream } from '../sse.js';
  * shipped importers implement it, so discovery cannot delegate. These are the
  * fallbacks; an importer that grows the method overrides them.
  */
-const DEFAULT_LOCATIONS: Partial<Record<TranscriptSource, string[]>> = {
-  'claude-code': [join(homedir(), '.claude', 'projects'), join(homedir(), '.config', 'claude', 'projects')],
-  cursor: [join(homedir(), '.cursor', 'chats')],
-  gemini: [join(homedir(), '.gemini', 'sessions')],
-};
+function defaultLocations(home = homedir()): Partial<Record<TranscriptSource, string[]>> {
+  return {
+    'claude-code': [join(home, '.claude', 'projects'), join(home, '.config', 'claude', 'projects')],
+    cursor: [join(home, '.cursor', 'chats')],
+    gemini: [join(home, '.gemini', 'sessions')],
+  };
+}
 
 const DISCOVER_FILE_LIMIT = 200;
 const DISCOVER_DEPTH = 3;
@@ -211,7 +213,7 @@ async function distill(
  * under Claude Code's projects directory. The id is checked to be a plain
  * token first, so it can never name a path of its own.
  */
-export async function claudeCodeTranscript(sessionId: string, roots = DEFAULT_LOCATIONS['claude-code'] ?? []): Promise<string | undefined> {
+export async function claudeCodeTranscript(sessionId: string, roots = defaultLocations()['claude-code'] ?? []): Promise<string | undefined> {
   if (!/^[A-Za-z0-9-]{8,80}$/.test(sessionId)) return undefined;
   for (const root of roots) {
     const projects = await readdir(root, { withFileTypes: true }).catch(() => []);
@@ -233,10 +235,14 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
    * draft. Only a Claude Code chat can be read back, because its transcript is
    * a file named after the session id Husk recorded; for any other app the
    * person exports the chat and imports it.
+   *
+   * Where the person's Claude Code is installed, the draft runs on it and
+   * continues this chat, on this computer (`engine: claude-code`); otherwise,
+   * or when asked (`engine: builtin`), on Husk's own engine and any model.
    */
   app.post('/v1/computers/:id/bot', async (req) => {
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { useModel?: boolean; model?: string };
+    const body = (req.body ?? {}) as { useModel?: boolean; model?: string; engine?: 'claude-code' | 'builtin' };
     const computer = await ctx.deps.manager.get(id);
     if (!computer) throw notFound('computer', id);
     const sessionId = computer.info.spec?.labels?.['husk.session'];
@@ -254,17 +260,23 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
     if (!transcript) throw huskError('E_IMPORT_FAILED', 'the chat has no messages yet');
     await store.saveTranscript(transcript);
     const distilled = await distill(transcript, body.useModel === true, router, body.model);
-    const spec = await specFromDistilled(distilled, transcript);
-    return { transcriptId: transcript.id, distilled, spec, yaml: stringifyYaml(spec, { lineWidth: 100 }) };
+    const claudeCode = findCli('claude-code') !== undefined;
+    const draft = await specFromDistilled(distilled, transcript);
+    const spec =
+      (body.engine ?? (claudeCode ? 'claude-code' : 'builtin')) === 'claude-code'
+        ? parseSpec({ ...draft, model: 'auto', engine: { type: 'claude-code', resume: sessionId } })
+        : draft;
+    return { transcriptId: transcript.id, distilled, spec, yaml: stringifyYaml(spec, { lineWidth: 100 }), claudeCode };
   });
 
   app.get('/v1/sessions/discover', async (req) => {
     const q = req.query as { source?: TranscriptSource; path?: string };
-    const sources: TranscriptSource[] = q.source ? [q.source] : (Object.keys(DEFAULT_LOCATIONS) as TranscriptSource[]);
+    const locations = defaultLocations();
+    const sources: TranscriptSource[] = q.source ? [q.source] : (Object.keys(locations) as TranscriptSource[]);
     const sessions: DiscoveredSession[] = [];
 
     for (const source of sources) {
-      const roots = q.path ? [q.path] : (DEFAULT_LOCATIONS[source] ?? []);
+      const roots = q.path ? [q.path] : (locations[source] ?? []);
       for (const root of roots) {
         const files: string[] = [];
         await walk(root, DISCOVER_DEPTH, files);

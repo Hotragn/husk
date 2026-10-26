@@ -37,9 +37,11 @@ class FakeSocket {
 
 let calls: Array<{ method: string; path: string; body?: string }>;
 let existing = false;
+let claudeCode = false;
 beforeEach(() => {
   calls = [];
   existing = false;
+  claudeCode = false;
   // A socket from the last test must never stand in for this one's.
   FakeSocket.last = undefined;
   vi.stubGlobal('WebSocket', FakeSocket);
@@ -51,8 +53,13 @@ beforeEach(() => {
       if (path === '/v1/overview') return Response.json(overview);
       if (path === '/v1/computers/cmp_chat/activity')
         return Response.json({ entries: [{ at: '2026-10-21T10:43:00Z', tool: 'shell', ok: true, ms: 120, via: 'mcp', summary: 'npm test' }] });
-      if (path === '/v1/computers/cmp_chat/bot')
-        return Response.json({ transcriptId: 'tr_1', yaml: 'name: ci-triage\n', spec: { name: 'ci-triage' }, distilled: { confidence: 0.16, notes: ['Review the persona before shipping.'] } });
+      if (path === '/v1/computers/cmp_chat/bot') {
+        // As the shared Husk drafts it: on the person's Claude Code when it is installed, unless asked otherwise.
+        const asked = (JSON.parse(String(init?.body ?? '{}')) as { engine?: string }).engine;
+        const type = asked ?? (claudeCode ? 'claude-code' : 'builtin');
+        const engine = type === 'claude-code' ? { type, resume: 'sess-1' } : { type };
+        return Response.json({ transcriptId: 'tr_1', yaml: `name: ci-triage\nengine:\n  type: ${type}\n`, spec: { name: 'ci-triage', engine }, distilled: { confidence: 0.16, notes: ['Review the persona before shipping.'] }, claudeCode });
+      }
       if (path === '/v1/husks/ci-triage' && (init?.method ?? 'GET') === 'GET')
         return existing ? Response.json({ spec: { name: 'ci-triage' }, yaml: '' }) : Response.json({ error: { code: 'E_HUSK_NOT_FOUND', message: 'no' } }, { status: 404 });
       if (path === '/v1/husks' && init?.method === 'POST') return Response.json({ name: 'ci-triage', displayName: 'x', description: '', model: 'auto' }, { status: 201 });
@@ -211,6 +218,30 @@ describe('Chat panel', () => {
     expect(await screen.findByText('Saved as ci-triage. Run it from Husks.')).toBeTruthy();
     expect(calls.find((c) => c.method === 'POST' && c.path === '/v1/husks')).toBeTruthy();
     expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+  });
+
+  it("runs the bot on the person's own Claude Code when it is installed, and on Husk's engine if they choose", async () => {
+    claudeCode = true;
+    render(<ChatPanel computerId="cmp_chat" onOpen={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Make this a bot' }));
+    const runsOn = (await screen.findByLabelText('Runs on')) as HTMLSelectElement;
+    expect(runsOn.value).toBe('claude-code');
+    expect(screen.getByText(/goes on with this chat on this computer/)).toBeTruthy();
+    fireEvent.change(runsOn, { target: { value: 'builtin' } });
+    await waitFor(() => expect((screen.getByLabelText('Runs on') as HTMLSelectElement).value).toBe('builtin'));
+    expect(calls.filter((c) => c.path === '/v1/computers/cmp_chat/bot').at(-1)?.body).toContain('"engine":"builtin"');
+    expect(screen.getByText(/type: builtin/)).toBeTruthy();
+    // Distilling again keeps the choice.
+    fireEvent.click(screen.getByRole('button', { name: 'Distill again' }));
+    await waitFor(() => expect(calls.filter((c) => c.path === '/v1/computers/cmp_chat/bot')).toHaveLength(3));
+    expect(calls.at(-1)?.body).toContain('"engine":"builtin"');
+  });
+
+  it("says Husk's engine runs the bot when Claude Code is not where Husk can find it", async () => {
+    render(<ChatPanel computerId="cmp_chat" onOpen={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Make this a bot' }));
+    expect(await screen.findByText(/Runs on Husk's own engine/)).toBeTruthy();
+    expect(screen.queryByLabelText('Runs on')).toBeNull();
   });
 
   it('asks before replacing a bot that already has the name', async () => {

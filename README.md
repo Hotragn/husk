@@ -213,6 +213,19 @@ limits: { maxSteps: 24, maxCostUsd: 0.25 }
 transcript announces itself instead of producing a plausible-looking persona nobody
 checks. Five worked examples live in [`examples/`](examples/).
 
+A bot runs on Husk's own engine, on any model, or on your own Claude Code or Codex,
+headless under your own login, with Husk's tools and nothing else:
+
+```yaml
+engine:
+  type: claude-code   # or codex; builtin is the default
+  resume: <session>   # Claude Code: go on with that chat, on its computer
+```
+
+From a Claude Code chat, the console's **Make this a bot** sets this up when Claude Code
+is installed, so the bot is that chat going on. The
+[husk.yaml reference](apps/docs/content/chat-to-bot/husk-yaml.mdx#engine) has the details.
+
 ## What is in it
 
 - **A machine, not an interpreter.** Files, a shell, ports, a browser. `/work` survives
