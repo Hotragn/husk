@@ -349,6 +349,8 @@ export interface Overview {
   running?: Record<string, { tool: string; since: string }>;
   /** Computers a chat runs in its own process: watched and taken over from the chat's link. Absent from older servers. */
   inChat?: string[];
+  /** Remote access, when this Husk was started with it. `warning`: advisories short of high, or a check not made. */
+  remote?: { on: boolean; publicUrl: string; apps: number; offReason?: string; warning?: string };
 }
 
 /** One tool call on a computer. `summary` never carries typed text. */
@@ -429,6 +431,35 @@ export interface ConnectResult {
 export interface ComputerChoice {
   provider?: string;
   flavor?: 'base' | 'python' | 'node' | 'full';
+}
+
+/** A published advisory against a package this Husk runs, from the npm registry. */
+export interface RemoteAdvisory {
+  name: string;
+  version: string;
+  title: string;
+  severity: 'low' | 'moderate' | 'high' | 'critical';
+  url: string;
+  /** The versions it affects, as the advisory gives them. */
+  vulnerable?: string;
+}
+
+/** `GET /v1/remote`: chat apps on the web reaching this Husk. The route is a 404 unless `husk serve --remote`. */
+export interface RemoteStatus {
+  on: boolean;
+  /** Why it is off: switched off here, or an advisory switched it off. */
+  offReason?: string;
+  publicUrl: string;
+  /** What a chat app is given: `<publicUrl>/mcp`. */
+  endpoint: string;
+  owner: boolean;
+  /** Apps the owner signed in, and that have not been signed out since. */
+  apps: Array<{ id: string; name: string; createdAt: string }>;
+  /** The last advisory check's findings, every severity. */
+  advisories: RemoteAdvisory[];
+  checkedAt?: string;
+  /** Why the last check could not be made; it is tried again. */
+  checkError?: string;
 }
 
 /** One message on `WS /v1/computers/:id/screen`. */

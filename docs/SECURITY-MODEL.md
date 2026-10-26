@@ -177,20 +177,82 @@ In `ask`, tools marked `dangerous` pause for a human. **If no approver is wired 
 call is denied, not allowed** — a headless server running an `ask`-mode husk fails closed.
 In `readonly`, dangerous tools are never offered.
 
+## Remote access
+
+`husk serve --remote` is the one way Husk takes calls from the internet, from claude.ai and
+ChatGPT. It is off unless you start it, and it is for one person, its owner. The setup is
+in the guide (`apps/docs/content/guides/remote-access.mdx`); the routes are in
+[API.md](API.md#remote-access).
+
+- **Who gets in.** Whoever first types the claim code, which is printed on a terminal and
+  never into a log (80 bits, 15 minutes, 5 tries), and makes a passkey. After that, only
+  that passkey, with the person verified and its counter going up.
+- **Tokens.** Access tokens are EdDSA JWTs for one hour, for this public URL's `/mcp`
+  alone. Refresh tokens last 30 days and change on every use; a reused one ends its whole
+  family, including what a request in flight at that moment would mint.
+- **What the internet reaches.** Remote access's own port, which the tunnel publishes.
+  It serves the sign-in, `/mcp`, and the links Husk minted for a remote chat, and nothing
+  else, whatever `Host` header a request carries. The console and the API stay on their
+  own port, on loopback, behind the machine's token.
+- **Links.** A link a remote chat gives its person opens only after the owner's passkey,
+  used in that browser: the chat holds the link too, and a chat can be shared. Off, reset
+  and signing the app out end it.
+- **What a remote chat runs on.** Computers from an isolated provider only, bound apart
+  from this machine's own chats. The workspace tools, which work on this machine's files,
+  are not offered.
+- **What runs without you.** Nothing that changes anything. Commands, file changes and
+  browser actions wait for the owner's passkey, on a page that shows every argument
+  exactly; a call too big to show is never put to them.
+- **Off.** One switch revokes every token and makes the public URL a 404.
+- **Advisories.** Husk will not serve remotely while a high or critical security advisory
+  stands against the packages it runs (checked at start and daily), and switches itself
+  off when one appears.
+- **What a flood can do.** Budgets are per minute and never per address, which a tunnel
+  hides. What the owner already let in has its own, so a flood can delay only a new app's
+  first sign-in. If that happens, switch remote access off.
+- **Who can read it.** The chat app sees every tool result. Depending on the tunnel, so
+  can its provider: Tailscale Funnel and ngrok with TLS ended at the agent cannot,
+  Cloudflare and Fly can. The guide has the table.
+
+Two security reviews of remote access, in October 2026, found these. Each is fixed and
+has a test:
+
+| Found | Now |
+| --- | --- |
+| A refresh token minted by a request in flight could outlive the reuse that ended its family | A family a reuse ended stays ended, and nothing awaits between that check and the mint; off and reset end requests in flight too |
+| The public surface was chosen by the `Host` header, which a tunnel passes on as written | Remote access has its own port, and its requests carry a mark only this process knows |
+| Sign-in errors were redirected to any return address an app registered: an open redirect | Errors are shown on the page; the page warns of a return address that is not a chat app Husk knows |
+| Tokens kept working after the public URL changed | The state belongs to its URL: a new one starts over |
+| A link made on this machine opened under the public URL | Only links minted for a remote chat open there |
+| One stranger could use up the budget the owner's approvals and sign-ins shared | Those have budgets of their own |
+| A passkey whose counter fell back to zero was accepted | Refused, as WebAuthn asks |
+| The approval page showed a cut, redacted line, which could hide what a command ran | It shows every argument exactly, with hidden characters escaped |
+| The claim code was printed into a service's log | It is printed on a terminal only |
+| A link the chat was given could take over the computer and type into its browser, with no passkey | A link opens only after the owner's passkey, used in that browser |
+| Links outlived off, reset and their app's sign-out | All three end them |
+| An access token outlived the reuse that ended its family, for up to an hour | It ends with its family |
+| A sign-in that had typed the old claim code still made its owner after a new code | A new code ends it |
+| The public port kept `Idempotency-Key` records, which strangers could fill, replay past a limit, or read another's answer from | It keeps none |
+| The public port read bodies of up to 32 MB before checking a token or a budget | `/mcp` checks first, and sign-in bodies are at most 64 KB |
+| An app id such as `__proto__` crashed the sign-in | Ids are looked up as registered |
+| A hand-off link opened in a browser under the public URL showed "Reconnect": the console's `/health` check was a 404 there | `/health` answers there, saying only that it is up |
+
 ## What we do not do
 
 - **No telemetry.** Not off by default — absent. No analytics, no crash reporter, no
   phone-home. The only calls Husk makes are to the model provider you configured, to a
   registry when pulling an image, and — the first time a computer needs the rendered
   browser and has no Chromium of its own — to Chrome for Testing (Playwright's build on
-  arm64), from inside that computer.
+  arm64), from inside that computer. With remote access on, it also asks the npm
+  registry for advisories, sending its packages' names and versions and nothing else.
 - **No credential storage.** Husk reads keys from the environment and never writes them to
   `~/.husk`. One thing does land there verbatim: `husk import` caches the transcript you
   gave it, so a chat log containing a key keeps that key in `~/.husk/transcripts`. What
   Husk *derives* from it is redacted first — the distilled `husk.yaml`, its name, its
   slug and its filename — but the cached copy of your own file is not rewritten.
 - **No remote execution by default.** `husk serve` binds loopback, and it refuses to start
-  on a non-loopback address without `HUSK_TOKEN` set. The shared Husk that a chat starts
+  on a non-loopback address without `HUSK_TOKEN` set. Remote access (above) is the one
+  exception, and only when you start it. The shared Husk that a chat starts
   also binds loopback, always with a token it mints and writes to `~/.husk/daemon.json`
   (owner-only); any program running as you can read that file. The links Husk gives a
   chat, so it can show you a computer, carry a short-lived token scoped to that one

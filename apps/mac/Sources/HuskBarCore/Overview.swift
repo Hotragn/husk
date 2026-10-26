@@ -5,11 +5,39 @@ public struct Overview: Decodable, Equatable {
     public var computers: [Computer]
     public var activeRuns: [ActiveRun]
     public var handoffs: [Handoff]
+    /// Present when this Husk was started with remote access.
+    public var remote: RemoteAccess?
 
-    public init(computers: [Computer], activeRuns: [ActiveRun], handoffs: [Handoff]) {
+    public init(computers: [Computer], activeRuns: [ActiveRun], handoffs: [Handoff], remote: RemoteAccess? = nil) {
         self.computers = computers
         self.activeRuns = activeRuns
         self.handoffs = handoffs
+        self.remote = remote
+    }
+}
+
+/// Chat apps on the web reaching this Husk (`husk serve --remote`).
+public struct RemoteAccess: Decodable, Equatable {
+    public var on: Bool
+    public var publicUrl: String
+    /// Apps signed in.
+    public var apps: Int
+    public var offReason: String?
+    /// Advisories short of high against this install, or a check that could not be made.
+    public var warning: String?
+
+    public init(on: Bool, publicUrl: String, apps: Int, offReason: String? = nil, warning: String? = nil) {
+        self.on = on
+        self.publicUrl = publicUrl
+        self.apps = apps
+        self.offReason = offReason
+        self.warning = warning
+    }
+
+    /// The menu's line: on, at which URL, for how many apps; or why it is off.
+    public var line: String {
+        if on { return "Remote access on · \(publicUrl) · \(apps == 1 ? "1 app" : "\(apps) apps")" }
+        return offReason.map { "Remote access off: \($0)" } ?? "Remote access off"
     }
 }
 

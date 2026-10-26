@@ -1,7 +1,7 @@
 import { HUSK_PROTOCOL, HUSK_VERSION } from '@husk-ai/core';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
-import { assertBindIsSafe, installAuth, isLoopbackHost } from './auth.js';
+import { assertBindIsSafe, fromPublic, installAuth, isLoopbackHost } from './auth.js';
 import { installBodyParsers } from './body.js';
 import { installConsole } from './console.js';
 import { createContext } from './context.js';
@@ -71,6 +71,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     deps,
     options.approvalTimeoutMs === undefined ? {} : { approvalTimeoutMs: options.approvalTimeoutMs },
   );
+  if (options.remote) ctx.remote = options.remote;
   app.decorate('husk', ctx);
 
   installErrorHandling(app);
@@ -92,9 +93,11 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   installAuth(app, {
     token: config.token,
     publicPrefixes: ['/assets/', '/favicon', '/v1/a/'],
-    scopeOf: (t) => ctx.scoped.verify(t),
+    scopeOf: (t, o) => ctx.scoped.verify(t, o),
     loopbackOnly: isLoopbackHost(config.host),
-    ...(remote ? { remote: { host: remote.host, origin: remote.origin, paths: isRemotePath } } : {}),
+    ...(remote
+      ? { remote: { mark: remote.mark, origin: remote.origin, paths: isRemotePath, on: () => remote.offReason === undefined, owner: (s) => remote.ownerSession(s) } }
+      : {}),
   });
 
   app.addHook('onSend', async (_req, reply, payload) => {
@@ -103,15 +106,17 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   });
 
   installBodyParsers(app);
-  installIdempotency(app);
+  installIdempotency(app, remote?.mark);
   installAdmission(app);
+  // A link under the public URL stops opening when remote access goes off or resets, or its app signs out.
+  remote?.onRevoke((client) => ctx.scoped.revokePublic(client));
 
-  app.get('/health', async () => ({
-    ok: true,
-    version: HUSK_VERSION,
-    protocol: HUSK_PROTOCOL,
-    uptimeSec: Math.round((deps.now() - deps.startedAt) / 1000),
-  }));
+  // Under the public URL it says only that it is up: a version is for this machine.
+  app.get('/health', async (req) =>
+    remote && fromPublic(req, remote.mark)
+      ? { ok: true }
+      : { ok: true, version: HUSK_VERSION, protocol: HUSK_PROTOCOL, uptimeSec: Math.round((deps.now() - deps.startedAt) / 1000) },
+  );
 
   await app.register(doctorRoutes);
   await app.register(computerRoutes);
@@ -207,13 +212,17 @@ function installAdmission(app: FastifyInstance): void {
  * The retry that matters is the one after a timeout, where the client cannot tell
  * whether the first attempt created a computer. Replaying the recorded response is
  * the difference between one machine and eight.
+ *
+ * Never under remote access's public URL (`publicMark`): there a stranger could
+ * fill the cache, skip a handler's own limits by replaying, or read back an
+ * answer someone else's key recorded, such as their tokens.
  */
-function installIdempotency(app: FastifyInstance): void {
+function installIdempotency(app: FastifyInstance, publicMark?: string): void {
   const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
   app.addHook('preHandler', async (req, reply) => {
     const key = req.headers['idempotency-key'];
-    if (typeof key !== 'string' || !MUTATING.has(req.method)) return;
+    if (typeof key !== 'string' || !MUTATING.has(req.method) || fromPublic(req, publicMark)) return;
     const scoped = `${req.method} ${req.url} ${key}`;
     const hit = app.husk.deps.store.recallIdempotent(scoped);
     if (hit) {
@@ -228,7 +237,7 @@ function installIdempotency(app: FastifyInstance): void {
 
   app.addHook('onSend', async (req, reply, payload) => {
     const key = req.headers['idempotency-key'];
-    if (typeof key !== 'string' || !MUTATING.has(req.method)) return payload;
+    if (typeof key !== 'string' || !MUTATING.has(req.method) || fromPublic(req, publicMark)) return payload;
     if (reply.getHeader('Idempotency-Replayed')) return payload;
     if (reply.statusCode >= 400) return payload;
     const scoped = `${req.method} ${req.url} ${key}`;

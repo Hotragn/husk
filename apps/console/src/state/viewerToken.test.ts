@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { linkedComputerId, linkedHandoffId, readViewerToken, storeViewerToken } from './viewerToken';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { HuskApi } from '../api/client';
+import { linkedComputerId, linkedHandoffId, ownerSession, readViewerToken, storeViewerToken } from './viewerToken';
 
 describe('viewer authentication', () => {
   beforeEach(() => {
@@ -34,6 +35,33 @@ describe('viewer authentication', () => {
     expect(window.location.hash).toBe('#handoff=hnd_1');
     expect(window.location.href).not.toContain('abc123');
     expect(linkedHandoffId()).toBe('hnd_1');
+  });
+});
+
+describe('a link under remote access’s public URL', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('keeps the owner session its passkey page added, out of the address bar, and sends it with every request', async () => {
+    window.sessionStorage.clear();
+    window.history.replaceState(null, '', '/#handoff=hnd_2&token=tok&owner=own%2Bsession');
+    expect(readViewerToken()).toEqual({ token: 'tok', fromLink: true });
+    expect(window.location.href).not.toContain('own');
+    expect(ownerSession()).toBe('own+session');
+
+    const seen: Array<Record<string, string>> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: string, init?: RequestInit) => {
+        seen.push(Object.fromEntries(new Headers(init?.headers)));
+        return Response.json({ ok: true });
+      }),
+    );
+    await new HuskApi({ baseUrl: 'https://box.tail1234.ts.net', token: 'tok', owner: ownerSession() }).health();
+    expect(seen[0]).toMatchObject({ authorization: 'Bearer tok', 'x-husk-owner': 'own+session' });
+    // A link from this machine carries none, and clears what an earlier one left.
+    window.history.replaceState(null, '', '/#handoff=hnd_3&token=local');
+    readViewerToken();
+    expect(ownerSession()).toBe('');
   });
 });
 

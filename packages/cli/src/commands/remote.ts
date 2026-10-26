@@ -12,8 +12,8 @@ export async function run(argv: string[]): Promise<number> {
   const { values, positionals } = parse(argv, { json: { type: 'boolean' } }, 'remote');
   ui.configure(values);
   const action = positionals[0] ?? 'status';
-  if (!['status', 'claim', 'reset'].includes(action)) {
-    throw new HuskError('E_CONFIG', `unknown remote action "${action}"`, { hint: 'husk remote, husk remote claim, or husk remote reset' });
+  if (!['status', 'claim', 'off', 'on', 'reset'].includes(action)) {
+    throw new HuskError('E_CONFIG', `unknown remote action "${action}"`, { hint: 'husk remote, or husk remote claim, off, on or reset' });
   }
   const rec = readDaemonRecord();
   if (!rec) throw new HuskError('E_CONFIG', 'no Husk is running on this machine', { hint: 'start it with `husk serve --remote --public-url https://<host>`' });
@@ -24,7 +24,7 @@ export async function run(argv: string[]): Promise<number> {
       signal: AbortSignal.timeout(10_000),
     });
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    if (res.status === 404) throw new HuskError('E_CONFIG', 'remote access is off', { hint: 'start it with `husk serve --remote --public-url https://<host>`' });
+    if (res.status === 404) throw new HuskError('E_CONFIG', 'this Husk was not started with remote access', { hint: 'start it with `husk serve --remote --public-url https://<host>`' });
     if (!res.ok) {
       const err = body.error as { message?: string; hint?: string } | undefined;
       throw new HuskError('E_CONFIG', err?.message ?? `the Husk answered ${res.status}`, err?.hint ? { hint: err.hint } : {});
@@ -32,15 +32,26 @@ export async function run(argv: string[]): Promise<number> {
     return body;
   };
 
-  if (action === 'status') {
-    const s = (await ask('GET', '/v1/remote')) as { endpoint: string; owner: boolean; apps: Array<{ name: string; createdAt: string }> };
+  if (action === 'status' || action === 'off' || action === 'on') {
+    const s = (await ask(action === 'status' ? 'GET' : 'POST', action === 'status' ? '/v1/remote' : `/v1/remote/${action}`)) as {
+      on: boolean;
+      offReason?: string;
+      endpoint: string;
+      owner: boolean;
+      apps: Array<{ name: string; createdAt: string }>;
+      advisories: Array<{ name: string; version: string; title: string; severity: string; url: string }>;
+      checkError?: string;
+    };
     if (values.json) {
       ui.json(s);
       return EXIT_OK;
     }
-    ui.print(`${ui.green('✓')} remote access on ${ui.bold(s.endpoint)}`);
+    if (s.on) ui.print(`${ui.green('✓')} remote access on ${ui.bold(s.endpoint)}`);
+    else ui.print(`${ui.yellow('■')} remote access off  ${ui.dim(s.offReason ?? '')}`);
     ui.print(`  owner    ${s.owner ? 'claimed, signs in with a passkey' : ui.yellow('none yet: `husk remote claim` prints a claim code')}`);
-    ui.print(`  apps     ${s.apps.length ? s.apps.map((a) => a.name).join(', ') : ui.dim('none has signed in')}`);
+    ui.print(`  apps     ${s.apps.length ? s.apps.map((a) => a.name).join(', ') : ui.dim('none signed in')}`);
+    for (const a of s.advisories ?? []) ui.warn(`${a.name}@${a.version}: ${a.title} (${a.severity}) ${a.url}`.trim());
+    if (s.checkError) ui.warn(`could not check for security advisories (${s.checkError}); trying again every hour`);
     return EXIT_OK;
   }
   if (action === 'reset' && !values.json) ui.warn('removing the owner, every app that signed in and every token');

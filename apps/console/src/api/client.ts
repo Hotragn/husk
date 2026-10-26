@@ -51,6 +51,7 @@ import type {
   ImportedChat,
   ComputerChoice,
   ConnectResult,
+  RemoteStatus,
   SetupState,
 } from './wire';
 
@@ -69,6 +70,8 @@ const PROVISION_BUDGET_MS = 600_000;
 export interface HuskApiOptions {
   baseUrl: string;
   token?: string;
+  /** Under remote access's public URL: the owner session a link needs besides its token (`x-husk-owner`). */
+  owner?: string;
 }
 
 /** A shell command to run in a computer. Mirrors the server's `ExecSchema`. */
@@ -86,9 +89,10 @@ export interface ExecRequest {
  * The console acts as the person: what they change on a computer goes through
  * while they hold it, where a program's change is refused.
  */
-function asPerson(init?: RequestInit): RequestInit {
+function asPerson(init?: RequestInit, owner?: string): RequestInit {
   const headers = new Headers(init?.headers);
   headers.set('x-husk-as', 'person');
+  if (owner) headers.set('x-husk-owner', owner);
   return { ...init, headers };
 }
 
@@ -96,10 +100,13 @@ export class HuskApi {
   readonly baseUrl: string;
   private readonly client: HuskClient;
   private readonly token: string | undefined;
+  private readonly owner: string | undefined;
 
   constructor(opts: HuskApiOptions) {
     this.baseUrl = stripTrailingSlash(opts.baseUrl);
     this.token = opts.token && opts.token.length > 0 ? opts.token : undefined;
+    this.owner = opts.owner || undefined;
+    const owner = this.owner;
     this.client = new HuskClient({
       baseUrl: this.baseUrl,
       ...(this.token ? { token: this.token } : {}),
@@ -108,7 +115,7 @@ export class HuskApi {
       // which detaches it from `window`. In Node that is fine; in a browser it
       // is `TypeError: Illegal invocation` on the first request. Handing it a
       // closure keeps the receiver intact.
-      fetch: (input, init) => globalThis.fetch(input, asPerson(init)),
+      fetch: (input, init) => globalThis.fetch(input, asPerson(init, owner)),
     });
   }
 
@@ -232,6 +239,38 @@ export class HuskApi {
 
   disconnectApp(id: string): Promise<ConnectResult> {
     return this.client.http.request<ConnectResult>('DELETE', `/v1/setup/apps/${enc(id)}`, { timeoutMs: 90_000 });
+  }
+
+  // -- remote access --------------------------------------------------------
+
+  /** `GET /v1/remote`, or null when this Husk was not started with remote access. */
+  async remoteStatus(signal?: AbortSignal): Promise<RemoteStatus | null> {
+    try {
+      return await this.client.http.request<RemoteStatus>('GET', '/v1/remote', { ...(signal ? { signal } : {}) });
+    } catch (err) {
+      if (isHuskError(err) && err.details?.status === 404) return null;
+      throw err;
+    }
+  }
+
+  /** `POST /v1/remote/claim`: a code that makes whoever types it first the owner. */
+  remoteClaim(): Promise<{ code: string }> {
+    return this.client.http.request('POST', '/v1/remote/claim', {});
+  }
+
+  /** `POST /v1/remote/reset`: forgets the owner, every app and every token, and gives a new claim code. */
+  remoteReset(): Promise<{ code: string }> {
+    return this.client.http.request('POST', '/v1/remote/reset', {});
+  }
+
+  /** `POST /v1/remote/off` or `/on`. Off signs every app out; on refuses while a high or critical advisory stands. */
+  remoteSwitch(on: boolean): Promise<RemoteStatus> {
+    return this.client.http.request<RemoteStatus>('POST', on ? '/v1/remote/on' : '/v1/remote/off', {});
+  }
+
+  /** `DELETE /v1/remote/apps/:id`: signs one app out and forgets it. */
+  remoteSignOut(id: string): Promise<RemoteStatus> {
+    return this.client.http.request<RemoteStatus>('DELETE', `/v1/remote/apps/${enc(id)}`, {});
   }
 
   /** `POST /v1/setup/test`: a throwaway computer, one command, then removed. */
@@ -554,6 +593,7 @@ export class HuskApi {
     const url = this.client.http.url(path);
     const headers: Record<string, string> = {};
     if (this.token) headers.authorization = `Bearer ${this.token}`;
+    if (this.owner) headers['x-husk-owner'] = this.owner;
     let res: Response;
     try {
       res = await fetch(url, { headers, cache: 'no-store', ...(signal ? { signal } : {}) });

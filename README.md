@@ -82,6 +82,12 @@ Coming from 0.1.4? Run setup again, or **Update** on the Connect page. Each chat
 per-project entries included (`claude mcp add` writes those by default). Your computers,
 the named sessions bound to them, their files and your bots carry over as they are.
 
+**claude.ai and ChatGPT** run in someone else's data centre, so they reach Husk through a
+tunnel you run, or a Fly app of your own: `husk serve --remote --public-url https://<name>`.
+It is for you alone (a claim code once, then your passkey), and every command, file change
+and browser action waits for your passkey. Who can read what, the tunnels and the off
+switch are in the [remote access guide](apps/docs/content/guides/remote-access.mdx).
+
 > [!NOTE]
 > `setup`, the shared Husk and the console's Connect page are on `main` and not yet
 > published: npm has 0.1.4. Until the next release, run it from a checkout with

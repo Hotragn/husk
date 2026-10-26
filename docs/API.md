@@ -117,7 +117,7 @@ DELETE /v1/computers/:id        -> 204   (a chat's computer, or ?erase=true, nee
 GET    /v1/computers/:id/disk   -> { "bytes": number | null, "note"?: string }
 GET    /v1/computers/:id/stats  -> { cpuPercent, memoryBytes, memoryLimitBytes, diskBytes, notes? }
 GET    /v1/computers/:id/thumbnail -> image/jpeg of an already-open browser, else 404
-GET    /v1/overview             -> { computers: ComputerInfo[], activeRuns: ActiveRun[], handoffs: PendingHandoff[], activity: { [id]: ActivityEntry }, running: { [id]: { tool, since } }, inChat: string[] }
+GET    /v1/overview             -> { computers: ComputerInfo[], activeRuns: ActiveRun[], handoffs: PendingHandoff[], activity: { [id]: ActivityEntry }, running: { [id]: { tool, since } }, inChat: string[], remote? }
 GET    /v1/computers/:id/activity -> { "entries": ActivityEntry[] }   (oldest first, the last 200)
 POST   /v1/computers/:id/bot    body: { "useModel"?: boolean, "engine"?: "claude-code" | "codex" | "builtin" } -> { transcriptId, spec, yaml, distilled, engines }
 POST   /v1/computers/:id/stop   -> ComputerInfo
@@ -203,15 +203,26 @@ newer Husk uses it to replace an older one after an upgrade.
 ### Remote access
 
 Off unless the server was started with `husk serve --remote --public-url https://<host>`.
+The setup, tunnels included, is in the guide (`apps/docs/content/guides/remote-access.mdx`).
 
-- **Where it listens.** On loopback, where a tunnel connects. The public URL is the
-  tunnel's fixed name, with no path.
-- **The public URL's own paths.** Requests whose `Host` is the public URL's host reach
-  only the routes below that are not under `/v1`. Anything else there is a 404, and
-  those routes answer only under that name.
+- **Where it listens.** On a port of its own, which the tunnel publishes: `--remote-port`,
+  by default the API's port plus one, on loopback (`--remote-host` for a container behind
+  its own proxy). The API and the console stay on their own port, on loopback. The public
+  URL is the tunnel's fixed name, with no path.
+- **What that port serves.** Only the routes below that are not under `/v1`, and the
+  links described under them. Anything else there is a 404, whatever `Host` the request
+  carries: a tunnel passes `Host` on as the caller wrote it, so the port decides, not the
+  name. The API's port serves none of these routes.
 - **Computers.** Remote chats get them only from an isolated provider (`--provider`,
   Docker by default); the server refuses to start if it is not one. They are bound
   apart from this machine's own chats, so neither side can reach the other's by id.
+- **Security advisories.** Before serving, and daily after, the server sends its Husk
+  packages and every runtime dependency they resolve, by name and version only, to the
+  npm registry's bulk advisory endpoint (`HUSK_ADVISORY_ENDPOINT` points elsewhere).
+  - A high or critical advisory refuses to start, naming it, with no flag to serve anyway.
+    One that appears while serving switches remote access off, with the reason.
+  - A lesser one starts with a warning.
+  - A registry that cannot be asked starts with a warning, and is asked again every hour.
 
 ```
 POST|GET|DELETE /mcp                                 MCP over Streamable HTTP, both protocol eras
@@ -224,6 +235,9 @@ POST /oauth/start | /oauth/claim | /oauth/passkey | /oauth/consent   the page's 
 POST /oauth/token                                    authorization_code (PKCE S256) or refresh_token
 GET  /oauth/approve                                  the page that approves one tool call (?id=)
 POST /oauth/approve/start | /oauth/approve           its passkey, and the owner's answer
+GET  /oauth/link                                     where a remote chat's links start: the owner's passkey
+POST /oauth/link/start | /oauth/link                 its passkey, then an owner session for links
+GET  /health                                         { ok: true } and nothing more
 ```
 
 - **Approvals.** A remote chat's call that changes things (`shell`, `write_file`,
@@ -232,18 +246,44 @@ POST /oauth/approve/start | /oauth/approve           its passkey, and the owner'
   - The call answers at once, with a link to `/oauth/approve?id=…` for the model to
     relay. The owner approves there with their passkey, from anywhere, and the model
     calls again with the same arguments.
-  - An approval covers that one call, once. Ten minutes unanswered is a no.
-  - Saying no needs no passkey. Letting that app use that tool unasked for an hour is a
-    box the owner ticks, never the default.
-- **Limits** are per minute and keyed on what a tunnel does not hide: the signed-in app
-  on `/mcp`, the app asking for tokens, each route as a whole. Never the address. Over
-  a limit is a 429 with `Retry-After`.
+  - The page shows a line saying what the call does, then every argument it sends,
+    exactly, with characters that could hide or reorder text shown as escapes. A call
+    bigger than 20,000 characters shown is never put to the owner, and never runs.
+  - An approval covers that one call, once: the same tool, computer and arguments, in any
+    key order. Ten minutes unanswered is a no.
+  - Saying no needs no passkey. Letting that app make any call of that tool, on any of its
+    computers, unasked for an hour is a box the owner ticks, never the default.
+- **Limits** are per minute and keyed on what a tunnel does not hide, never the address.
+  Over a limit is a 429 with `Retry-After`.
+  - What the owner already let in has budgets of its own: each signed-in app on `/mcp`
+    and for tokens, each sign-in in flight, and each approval in flight, keyed on an id
+    only whoever started it knows.
+  - Everyone else shares one budget per route, so a flood can delay only a new app's
+    first sign-in.
+- **The sign-in.** Nothing is sent back to an app before the owner has signed in: an
+  authorization request in error is shown as a page, not redirected, since anyone can
+  register an app. The page names where it sends the owner back, and says plainly when
+  that is not claude.ai, ChatGPT or an app on the owner's own device. Every answer sent
+  back carries `iss` (RFC 9207, advertised in the metadata).
 - **Links a remote chat gives its person** (a handoff, a look at a computer) are under
-  the public URL. Under that name, only these answer:
-  - the console's page and files, which hold nothing;
-  - the scoped routes behind the link (`/v1/handoffs/:id/…`, `/v1/scoped/…`), with that
-    link's token in `Authorization`. Never this machine's token, and never a token in the
-    URL.
+  the public URL, at `/oauth/link#handoff=…&token=…`. The chat holds the link too, and so
+  may whoever it was shown to, so it opens only after the owner's passkey:
+  - `/oauth/link` asks for the passkey, then goes on to the console with an owner session
+    in the fragment, which no server sees.
+  - Under the public URL, only the console's page and files answer without both. They
+    hold nothing.
+  - The scoped routes behind the link (`/v1/handoffs/:id/…`, `/v1/scoped/…`) need the
+    link's token in `Authorization` and the owner session in `X-Husk-Owner`. Without the
+    session, the answer is a 401 with `details.passkey: true`.
+  - Only a token minted for a remote chat counts: `{ "public": true, "holder": <app> }` on
+    `POST /v1/computers/:id/link` or `/handoffs`. Never one made on this machine, never
+    this machine's own token, and never a token in the URL.
+  - Owner sessions last eight hours. Switching off or resetting ends every link and
+    session, and signing an app out ends the links it was given.
+- **What the public port takes.** Sign-in bodies are at most 64 KB. `/mcp` checks its token
+  and budget before it reads a byte of the body. Nothing there is recorded for
+  `Idempotency-Key`. App ids are looked up as registered, never through the object
+  prototype.
 
 - **`/mcp`.** It takes a bearer access token in `Authorization`, never in a URL. Without
   a good one it answers 401 with
@@ -252,19 +292,35 @@ POST /oauth/approve/start | /oauth/approve           its passkey, and the owner'
   `aud` is `<public URL>/mcp`. Any other algorithm or key id is refused, and so is a
   token for another URL.
 - **Refresh tokens.** They last 30 days and change on every use. Using one twice ends
-  its whole family.
-- **Who signs in.** Only the owner: whoever first types the claim code the server prints
-  (80 bits, 15 minutes, 5 tries), registering a passkey as they do. Every later sign-in
-  needs that passkey.
+  its whole family: the access tokens minted in it, and any token a request still in
+  flight would have minted in it.
+- **Who signs in.** Only the owner: whoever first types the claim code (80 bits, 15
+  minutes, 5 tries), registering a passkey as they do. The code is printed on a terminal
+  and never into a log; otherwise `husk remote claim` gives one. A new code ends any
+  sign-in that typed the old one. Every later sign-in needs that passkey. A passkey whose
+  counter does not go up is refused; one that keeps no count (zero every time) is fine.
 - **Redirects.** Only ones the app registered, https or loopback http.
+- **A new public URL.** The passkey and every token belong to the name they were made
+  under, so starting with another `--public-url` forgets the owner, the apps and the
+  tokens, says so, and prints a claim code.
 
 On this machine, with the server's token:
 
 ```
-GET  /v1/remote          -> { on, publicUrl, endpoint, owner, apps: [{ id, name, createdAt }] }
-POST /v1/remote/claim    -> { code }   a new claim code, while there is no owner
-POST /v1/remote/reset    -> { code }   no owner, no apps, no tokens; a code for a new owner
+GET    /v1/remote          -> RemoteStatus
+POST   /v1/remote/claim    -> { code }   a new claim code, while there is no owner
+POST   /v1/remote/off      -> RemoteStatus   every token revoked, the public URL a 404
+POST   /v1/remote/on       -> RemoteStatus   refused while a high or critical advisory stands
+DELETE /v1/remote/apps/:id -> RemoteStatus   that app signed out, its tokens with it
+POST   /v1/remote/reset    -> { code }   no owner, no apps, no tokens; a code for a new owner
 ```
+
+`RemoteStatus` is `{ on, offReason?, publicUrl, endpoint, owner, apps: [{ id, name,
+createdAt }], advisories: [{ name, version, title, severity, url, vulnerable? }],
+checkedAt?, checkError? }`. `apps` lists only apps the owner let in and that have not been
+signed out since; `createdAt` is when they were let in. Off keeps the owner, so signing
+back in is their passkey away. `GET /v1/overview` carries `remote: { on, publicUrl, apps,
+offReason?, warning? }` while the server serves remote access, for Husk Bar.
 
 ### Exec
 

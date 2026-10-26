@@ -26,16 +26,20 @@ export type RemoteHandoffState = 'open' | 'done' | 'aborted' | 'unknown';
 export interface DaemonClient {
   url: string;
   callTool(computerId: string, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult>;
-  /** Give a computer to the person in the shared console. The token opens that computer only. */
-  openHandoff(computerId: string, reason: string, label?: string): Promise<{ handoffId: string; token: string }>;
+  /**
+   * Give a computer to the person in the shared console. The token opens that
+   * computer only; `holder`: the remote app it is for, so it opens under remote
+   * access's public URL too, and ends when that app signs out.
+   */
+  openHandoff(computerId: string, reason: string, label?: string, holder?: string): Promise<{ handoffId: string; token: string }>;
   /** Whether a handoff is still waiting, or how it ended. Polling it also keeps it alive. */
   state(handoffId: string): Promise<RemoteHandoffState>;
   /** The person said done, in the chat. */
   complete(handoffId: string): Promise<void>;
   /** The chat went away before the person finished. */
   cancel(handoffId: string): Promise<void>;
-  /** A short-lived token that opens one computer's page in the console. */
-  linkToken(computerId: string): Promise<string>;
+  /** A short-lived token that opens one computer's page in the console; `holder` as for `openHandoff`. */
+  linkToken(computerId: string, holder?: string): Promise<string>;
   /** This chat runs that computer in its own process: the console says so rather than offer a take-over. */
   markInChat(computerId: string): Promise<void>;
   /** The chat is closing: stop its computer. Refused (409) while a person holds it, which leaves it running. */
@@ -199,8 +203,8 @@ function client(first: DaemonRecord, doFetch: typeof fetch, read: () => DaemonRe
     get url() {
       return rec.url;
     },
-    async openHandoff(computerId, reason, label) {
-      const { status, json } = await call('POST', `/v1/computers/${id(computerId)}/handoffs`, { reason, ...(label ? { label } : {}) });
+    async openHandoff(computerId, reason, label, holder) {
+      const { status, json } = await call('POST', `/v1/computers/${id(computerId)}/handoffs`, { reason, ...(label ? { label } : {}), ...(holder ? { public: true, holder } : {}) });
       if (status === 404) throw new RunLocally(`the shared husk has no computer ${computerId}`);
       return { handoffId: String(json.handoffId), token: String(json.token) };
     },
@@ -222,8 +226,8 @@ function client(first: DaemonRecord, doFetch: typeof fetch, read: () => DaemonRe
     async cancel(handoffId) {
       await call('DELETE', `/v1/handoffs/${id(handoffId)}`);
     },
-    async linkToken(computerId) {
-      const { status, json } = await call('POST', `/v1/computers/${id(computerId)}/link`);
+    async linkToken(computerId, holder) {
+      const { status, json } = await call('POST', `/v1/computers/${id(computerId)}/link`, holder ? { public: true, holder } : undefined);
       if (status === 404) throw new RunLocally(`the shared husk has no computer ${computerId}`);
       // Never a link that opens nothing: `token=undefined` reads as a working link.
       if (typeof json.token !== 'string' || !json.token) throw new Error('the shared husk gave no link token');
