@@ -182,17 +182,23 @@ the machine's one Husk: it writes `~/.husk/daemon.json` (`url`, a minted `token`
 `pid`, `version`; owner-only), and a chat's MCP process forwards its computer tools
 here, starting `husk-mcp --daemon` if nothing answers. The Husk a chat starts mints a
 token, since nobody is there to configure one; `husk serve` uses `HUSK_TOKEN` if set,
-and is otherwise tokenless on loopback, as before.
+and is otherwise tokenless on loopback, as before. That is what lets the console show a
+chat's browser and what it is doing. The result has the MCP shape,
+`{ content: [...], isError? }`; a tool failure is a 200 with `isError: true`. While a
+person holds the computer in a handoff, every tool but `computer_info` is refused.
+
+A call still running after 20 s answers 200 at once, then sends a space every 20 s until
+its JSON follows. So an hour-long command, or a bot waiting for its computer back,
+outlasts a client's header and idle timeouts (Node's `fetch` gives up after 300 s of
+either). JSON allows the leading spaces. An error after that point is the usual
+`{ error }` body, with the 200.
 
 ```
 POST /v1/shutdown   -> 202 { stopping: true }
 ```
 
 Stops the process cleanly. It refuses (403) while a run or a handoff is in progress. A
-newer Husk uses it to replace an older one after an upgrade. That is what lets the console
-show a chat's browser and what it is doing. The result has the MCP shape,
-`{ content: [...], isError? }`; a tool failure is a 200 with `isError: true`. While a
-person holds the computer in a handoff, every tool but `computer_info` is refused.
+newer Husk uses it to replace an older one after an upgrade.
 
 ### Exec
 
