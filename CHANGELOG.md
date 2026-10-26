@@ -249,6 +249,10 @@ not here.
 
 ### Security
 
+- **zod 4.** `@husk-ai/core`, `@husk-ai/server` and `@husk-ai/sessions` move from zod
+  3.25.76 to 4.6.7, out of [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)
+  (high: memory exhaustion validating large arrays, every version below 4.6.6). The
+  schemas `@husk-ai/core` exports are zod 4 schemas now.
 - **Chromium keeps its own sandbox outside containers**, falling back with a warning only
   where it cannot start. Every new tab and every redirect hop is checked against the
   address filter, which reads IPv6 addresses whole ([#202](https://github.com/Hotragn/husk/pull/202)).

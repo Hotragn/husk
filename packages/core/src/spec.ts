@@ -29,7 +29,7 @@ export const ComputerConfigSchema = z.object({
   network: NetworkPolicySchema.default({ mode: 'egress' }),
   packages: z.array(z.string()).default([]),
   setup: z.string().optional(),
-  env: z.record(z.string()).default({}),
+  env: z.record(z.string(), z.string()).default({}),
   workdir: z.string().default('/work'),
   persist: z.boolean().default(false),
   mounts: z
@@ -52,7 +52,7 @@ export const ComputerConfigSchema = z.object({
    * Optional rather than `.default({})` so a spec that never mentions labels
    * serialises exactly as it did before.
    */
-  labels: z.record(z.string()).optional(),
+  labels: z.record(z.string(), z.string()).optional(),
 });
 
 export const LimitsSchema = z.object({
@@ -143,7 +143,7 @@ const HuskSpecObject = z.object({
   model: z.string().default('auto'),
   /** Tried in order when the primary is unavailable, rate limited, or over budget. */
   fallbackModels: z.array(z.string()).default([]),
-  engine: EngineSchema.default({}),
+  engine: EngineSchema.prefault({}),
   temperature: z.number().min(0).max(2).optional(),
   /** The system prompt. Supports {{var}} interpolation from RunOptions.vars. */
   persona: z.string().default(''),
@@ -151,13 +151,13 @@ const HuskSpecObject = z.object({
   examples: z.array(ExampleSchema).default([]),
   /** Tool names, or the computer / files / web / http bundles. */
   tools: z.array(z.string()).default(['computer']),
-  computer: ComputerConfigSchema.default({}),
-  limits: LimitsSchema.default({}),
-  guardrails: GuardrailsSchema.default({}),
-  memory: MemorySchema.default({}),
+  computer: ComputerConfigSchema.prefault({}),
+  limits: LimitsSchema.prefault({}),
+  guardrails: GuardrailsSchema.prefault({}),
+  memory: MemorySchema.prefault({}),
   triggers: z.array(TriggerSchema).default([{ type: 'cli' }]),
   /** Free-form, carried through untouched. */
-  metadata: z.record(z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
   /** Provenance: which transcript this husk was distilled from. */
   origin: z
     .object({

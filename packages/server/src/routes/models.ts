@@ -9,7 +9,7 @@ import { SseStream, closedEarly, pipeSse } from '../sse.js';
 const ContentPartSchema: z.ZodType<unknown> = z.union([
   z.object({ type: z.literal('text'), text: z.string() }),
   z.object({ type: z.literal('image'), mimeType: z.string(), data: z.string() }),
-  z.object({ type: z.literal('tool_call'), id: z.string(), name: z.string(), args: z.record(z.unknown()) }),
+  z.object({ type: z.literal('tool_call'), id: z.string(), name: z.string(), args: z.record(z.string(), z.unknown()) }),
   z.object({
     type: z.literal('tool_result'),
     toolCallId: z.string(),
@@ -32,7 +32,7 @@ const ChatRequestSchema = z.object({
     .min(1),
   system: z.string().optional(),
   tools: z
-    .array(z.object({ name: z.string(), description: z.string(), parameters: z.record(z.unknown()) }))
+    .array(z.object({ name: z.string(), description: z.string(), parameters: z.record(z.string(), z.unknown()) }))
     .optional(),
   toolChoice: z.union([z.enum(['auto', 'none', 'required']), z.object({ name: z.string() })]).optional(),
   temperature: z.number().min(0).max(2).optional(),
@@ -41,9 +41,9 @@ const ChatRequestSchema = z.object({
   stop: z.array(z.string()).optional(),
   thinking: z.object({ enabled: z.boolean(), budgetTokens: z.number().int().positive().optional() }).optional(),
   responseFormat: z
-    .union([z.object({ type: z.literal('text') }), z.object({ type: z.literal('json'), schema: z.record(z.unknown()).optional() })])
+    .union([z.object({ type: z.literal('text') }), z.object({ type: z.literal('json'), schema: z.record(z.string(), z.unknown()).optional() })])
     .optional(),
-  metadata: z.record(z.string()).optional(),
+  metadata: z.record(z.string(), z.string()).optional(),
 });
 
 function parseChat(body: unknown): ChatRequest {

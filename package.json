@@ -31,17 +31,7 @@
   },
   "overrides": {
     "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "zod": "3.25.76",
-    "@modelcontextprotocol/core": {
-      "zod": "^4.2.0"
-    },
-    "@modelcontextprotocol/server": {
-      "zod": "^4.2.0"
-    },
-    "@modelcontextprotocol/client": {
-      "zod": "^4.2.0"
-    }
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@anthropic-ai/mcpb": "2.1.2",
