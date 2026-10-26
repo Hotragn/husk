@@ -2096,7 +2096,8 @@ async function checkRemoteAccess() {
       computer: id,
       command: `mkdir -p /work/typed && echo ${Buffer.from(typedPage).toString('base64')} | base64 -d > /work/typed/index.html && cd /work/typed && (setsid python3 -m http.server 8767 --bind 127.0.0.1 >/dev/null 2>&1 &) ; sleep 1`,
     });
-    await app.callTool({ name: 'browser_goto', arguments: { computer: id, url: 'http://127.0.0.1:8767/' } });
+    const went = textOfCall(await app.callTool({ name: 'browser_goto', arguments: { computer: id, url: 'http://127.0.0.1:8767/' } }));
+    check('the remote chat opens a page on its computer', /now at http:\/\/127\.0\.0\.1:8767\//.test(went), went.slice(0, 200));
 
     // Sign in for me, from wherever the person is: the handoff's link is under
     // the public URL, and starts at the owner's passkey, since the chat holds the link too.
@@ -2113,6 +2114,14 @@ async function checkRemoteAccess() {
       linkPage?.status === 200 && alone?.status === 401 && Boolean(session) && opened?.status === 200,
       `${handed.slice(0, 160)}; page ${linkPage?.status}, alone ${alone?.status}, with the passkey ${opened?.status}`,
     );
+    // Its screen, as the link's page asks for it: the link's token and the owner's session, under the public URL.
+    const shot = view
+      ? await f(`${PUBLIC}/v1/handoffs/${view[2]}/screen`, { headers: { authorization: `Bearer ${linkToken}`, 'x-husk-owner': session ?? '' }, signal: AbortSignal.timeout(30_000) }).catch((err) => err)
+      : undefined;
+    const shotType = shot instanceof Response ? (shot.headers.get('content-type') ?? '') : '';
+    const shotSays = shot instanceof Response ? `${shot.status} ${shotType} ${shot.ok ? '' : (await shot.text()).slice(0, 300)}` : `no answer: ${shot?.message ?? shot}`;
+    if (shot instanceof Response && shot.ok) await shot.arrayBuffer();
+    check('the link’s screen comes through the public URL, as a picture', shot instanceof Response && shot.status === 200 && /image\/jpeg/.test(shotType), shotSays);
     // The same link in a real browser, as the owner opens it on their phone:
     // the passkey (a virtual authenticator holding theirs), the computer's
     // screen, and what they type there reaching the chat's own page.
@@ -2128,11 +2137,27 @@ async function checkRemoteAccess() {
         options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
       });
       await cdp.send('WebAuthn.addCredential', { authenticatorId, credential: passkey.forBrowser() });
+      // What the page's frames meet, said if the screen never comes.
+      const frames = { asked: 0, answers: [], errors: [] };
+      const isFrame = (url) => /\/screen(\?|$)/.test(new URL(url).pathname + new URL(url).search);
+      tab.on('request', (r) => { if (isFrame(r.url())) frames.asked += 1; });
+      tab.on('response', (r) => { if (isFrame(r.url())) frames.answers.push(r.status()); });
+      tab.on('requestfailed', (r) => { if (isFrame(r.url())) frames.answers.push(`failed: ${r.failure()?.errorText}`); });
+      tab.on('console', (m) => { if (m.type() === 'error') frames.errors.push(m.text().slice(0, 200)); });
+      tab.on('pageerror', (e) => frames.errors.push(String(e).slice(0, 200)));
       await tab.goto(view?.[1] ?? `${PUBLIC}/oauth/link`);
       await tab.getByRole('button', { name: 'Use my passkey' }).click();
       await tab.getByText('Paused, waiting for you').waitFor({ timeout: 30_000 });
       const screen = tab.locator('img[alt^="The page the run is paused on"]');
-      await screen.waitFor({ timeout: 60_000 });
+      await screen.waitFor({ timeout: 60_000 }).catch(async (err) => {
+        await tab.screenshot({ path: join(process.env.E2E_SHOTS ?? join(root, 'e2e-shots'), '21-remote-handoff-no-screen.png') }).catch(() => undefined);
+        const visibility = await tab.evaluate(() => document.visibilityState).catch(() => '?');
+        const said = (await tab.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
+        throw new Error(
+          `${String(err.message).split('\n')[0]} -- frames asked ${frames.asked}, answered ${JSON.stringify(frames.answers.slice(-5))}, ` +
+            `page ${visibility}, console errors ${JSON.stringify(frames.errors.slice(-3))}; the page said: ${said}`,
+        );
+      });
       const shown = (await screen.evaluate((img) => img.naturalWidth)) > 0;
       await tab.locator('input[aria-label="Type into the page"]').focus();
       await tab.keyboard.type('from-the-web', { delay: 80 });
