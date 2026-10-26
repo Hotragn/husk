@@ -142,6 +142,12 @@ export const liveProbes: DoctorProbes = {
   },
 };
 
+/** Below `engines`' floor of 20.10: 20.9 is, 21.0 is not. */
+export function belowNodeFloor(version: string): boolean {
+  const [major = 0, minor = 0] = version.split('.').map(Number);
+  return major < 20 || (major === 20 && minor < 10);
+}
+
 export async function collect(force = false, probes: DoctorProbes = liveProbes): Promise<DoctorReport> {
   const firstRun = !existsSync(huskHome());
   const [providers, models] = await Promise.all([
@@ -177,8 +183,7 @@ export async function collect(force = false, probes: DoctorProbes = liveProbes):
     );
   }
 
-  const major = Number(process.versions.node.split('.')[0] ?? 0);
-  if (major < 20) warnings.push(`Node ${process.versions.node} is below the supported floor of 20.10.`);
+  if (belowNodeFloor(process.versions.node)) warnings.push(`Node ${process.versions.node} is below the supported floor of 20.10.`);
 
   // One root cause with two faces. Docker Desktop runs its engine inside
   // WSL2, so a host whose WSL is down loses the isolated provider and the
