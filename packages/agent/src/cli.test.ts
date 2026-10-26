@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createLogger, parseSpec } from '@husk-ai/core';
@@ -80,7 +80,8 @@ describe('the claude-code engine', () => {
     expect(argv).not.toContain('--resume');
     expect(argv).not.toContain('--model');
     // Its own folder, so no project's hooks run; the prompt on stdin, never on a command line.
-    expect(cwd).toBe(join(dir, 'home', 'bots', 'nightly'));
+    // Real paths: on a Mac the temp folder is under /var, which is /private/var.
+    expect(realpathSync(cwd)).toBe(realpathSync(join(dir, 'home', 'bots', 'nightly')));
     expect(input).toBe('Is the site up?');
     expect(claudecode).toBeNull();
 
