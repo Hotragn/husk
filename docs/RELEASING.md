@@ -58,6 +58,36 @@ because that step had been sitting on `main`, unused, since `0.1.2`.
    walking up from the script's location, so a check run inside the checkout can bind
    the workspace copy and report on your working tree instead of on what shipped.
 
+## The desktop installers
+
+The same tag builds the desktop app on Windows, macOS and Linux (`release.yml`'s
+`desktop` job, after the npm publish) and attaches its installers to the Release: the
+Windows installer, the Mac disk image and the Linux AppImage.
+
+Each is signed where its certificate is set as a repository secret, and the run warns,
+installer by installer, where one is not:
+
+| Secret | What it is | What it turns on |
+| --- | --- | --- |
+| `MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD` | a Developer ID Application certificate, base64 `.p12`, and its password | the Mac app is signed, with the hardened runtime |
+| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | the Apple account that notarizes | the signed app is notarized, so Gatekeeper opens it without a warning |
+| `WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD` | a code-signing certificate, base64 `.pfx`, and its password | the Windows installer and app are signed, so SmartScreen knows the publisher |
+
+AppImages are not signed, as is usual on Linux.
+
+With no certificate, the installer is built unsigned and never signed with whatever a
+runner's keychain holds. A dry run (`workflow_dispatch`, `dry_run: true`) builds them all,
+signing included, and keeps them as the run's artifacts: try signing that way before a
+release depends on it.
+
+**Check the installers themselves**, on a fresh machine, before telling anyone:
+
+- **macOS:** `spctl --assess --type execute --verbose "/Applications/Husk.app"` says
+  `accepted` and `source=Notarized Developer ID`.
+- **Windows:** `Get-AuthenticodeSignature "Husk Setup X.Y.Z.exe"` says `Valid`.
+- **Both:** a first run opens on Connect, and a chat connected from there gets its
+  computer.
+
 ## Two ways the registry will lie to you
 
 **npm's read path is eventually consistent.** A `GET` for a version you just published

@@ -2,7 +2,8 @@ name: desktop
 
 # Builds the Husk desktop app (apps/desktop) on each platform, starts the
 # packaged app in smoke mode, and uploads the unsigned installer. Nothing is
-# signed or published here: that needs the maintainer's certificates.
+# signed or published here: release.yml's desktop job signs and attaches the
+# installers to a Release, with the owner's certificates (docs/RELEASING.md).
 
 on:
   push:
