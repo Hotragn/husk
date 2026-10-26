@@ -44,6 +44,19 @@ describe('connectDaemon', () => {
     expect(JSON.parse(String(tool.init!.body))).toEqual({ args: { command: 'ls' }, via: 'mcp' });
   });
 
+  it("says a bot's call is a bot's, so it waits out a take-over (J5-e)", async () => {
+    const f = fakeFetch(HUSK_VERSION, () => new Response(JSON.stringify({ content: [{ type: 'text', text: 'ran' }] })));
+    const d = await connectDaemon({ log, read: () => record(), fetchImpl: f, launch: () => { throw new Error('must not launch'); } });
+    process.env.HUSK_BOT = 'nightly';
+    try {
+      await d!.callTool('cmp_1', 'shell', { command: 'ls' });
+    } finally {
+      delete process.env.HUSK_BOT;
+    }
+    const tool = f.calls.find((c) => c.url.includes('/tools/shell'))!;
+    expect(JSON.parse(String(tool.init!.body))).toEqual({ args: { command: 'ls' }, via: 'bot' });
+  });
+
   it('starts one when none answers, and waits for it', async () => {
     let launched = false;
     const d = await connectDaemon({

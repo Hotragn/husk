@@ -323,7 +323,7 @@ export function fakeAgentFactory(script: FakeAgentScript = {}): AgentFactory {
         const never = new AbortController().signal;
         yield { type: 'computer_ready', computerId: script.toolOn.computerId, provider: 'local' };
         const call = { type: 'tool_call' as const, id: 'call_1', name: script.toolOn.name, args: {} };
-        const admitted = opts.admitTool ? await opts.admitTool(call, opts.signal ?? never) : undefined;
+        const admitted = opts.admitTool ? await opts.admitTool(call, opts.signal ?? never, script.toolOn.computerId) : undefined;
         if (admitted && !('refused' in admitted)) admitted.done();
         const output = admitted && 'refused' in admitted ? admitted.refused : 'ran';
         yield { type: 'tool_end', call, output, isError: output !== 'ran', durationMs: 1 };

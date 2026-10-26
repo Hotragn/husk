@@ -760,6 +760,15 @@ describe('Agent: a person sharing the computer', () => {
     expect(toolResults(result.messages)[0]).toMatchObject({ content: 'stopped part-way', isError: true });
   });
 
+  it("asks about the run's very first computer call with its computer, so a hold made before the run counts", async () => {
+    const admitTool = vi.fn(async () => ({ refused: 'The user took over this computer.' }));
+    const computers = new FakeComputerSource();
+    const agent = new Agent({ spec: specFor({ persona: 'be useful' }), router: new FakeRouter(turns()), tools: [shell()] as never, computers, logger: silent });
+    const result = await agent.run({ input: 'go', admitTool });
+    expect(admitTool).toHaveBeenCalledWith(expect.objectContaining({ name: 'shell' }), expect.anything(), computers.computer.id);
+    expect(toolResults(result.messages)[0]).toMatchObject({ content: 'The user took over this computer.', isError: true });
+  });
+
   it('never asks about a tool that does not touch the computer', async () => {
     const admitTool = vi.fn(async () => ({ refused: 'no' }));
     const { agent } = agentWith([{ text: 'x', toolCalls: [toolCall('c1', 'echo', { value: 'y' })] }, { text: 'done' }], [echo('echo')]);

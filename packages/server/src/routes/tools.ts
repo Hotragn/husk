@@ -5,7 +5,7 @@ import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
 import { PERSON_RUN, refusalText } from '../handoffs.js';
 import { closedEarly } from '../sse.js';
-import { underControl } from '../control.js';
+import { givenBack, underControl } from '../control.js';
 
 /** How long a chat's call waits for a person to give back a computer they took. Tests shorten it. */
 export const takeover = { waitMs: 45_000 };
@@ -14,7 +14,7 @@ function parseBody(body: unknown): { args: Record<string, unknown>; via: string 
   const b = (body ?? {}) as { args?: unknown; via?: unknown };
   const args = b.args ?? {};
   if (typeof args !== 'object' || args === null || Array.isArray(args)) throw invalidSpec(['args: expected an object']);
-  // Who is calling, for the audit log and the timeline: `mcp` for a chat.
+  // Who is calling, for the audit log and the timeline: `mcp` for a chat, `bot` for a bot on a person's own CLI.
   const via = typeof b.via === 'string' && /^[a-z-]{1,32}$/.test(b.via) ? b.via : 'mcp';
   return { args: args as Record<string, unknown>, via };
 }
@@ -52,10 +52,10 @@ export async function toolRoutes(app: FastifyInstance): Promise<void> {
     const heldNow = () => (name === 'computer_info' ? undefined : ctx.runner.handoffs.list().find((h) => h.computerId === id));
     let held = heldNow();
     // Taken from the console: the call waits a while for the person to give it
-    // back, so a short look-in pauses the chat instead of ending its turn.
-    const until = Date.now() + takeover.waitMs;
-    while (held?.runId === PERSON_RUN && Date.now() < until && !signal.aborted) {
-      await new Promise((r) => setTimeout(r, 250));
+    // back, so a short look-in pauses the chat instead of ending its turn. A
+    // bot's call (via `bot`, J5-e) waits until they do: nobody is there to tell.
+    if (held?.runId === PERSON_RUN) {
+      await givenBack(ctx.runner.handoffs, id, signal, via === 'bot' ? Infinity : Date.now() + takeover.waitMs);
       held = heldNow();
     }
     if (held) {

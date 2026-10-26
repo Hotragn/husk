@@ -107,7 +107,7 @@ describe('the claude-code engine', () => {
     expect(argv.slice(argv.indexOf('--resume'))).toEqual(['--resume', 'chat-session-1', '--fork-session']);
     expect(after(argv, '--model')).toBe('sonnet');
     const config = JSON.parse(readFileSync(after(argv, '--mcp-config')!, 'utf8'));
-    expect(config.mcpServers.husk.env).toEqual({ HUSK_CHAT_SESSION: 'chat-session-1' });
+    expect(config.mcpServers.husk.env).toEqual({ HUSK_BOT: 'nightly', HUSK_CHAT_SESSION: 'chat-session-1' });
     expect(config.mcpServers.husk.args).not.toContain('--session');
     expect(events.some((e) => e.type === 'warning' && /earlier spend/.test(e.message))).toBe(true);
     expect(resultOf(events).usage).toMatchObject({ inputTokens: 40, costUsd: 0 });
@@ -183,6 +183,8 @@ describe('the codex engine', () => {
     for (const off of ['features.shell_tool=false', 'features.apps=false', 'web_search="disabled"', 'approval_policy="never"', 'mcp_servers.husk.required=true']) expect(set).toContain(off);
     expect(set).toContain('mcp_servers.husk.command="husk-mcp-test"');
     expect(set).toContain('mcp_servers.husk.args=["bin.js","--flavor","base","--keep","--network","egress","--session","bot-nightly"]');
+    // Its calls wait out a person's take-over (J5-e).
+    expect(set).toContain('mcp_servers.husk.env={HUSK_BOT="nightly"}');
     expect(set.find((s) => s.startsWith('developer_instructions='))).toContain('Check the site.');
     expect(argv.at(-1)).toBe('-');
     expect(input).toBe('Is the site up?');
