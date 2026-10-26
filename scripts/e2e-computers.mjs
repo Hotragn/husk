@@ -1562,13 +1562,19 @@ async function checkPackages() {
   const made = await api('POST', '/v1/computers', { name: `e2e-pkgs-${process.pid}`, provider: 'docker', packages: ['jq'] });
   check('a docker computer asked for packages is made', made.status === 201, JSON.stringify(made.body).slice(0, 300));
   if (made.status !== 201) return;
-  created.push(made.body.id);
-  const ran = await api('POST', `/v1/computers/${made.body.id}/exec`, { cmd: 'jq --version' });
-  check(
-    'its packages are in it, built into an image of its own',
-    /^jq-1\./.test(ran.body?.stdout ?? '') && /^husk-packages:/.test(made.body.image ?? ''),
-    `${made.body.image}: ${JSON.stringify(ran.body).slice(0, 200)}`,
-  );
+  const id = made.body.id;
+  created.push(id);
+  try {
+    const ran = await api('POST', `/v1/computers/${id}/exec`, { cmd: 'jq --version' });
+    check(
+      'its packages are in it, built into an image of its own',
+      /^jq-1\./.test(ran.body?.stdout ?? '') && /^husk-packages:/.test(made.body.image ?? ''),
+      `${made.body.image}: ${JSON.stringify(ran.body).slice(0, 200)}`,
+    );
+  } finally {
+    // Gone at once: the desktop app counts the computers in the corner later.
+    await api('DELETE', `/v1/computers/${id}?confirm=${id}`, undefined, rec.token, { 'x-husk-as': 'person' }).catch(() => undefined);
+  }
 }
 
 async function checkDeleteErases(id) {
