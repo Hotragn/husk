@@ -170,9 +170,13 @@ async function tool(id, name, args = {}) {
   return r.body;
 }
 
-/** A minimal MCP client over a child's stdio: this build with `args`, or a chat app's own `launch` entry. */
-function mcpSession(args, launch = { command: process.execPath, args: [bin] }) {
-  const child = spawn(launch.command, [...launch.args, ...args], { env: { ...env, ...(launch.env ?? {}) }, stdio: ['pipe', 'pipe', 'inherit'] });
+/**
+ * A minimal MCP client over a child's stdio: this build with `args`, or a chat
+ * app's own `launch` entry. `answer` replies to the server's own requests, as
+ * an app answers its "Done?" prompt; any other request is refused.
+ */
+function mcpSession(args, launch = { command: process.execPath, args: [bin] }, { env: own = env, answer = () => undefined } = {}) {
+  const child = spawn(launch.command, [...launch.args, ...args], { env: { ...own, ...(launch.env ?? {}) }, stdio: ['pipe', 'pipe', 'inherit'] });
   let buffer = '';
   const waiting = new Map();
   child.stdout.on('data', (chunk) => {
@@ -182,7 +186,12 @@ function mcpSession(args, launch = { command: process.execPath, args: [bin] }) {
       buffer = buffer.slice(i + 1);
       if (!line) continue;
       const msg = JSON.parse(line);
-      if (msg.id !== undefined && waiting.has(msg.id)) {
+      if (msg.method !== undefined) {
+        if (msg.id === undefined) continue;
+        const result = answer(msg);
+        const reply = result === undefined ? { error: { code: -32601, message: `${msg.method} is not answered here` } } : { result };
+        child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: msg.id, ...reply })}\n`);
+      } else if (msg.id !== undefined && waiting.has(msg.id)) {
         waiting.get(msg.id)(msg);
         waiting.delete(msg.id);
       }
@@ -1700,6 +1709,120 @@ async function checkClaudeCodeBot() {
   }
 }
 
+/**
+ * The support matrix (docs/clients.md, J6-a): each app as it starts Husk and
+ * speaks to it, with its own name, protocol version and capabilities, as far as
+ * the matrix knows them. An app with a config file starts the entry setup wrote
+ * into it; Claude Code and Codex add Husk with their own CLIs, which CI does not
+ * have, so they start the same launch line. Perplexity's name is not known: it
+ * stands for any app Husk does not know.
+ */
+const UI = { extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app'] } } };
+const DESKTOP = { app: 'claude-desktop', file: ['.config', 'Claude', 'claude_desktop_config.json'], key: 'mcpServers' };
+const CLIENTS = [
+  { label: 'Claude Desktop', ...DESKTOP, name: 'claude-ai', protocol: '2025-11-25', caps: UI, platform: 'Claude Desktop' },
+  { label: 'Claude Desktop’s Code tab', ...DESKTOP, name: 'local-agent-mode-husk', protocol: '2025-11-25', caps: { roots: {}, ...UI }, platform: 'Claude Desktop' },
+  { label: 'Claude Code', name: 'claude-code', protocol: '2026-07-28', caps: { elicitation: {} }, session: `e2e-${process.pid}`, platform: 'Claude Code', inChat: true },
+  { label: 'Codex', name: 'codex-mcp-client', protocol: '2025-06-18', caps: { elicitation: {} }, platform: 'Codex' },
+  { label: 'Cursor', app: 'cursor', file: ['.cursor', 'mcp.json'], key: 'mcpServers', name: 'cursor-vscode', protocol: '2025-06-18', caps: { elicitation: {} }, platform: 'Cursor', inChat: true },
+  { label: 'VS Code', app: 'vscode', file: ['.config', 'Code', 'User', 'mcp.json'], key: 'servers', name: 'Visual Studio Code', protocol: '2025-11-25', caps: { elicitation: { form: {} } }, platform: 'VS Code', inChat: true, waits: true },
+  { label: 'Windsurf', app: 'windsurf', file: ['.codeium', 'windsurf', 'mcp_config.json'], key: 'mcpServers', name: 'windsurf', protocol: '2025-06-18', platform: 'Windsurf' },
+  { label: 'Zed', app: 'zed', file: ['.config', 'zed', 'settings.json'], key: 'context_servers', name: 'Zed', protocol: '2025-11-25', platform: 'Zed', long: true },
+  { label: 'Gemini CLI', app: 'gemini', file: ['.gemini', 'settings.json'], key: 'mcpServers', name: 'gemini-cli-mcp-client', protocol: '2025-06-18', caps: { roots: { listChanged: true } }, platform: 'Gemini CLI' },
+  { label: 'Perplexity', name: 'Perplexity', protocol: '2025-06-18', platform: 'Perplexity' },
+];
+
+/**
+ * Setup connects every app with a config file, in a home of this check's own,
+ * then each app's chat runs against Husk (checkClient).
+ */
+async function checkClients() {
+  const own = join(home, 'clients');
+  const config = join(own, '.config');
+  // Zed's first settings file is mostly comments, which setup must keep.
+  mkdirSync(join(config, 'zed'), { recursive: true });
+  writeFileSync(join(config, 'zed', 'settings.json'), '// Zed settings\n{\n  "ui_font_size": 16,\n}\n');
+  const apps = [...new Set(CLIENTS.flatMap((c) => (c.app ? [c.app] : [])))];
+  const setup = spawnSync(process.execPath, [cli, 'setup', '--computer', 'docker', '--apps', apps.join(','), '--yes', '--no-start'], {
+    env: { ...env, HOME: own, XDG_CONFIG_HOME: config, HUSK_LAUNCH: JSON.stringify({ command: process.execPath, args: [bin] }) },
+    encoding: 'utf8',
+    timeout: 300_000,
+  });
+  check(`setup connects ${apps.join(', ')}, each in its own file`, setup.status === 0, `${setup.stdout ?? ''}${setup.stderr ?? ''}`.slice(-600));
+  const zed = readFileSync(join(config, 'zed', 'settings.json'), 'utf8');
+  check('setup keeps the comments in Zed’s settings', zed.startsWith('// Zed settings\n{') && zed.includes('"ui_font_size": 16,'), zed.slice(0, 200));
+  // The files hold no `//` but a comment's, nor a `,}` but a trailing comma's.
+  const entryOf = (c) => JSON.parse(readFileSync(join(own, ...c.file), 'utf8').replace(/^\s*\/\/.*$/gm, '').replace(/,(\s*[}\]])/g, '$1'))[c.key]?.husk;
+  for (const c of CLIENTS) await checkClient(c, entryOf(c.file ? c : DESKTOP), Boolean(c.file));
+}
+
+/**
+ * One app's chat: Husk answers in a protocol the app speaks, lists tools that
+ * fit every app's limits, names the chat's computer for the app, answers a call
+ * longer than the app allows before the app gives up (one app with a 60 s
+ * limit), and asks "Done?" in the chat only where the app shows it.
+ */
+async function checkClient(c, entry, fromFile) {
+  const say = (what) => `${c.label}: ${what}`;
+  if (fromFile) {
+    const shaped = entry?.command === process.execPath && entry.args?.[0] === bin && (c.key !== 'servers' || entry.type === 'stdio');
+    check(say(`setup wrote its entry under ${c.key}, in the app’s own shape`), shaped, JSON.stringify(entry));
+  }
+  let asked = 0;
+  const chatEnv = { ...env, ...(c.session ? { CLAUDE_CODE_SESSION_ID: c.session } : {}) };
+  if (!c.session) delete chatEnv.CLAUDE_CODE_SESSION_ID;
+  const chat = mcpSession([], entry, {
+    env: chatEnv,
+    answer: (msg) => (msg.method === 'elicitation/create' ? (asked++, { action: 'accept', content: { done: true } }) : undefined),
+  });
+  let mine;
+  try {
+    const init = await chat.request('initialize', { protocolVersion: c.protocol, capabilities: c.caps ?? {}, clientInfo: { name: c.name, version: '0' } });
+    // MCP's negotiation: the version asked for when Husk serves it, else Husk's newest.
+    const answered = c.protocol === '2026-07-28' ? '2025-11-25' : c.protocol;
+    check(say(`Husk answers in ${answered}`), init.result?.protocolVersion === answered, JSON.stringify(init.result?.protocolVersion ?? init.error));
+    chat.notify('notifications/initialized');
+    const names = ((await chat.request('tools/list', {})).result?.tools ?? []).map((t) => t.name);
+    // The strictest of each limit: Cascade's 100 tools, Cursor's 60 characters for
+    // server and tool together, Gemini CLI's 63 for mcp_<server>_<tool>.
+    const fits = names.length <= 100 && names.every((n) => /^[a-z][a-z0-9_]*$/.test(n) && `husk${n}`.length <= 60 && `mcp_husk_${n}`.length <= 63);
+    check(say(`its ${names.length} tools fit every app’s limits, with job_wait only where the app gives up on a call`), fits && names.includes('shell') && names.includes('job_wait') !== Boolean(c.waits), names.join(' '));
+
+    const known = new Set((await api('GET', '/v1/overview')).body.computers.map((x) => x.id));
+    const target = (id) => (c.session ? {} : { computer: id });
+    const hello = textOf((await chat.request('tools/call', { name: 'shell', arguments: { ...target('new'), command: 'echo from-the-app' } })).result ?? {});
+    mine = (await api('GET', '/v1/overview')).body.computers.find((x) => !known.has(x.id));
+    if (mine) created.push(mine.id);
+    const platform = mine?.spec?.labels?.['husk.platform'];
+    check(say(`a chat’s computer is named for ${c.platform}`), /from-the-app/.test(hello) && platform === c.platform, `${platform}; ${hello.slice(0, 160)}`);
+
+    if (c.long) {
+      const started = Date.now();
+      const first = textOf((await chat.request('tools/call', { name: 'shell', arguments: { ...target(mine.id), command: 'sleep 58; echo after-the-wait' } })).result ?? {});
+      const secs = Math.round((Date.now() - started) / 1000);
+      const job = /job_wait with job "([\w-]+)"/.exec(first)?.[1];
+      check(say(`a call longer than its 60 s answers "still running" in time (${secs}s)`), Boolean(job) && secs < 58, first.slice(0, 200));
+      const rest = textOf((await chat.request('tools/call', { name: 'job_wait', arguments: { job } })).result ?? {});
+      check(say('job_wait collects the rest'), /after-the-wait/.test(rest), rest.slice(0, 200));
+    }
+
+    const handed = textOf((await chat.request('tools/call', { name: 'hand_off', arguments: { ...target(mine.id), reason: 'e2e: the per-app check.' } })).result ?? {});
+    if (c.inChat) {
+      check(say('asks "Done?" in the chat, and the computer is the AI’s again'), asked === 1 && /computer is yours again/.test(handed), handed.slice(0, 200));
+    } else {
+      const handoff = /^Handoff (\S+) is open/.exec(handed)?.[1];
+      check(say('gives a link to relay instead'), asked === 0 && Boolean(handoff) && /#handoff=/.test(handed), handed.slice(0, 200));
+      await chat.request('tools/call', { name: 'hand_off_done', arguments: { handoff } });
+    }
+  } finally {
+    chat.child.stdin.end();
+    if (mine) {
+      const gone = await api('DELETE', `/v1/computers/${mine.id}?confirm=${mine.id}`, undefined, rec.token, { 'x-husk-as': 'person' });
+      if (gone.status === 204) created.splice(created.indexOf(mine.id), 1);
+    }
+  }
+}
+
 try {
   // 1. A fresh home and a non-interactive setup, as the README's line runs it:
   // Husk added to one chat app on the computer chosen, the image with the
@@ -1740,6 +1863,9 @@ try {
 
   // 1e. A bot's scheduled run waits while a person has its computer (J5-e).
   await checkScheduledRunPauses();
+
+  // 1f. Every chat app in the support matrix, as it starts and speaks to Husk (J6-a).
+  await checkClients();
 
   // 2. A Docker computer with a browser.
   // Unique: the name is the container's, and another `e2e` container would clash.

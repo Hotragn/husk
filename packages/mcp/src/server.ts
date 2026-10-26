@@ -10,7 +10,7 @@ import {
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { HUSK_VERSION, IDENTITY_LABELS, chatLabel, createLogger, networkEnforcement, platformName, quiet, redact } from '@husk-ai/core';
+import { HUSK_VERSION, IDENTITY_LABELS, chatClient, chatLabel, createLogger, networkEnforcement, platformName, quiet, redact } from '@husk-ai/core';
 import type { IdentitySource } from '@husk-ai/core';
 import type { Computer, ComputerInfo, ComputerSpec, Logger } from '@husk-ai/core';
 import { ComputerManager, ensureRunning } from '@husk-ai/runtime';
@@ -49,6 +49,8 @@ export interface HuskMcpOptions {
   connect?: () => Promise<DaemonClient | undefined>;
   /** Stop a computer after this long with no tool call. Default 10 minutes. */
   idleStopMs?: number;
+  /** Answer "still running" after this long, instead of the chat app's own wait. For tests. */
+  callWaitMs?: number;
   logger?: Logger;
   profile?: WorkspaceProfile;
   workspaceStore?: WorkspaceStore;
@@ -89,28 +91,38 @@ const CHAT_KEY_PREFIX = 'chat:';
 const ELICIT_WAIT_MS = 200_000;
 
 /**
- * Clients known to actually show a form-elicitation prompt. Declaring the
- * capability is not enough: Claude Desktop is reported to declare it and never
- * show the dialog (https://github.com/fdsimms/todo/issues/3124,
- * https://github.com/anthropics/claude-code/issues/41110), which would leave the
- * person waiting minutes for a link. Everyone else gets the link at once.
- *  - Claude Code: https://code.claude.com/docs/en/mcp
- *  - Cursor (1.5+): https://cursor.com/docs/context/mcp
- *  - VS Code (1.102+): https://code.visualstudio.com/updates/v1_107
- * ponytail: names matched by substring of clientInfo.name; confirm each by
- * observation. A wrong name only costs the in-chat prompt, never safety.
- */
-const SHOWS_ELICITATION = [/claude-code/i, /cursor/i, /visual studio code|vscode/i];
-
-/**
  * Whether a handoff asks "Done?" in the chat, or gives a link at once: the
  * client declares form elicitation (`elicitation: {}` means form mode; one
- * that lists only `url` has no form) and is one known to show it.
+ * that lists only `url` has no form) and is one known to show it (`chatClient`
+ * in @husk-ai/core). Declaring it is not enough: Claude Desktop has been seen
+ * to declare it and never show the dialog, which would leave the person
+ * waiting minutes for a link.
  * https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation
  */
 export function asksInChat(clientName: string, elicitation: { form?: unknown; url?: unknown } | undefined): boolean {
   if (!elicitation || (elicitation.form === undefined && elicitation.url !== undefined)) return false;
-  return SHOWS_ELICITATION.some((re) => re.test(clientName));
+  return chatClient(clientName).asksInChat;
+}
+
+/** The tool a chat collects a call with when the call outlasted its app's wait. */
+export const JOB_WAIT_TOOL: ToolDef = {
+  name: 'job_wait',
+  description:
+    'Get the result of a Husk call that answered "still running". It waits as long as this chat ' +
+    'app allows a call, then says again if the job is not done yet. The job goes on in the computer ' +
+    'either way, so call this rather than running the work again.',
+  inputSchema: {
+    type: 'object',
+    properties: { job: { type: 'string', description: 'The job id the call gave.' } },
+    required: ['job'],
+  },
+};
+
+/** A call that outlasted its app's wait, still running or not yet collected. */
+interface Job {
+  tool: string;
+  started: number;
+  result: Promise<CallToolResult>;
 }
 
 /** How often a chat checks whether the person finished in the console. */
@@ -174,6 +186,9 @@ export class HuskMcpServer {
   /** Handoffs open in this session. A person ends one; closing the session ends them all. */
   private readonly handoffs = new HandoffRegistry();
   private readonly closing = new AbortController();
+  /** Calls that outlasted their app's wait, by the id the chat collects them with. */
+  private readonly jobs = new Map<string, Job>();
+  private readonly callWaitMs: number | undefined;
   /** Short-lived links, each scoped to one computer or one computer-less handoff. */
   private readonly tokens = new ScopedTokens();
   /** Ended from the viewer, so a later hand_off_done for one is an answer, not an error. */
@@ -195,6 +210,7 @@ export class HuskMcpServer {
     if (opts.shared) this.daemon = Promise.resolve(opts.shared);
     this.connect = opts.connect ?? (() => connectDaemon({ log: this.log, onLocal: (why) => (this.localReason = why) }));
     this.idleStopMs = opts.idleStopMs ?? 10 * 60 * 1000;
+    this.callWaitMs = opts.callWaitMs;
     this.profile = opts.profile ?? 'computer';
     this.workspaceStore = opts.workspaceStore ?? new WorkspaceStore();
     this.workspaceTools = new WorkspaceTools(this.workspaceStore, () => this.openViewer());
@@ -255,60 +271,106 @@ export class HuskMcpServer {
           return { isError: true, content: [{ type: 'text', text: redact((err as Error).message) }] };
         }
       }
-      const { computer: requested, ...toolArgs } = (args ?? {}) as Record<string, unknown>;
-      let computer: Computer;
-      try {
-        const resolved = await this.resolve(requested);
-        if (typeof resolved === 'string') return { isError: true, content: [{ type: 'text', text: resolved }] };
-        computer = resolved;
-      } catch (err) {
-        const error = err as Error & { hint?: string };
-        const text = `Computer unavailable: ${error.message}\n${error.hint ?? 'Run husk doctor to check the provider, then retry.'}`;
-        return { isError: true, content: [{ type: 'text', text: redact(text) }] };
-      }
-      // The person holds the computer until they say done. The model must not
-      // type into the page they are signing in on, or run commands under them.
-      const held = this.handoffs.list().find((h) => !h.computerId || h.computerId === computer.id);
-      if (held && name !== 'computer_info') {
-        // Taken from a link, not handed off by the model: only the person's Give back ends it.
-        return { isError: true, content: [{ type: 'text', text: refusalText(held) }] };
-      }
-
-      // Every call, at the one place they all pass through. An audit log that
-      // has to be remembered at each new tool is an audit log with holes -- and
-      // this path had no log at all until now, which is the more embarrassing
-      // version of the same problem.
-      this.busy(computer.id, +1);
-      let result: Awaited<ReturnType<typeof callTool>>;
-      try {
-        result = await this.runTool(computer, name, toolArgs, extra.signal);
-      } finally {
-        this.busy(computer.id, -1);
-      }
-
-      const content = [...result.content];
-      if (!this.announced.has(computer.id)) {
-        this.announced.add(computer.id);
-        const carry =
-          this.identity === 'first-call'
-            ? ` Your computer id is ${computer.id}: pass computer: "${computer.id}" on every later Husk call in this conversation.`
-            : '';
-        // A client that renders no card (Claude Code, most terminals) shows nothing
-        // of the computer unless the model passes a link on.
-        const link = this.rendersCards() ? '' : await this.announceLink(computer.id);
-        // Kept on another provider than asked -- made while that one was down -- is said, not silent.
-        const asked = this.spec.provider;
-        const elsewhere =
-          asked && computer.info.provider !== asked
-            ? ` It runs on ${computer.info.provider}, not the ${asked} this chat asked for: it was made when ${asked} ` +
-              `was not available, and a chat keeps its computer. Tell the user; a new chat gets one on ${asked}.`
-            : '';
-        content.unshift({ type: 'text', text: `${this.isolationNote(computer)}${elsewhere}${carry}${link}\n` });
-      }
-      // computer_info is where a chat's card first appears; it needs the state, never a token.
-      const card = name === 'computer_info' && this.rendersCards() ? { structuredContent: { ...(await this.cardState(computer.id)) } } : {};
-      return { content, ...card, ...(result.isError ? { isError: true } : {}) };
+      if (name === JOB_WAIT_TOOL.name) return this.jobWait((args ?? {}) as Record<string, unknown>);
+      // An app that gives up on a call after a while is answered before it does:
+      // the call goes on, and the chat collects it with job_wait. So it stops when
+      // the chat cancels it before that answer, or this process closes, and not
+      // because the request it came in on was answered.
+      const signal = AbortSignal.any([extra.signal, this.closing.signal]);
+      return this.answered({ tool: name, started: Date.now(), result: this.computerCall(name, (args ?? {}) as Record<string, unknown>, signal) });
     });
+  }
+
+  private async computerCall(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<CallToolResult> {
+    const { computer: requested, ...toolArgs } = args;
+    let computer: Computer;
+    try {
+      const resolved = await this.resolve(requested);
+      if (typeof resolved === 'string') return { isError: true, content: [{ type: 'text', text: resolved }] };
+      computer = resolved;
+    } catch (err) {
+      const error = err as Error & { hint?: string };
+      const text = `Computer unavailable: ${error.message}\n${error.hint ?? 'Run husk doctor to check the provider, then retry.'}`;
+      return { isError: true, content: [{ type: 'text', text: redact(text) }] };
+    }
+    // The person holds the computer until they say done. The model must not
+    // type into the page they are signing in on, or run commands under them.
+    const held = this.handoffs.list().find((h) => !h.computerId || h.computerId === computer.id);
+    if (held && name !== 'computer_info') {
+      // Taken from a link, not handed off by the model: only the person's Give back ends it.
+      return { isError: true, content: [{ type: 'text', text: refusalText(held) }] };
+    }
+
+    // Every call, at the one place they all pass through. An audit log that
+    // has to be remembered at each new tool is an audit log with holes -- and
+    // this path had no log at all until now, which is the more embarrassing
+    // version of the same problem.
+    this.busy(computer.id, +1);
+    let result: Awaited<ReturnType<typeof callTool>>;
+    try {
+      result = await this.runTool(computer, name, toolArgs, signal);
+    } finally {
+      this.busy(computer.id, -1);
+    }
+
+    const content = [...result.content];
+    if (!this.announced.has(computer.id)) {
+      this.announced.add(computer.id);
+      const carry =
+        this.identity === 'first-call'
+          ? ` Your computer id is ${computer.id}: pass computer: "${computer.id}" on every later Husk call in this conversation.`
+          : '';
+      // A client that renders no card (Claude Code, most terminals) shows nothing
+      // of the computer unless the model passes a link on.
+      const link = this.rendersCards() ? '' : await this.announceLink(computer.id);
+      // Kept on another provider than asked -- made while that one was down -- is said, not silent.
+      const asked = this.spec.provider;
+      const elsewhere =
+        asked && computer.info.provider !== asked
+          ? ` It runs on ${computer.info.provider}, not the ${asked} this chat asked for: it was made when ${asked} ` +
+            `was not available, and a chat keeps its computer. Tell the user; a new chat gets one on ${asked}.`
+          : '';
+      content.unshift({ type: 'text', text: `${this.isolationNote(computer)}${elsewhere}${carry}${link}\n` });
+    }
+    // computer_info is where a chat's card first appears; it needs the state, never a token.
+    const card = name === 'computer_info' && this.rendersCards() ? { structuredContent: { ...(await this.cardState(computer.id)) } } : {};
+    return { content, ...card, ...(result.isError ? { isError: true } : {}) };
+  }
+
+  /** How long a call is held before it answers "still running"; 0 where the app waits as long as a call takes. */
+  private waitMs(): number {
+    return this.callWaitMs ?? (chatClient(this.mcp.getClientVersion()?.name).waitSec ?? 0) * 1000;
+  }
+
+  /**
+   * A call's result if it ends within the app's wait. Otherwise the call goes
+   * on as job `id` (a new one the first time), and the answer says how to
+   * collect it. ponytail: a job nobody collects keeps its result until this
+   * process ends; expire them if chats start leaving many behind.
+   */
+  private async answered(job: Job, id?: string): Promise<CallToolResult> {
+    const ms = this.waitMs();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<undefined>((resolveLate) => {
+      if (ms) timer = setTimeout(() => resolveLate(undefined), ms);
+    });
+    const done = await Promise.race([job.result, late]).finally(() => clearTimeout(timer));
+    if (done) {
+      if (id) this.jobs.delete(id);
+      return done;
+    }
+    if (!id) this.jobs.set((id = randomUUID().slice(0, 8)), job);
+    const secs = Math.round((Date.now() - job.started) / 1000);
+    return { content: [{ type: 'text', text: `${job.tool} is still running after ${secs}s, and goes on in the computer. Call job_wait with job "${id}" for its result.` }] };
+  }
+
+  private jobWait(args: Record<string, unknown>): Promise<CallToolResult> | CallToolResult {
+    const id = String(args.job ?? '');
+    const job = this.jobs.get(id);
+    if (!job) {
+      return { isError: true, content: [{ type: 'text', text: `There is no job "${id}" here: its result was already given, or this chat's Husk has restarted since and lost it.` }] };
+    }
+    return this.answered(job, id);
   }
 
   /**
@@ -673,10 +735,9 @@ export class HuskMcpServer {
                 required: ['done'],
               },
             },
-            // Under the 240s that claude.ai and Claude Desktop allow a whole tool
-            // call (https://claude.com/docs/connectors/building), so the model
-            // still gets the link back. When this fires the handoff stays open.
-            { signal: stop.signal, timeout: ELICIT_WAIT_MS },
+            // Under the app's own limit on a call, so the model still gets the
+            // link back. When this fires the handoff stays open.
+            { signal: stop.signal, timeout: Math.min(ELICIT_WAIT_MS, this.waitMs() || ELICIT_WAIT_MS) },
           )
           .then((r) => (r.action === 'accept' && r.content?.done === true ? 'done' : 'not-yet'))
           .catch(() => 'not-yet' as const);
@@ -706,14 +767,16 @@ export class HuskMcpServer {
    * The computer tools this client sees. Card-capable clients get the card on
    * computer_info and hand_off, plus the two app-only tools the card calls;
    * other clients never see those, since they would show them to the model.
+   * job_wait is for apps that give up on a call, so only they see it.
    */
   private computerTools(): ToolDef[] {
     const base = [...toolsFor(this.degraded), ...HANDOFF_TOOLS, OPEN_UI_TOOL];
-    if (!this.rendersCards()) return this.withComputerArg(base);
+    const jobs = this.waitMs() ? [JOB_WAIT_TOOL] : [];
+    if (!this.rendersCards()) return [...this.withComputerArg(base), ...jobs];
     const withCard = base.map((t) =>
       t.name === 'computer_info' || t.name === 'hand_off' ? { ...t, _meta: { ui: { resourceUri: CARD_URI } } } : t,
     );
-    return [...this.withComputerArg(withCard), ...CARD_APP_TOOLS];
+    return [...this.withComputerArg(withCard), ...CARD_APP_TOOLS, ...jobs];
   }
 
   /** A computer this process owns, or a chat's computer from an earlier process. Never creates one. */

@@ -44,9 +44,9 @@ export const COMMANDS: HelpEntry[] = [
     details:
       "Chooses where your chats' computers run (docker, podman, local, ssh, fly), adds Husk to the\n"
       + 'chat apps you pick, and starts the one Husk every chat goes through, printing its console link.\n\n'
-      + 'Apps it knows: claude-desktop, claude-code, cursor, vscode, windsurf, codex, gemini. For an app\n'
-      + 'with a JSON config it backs the file up, then changes only its own "husk" entry, and refuses a\n'
-      + 'file it cannot parse. Claude Code and Codex are changed through their own commands.\n'
+      + 'Apps it knows: claude-desktop, claude-code, cursor, vscode, windsurf, zed, codex, gemini. For an\n'
+      + 'app with a JSON config it backs the file up, then changes only its own "husk" entry in place,\n'
+      + 'and refuses a file it cannot parse. Claude Code and Codex are changed through their own commands.\n'
       + 'Re-run it to change the computer; --remove takes Husk out of every app it is in.',
     flags: [
       ['--computer <name>', 'docker, podman, local, ssh, fly, or auto'],

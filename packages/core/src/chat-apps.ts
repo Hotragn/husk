@@ -2,19 +2,22 @@ import { execFile } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { HUSK_RANGE } from './identity.js';
+import { parseJsonc, setMember } from './jsonc.js';
 
 /**
  * The chat apps `husk setup` can connect, and how each one is told about Husk.
  *
- * Where an app keeps its MCP servers in a JSON file, Husk edits that file: it
- * backs it up first, changes only its own `husk` entry, and refuses to touch a
- * file it cannot parse. Where the app has its own command for this (Claude
- * Code, Codex), Husk runs that command with fixed arguments. Locations follow
- * each vendor's own documentation.
+ * Where an app keeps its MCP servers in a JSON file, Husk edits that file in
+ * place: it backs it up first, changes only its own `husk` entry, keeping the
+ * file's comments and layout, and refuses to touch a file it cannot parse.
+ * Where the app has its own command for this (Claude Code, Codex), Husk runs
+ * that command with fixed arguments. Locations follow each vendor's own
+ * documentation; docs/clients.md has the sources.
  */
 
-export type ChatAppId = 'claude-desktop' | 'claude-code' | 'cursor' | 'vscode' | 'windsurf' | 'codex' | 'gemini';
+export type ChatAppId = 'claude-desktop' | 'claude-code' | 'cursor' | 'vscode' | 'windsurf' | 'zed' | 'codex' | 'gemini';
 
 export interface ChatApp {
   id: ChatAppId;
@@ -88,9 +91,11 @@ interface FileApp {
   dir: string;
   file: string;
   /** The top-level key holding servers. */
-  key: 'mcpServers' | 'servers';
+  key: 'mcpServers' | 'servers' | 'context_servers';
   /** Extra fields the entry needs (VS Code wants `type`). */
   extra?: Record<string, string>;
+  /** The app reads comments and trailing commas in the file (Zed writes them). */
+  comments?: true;
   after: string;
 }
 
@@ -317,6 +322,8 @@ function envFlags(flag: string, l: HuskLaunch): string[] {
 
 export function chatAppDefs(home = homedir()): AppDef[] {
   const data = appData(home);
+  // ~/.config/zed on macOS too, not Application Support.
+  const zed = process.platform === 'win32' ? join(data, 'Zed') : process.platform === 'darwin' ? join(home, '.config', 'zed') : join(data, 'zed');
   return [
     {
       kind: 'file', id: 'claude-desktop', name: 'Claude Desktop',
@@ -342,9 +349,16 @@ export function chatAppDefs(home = homedir()): AppDef[] {
       after: 'Reload VS Code. Husk appears in the Copilot chat tools.',
     },
     {
-      kind: 'file', id: 'windsurf', name: 'Windsurf',
+      // Windsurf became Devin Desktop in June 2026. Both its agents read this file:
+      // Cascade while it moves to ~/.config/devin, Devin Local through its Windsurf import.
+      kind: 'file', id: 'windsurf', name: 'Windsurf (Devin Desktop)',
       dir: join(home, '.codeium', 'windsurf'), file: join(home, '.codeium', 'windsurf', 'mcp_config.json'), key: 'mcpServers',
-      after: 'Restart Windsurf.',
+      after: 'Restart Windsurf or Devin Desktop.',
+    },
+    {
+      kind: 'file', id: 'zed', name: 'Zed',
+      dir: zed, file: join(zed, 'settings.json'), key: 'context_servers', comments: true,
+      after: 'Open Zed’s Agent Panel settings: Husk is in its MCP servers. Restart Zed if it is not.',
     },
     {
       kind: 'cli', id: 'codex', name: 'Codex CLI', bin: 'codex', dir: join(home, '.codex'),
@@ -361,16 +375,46 @@ export function chatAppDefs(home = homedir()): AppDef[] {
   ];
 }
 
-function parseConfig(def: FileApp): Record<string, unknown> {
-  const text = readText(def.file);
+function parseConfig(def: FileApp, text = readText(def.file)): Record<string, unknown> {
   if (text === undefined || text.trim() === '') return {};
   try {
-    const parsed = JSON.parse(text) as unknown;
+    const parsed = def.comments ? parseJsonc(text) : (JSON.parse(text) as unknown);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('not an object');
     return parsed as Record<string, unknown>;
   } catch {
-    throw new Error(`${def.file} is not plain JSON, so Husk will not edit it. Add Husk to it by hand, or fix the file and run setup again.`);
+    const plain = def.comments ? 'JSON' : 'plain JSON';
+    throw new Error(`${def.file} is not ${plain}, so Husk will not edit it. Add Husk to it by hand, or fix the file and run setup again.`);
   }
+}
+
+/** The app's servers, as an object even where the file has something else under that key. */
+function serversOf(def: FileApp): Record<string, unknown> {
+  const servers = parseConfig(def)[def.key];
+  return servers && typeof servers === 'object' && !Array.isArray(servers) ? (servers as Record<string, unknown>) : {};
+}
+
+/**
+ * Set Husk's entry in an app's file, or take it out (`entry` undefined), in
+ * place. Refuses rather than write a file that would read as anything but the
+ * same settings with that one change. Returns the backup made first.
+ */
+function editConfig(def: FileApp, entry: Record<string, unknown> | undefined, now: Date): string | undefined {
+  const text = readText(def.file) ?? '';
+  const config = parseConfig(def, text);
+  const servers = { ...((config[def.key] as Record<string, unknown> | undefined) ?? {}) };
+  if (entry) servers.husk = entry;
+  else delete servers.husk;
+  let next: string | undefined;
+  try {
+    next = setMember(text, def.key, 'husk', entry);
+    if (!isDeepStrictEqual(parseConfig(def, next), { ...config, [def.key]: servers })) next = undefined;
+  } catch {
+    next = undefined;
+  }
+  if (next === undefined) throw new Error(`Husk could not change only its own entry in ${def.file}, so it left the file as it was. Add Husk to it by hand.`);
+  const backup = backupOf(def.file, now);
+  writeAtomic(def.file, next);
+  return backup;
 }
 
 function entriesOf(def: AppDef): Entry[] {
@@ -511,19 +555,20 @@ export async function connectChatApp(
     return { id, ok: true, message: `added to ${def.name}.${projects} ${def.after}` };
   }
   try {
-    const config = parseConfig(def);
-    const servers = { ...((config[def.key] as Record<string, unknown> | undefined) ?? {}) };
+    const servers = serversOf(def);
     const prev = servers.husk && typeof servers.husk === 'object' ? (servers.husk as Record<string, unknown>) : {};
     const prevEnv = prev.env && typeof prev.env === 'object' ? (prev.env as Record<string, string>) : {};
-    servers.husk = {
-      ...prev,
-      ...(def.extra ?? {}),
-      command: launch.command,
-      args: keepingTheirs(launch, entryOf(prev), opts.keepChoice).args,
-      ...(launch.env ? { env: { ...prevEnv, ...launch.env } } : {}),
-    };
-    const backup = backupOf(def.file, opts.now ?? new Date());
-    writeAtomic(def.file, `${JSON.stringify({ ...config, [def.key]: servers }, null, 2)}\n`);
+    const backup = editConfig(
+      def,
+      {
+        ...prev,
+        ...(def.extra ?? {}),
+        command: launch.command,
+        args: keepingTheirs(launch, entryOf(prev), opts.keepChoice).args,
+        ...(launch.env ? { env: { ...prevEnv, ...launch.env } } : {}),
+      },
+      opts.now ?? new Date(),
+    );
     return { id, ok: true, message: `added to ${def.name}. ${def.after}`, ...(backup ? { backup } : {}) };
   } catch (err) {
     return { id, ok: false, message: (err as Error).message };
@@ -582,12 +627,8 @@ export async function disconnectChatApp(id: ChatAppId, opts: { home?: string; no
     return { id, ok: gone, message: gone ? `removed from ${def.name}` : `${def.bin} said: ${r.output}` };
   }
   try {
-    const config = parseConfig(def);
-    const servers = { ...((config[def.key] as Record<string, unknown> | undefined) ?? {}) };
-    if (!('husk' in servers)) return { id, ok: true, message: `${def.name} did not have Husk` };
-    delete servers.husk;
-    const backup = backupOf(def.file, opts.now ?? new Date());
-    writeAtomic(def.file, `${JSON.stringify({ ...config, [def.key]: servers }, null, 2)}\n`);
+    if (!('husk' in serversOf(def))) return { id, ok: true, message: `${def.name} did not have Husk` };
+    const backup = editConfig(def, undefined, opts.now ?? new Date());
     return { id, ok: true, message: `removed from ${def.name}`, ...(backup ? { backup } : {}) };
   } catch (err) {
     return { id, ok: false, message: (err as Error).message };

@@ -70,10 +70,12 @@ npx @husk-ai/cli@~0.2 setup
 
 `setup` asks where your chats' computers should run (Docker, Podman, this machine, SSH or
 Fly, with the reason any of them is unavailable and its fix), adds Husk to the chat apps
-it finds (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Codex, Gemini CLI),
+it finds (Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Zed, Codex, Gemini CLI),
 and starts the one Husk every chat goes through, printing its console link. It backs up
 each app's config file before changing it and touches only its own `husk` entry.
-`--remove` takes it out again. The console's **Connect** page does the same.
+`--remove` takes it out again. The console's **Connect** page does the same. What each
+app supports, and how Husk was checked against it, is in
+[docs/clients.md](docs/clients.md).
 
 Coming from 0.1.4? Run setup again, or **Update** on the Connect page. Each chat app's
 `husk` entry moves to this release and keeps the flags and env you gave it, Claude Code's
@@ -136,7 +138,8 @@ accessibility ref rather than pixel coordinates, `hand_off` / `hand_off_done`,
 which give you the computer for a login, a 2FA code or a CAPTCHA and give it back
 only when you say you're done, and `computer_open_ui`, which gives the chat a link
 to show you the computer. Apps that render MCP Apps cards also get the card's two
-tools.
+tools. Apps that give up on a long tool call get `job_wait`: Husk answers such an app
+before it gives up, saying the call is still running, and `job_wait` collects the result.
 
 The first tool result says what kind of machine it got. A model that thinks it is
 sandboxed when it is not makes worse decisions than one that knows.
