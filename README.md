@@ -337,6 +337,7 @@ four dotted octets is not a rule.
 - **[API reference](docs/API.md)** — the control-plane HTTP contract
 - **[Build contract](docs/BUILD-CONTRACT.md)** — conventions every package obeys
 - **[Security model](docs/SECURITY-MODEL.md)** — what is isolated and what is not
+- **[Benchmark](docs/BENCHMARK.md)** — Husk's browser tools against Playwright MCP, measured in CI
 - **[Examples](examples/)** — five `husk.yaml` recipes and an MCP session demo
 - **[Diagrams](docs/diagrams/)** — 16 interactive architecture, dataflow and design diagrams
 

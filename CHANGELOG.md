@@ -83,7 +83,8 @@ not here.
   from just before they act. A call on a computer you hold opens with `E_COMPUTER_HELD`
   ([#220](https://github.com/Hotragn/husk/pull/220)).
 - **A benchmark against Playwright MCP** on the same computer and Chromium, published in
-  every e2e run's summary ([#223](https://github.com/Hotragn/husk/pull/223)).
+  every e2e run's summary, with the latest numbers in [docs/BENCHMARK.md](docs/BENCHMARK.md)
+  ([#223](https://github.com/Hotragn/husk/pull/223)).
 - **Strict network enforcement.** `strict: true` under `computer.network`, or
   `husk-mcp --network-strict`, refuses a provider that cannot enforce the policy for every
   process. Without it, Husk says what is not enforced ([#219](https://github.com/Hotragn/husk/pull/219)).
