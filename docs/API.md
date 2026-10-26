@@ -173,7 +173,7 @@ as `distill` does below, and `engine` in the body picks one.
 ### Chat tools
 
 ```
-POST /v1/computers/:id/tools/:name   body: { "args": {...}, "via"?: "mcp" } -> ToolResult
+POST /v1/computers/:id/tools/:name   body: { "args": {...}, "via"?: "mcp" | "bot" } -> ToolResult
 ```
 
 Runs one of the MCP server's computer tools (`shell`, `read_file`, `browser_click`, …)
@@ -427,7 +427,10 @@ overview's `running` names the call it waits for, which the console and the desk
 app show. While it is held, a chat's call to `POST /v1/computers/:id/tools/:name`
 waits up to 45 seconds for it to
 come back, then runs; still held, it answers with an error telling the model it is
-paused. After Give back, a browser action is refused only if the page is not the one
+paused. A bot's call waits until Give back instead, with nobody to tell: a bot on the
+person's own CLI sends `"via": "bot"`, and a husk run's tools pause in the runner, which
+says so once in the run (`Paused: a person took over the computer…`). A cancel or the
+run's `timeoutSec` still ends a paused run. After Give back, a browser action is refused only if the page is not the one
 the AI left (another URL, title or tab, or a call of its own stopped part-way), with
 what changed; a `browser_snapshot` or `browser_goto` clears that.
 

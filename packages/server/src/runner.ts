@@ -11,9 +11,9 @@ import type {
   ToolCallPart,
 } from '@husk-ai/core';
 import { ApprovalRegistry } from './approvals.js';
-import { admitCall } from './control.js';
+import { admitCall, givenBack } from './control.js';
 import type { PendingApproval } from './approvals.js';
-import { HandoffRegistry } from './handoffs.js';
+import { HandoffRegistry, PERSON_RUN } from './handoffs.js';
 import type { PendingHandoff } from './handoffs.js';
 import type { ComputerSourceLike, ManagerLike, ResolvedDeps, ServerRunOptions } from './deps.js';
 import { EventBus } from './events.js';
@@ -167,6 +167,8 @@ export class Runner {
     runId: string,
     signal: AbortSignal,
     onEvent: (e: ServerRunEvent) => void,
+    /** The runner's own word in the run, such as a pause: a streamed run's `onEvent` takes only the agent's. */
+    notice: (e: ServerRunEvent) => void = onEvent,
   ): ServerRunOptions {
     if (body.input === undefined || body.input === null || body.input === '') {
       throw huskError('E_SPEC_INVALID', 'run requires a non-empty `input`', {
@@ -201,12 +203,20 @@ export class Runner {
         },
       );
     };
-    // The run's tools obey a person holding its computer, as a chat's do:
-    // refused while they hold it, stopped part-way when they take it.
-    opts.admitTool = (call, runSignal) => {
+    // The run's tools obey a person holding its computer, as a chat's do: stopped
+    // part-way when they take it. Where a chat's call is refused so it can tell
+    // its person, a bot's waits, said once, until they give it back (J5-e):
+    // nobody is there to tell. A cancel or the run's timeout still ends it.
+    opts.admitTool = async (call, runSignal) => {
       const computerId = this.active.get(runId)?.computerId;
-      if (!computerId) return Promise.resolve({ signal: runSignal, done: () => {}, stopped: () => undefined });
-      return admitCall(this.handoffs, computerId, call.name, runSignal);
+      if (!computerId) return { signal: runSignal, done: () => {}, stopped: () => undefined };
+      const taken = () => this.handoffs.list().some((h) => h.computerId === computerId && h.runId === PERSON_RUN);
+      for (let paused = false; ; paused = true) {
+        const admitted = await admitCall(this.handoffs, computerId, call.name, runSignal);
+        if (!('refused' in admitted) || runSignal.aborted || !taken()) return admitted;
+        if (!paused) notice({ type: 'warning', message: 'Paused: a person took over the computer. The run goes on when they give it back.' });
+        await givenBack(this.handoffs, computerId, runSignal);
+      }
     };
     if (approvalMode === 'ask') {
       opts.onApproval = (request: ApprovalRequest) => {
@@ -366,12 +376,22 @@ export class Runner {
       // that says so cannot wait for the agent's next event: it would arrive only
       // once the person had already answered. Wake the loop as soon as one lands.
       let wake: (() => void) | undefined;
-      const opts = this.buildOptions(spec, body, runId, abort.signal, (e) => {
-        if (e.type === 'approval_required' || e.type === 'handoff_required') {
+      const opts = this.buildOptions(
+        spec,
+        body,
+        runId,
+        abort.signal,
+        (e) => {
+          if (e.type === 'approval_required' || e.type === 'handoff_required') {
+            sideChannel.push(e);
+            wake?.();
+          }
+        },
+        (e) => {
           sideChannel.push(e);
           wake?.();
-        }
-      });
+        },
+      );
 
       const events = agent.stream(opts)[Symbol.asyncIterator]();
       for (;;) {

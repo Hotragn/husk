@@ -23,11 +23,27 @@ const cli = join(root, 'packages', 'cli', 'dist', 'bin.js');
 const { resolveImage } = await import(pathToFileURL(join(root, 'packages', 'runtime', 'dist', 'index.js')).href);
 const home = mkdtempSync(join(tmpdir(), 'husk-e2e-'));
 
-// Just enough of Ollama's API for a bot to get one answer, with no model and no key.
+// Just enough of Ollama's API for a bot to get an answer, with no model and no key. Asked
+// for "e2e-tool", it runs one command on the computer first and answers with what it printed.
+function stubChat(raw) {
+  let messages = [];
+  try {
+    messages = JSON.parse(raw).messages ?? [];
+  } catch {
+    // not JSON: a plain answer
+  }
+  const asked = messages.filter((m) => m.role === 'user').map((m) => String(m.content)).join(' ');
+  const printed = messages.filter((m) => m.role === 'tool').map((m) => String(m.content)).join('\n');
+  const message =
+    /e2e-tool/.test(asked) && !printed
+      ? { role: 'assistant', content: '', tool_calls: [{ function: { name: 'shell', arguments: { command: 'echo bot-ran' } } }] }
+      : { role: 'assistant', content: printed ? `Done: ${printed.slice(0, 300)}` : 'Hello from the stub model.' };
+  return { model: 'qwen2.5:7b', message, done: true, done_reason: 'stop', prompt_eval_count: 12, eval_count: 6 };
+}
 const ollama = createServer((req, res) => {
-  req.resume().on('end', () => {
-    const said = { model: 'qwen2.5:7b', message: { role: 'assistant', content: 'Hello from the stub model.' }, done: true, done_reason: 'stop', prompt_eval_count: 12, eval_count: 6 };
-    const answer = { '/api/tags': { models: [{ name: 'qwen2.5:7b', model: 'qwen2.5:7b' }] }, '/api/show': { capabilities: ['completion', 'tools'] }, '/api/chat': said }[req.url];
+  let raw = '';
+  req.on('data', (chunk) => (raw += chunk)).on('end', () => {
+    const answer = { '/api/tags': { models: [{ name: 'qwen2.5:7b', model: 'qwen2.5:7b' }] }, '/api/show': { capabilities: ['completion', 'tools'] } }[req.url] ?? (req.url === '/api/chat' ? stubChat(raw) : undefined);
     res.writeHead(answer ? 200 : 404, { 'content-type': req.url === '/api/chat' ? 'application/x-ndjson' : 'application/json' });
     res.end(answer ? `${JSON.stringify(answer)}\n` : '');
   });
@@ -1562,6 +1578,51 @@ async function checkJobHost() {
 }
 
 /**
+ * Bots obey a take-over (J5-e): the person takes a bot's computer, the bot's
+ * schedule fires, and the run waits, saying so once, until they give it back;
+ * then it runs its command and finishes. A chat would be told to stop instead.
+ */
+async function checkScheduledRunPauses() {
+  const name = 'e2e-sched';
+  const spec = { name, model: 'ollama/qwen2.5:7b', persona: 'Use the computer.', tools: ['computer'], computer: { flavor: 'full' } };
+  check('a bot that uses a computer is saved', (await api('POST', '/v1/husks', { spec })).status === 201);
+  const first = await api('POST', `/v1/husks/${name}/run`, { input: 'e2e-tool: once' });
+  check('it runs a command on a computer of its own', first.status === 200 && /bot-ran/.test(first.body.text ?? ''), JSON.stringify(first.body).slice(0, 240));
+  const computerId = ((await api('GET', `/v1/runs/${first.body.runId}`)).body.events ?? []).find((e) => e.type === 'computer_ready')?.computerId;
+  check('its run names the computer', Boolean(computerId), String(computerId));
+  created.push(computerId);
+
+  const person = { 'x-husk-as': 'person' };
+  const taken = await api('POST', `/v1/computers/${computerId}/takeover`, undefined, rec.token, person);
+  check("the person takes the bot's computer", taken.status === 201, JSON.stringify(taken.body).slice(0, 160));
+  const scheduled = { ...spec, triggers: [{ type: 'cron', schedule: '* * * * *', prompt: 'e2e-tool: on schedule' }] };
+  check('the bot gets a schedule, every minute', (await api('PUT', `/v1/husks/${name}`, { spec: scheduled })).status === 200);
+  let run;
+  for (let i = 0; i < 300 && !run; i++) {
+    await sleep(250);
+    run = ((await api('GET', `/v1/runs?husk=${name}`)).body.runs ?? []).find((r) => r.runId !== first.body.runId);
+  }
+  check('the schedule fires while the person has the computer', Boolean(run), run?.runId ?? 'no scheduled run in 75 s');
+  await sleep(4000);
+  const meanwhile = (await api('GET', `/v1/runs/${run.runId}`)).body.result;
+  check('the scheduled run waits: it is still running, its command not run', meanwhile?.status === 'running', JSON.stringify(meanwhile).slice(0, 200));
+
+  await api('POST', `/v1/handoffs/${taken.body.handoffId}/done`, undefined, rec.token, person);
+  let after;
+  for (let i = 0; i < 240; i++) {
+    after = (await api('GET', `/v1/runs/${run.runId}`)).body;
+    if (after.result?.stopReason) break;
+    await sleep(250);
+  }
+  check('given back, the run goes on, runs its command and finishes', after?.result?.stopReason === 'complete' && /bot-ran/.test(after.result.text ?? ''), JSON.stringify(after?.result).slice(0, 240));
+  const pauses = (after?.events ?? []).filter((e) => e.type === 'warning' && /^Paused: a person took over/.test(e.message));
+  check('its record says it paused, once', pauses.length === 1, `${pauses.length} pause notes`);
+  check('the bot is deleted', (await api('DELETE', `/v1/husks/${name}`)).status === 204);
+  const gone = await api('DELETE', `/v1/computers/${computerId}?confirm=${computerId}`, undefined, rec.token, person);
+  if (gone.status === 204) created.splice(created.indexOf(computerId), 1);
+}
+
+/**
  * A Codex chat becomes a bot (J5-d). Codex hands its MCP servers no session
  * id, so the chat names its computer by the id the first answer carries, and
  * Make this a bot finds the chat's rollout by that id.
@@ -1676,6 +1737,9 @@ try {
 
   // 1d. A Codex chat becomes a bot, read back by the rollout that names its computer.
   await checkCodexChatBot();
+
+  // 1e. A bot's scheduled run waits while a person has its computer (J5-e).
+  await checkScheduledRunPauses();
 
   // 2. A Docker computer with a browser.
   // Unique: the name is the container's, and another `e2e` container would clash.

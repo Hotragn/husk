@@ -233,7 +233,8 @@ export function huskServer(spec: HuskSpec): CliCommand | undefined {
   if (c.network.strict) args.push('--network-strict');
   if (c.memoryMb) args.push('--memory', String(c.memoryMb));
   if (c.cpus) args.push('--cpus', String(c.cpus));
-  const env: Record<string, string> = { ...(launch.env ?? {}) };
+  // A bot's calls wait out a person's take-over, where a chat's are told to stop (J5-e).
+  const env: Record<string, string> = { ...(launch.env ?? {}), HUSK_BOT: spec.name };
   if (spec.engine.resume) env['HUSK_CHAT_SESSION'] = spec.engine.resume;
   else args.push('--session', `bot-${spec.name}`);
   return { command: launch.command, args, env };
