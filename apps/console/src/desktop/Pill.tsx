@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { AppGlyph } from './AppGlyph';
-import { ago, arrive, desktopBridge, doing, statusOf, tabName, useDesktopState } from './bridge';
+import { ago, arrive, desktopBridge, doing, statusOf, tabName, useDesktopState, useShape } from './bridge';
 import type { DesktopComputer } from './bridge';
 
 export function Pill() {
@@ -26,6 +26,7 @@ export function Pill() {
   const items = state?.computers ?? [];
   const notch = state?.notch;
   const away = state?.connected === false;
+  useShape('.pill');
   useEffect(() => {
     const shut = () => setOpen(false);
     window.addEventListener('blur', shut);

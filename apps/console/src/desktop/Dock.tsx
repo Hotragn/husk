@@ -16,7 +16,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { arrive, desktopBridge, doing, statusOf, useDesktopState } from './bridge';
+import { arrive, desktopBridge, doing, statusOf, useDesktopState, useShape } from './bridge';
 import type { DesktopComputer } from './bridge';
 import type { DockStage } from './dock3d';
 import { TINTS, tintOf } from './tints';
@@ -63,6 +63,7 @@ export function Dock() {
   }, [stage, itemsKey]);
 
   useEffect(() => arrive(row), []);
+  useShape('.dock-row, .dock-tray, .dock-tip');
 
   const enter = (id: string) => {
     setHover(id);

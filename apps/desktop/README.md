@@ -44,7 +44,9 @@ that tells you when a chat is waiting for you.
 - **Minimizes to the notch.** The minimized window becomes its computers' logos in a black
   capsule hanging from the top of the screen: around the notch on a Mac that has one,
   centred on Windows and Linux. Click a logo to open that tab; hover to see what each
-  computer is doing.
+  computer is doing. Clicks around the corner and the notch reach the windows under them,
+  on Linux too. Both follow your main screen when screens are added, removed or resized,
+  and a Computers window left on a screen that went away comes back.
 - **Real logos.** Claude, Cursor, Gemini, Zed and Windsurf use their marks from
   [simple-icons](https://simpleicons.org) (CC0). VS Code shows its own installed app icon,
   and Codex a monogram until its mark is added.
@@ -55,6 +57,8 @@ that tells you when a chat is waiting for you.
   on or off.
 - **Start at login** is a tray menu option, off by default.
 - **Quit** leaves Husk running for your chats. **Quit and stop Husk** stops it too.
+  Closing the Husk window only hides it, so a command running in its Terminal keeps
+  running. On a Mac, the Dock icon brings it back.
 
 It never edits a chat app's settings on its own. That happens only on the Connect page,
 when you click.
@@ -91,4 +95,17 @@ over stdio (initialize, then 34 tools listed). The `desktop` workflow builds and
 smoke-tests it on Windows, macOS and Linux.
 
 Not yet checked by a person: the tray, notifications and Start at login on each platform,
-and a chat app connected to the installed app's binary.
+and a chat app connected to the installed app's binary. Nor these, which CI cannot see:
+
+- **Windows:** a chat's call opens a minimized Computers window without taking focus from
+  what you are typing in. Ctrl+Alt+Shift+H gives the keyboard to the corner, and Escape
+  gives it back.
+- **macOS:** after the window is minimized to the notch, Husk is still in the Dock and in
+  Cmd-Tab (`lsappinfo info -only ApplicationType Husk` says `Foreground`), and the notch
+  still floats over a full-screen app. Cmd+Option+Shift+H gives the keyboard to the notch.
+- **Linux:** with the app's own flags (not the smoke run's), the corner and the notch are
+  transparent, and clicks around them reach the window under them.
+- **Two screens:** unplug the screen the Computers window is on, and it comes back on the
+  main screen; the corner and the notch move with the main screen.
+- **The Terminal:** start `sleep 60; echo done` in the console's Terminal, close the window,
+  open it from the tray, and `done` arrives.

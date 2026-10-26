@@ -74,6 +74,8 @@ function log(line) {
 }
 
 let win;
+/** The app is quitting (Cmd+Q, logout): the console window may close for real. */
+let quitting = false;
 let tray;
 let rec;
 let waiting = [];
@@ -226,6 +228,15 @@ function openWindow(panel) {
     });
   }
   win.removeMenu();
+  // Closing hides it, as the Computers window does: a command running in its Terminal keeps running.
+  win.on('close', (event) => {
+    if (quitting) return;
+    event.preventDefault();
+    win.hide();
+  });
+  win.on('session-end', () => {
+    quitting = true;
+  });
   // The console only. Anything else opens in the default browser, if it is a web link at all.
   win.webContents.on('will-navigate', (event, url) => {
     if (!sameOrigin(url, rec.url)) {
@@ -542,6 +553,15 @@ async function walkComputers(check, ids, prefix) {
   await computers.run('pill', `document.querySelector('.pill-row .pill-btn')?.click()`);
   const back = await until(() => computers.win?.isVisible(), 5000);
   check('opening it from the notch brings the window back', back);
+  if (process.platform === 'linux') {
+    // Linux lets clicks through an overlay only outside its shape: each is shaped to what it draws.
+    const area = (rects) => rects.reduce((sum, r) => sum + r.width * r.height, 0);
+    for (const [which, name] of [['dock', 'corner'], ['pill', 'notch']]) {
+      const size = computers.windowOf(which)?.getBounds();
+      const drawn = computers.shapes.get(which);
+      check(`on Linux the ${name} lets clicks through around what it draws`, size && drawn && area(drawn) < size.width * size.height, JSON.stringify(drawn));
+    }
+  }
 }
 
 /** HUSK_DESKTOP_SMOKE=1: two made-up chats' computers, one of them waiting for the person. */
@@ -566,6 +586,9 @@ async function smokeComputers() {
     await walkComputers(check, ['cmp_smokea1', 'cmp_smokeb2'], 'desktop');
     if (stop) log(`SMOKE film: ${await stop()} frames of the whole screen`);
   }
+  // Closing the console window hides it: a command running in its Terminal keeps running.
+  win?.close();
+  check('closing the console window hides it, so its Terminal keeps running', win && !win.isDestroyed() && !win.isVisible());
   return passed();
 }
 
@@ -699,6 +722,9 @@ async function startApp() {
     return;
   }
   app.on('second-instance', () => openWindow());
+  app.on('before-quit', () => {
+    quitting = true;
+  });
   // Closing the window leaves Husk in the tray; chats keep their computers.
   app.on('window-all-closed', () => {});
 
@@ -728,6 +754,8 @@ async function startApp() {
   computers = new Computers({ rec: () => rec, icon: ICON, onConsole: () => openWindow(), onRefresh: () => void poll(), giveBack });
   if (!globalShortcut.register(ROW_KEYS, () => computers.focusRow())) log(`${ROW_KEYS} belongs to another app: the tray lists the computers instead`);
   app.on('will-quit', () => globalShortcut.unregisterAll());
+  // A Mac's Dock icon, or Cmd-Tab, with no window showing: the console comes back. (A Mac activates the app as it launches too.)
+  if (!SMOKE && !LIVE) app.on('activate', () => openWindow());
   watchCalls();
   if (LIVE) {
     void liveSmoke();

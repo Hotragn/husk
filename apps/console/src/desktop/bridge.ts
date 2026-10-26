@@ -10,7 +10,7 @@
  * the corner row and the notch never disagree.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface DesktopComputer {
   id: string;
@@ -66,6 +66,8 @@ export type DesktopAct =
   | { type: 'interactive'; on: boolean }
   /** The corner or the notch gives the keyboard back to whatever had it before the app's shortcut. */
   | { type: 'release' }
+  /** Linux: where the corner or the notch draws, in its window's pixels; clicks elsewhere reach the windows under it. */
+  | { type: 'shape'; rects: Array<{ x: number; y: number; width: number; height: number }> }
   | { type: 'window'; op: 'close' | 'minimize' | 'maximize' | 'pin' }
   | { type: 'refresh' };
 
@@ -99,6 +101,41 @@ export function arrive(within: { current: HTMLElement | null }, then?: () => voi
   };
   window.addEventListener('focus', on);
   return () => window.removeEventListener('focus', on);
+}
+
+/**
+ * Linux cannot pass clicks through a window's clear parts, so there the
+ * corner and the notch tell the app where they draw: the boxes of what
+ * `selector` matches, after every render and whenever those boxes change (a
+ * list opening, a label fading in), and the app lets clicks through the rest
+ * of the window. Elsewhere, and when nothing changed, nothing is sent.
+ */
+export function useShape(selector: string): void {
+  const sent = useRef('');
+  useEffect(() => {
+    const desk = desktopBridge();
+    if (desk?.platform !== 'linux') return;
+    const send = () => {
+      const rects = [...document.querySelectorAll(selector)]
+        .map((el) => el.getBoundingClientRect())
+        .filter((r) => r.width > 0 && r.height > 0)
+        .map((r) => ({ x: r.left, y: r.top, width: r.width, height: r.height }));
+      const key = JSON.stringify(rects);
+      if (!rects.length || key === sent.current) return;
+      sent.current = key;
+      void desk.act({ type: 'shape', rects });
+    };
+    send();
+    const observer = new ResizeObserver(send);
+    for (const el of document.querySelectorAll(selector)) observer.observe(el);
+    // A transform is no resize: what animates in is measured again once it has.
+    const events = ['resize', 'animationend', 'transitionend'];
+    for (const e of events) window.addEventListener(e, send);
+    return () => {
+      observer.disconnect();
+      for (const e of events) window.removeEventListener(e, send);
+    };
+  });
 }
 
 /** "3s ago", "4 min ago": how long since a chat's last call, for a status line. */

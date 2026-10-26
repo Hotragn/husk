@@ -307,6 +307,37 @@ describe('the keyboard', () => {
   });
 });
 
+describe('clicks around the corner and the notch', () => {
+  const box = { left: 10, top: 4, width: 88, height: 46, right: 98, bottom: 50, x: 10, y: 4, toJSON: () => ({}) } as DOMRect;
+  const drawn = { x: 10, y: 4, width: 88, height: 46 };
+
+  it('reach the windows under them on Linux: the corner and the notch say where they draw', async () => {
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+    const measure = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(box);
+    try {
+      bridge(desk([computer('cmp_a01')]), 'linux');
+      const { container } = render(<Dock />);
+      await waitFor(() => expect(container.querySelector('.dock-flat')).not.toBeNull());
+      // The row of computers and the tray under it.
+      expect(acts).toContainEqual({ type: 'shape', rects: [drawn, drawn] });
+      cleanup();
+      acts = [];
+      bridge(desk([computer('cmp_a01')], { window: 'minimized' }), 'linux');
+      render(<Pill />);
+      expect(acts).toEqual([{ type: 'shape', rects: [drawn] }]);
+    } finally {
+      measure.mockRestore();
+    }
+  });
+
+  it('need nothing said elsewhere, where the app passes them through itself', () => {
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+    bridge(desk([computer('cmp_a01')], { window: 'minimized' }), 'win32');
+    render(<Pill />);
+    expect(acts).toEqual([]);
+  });
+});
+
 describe('the chat apps’ marks', () => {
   it('draws a real mark where Husk has one, the installed icon first, and a monogram otherwise', () => {
     expect(logoOf('Claude Code')?.title).toBe('Claude');
