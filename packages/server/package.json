@@ -53,7 +53,7 @@
     "@husk-ai/runtime": "0.2.0",
     "@husk-ai/sessions": "0.2.0",
     "@husk-ai/workspaces": "0.2.0",
-    "fastify": "^5.12.3",
+    "fastify": "^5.12.7",
     "ws": "^8.21.3",
     "yaml": "^2.9.0",
     "zod": "^3.23.8"
