@@ -135,7 +135,7 @@ not here.
   run checks every app ([#243](https://github.com/Hotragn/husk/pull/243)).
 - **Chat apps on the web.** `husk serve --remote --public-url https://<name>` lets claude.ai
   and ChatGPT use Husk through a tunnel you run, or from a Fly app of your own
-  ([#245](https://github.com/Hotragn/husk/pull/245), [#247](https://github.com/Hotragn/husk/pull/247)).
+  ([#245](https://github.com/Hotragn/husk/pull/245), [#247](https://github.com/Hotragn/husk/pull/247), [#248](https://github.com/Hotragn/husk/pull/248)).
   - It is for one owner, who claims it once with a code printed on the machine and signs
     in with a passkey after that.
   - Commands, file changes and browser actions wait for the owner's passkey, on a page
