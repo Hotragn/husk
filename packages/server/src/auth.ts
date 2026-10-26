@@ -125,7 +125,7 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
     // takes a bearer token, never a cookie, so a page elsewhere gains nothing.
     if (remote && fromPublic(req, remote.mark)) {
       // Switched off: as if nothing were there, until it is switched on again.
-      if (!remote.on()) return reply.code(404).send({ error: { code: 'E_NOT_FOUND', message: 'not found' } });
+      if (!remote.on()) return reply.code(404).send({ error: { code: 'E_ROUTE_NOT_FOUND', message: 'not found' } });
       const from = req.headers.origin;
       if (route && remote.paths(route)) {
         if (route.startsWith('/oauth/') && from && from !== remote.origin) {
@@ -162,10 +162,10 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
         }
         return refuse(reply, 401, 'this link has expired', 'ask the chat for a new link');
       }
-      return reply.code(404).send({ error: { code: 'E_NOT_FOUND', message: 'not found' } });
+      return reply.code(404).send({ error: { code: 'E_ROUTE_NOT_FOUND', message: 'not found' } });
     }
     // The remote paths answer only on remote access's own port.
-    if (remote && route && remote.paths(route)) return reply.code(404).send({ error: { code: 'E_NOT_FOUND', message: 'not found' } });
+    if (remote && route && remote.paths(route)) return reply.code(404).send({ error: { code: 'E_ROUTE_NOT_FOUND', message: 'not found' } });
 
     // A web page may not drive this server, token or not. A browser sends
     // Origin on every cross-site request and on every WebSocket, and nothing

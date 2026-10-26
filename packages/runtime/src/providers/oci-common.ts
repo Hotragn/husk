@@ -24,7 +24,7 @@ import type {
   WriteFileOptions,
 } from '@husk-ai/core';
 import { type ImagePlan, installScript, resolveImage } from '../images.js';
-import { OutputBuffer, evaluateCommand } from '../policy.js';
+import { OutputBuffer, commandRulesOf, evaluateCommand } from '../policy.js';
 import { forgetInfo, lastUsedTimes, reapExpired, touchInfo } from '../registry.js';
 import { EXEC_TAG, STOP_UNCONFIRMED, newExecTag, reapArgv, timerMs } from '../reap.js';
 import { wireSpawned } from './spawned.js';
@@ -379,11 +379,7 @@ export class OciComputer implements Computer {
 
   /** Same policy as the local provider. A container limits the blast radius of a destructive command; it does not make running one a good idea. */
   private assertAllowed(cmd: string | string[]): void {
-    const labels = this.info.spec.labels ?? {};
-    const decision = evaluateCommand(cmd, {
-      deny: splitList(labels['husk.denyCommands']),
-      allow: splitList(labels['husk.allowCommands']),
-    });
+    const decision = evaluateCommand(cmd, commandRulesOf(this.info.spec.labels));
     if (!decision.allowed) {
       throw new HuskError('E_EXEC_DENIED', `refused: ${decision.reason}`, {
         hint: 'add a pattern to guardrails.allowCommands in husk.yaml if this is intentional',
@@ -478,7 +474,9 @@ export class OciComputer implements Computer {
       if (req.signal?.aborted) onAbort();
       else req.signal?.addEventListener('abort', onAbort, { once: true });
 
-      const ms = timerMs(req.timeoutSec);
+      // 120 s when none is given, as on every other provider: a command that
+      // never ends must not hold the call open forever.
+      const ms = timerMs(req.timeoutSec ?? 120);
       if (ms !== undefined) {
         timer = setTimeout(() => {
           timedOut = true;
@@ -909,7 +907,7 @@ export class OciComputer implements Computer {
   async restore(snapshotId: string): Promise<void> {
     if (!this.recreate) {
       throw new HuskError('E_NOT_IMPLEMENTED', 'this computer was not created by a provider that can rebuild it', {
-        hint: 'restore from `husk up --snapshot <id>` instead',
+        hint: 'get the computer again from its provider (ComputerManager.get), which can rebuild it, and restore that',
       });
     }
     const dir = snapshotDir();
@@ -971,11 +969,6 @@ export class OciComputer implements Computer {
       createReadStream(hostFile).pipe(child.stdin);
     });
   }
-}
-
-function splitList(v: string | undefined): string[] | undefined {
-  if (!v) return undefined;
-  return v.split('\u0000').filter(Boolean);
 }
 
 function readState(data: { State?: { Running?: boolean; Status?: string } }): ComputerInfo['state'] {

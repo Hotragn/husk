@@ -76,4 +76,24 @@ describe('husk setup, unattended', () => {
       launch: { args: ['-y', `@husk-ai/mcp@${HUSK_RANGE}`, '--provider', 'docker', '--flavor', 'full'] },
     });
   });
+
+  it('settles auto as a chat will, by priority, and gives it that computer’s image', async () => {
+    const out: unknown[] = [];
+    vi.spyOn(ui, 'json').mockImplementation((v) => void out.push(v));
+    vi.spyOn(ui, 'print').mockImplementation(() => {});
+    const both = {
+      ...probes,
+      providerStatus: async () => [
+        { name: 'local', description: 'x', priority: 10, available: true, isolated: false, isolationKind: 'guardrails' as const },
+        { name: 'docker', description: 'x', priority: 50, available: true, isolated: true, isolationKind: 'kernel' as const },
+      ],
+    };
+    expect(await run(['--computer', 'auto', '--apps', '', '--no-start', '--json'], both)).toBe(0);
+    expect(out[0]).toMatchObject({
+      provider: 'auto',
+      flavor: 'full',
+      // auto is the default, so it is not written; the flavor is.
+      launch: { args: ['-y', `@husk-ai/mcp@${HUSK_RANGE}`, '--flavor', 'full'] },
+    });
+  });
 });

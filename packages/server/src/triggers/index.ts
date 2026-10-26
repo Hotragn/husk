@@ -1,4 +1,5 @@
 import type { Adapter, InboundHttpHandler } from '@husk-ai/adapters';
+import { expandEnvRefs } from '@husk-ai/core';
 import type { HuskSpec, Trigger } from '@husk-ai/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ctxOf } from '../context.js';
@@ -89,7 +90,13 @@ export class TriggerHost {
         } else if (trigger.type === 'webhook') {
           const key = mountKey(spec.name, trigger.path);
           const entry: { husk: string; secret?: string } = { husk: spec.name };
-          if (trigger.secret) entry.secret = trigger.secret;
+          try {
+            if (trigger.secret) entry.secret = expandEnvRefs(trigger.secret, process.env, `husk ${spec.name}'s webhook secret`);
+          } catch (err) {
+            // Not mounted at all: mounted unsigned, anyone could start this husk.
+            this.ctx.deps.log.error(`${(err as Error).message}; its webhook at /v1/w${key} is not mounted`);
+            continue;
+          }
           this.webhookMounts.set(key, entry);
           mounted.push({
             husk: spec.name,

@@ -14,7 +14,7 @@ import type {
   ProviderName,
   WriteFileOptions,
 } from '@husk-ai/core';
-import { GUEST_ROOT, evaluateCommand, normaliseGuestPath, shellQuote } from '../policy.js';
+import { GUEST_ROOT, commandRulesOf, evaluateCommand, normaliseGuestPath, shellQuote } from '../policy.js';
 import { forgetInfo, loadInfos, persistInfo, reapExpired } from '../registry.js';
 import { EXEC_TAG, REAP_SCRIPT, STOP_UNCONFIRMED, newExecTag, timerMs } from '../reap.js';
 import { parseLsLong } from './oci-common.js';
@@ -330,11 +330,7 @@ class FlyComputer implements Computer {
     this.assertLive();
     const started = Date.now();
 
-    const labels = this.info.spec.labels ?? {};
-    const decision = evaluateCommand(req.cmd, {
-      deny: splitList(labels['husk.denyCommands']),
-      allow: splitList(labels['husk.allowCommands']),
-    });
+    const decision = evaluateCommand(req.cmd, commandRulesOf(this.info.spec.labels));
     if (!decision.allowed) {
       throw new HuskError('E_EXEC_DENIED', `refused: ${decision.reason}`, {
         hint: 'add a pattern to guardrails.allowCommands in husk.yaml if this is intentional',
@@ -595,11 +591,6 @@ class FlyComputer implements Computer {
     this.info.state = 'destroyed';
     await forgetInfo(this.info.id);
   }
-}
-
-function splitList(v: string | undefined): string[] | undefined {
-  if (!v) return undefined;
-  return v.split('\u0000').filter(Boolean);
 }
 
 // ---------------------------------------------------------------------------

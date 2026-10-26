@@ -472,12 +472,13 @@ execute shell commands. [Self-hosting](/guides/self-hosting) is the full setup.
 ### `husk mcp`
 
 ```bash
-husk mcp [--provider <p>] [--session-key <k>] [--keep]
+husk mcp [--provider <p>] [--flavor <f>] [--session-key <k>] [--keep]
 ```
 
 | Flag | Effect |
 | --- | --- |
 | `--provider` | Force a computer provider |
+| `--flavor` | The image: `base`, `python`, `node` or `full`. Default `full`, the one that runs the browser |
 | `--session-key` | Reuse one machine across calls |
 | `--keep` | Leave the machine running after the client disconnects |
 
@@ -485,10 +486,11 @@ stdout carries JSON-RPC and nothing else; logs go to stderr.
 
 <Note>
 `husk mcp` and `npx @husk-ai/mcp` are two different front ends with two different flag
-sets. The standalone binary takes `--session`, `--flavor`, `--network`, `--memory` and
-`--cpus` as well; `husk mcp` takes only the three above, and spells the session flag
-`--session-key`. [MCP setup](/mcp) documents the standalone binary, which is the one an
-MCP client launches.
+sets. The standalone binary also takes `--profile`, `--session`, `--network`,
+`--network-strict`, `--memory`, `--cpus`, `--daemon` and `--jobs`; `husk mcp` takes only
+the four above, and spells the session flag `--session-key`. Both give chats the `full`
+image unless told otherwise. [MCP setup](/mcp) documents the standalone binary, which is
+the one an MCP client launches.
 </Note>
 
 ### `husk version`

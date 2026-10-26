@@ -17,7 +17,7 @@ interface McpModule {
   HuskMcpServer?: new (opts?: {
     sessionKey?: string;
     ephemeral?: boolean;
-    spec?: { provider?: string };
+    spec?: { provider?: string; flavor?: string };
   }) => { connectStdio(): Promise<void>; close(): Promise<void> };
 }
 
@@ -26,6 +26,7 @@ export async function run(argv: string[]): Promise<number> {
     argv,
     {
       provider: { type: 'string' },
+      flavor: { type: 'string' },
       'session-key': { type: 'string' },
       keep: { type: 'boolean', default: false },
     },
@@ -55,7 +56,9 @@ export async function run(argv: string[]): Promise<number> {
     // `--keep` leaves the machine alive after the client disconnects, which is
     // what you want while debugging and not what you want by default.
     ephemeral: values.keep !== true,
-    ...(values.provider ? { spec: { provider: values.provider as string } } : {}),
+    // The chat is offered the browser tools, and only `full` runs the browser,
+    // as `npx @husk-ai/mcp` gives it.
+    spec: { flavor: (values.flavor as string | undefined) ?? 'full', ...(values.provider ? { provider: values.provider as string } : {}) },
   });
 
   ui.note(ui.dim('husk mcp — speaking MCP on stdio. Logs are on stderr; stdout is the protocol.'));

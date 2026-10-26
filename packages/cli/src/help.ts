@@ -254,8 +254,8 @@ export const COMMANDS: HelpEntry[] = [
       + 'provider only, never this machine itself. It will not start while a high or critical security\n'
       + 'advisory stands against this install. Off unless you pass --remote.',
     flags: [
-      ['--port <n>', 'default: 7377'],
-      ['--host <h>', 'default: 127.0.0.1 -- loopback only unless you change it'],
+      ['--port <n>', 'default: HUSK_PORT, else 7377'],
+      ['--host <h>', 'default: HUSK_HOST, else 127.0.0.1 -- loopback only unless you change it'],
       ['--remote', 'serve /mcp to chat apps on the web, for the owner only'],
       ['--public-url <url>', 'the fixed https name your tunnel gives remote access; needed with --remote'],
       ['--provider <name>', 'where remote chats get computers: docker (default), podman, fly or ssh'],
@@ -280,10 +280,16 @@ export const COMMANDS: HelpEntry[] = [
     name: 'mcp',
     group: 'system',
     summary: 'Run the MCP server on stdio',
-    usage: 'husk mcp',
+    usage: 'husk mcp [--provider <name>] [--flavor <name>] [--session-key <key>] [--keep]',
     details:
       'This is what an MCP client launches. stdout is the protocol channel and carries\nnothing else; logs go to stderr.',
-    examples: ['claude mcp add husk -- npx -y @husk-ai/mcp', 'husk mcp'],
+    flags: [
+      ['--provider <name>', 'docker | podman | local | ssh | fly; default: the best available'],
+      ['--flavor <name>', 'base | python | node | full; default: full, the image that runs the browser'],
+      ['--session-key <key>', 'reuse a named machine; default: one for this server process'],
+      ['--keep', 'leave the machine running after the client disconnects'],
+    ],
+    examples: ['claude mcp add husk -- npx -y @husk-ai/mcp', 'husk mcp', 'husk mcp --provider podman --keep'],
   },
   {
     name: 'models',

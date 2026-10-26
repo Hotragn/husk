@@ -252,6 +252,12 @@ computer:
 
 Explicit beats implicit, and now it is in the file where a reviewer can see it.
 
+`${NAME}` is read from the environment Husk runs in (your shell for `husk run`, the
+server's for `husk serve`) when the computer is made, never when the file is read, so
+the file keeps the placeholder and not the secret. A `NAME` that is unset or empty is an
+error, and no computer is made. Write `$${NAME}` for the text `${NAME}` itself. The same
+goes for a webhook trigger's `secret`.
+
 ## limits
 
 ```yaml
@@ -294,8 +300,9 @@ guardrails:
 | `redactSecrets` | boolean | `true` | Pass every tool result through `redact()` before the model sees it |
 
 `allowCommands` wins over `denyCommands` and over the built-in deny list: an explicit
-allow entry is you saying you know better about your own machine, and you do. An entry
-that is not valid regex falls back to a substring match rather than throwing.
+allow entry is you saying you know better about your own machine, and you do. It wins
+where it matches, so a command chained after an allowed one is checked on its own. An
+entry that is not valid regex falls back to a substring match rather than throwing.
 
 ### approvalMode
 

@@ -189,4 +189,5 @@ claude mcp add husk -- npx -y @husk-ai/mcp
 
 That gives Claude Code — or Cursor, or Zed, or anything speaking MCP — a Linux
 computer mid-conversation, with no account and no config file. `husk mcp` runs
-the same server directly on stdio.
+the same tools on stdio, with fewer flags: `--provider`, `--flavor`, `--session-key`
+and `--keep`.

@@ -123,6 +123,7 @@ export interface ExecRequest {
   cmd: string | string[];
   cwd?: string;
   env?: Record<string, string>;
+  /** Seconds before the command is killed. 120 when unset. */
   timeoutSec?: number;
   stdin?: string;
   user?: string;

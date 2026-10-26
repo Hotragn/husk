@@ -218,6 +218,55 @@ function mask(s: string): string {
   return `${s.slice(0, keep)}...[redacted]`;
 }
 
+/**
+ * `${NAME}` in a husk.yaml value, as NAME from `env`.
+ *
+ * Expanded where the value is used, never when the file is read, so a spec
+ * written back to disk keeps the placeholder and not the secret. A NAME that is
+ * unset or empty is refused: a webhook secret left as the text `${...}` is one
+ * anyone can read in the docs, and an empty one is no secret. `$${NAME}` is
+ * the text `${NAME}` itself.
+ */
+export function expandEnvRefs(value: string, env: NodeJS.ProcessEnv, where: string): string {
+  return value.replace(/\$(\$?)\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, escaped: string, name: string) => {
+    if (escaped) return `\${${name}}`;
+    const found = env[name];
+    if (!found) {
+      throw new HuskError('E_CONFIG', `${where} uses \${${name}}, which is ${found === undefined ? 'not set' : 'empty'}`, {
+        hint: `set ${name} where Husk runs, or write $\${${name}} for the text itself`,
+      });
+    }
+    return found;
+  });
+}
+
+/** Where `pattern` matches `text`, as [start, end] pairs: a regex, or a literal when it is not valid regex. */
+function matchSpans(pattern: string | RegExp, text: string): Array<[number, number]> {
+  let re: RegExp;
+  try {
+    re = typeof pattern === 'string' ? new RegExp(pattern, 'g') : new RegExp(pattern.source, pattern.flags.replace('g', '') + 'g');
+  } catch {
+    // A user who typed a literal rather than a regex still meant something.
+    const out: Array<[number, number]> = [];
+    const literal = String(pattern);
+    for (let i = text.indexOf(literal); i !== -1; i = text.indexOf(literal, i + 1)) out.push([i, i + literal.length]);
+    return out;
+  }
+  return [...text.matchAll(re)].map((m) => [m.index, m.index + m[0].length]);
+}
+
+/**
+ * Whether a command rule matches `text` anywhere an allow entry does not.
+ *
+ * An allow entry lifts what it matches, not the whole line:
+ * `^sudo apt-get install` lets the `sudo` in `sudo apt-get install jq` through,
+ * and not an `rm -rf /` chained after it.
+ */
+export function matchesOutside(pattern: string | RegExp, text: string, allow: readonly string[]): boolean {
+  const allowed = allow.flatMap((a) => matchSpans(a, text));
+  return matchSpans(pattern, text).some(([s, e]) => !allowed.some(([as, ae]) => as <= s && e <= ae));
+}
+
 /** Approximate token count. Good enough for budgeting; never for billing. */
 export function estimateTokens(text: string): number {
   if (!text) return 0;
