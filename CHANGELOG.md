@@ -273,6 +273,22 @@ not here.
   bot's files and browser profile, cookies included, outlived it. The console's Delete,
   once you type the id back, now removes them too. `husk rm` still means "stop for now",
   and says what it keeps ([#229](https://github.com/Hotragn/husk/pull/229)).
+- **`fetch_url` and `http_request` check each redirect before following it.** They
+  followed the whole chain and checked only where it ended, so a 302 to an internal
+  address had been asked before it was refused. A hop to another origin no longer carries
+  `Authorization` or cookies ([#257](https://github.com/Hotragn/husk/pull/257)).
+- **`${NAME}` in a husk.yaml is read from Husk's environment**, in `computer.env` and in
+  a webhook's `secret`, as the docs showed. Nothing expanded it: a webhook secret copied
+  from the docs was the published text `${GITHUB_WEBHOOK_SECRET}`, and a computer got
+  the placeholder instead of the token. An unset or empty `NAME` is refused: no computer
+  is made, and the webhook is not mounted ([#257](https://github.com/Hotragn/husk/pull/257)).
+- **`guardrails.allowCommands` lifts a built-in refusal**, as documented. The lists never
+  reached the computer, so `sudo apt-get install` stayed refused whatever the husk.yaml
+  allowed. An entry now lifts what it matches, not the whole line: a command chained
+  after an allowed one, such as `; rm -rf /`, is checked on its own
+  ([#257](https://github.com/Hotragn/husk/pull/257)).
+- **`systemctl stop <unit>` is refused**, as the docs said. The rule caught only the
+  `service <name> stop` order ([#257](https://github.com/Hotragn/husk/pull/257)).
 
 ## [0.1.4] - 2026-09-22
 

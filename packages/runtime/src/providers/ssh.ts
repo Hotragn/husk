@@ -17,7 +17,7 @@ import type {
   ProviderName,
   WriteFileOptions,
 } from '@husk-ai/core';
-import { GUEST_ROOT, GUEST_TMP, OutputBuffer, evaluateCommand, normaliseGuestPath, shellQuote } from '../policy.js';
+import { GUEST_ROOT, GUEST_TMP, OutputBuffer, commandRulesOf, evaluateCommand, normaliseGuestPath, shellQuote } from '../policy.js';
 import { forgetInfo, loadInfos, persistInfo, reapExpired } from '../registry.js';
 import { EXEC_TAG, STOP_UNCONFIRMED, newExecTag, reapArgv, timerMs } from '../reap.js';
 import { parseLsLong } from './oci-common.js';
@@ -684,11 +684,7 @@ class SshComputer implements Computer {
     this.assertLive();
     const started = Date.now();
 
-    const labels = this.info.spec.labels ?? {};
-    const decision = evaluateCommand(req.cmd, {
-      deny: splitList(labels['husk.denyCommands']),
-      allow: splitList(labels['husk.allowCommands']),
-    });
+    const decision = evaluateCommand(req.cmd, commandRulesOf(this.info.spec.labels));
     if (!decision.allowed) {
       throw new HuskError('E_EXEC_DENIED', `refused: ${decision.reason}`, {
         hint: 'add a pattern to guardrails.allowCommands in husk.yaml if this is intentional',
@@ -987,11 +983,6 @@ class SshComputer implements Computer {
     }
     this.forwards.clear();
   }
-}
-
-function splitList(v: string | undefined): string[] | undefined {
-  if (!v) return undefined;
-  return v.split('\u0000').filter(Boolean);
 }
 
 function freeLocalPort(): Promise<number> {

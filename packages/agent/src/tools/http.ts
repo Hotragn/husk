@@ -2,7 +2,7 @@ import { HuskError } from '@husk-ai/core';
 import { assertUrlAllowed } from '../net.js';
 import { defineTool } from '../types.js';
 import type { AgentTool } from '../types.js';
-import { deadline, headerRecord, readCapped } from './fetching.js';
+import { deadline, fetchChecked, headerRecord, readCapped } from './fetching.js';
 import { int, object, str } from './util.js';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
@@ -64,17 +64,15 @@ export const http_request = defineTool<
     const cap = Math.min(input.maxBytes ?? DEFAULT_HTTP_BYTES, Math.max(4096, ctx.maxOutputBytes));
     const d = deadline(ctx.signal, HTTP_TIMEOUT_MS);
     try {
-      const res = await fetch(parsed, {
-        method,
-        headers,
-        body: method === 'GET' || method === 'HEAD' ? undefined : input.body,
-        redirect: 'follow',
-        signal: d.signal,
-      });
-      assertUrlAllowed(res.url || parsed.toString(), ctx.spec.computer.network);
+      // Every hop of a redirect chain is checked before it is asked, not after.
+      const { res, url } = await fetchChecked(
+        parsed,
+        { method, headers, body: method === 'GET' || method === 'HEAD' ? undefined : input.body, signal: d.signal },
+        (next) => assertUrlAllowed(next, ctx.spec.computer.network),
+      );
       const body = await readCapped(res, cap);
       return {
-        url: res.url || parsed.toString(),
+        url: url.toString(),
         method,
         status: res.status,
         statusText: res.statusText,

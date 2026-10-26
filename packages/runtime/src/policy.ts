@@ -1,6 +1,6 @@
 import { realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, posix, resolve, sep } from 'node:path';
-import { HuskError, completeCharEnd } from '@husk-ai/core';
+import { HuskError, completeCharEnd, matchesOutside } from '@husk-ai/core';
 import { DEFAULT_DENY, type CommandRule } from './deny.js';
 
 /**
@@ -433,44 +433,46 @@ export interface PolicyDecision {
  * Decide whether a command may run.
  *
  * `allow` wins over `deny`: an explicit allow-list entry is the user telling us
- * they know better about their own machine, and they do.
+ * they know better about their own machine, and they do. It wins where it
+ * matches, not over the whole line (`matchesOutside`), so an allowed command
+ * does not carry a refused one chained after it.
  */
 export function evaluateCommand(
   cmd: string | string[],
   opts: { deny?: string[]; allow?: string[]; extraRules?: CommandRule[] } = {},
 ): PolicyDecision {
   const text = Array.isArray(cmd) ? cmd.join(' ') : cmd;
-
-  for (const a of opts.allow ?? []) {
-    try {
-      if (new RegExp(a).test(text)) return { allowed: true };
-    } catch {
-      if (text.includes(a)) return { allowed: true };
-    }
-  }
+  const allow = opts.allow ?? [];
 
   for (const d of opts.deny ?? []) {
-    try {
-      if (new RegExp(d).test(text)) {
-        return { allowed: false, reason: 'matched a deny rule from this husk', rule: d };
-      }
-    } catch {
-      if (text.includes(d)) return { allowed: false, reason: 'matched a deny rule from this husk', rule: d };
-    }
+    if (matchesOutside(d, text, allow)) return { allowed: false, reason: 'matched a deny rule from this husk', rule: d };
   }
 
   for (const rule of [...DEFAULT_DENY, ...(opts.extraRules ?? [])]) {
-    if (rule.pattern.test(text)) {
-      return { allowed: false, reason: rule.reason, rule: String(rule.pattern) };
-    }
+    if (matchesOutside(rule.pattern, text, allow)) return { allowed: false, reason: rule.reason, rule: String(rule.pattern) };
   }
 
   return { allowed: true };
 }
 
-/** A computer's own command rules, from its labels: the husk's allow and deny lists, NUL-separated, as every provider reads them. */
+/**
+ * A computer's own command rules, from its labels: the husk's allow and deny
+ * lists, as every provider reads them. `computerSpecFor` writes each as a JSON
+ * array, because Docker gets every label as an argument, where a NUL cannot
+ * go, and a pattern may hold any other character. A label that is not a JSON
+ * array is one pattern.
+ */
 export function commandRulesOf(labels: Record<string, string> | undefined): { deny?: string[]; allow?: string[] } {
-  const list = (v: string | undefined): string[] | undefined => (v ? v.split('\u0000').filter(Boolean) : undefined);
+  const list = (v: string | undefined): string[] | undefined => {
+    if (!v) return undefined;
+    try {
+      const parsed: unknown = JSON.parse(v);
+      if (Array.isArray(parsed)) return parsed.filter((p): p is string => typeof p === 'string' && p !== '');
+    } catch {
+      // Not JSON: written by hand, as one pattern.
+    }
+    return [v];
+  };
   const deny = list(labels?.['husk.denyCommands']);
   const allow = list(labels?.['husk.allowCommands']);
   return { ...(deny ? { deny } : {}), ...(allow ? { allow } : {}) };

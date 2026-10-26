@@ -85,7 +85,7 @@ the block exists.
 | `computer.maxLifetimeSec` | integer | ≥ 0; `0` disables | `0` |
 | `computer.packages` | string[] | — | `[]` |
 | `computer.setup` | string | — | — |
-| `computer.env` | record of string | — | `{}` |
+| `computer.env` | record of string | `${NAME}` is read from Husk's environment | `{}` |
 | `computer.workdir` | string | — | `/work` |
 | `computer.persist` | boolean | — | `false` |
 | `computer.network.mode` | enum | `none` \| `egress` \| `full` | `egress` |
@@ -134,8 +134,9 @@ Every ceiling is checked before the next model call, not after. See
 | `guardrails.refuse` | string[] | free text | `[]` |
 | `guardrails.redactSecrets` | boolean | — | `true` |
 
-`allowCommands` is checked first and beats both `denyCommands` and the built-in deny
-list. See [Isolation](/security/isolation#the-command-deny-list) and
+`allowCommands` beats both `denyCommands` and the built-in deny list, where an entry
+matches: a command chained after an allowed one is checked on its own. See
+[Isolation](/security/isolation#the-command-deny-list) and
 [Approvals](/security/approvals).
 
 ## `memory`

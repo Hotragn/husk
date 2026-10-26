@@ -124,8 +124,9 @@ For `fetch_url` and `http_request`, in this order:
 3. `isHostAllowed(host, policy)` — `deny`, then `mode`.
 4. The private-address floor.
 
-Every check runs **twice**: once on the URL you passed, and again on `res.url` after
-redirects. A 302 to `http://169.254.169.254/` is caught on the second pass.
+The checks run on the URL you passed, and again on each redirect's target **before it
+is requested**. A 302 to `http://169.254.169.254/` is refused without asking that
+address anything, and a public → internal → public chain stops at the internal hop.
 
 `web_search` calls neither check. It talks to Tavily or Brave directly and is not
 filtered by the husk's network policy.

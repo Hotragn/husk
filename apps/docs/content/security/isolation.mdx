@@ -237,7 +237,7 @@ accident is unrecoverable*.
 | `mkfs`, `mkswap`, `fdisk`, `parted`, `sgdisk` | disk formatting |
 | `dd … of=/dev/sd*` (also `nvme`, `hd`, `disk`) | raw write to a block device |
 | `shutdown`, `reboot`, `halt`, `poweroff`, `init 0` | host power control |
-| `systemctl <x> stop`, `disable`, `mask`; the same via `service` | stopping host services |
+| `systemctl stop`, `disable` or `mask` a unit; `service <name> stop` | stopping host services |
 | `>` or `>>` into `/etc/passwd`, `shadow`, `sudoers`, `hosts` | overwriting a system file |
 | `chmod 777 /` | world-writable `/` |
 | anything piped into `sh`, `bash`, `zsh`, `ksh` | piping a remote script into a shell |
@@ -266,10 +266,22 @@ guardrails:
     - '^sudo apt-get install'
 ```
 
-`allowCommands` is checked **first** and wins over both your deny list and the built-in
-one. An explicit allow entry is you saying you know better about your own machine, and
-you do. An entry that is not valid regex falls back to a substring match rather than
-throwing.
+`allowCommands` wins over both your deny list and the built-in one. An explicit allow
+entry is you saying you know better about your own machine, and you do. An entry that is
+not valid regex falls back to a substring match rather than throwing.
+
+An entry wins **where it matches**, not over the whole line. `^sudo apt-get install`
+lets `sudo apt-get install -y jq` run, but `sudo apt-get install -y jq; rm -rf /` is
+still refused, and so is `sudo apt-get install jq > /etc/passwd`: the entry does not
+match the part that is refused. Anchored with `^`, it covers the start of a line only,
+so `apt-get update && sudo apt-get install jq` needs the entry without the `^`.
+
+Both lists are checked twice: by the agent before a command leaves it, and by the
+computer's provider, which is where the built-in list lives. The provider gets them when
+the computer is made, so a husk's computer that already exists keeps the lists it was
+made with. A new deny entry holds at once, since the agent checks it; for a new allow
+entry to lift a built-in refusal, remove the computer (`husk rm`) so the next run makes
+a fresh one. The lists apply to the builtin engine only.
 
 ## Output caps
 

@@ -91,8 +91,11 @@ error refused private address 169.254.169.254
 hint:  loopback, link-local and RFC1918 hosts must be named in computer.network.allow
 ```
 
-The check runs on the URL you passed **and again on `res.url` after redirects**, so a
-302 to `http://169.254.169.254/` is caught on the second pass.
+Redirects are followed one hop at a time, and each hop's URL is checked **before it is
+requested**. A 302 to `http://169.254.169.254/` is refused without asking that address
+anything, and a public → internal → public chain stops at the internal hop. A hop to
+another origin drops `Authorization`, `Cookie` and `Proxy-Authorization`, and more than
+ten hops is an error.
 
 ### Opening one deliberately
 
@@ -160,4 +163,4 @@ For both network tools, in this order:
 3. `deny`, then `mode` — `isHostAllowed`.
 4. The private-address floor.
 
-Then the whole sequence again on the post-redirect URL.
+Then the whole sequence again on each redirect's target, before it is requested.
