@@ -225,6 +225,10 @@ not here.
   decoded into a guess
   ([#129](https://github.com/Hotragn/husk/pull/129), thanks
   [@Audgui-Byte](https://github.com/Audgui-Byte))
+- **A chat's tool call failed after five minutes** on the shared Husk: a long `shell`
+  command, or a bot on Claude Code or Codex waiting for a person to give its computer
+  back, got `fetch failed` while the work went on. A long call now keeps its answer alive
+  ([#242](https://github.com/Hotragn/husk/pull/242)).
 
 ### Security
 
