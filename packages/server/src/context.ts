@@ -5,14 +5,19 @@ import type { ResolvedDeps } from './deps.js';
 import { EventBus } from './events.js';
 import { Runner } from './runner.js';
 import { CronScheduler } from './cron.js';
-import type { TriggerHost } from './triggers/index.js';
+
+/** What mounts the husks' triggers: a TriggerHost in this process, or the link to the job host that does (jobs.ts). */
+export interface TriggerSync {
+  sync(): Promise<unknown>;
+  stop(): Promise<void>;
+}
 
 export interface ServerContext {
   deps: ResolvedDeps;
   bus: EventBus;
   runner: Runner;
   scheduler: CronScheduler;
-  triggers?: TriggerHost;
+  triggers?: TriggerSync;
   /** Every tool call on every computer, chats included, for the console's timeline. */
   activity: ActivityLog;
   /** Short-lived links to one computer or one handoff, so a chat never carries the server token. */

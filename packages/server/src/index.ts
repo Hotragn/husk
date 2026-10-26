@@ -9,7 +9,9 @@
 export { createApp } from './app.js';
 export type { CreateAppOptions } from './app.js';
 
-export { serve, createDefaultDeps } from './serve.js';
+export { serve, serveJobs, createDefaultDeps } from './serve.js';
+export { JobsLink, createJobsApp, hasJobs, readJobsRecord, remoteRunner } from './jobs.js';
+export type { JobsRecord, SharedHusk } from './jobs.js';
 export type { ServeOptions, RunningServer } from './serve.js';
 
 export { Store } from './store.js';

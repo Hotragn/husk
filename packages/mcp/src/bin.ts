@@ -29,6 +29,8 @@ options
   --daemon            run the shared Husk that every chat's tools go through
                       (started for you on the first tool call; HUSK_DAEMON=off
                       keeps tools in each chat's own process)
+  --jobs              run the job host: bots' schedules, webhooks and chat
+                      triggers (the shared Husk starts it when a bot has one)
   -h, --help
 
 install into claude code
@@ -52,6 +54,7 @@ async function main(): Promise<void> {
         cpus: { type: 'string' },
         keep: { type: 'boolean', default: false },
         daemon: { type: 'boolean', default: false },
+        jobs: { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
       },
       strict: true,
@@ -69,6 +72,10 @@ async function main(): Promise<void> {
 
   if (values.daemon) {
     await runDaemon();
+    return;
+  }
+  if (values.jobs) {
+    await runJobs();
     return;
   }
 
@@ -114,10 +121,11 @@ async function main(): Promise<void> {
  * error: the first is already serving.
  */
 async function runDaemon(): Promise<void> {
-  const [{ serve }, { runTool }, { DEFAULT_CONFIG }] = await Promise.all([
+  const [{ serve }, { runTool }, { DEFAULT_CONFIG }, { launchJobs }] = await Promise.all([
     import('@husk-ai/server'),
     import('./tools.js'),
     import('@husk-ai/core'),
+    import('./daemon.js'),
   ]);
   // Two chats starting at once both launch one. The loser leaves before it
   // starts anything -- no triggers, no reaper -- rather than after a failed bind.
@@ -132,7 +140,8 @@ async function runDaemon(): Promise<void> {
   }
   try {
     // Nobody configures a Husk a chat started in the background, so it mints its own token.
-    await serve({ daemon: true, mintToken: true, deps: { runTool } });
+    // Bots' triggers go to a job host of their own, started when a bot has one.
+    await serve({ daemon: true, mintToken: true, deps: { runTool }, startJobs: launchJobs });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
       process.stderr.write('husk daemon: the port is taken, so another Husk is already serving; exiting\n');
@@ -140,6 +149,47 @@ async function runDaemon(): Promise<void> {
     }
     throw err;
   }
+}
+
+/**
+ * The job host: bots' schedules, webhooks and chat triggers, one per machine,
+ * started by the shared Husk when a bot has a trigger. It runs each bot by
+ * asking the shared Husk, starting that when it is not running, and leaves
+ * once no bot has a trigger.
+ */
+async function runJobs(): Promise<void> {
+  const [{ readJobsRecord, serveJobs }, { connectDaemon }, { HuskError, createLogger, readDaemonRecord }] = await Promise.all([
+    import('@husk-ai/server'),
+    import('./daemon.js'),
+    import('@husk-ai/core'),
+  ]);
+  const log = createLogger({ scope: 'husk jobs' });
+  const running = readJobsRecord();
+  const answering =
+    running &&
+    (await fetch(`${running.url}/health`, { headers: { authorization: `Bearer ${running.token}` }, signal: AbortSignal.timeout(1000) }).then(
+      (r) => r.ok,
+      () => false,
+    ));
+  if (answering) {
+    process.stderr.write('husk jobs: a job host already answers; exiting\n');
+    process.exit(0);
+  }
+  const shared = async () => {
+    const rec = (await connectDaemon({ log })) ? readDaemonRecord() : undefined;
+    if (!rec) throw new HuskError('E_PROVIDER_UNAVAILABLE', 'the shared Husk is not running and could not be started', { hint: '~/.husk/daemon.log says why' });
+    return { url: rec.url, token: rec.token };
+  };
+  let server: Awaited<ReturnType<typeof serveJobs>> | undefined;
+  let idle = false;
+  const leave = (why: string) => {
+    log.info(`leaving: ${why}`);
+    void (server?.close() ?? Promise.resolve()).then(() => process.exit(0));
+  };
+  server = await serveJobs({ shared, logger: log, onIdle: () => (server ? leave('no bot has a trigger') : (idle = true)) });
+  if (idle) leave('no bot has a trigger');
+  process.once('SIGINT', () => leave('SIGINT'));
+  process.once('SIGTERM', () => leave('SIGTERM'));
 }
 
 main().catch((err) => {
