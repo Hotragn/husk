@@ -363,9 +363,14 @@ export interface ActivityEntry {
 export interface BotDraft {
   transcriptId: string;
   yaml: string;
-  spec: { name: string };
+  spec: { name: string; engine?: { type: BotEngine | 'codex'; resume?: string } };
   distilled: { confidence?: number; notes?: string[] };
+  /** The person's own Claude Code is installed where the shared Husk can start it. */
+  claudeCode?: boolean;
 }
+
+/** What a bot made from a chat runs on: the person's Claude Code, continuing the chat, or Husk's own engine. */
+export type BotEngine = 'claude-code' | 'builtin';
 
 /** A chat app Husk can connect, as `GET /v1/setup` reports it. */
 export interface ChatApp {

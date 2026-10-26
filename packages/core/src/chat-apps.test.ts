@@ -8,11 +8,13 @@ import {
   connectChatApp,
   detectChatApps,
   disconnectChatApp,
+  findCli,
   followDesktopApp,
   huskLaunch,
   keepingTheirs,
   sameLaunch,
   shellSafe,
+  shimTarget,
 } from './chat-apps.js';
 import { HUSK_RANGE } from './identity.js';
 
@@ -87,6 +89,43 @@ describe('chat apps', () => {
     await connectChatApp('gemini', huskLaunch(), { home });
     expect((await disconnectChatApp('gemini', { home })).ok).toBe(true);
     expect(JSON.parse(readFileSync(fileOf('gemini'), 'utf8'))).toEqual({ mcpServers: { other: { command: 'x' } } });
+  });
+});
+
+describe("the person's own CLI, to run a bot on", () => {
+  // npm's shims, as npm writes them: a native binary, and a script with node.exe named first.
+  const claudeShim = '@ECHO off\r\nCALL :find_dp0\r\n"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*\r\n';
+  const codexShim =
+    '@ECHO off\r\nIF EXIST "%dp0%\\node.exe" (\r\n  SET "_prog=%dp0%\\node.exe"\r\n)\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n';
+
+  it('starts what an npm shim names, so no cmd.exe stands between Husk and the prompt', () => {
+    expect(shimTarget(claudeShim)).toBe('node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe');
+    expect(shimTarget(codexShim)).toBe('node_modules\\@openai\\codex\\bin\\codex.js');
+    expect(shimTarget('"%dp0%\\..\\..\\evil.exe" %*')).toBeUndefined();
+    expect(shimTarget('@ECHO off')).toBeUndefined();
+  });
+
+  it('runs a script under this Node, and anything else as it is', () => {
+    const dir = fresh();
+    writeFileSync(join(dir, 'claude.mjs'), '');
+    expect(findCli('claude-code', { HUSK_CLAUDE_CLI: join(dir, 'claude.mjs') })).toMatchObject({ command: process.execPath, args: [join(dir, 'claude.mjs')] });
+    writeFileSync(join(dir, 'codex'), '');
+    expect(findCli('codex', { HUSK_CODEX_CLI: join(dir, 'codex') })).toEqual({ command: join(dir, 'codex'), args: [] });
+    expect(findCli('codex', { HUSK_CODEX_CLI: join(dir, 'missing') })).toBeUndefined();
+  });
+
+  it('finds Claude Code where its own installer puts it', () => {
+    const dir = fresh();
+    const bin = join(dir, '.local', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude');
+    mkdirSync(join(dir, '.local', 'bin'), { recursive: true });
+    writeFileSync(bin, '');
+    const saved = process.env.PATH;
+    process.env.PATH = '';
+    try {
+      expect(findCli('claude-code', {}, dir)).toEqual({ command: bin, args: [] });
+    } finally {
+      process.env.PATH = saved;
+    }
   });
 });
 

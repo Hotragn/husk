@@ -104,7 +104,8 @@ export const lazyAgentFactory: AgentFactory = async (init) => {
       cause: err,
     });
   }
-  const Ctor = mod['Agent'] as (new (init: AgentInit) => AgentLike) | undefined;
+  // The person's own Claude Code or Codex, or Husk's own loop.
+  const Ctor = mod[init.spec.engine.type === 'builtin' ? 'Agent' : 'CliAgent'] as (new (init: AgentInit) => AgentLike) | undefined;
   if (typeof Ctor !== 'function') {
     throw huskError('E_NOT_IMPLEMENTED', '@husk-ai/agent does not export an Agent class', {
       hint: 'expected `new Agent({ spec, router, computers, tools })` with run() and stream()',

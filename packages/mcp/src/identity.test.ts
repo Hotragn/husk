@@ -209,6 +209,19 @@ describe('a host that names its session', () => {
     expect(made[0]?.info.spec.labels?.['husk.identity']).toBe('session');
     expect(made[0]?.info.spec.labels?.['husk.chat']).toMatch(/^Claude Code · session started \d\d:\d\d$/);
   });
+
+  it('gives a bot that continues a chat the chat’s own computer, whatever session the bot’s CLI is in', async () => {
+    process.env.CLAUDE_CODE_SESSION_ID = 'the-bots-own-run';
+    process.env.HUSK_CHAT_SESSION = 'the-chat-it-continues';
+    try {
+      const { fake, made, shell } = await connect('claude-code');
+      await shell();
+      expect(made[0]?.info.spec.labels?.['husk.session']).toBe('the-chat-it-continues');
+      expect([...fake.bindings.keys()]).toEqual(['claude-code:the-chat-it-continues']);
+    } finally {
+      delete process.env.HUSK_CHAT_SESSION;
+    }
+  });
 });
 
 describe('a chat computer outlives the process', () => {

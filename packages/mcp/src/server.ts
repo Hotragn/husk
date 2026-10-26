@@ -126,7 +126,8 @@ export class HuskMcpServer {
   private readonly log: Logger;
   /** How this process tells its chats apart. Fixed at startup. */
   private readonly identity: IdentitySource;
-  private readonly hostSessionId = process.env.CLAUDE_CODE_SESSION_ID;
+  /** A bot that continues a Claude Code chat names that chat, and gets its computer, files and logins (HUSK_CHAT_SESSION). */
+  private readonly hostSessionId = process.env.HUSK_CHAT_SESSION || process.env.CLAUDE_CODE_SESSION_ID;
   /** This process's computers. One for a session; one per chat when chats share the process. */
   private readonly computers = new Map<string, Computer>();
   private creating: Promise<Computer> | undefined;

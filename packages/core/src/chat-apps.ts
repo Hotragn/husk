@@ -252,6 +252,57 @@ export function onPath(bin: string): boolean {
   return findOnPath(bin) !== undefined;
 }
 
+/** A program to start as it is, with no shell between: a prompt's `&` or `%` is never a shell's to read. */
+export interface CliCommand {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+}
+
+/** The person's own CLIs a husk can run on, and the variable that points Husk at one installed elsewhere. */
+export const AGENT_CLIS = {
+  'claude-code': { bin: 'claude', name: 'Claude Code', override: 'HUSK_CLAUDE_CLI' },
+  codex: { bin: 'codex', name: 'Codex', override: 'HUSK_CODEX_CLI' },
+} as const;
+export type AgentCli = keyof typeof AGENT_CLIS;
+
+/** A script runs under this process's Node, Electron's included; anything else runs as it is. */
+function runnable(file: string): CliCommand {
+  if (!/\.[cm]?js$/i.test(file)) return { command: file, args: [] };
+  return { command: process.execPath, args: [file], ...(process.versions.electron ? { env: { ELECTRON_RUN_AS_NODE: '1' } } : {}) };
+}
+
+/**
+ * The file an npm shim on Windows starts. `claude.cmd` runs only through
+ * cmd.exe, so Husk starts what it names instead: the last `"%dp0%\..."` in
+ * it, relative to the shim's folder (an earlier one may name `node.exe`).
+ */
+export function shimTarget(text: string): string | undefined {
+  const named = [...text.matchAll(/"%dp0%\\([^"%]+)"/gi)].map((m) => m[1]!).filter((p) => !/^node\.exe$/i.test(p));
+  const last = named.at(-1);
+  return last && !last.split('\\').includes('..') ? last : undefined;
+}
+
+/**
+ * The person's own `claude` or `codex`, as something to start without a
+ * shell, or undefined when it is not installed where Husk can see it: on
+ * PATH, where its installer puts it, or at the path in its override variable.
+ */
+export function findCli(cli: AgentCli, env: NodeJS.ProcessEnv = process.env, home = homedir()): CliCommand | undefined {
+  const { bin, override } = AGENT_CLIS[cli];
+  const set = env[override];
+  if (set) return existsSync(set) ? runnable(set) : undefined;
+  const win = process.platform === 'win32';
+  const usual = [join(home, '.local', 'bin', win ? `${bin}.exe` : bin), ...(process.platform === 'darwin' ? [`/opt/homebrew/bin/${bin}`, `/usr/local/bin/${bin}`] : [])];
+  const found = findOnPath(bin) ?? usual.find((f) => existsSync(f));
+  if (!found) return undefined;
+  if (!win || /\.exe$/i.test(found)) return runnable(found);
+  if (!/\.cmd$/i.test(found)) return undefined;
+  const target = shimTarget(readText(found) ?? '');
+  const file = target && join(dirname(found), target);
+  return file && existsSync(file) ? runnable(file) : undefined;
+}
+
 /** Write-then-rename in the same folder, so a crash never leaves half a config. */
 function writeAtomic(file: string, text: string): void {
   mkdirSync(dirname(file), { recursive: true });

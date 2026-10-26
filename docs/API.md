@@ -119,7 +119,8 @@ GET    /v1/computers/:id/stats  -> { cpuPercent, memoryBytes, memoryLimitBytes, 
 GET    /v1/computers/:id/thumbnail -> image/jpeg of an already-open browser, else 404
 GET    /v1/overview             -> { computers: ComputerInfo[], activeRuns: ActiveRun[], handoffs: PendingHandoff[], activity: { [id]: ActivityEntry }, running: { [id]: { tool, since } }, inChat: string[] }
 GET    /v1/computers/:id/activity -> { "entries": ActivityEntry[] }   (oldest first, the last 200)
-POST   /v1/computers/:id/bot    body: { "useModel"?: boolean } -> { transcriptId, spec, yaml, distilled }
+POST   /v1/computers/:id/bot    body: { "useModel"?: boolean, "engine"?: "claude-code" | "builtin" } -> { transcriptId, spec, yaml, distilled, claudeCode }
+                                (the draft runs on the person's Claude Code, going on with the chat, when `claudeCode` says it is installed)
 POST   /v1/computers/:id/stop   -> ComputerInfo
 POST   /v1/computers/:id/start  -> ComputerInfo
 GET    /v1/computers/:id/browser/status     -> whether a browser can run here (never installs one)

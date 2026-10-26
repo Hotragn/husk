@@ -46,6 +46,7 @@ import type {
   ValidateResult,
   ActivityEntry,
   BotDraft,
+  BotEngine,
   ComputerChoice,
   ConnectResult,
   SetupState,
@@ -195,8 +196,9 @@ export class HuskApi {
   }
 
   /** `POST /v1/computers/:id/bot`: a husk draft distilled from the chat that owns this computer. */
-  makeBot(id: string, useModel = false): Promise<BotDraft> {
-    return this.client.http.request<BotDraft>('POST', `/v1/computers/${enc(id)}/bot`, { body: { useModel }, timeoutMs: 600_000 });
+  makeBot(id: string, opts: { useModel?: boolean; engine?: BotEngine } = {}): Promise<BotDraft> {
+    const body = { useModel: opts.useModel ?? false, ...(opts.engine ? { engine: opts.engine } : {}) };
+    return this.client.http.request<BotDraft>('POST', `/v1/computers/${enc(id)}/bot`, { body, timeoutMs: 600_000 });
   }
 
   // -- setup ----------------------------------------------------------------

@@ -25,6 +25,48 @@ const env = { ...process.env, HUSK_HOME: home };
 delete env.HUSK_DAEMON;
 delete env.HUSK_TOKEN;
 
+// A stand-in for the person's own `claude -p` (J5-c). It writes down how it was
+// started, starts the MCP server the config Husk gave it names, runs one command
+// on the computer through it, and answers as Claude Code's stream-json would.
+writeFileSync(
+  join(home, 'claude.mjs'),
+  String.raw`import { spawn } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const argv = process.argv.slice(2);
+writeFileSync(join(process.env.HUSK_HOME, 'claude-argv.json'), JSON.stringify(argv));
+const husk = JSON.parse(readFileSync(argv[argv.indexOf('--mcp-config') + 1], 'utf8')).mcpServers.husk;
+const server = spawn(husk.command, husk.args, { env: { ...process.env, ...husk.env }, stdio: ['pipe', 'pipe', 'inherit'] });
+const waiting = new Map();
+let buffer = '';
+let next = 1;
+server.stdout.on('data', (chunk) => {
+  buffer += chunk;
+  for (let i = buffer.indexOf('\n'); i >= 0; i = buffer.indexOf('\n')) {
+    const line = buffer.slice(0, i).trim();
+    buffer = buffer.slice(i + 1);
+    if (line) waiting.get(JSON.parse(line).id)?.(JSON.parse(line));
+  }
+});
+const send = (msg) => server.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
+const request = (method, params) => new Promise((resolve) => { const id = next++; waiting.set(id, resolve); send({ id, method, params }); });
+const say = (line) => process.stdout.write(JSON.stringify(line) + '\n');
+let prompt = '';
+for await (const chunk of process.stdin) prompt += chunk;
+await request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'claude-code', version: '0' } });
+send({ method: 'notifications/initialized' });
+say({ type: 'system', subtype: 'init', session_id: 'a-fork', mcp_servers: [{ name: 'husk', status: 'connected' }] });
+const call = { type: 'tool_use', id: 'tu1', name: 'mcp__husk__shell', input: { command: 'cat /work/marker; echo from-the-bot' } };
+say({ type: 'assistant', parent_tool_use_id: null, message: { id: 'm1', content: [call] } });
+const answer = (await request('tools/call', { name: 'shell', arguments: call.input })).result ?? {};
+const text = (answer.content ?? []).map((c) => c.text ?? '').join('\n');
+say({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: text, is_error: answer.isError === true }] } });
+say({ type: 'result', subtype: 'success', is_error: false, result: prompt + '\n' + text, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+server.stdin.end();
+`,
+);
+env.HUSK_CLAUDE_CLI = join(home, 'claude.mjs');
+
 const steps = [];
 function check(name, ok, detail = '') {
   steps.push({ name, ok });
@@ -1466,6 +1508,44 @@ async function checkDeleteErases(id) {
   check('and its volume is gone: delete means delete', Boolean(volume) && spawnSync('docker', ['volume', 'inspect', volume], { stdio: 'ignore' }).status !== 0, volume);
 }
 
+/**
+ * A bot on the person's own Claude Code, going on with a chat (J5-c): the chat
+ * leaves a file on its computer; the bot, run by the shared Husk, starts the
+ * stand-in `claude` on a fork of that chat, with no tool of its own, and its
+ * MCP server lands on the chat's computer, where the file is.
+ */
+async function checkClaudeCodeBot() {
+  const sid = 'e2e0c1a2-0000-4000-8000-00000000c0de';
+  const chat = mcpSession(['--provider', 'docker'], { command: process.execPath, args: [bin], env: { CLAUDE_CODE_SESSION_ID: sid } });
+  await chat.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'claude-code', version: '0' } });
+  chat.notify('notifications/initialized');
+  const wrote = textOf((await chat.request('tools/call', { name: 'shell', arguments: { command: 'echo chat-was-here > /work/marker && echo written' } })).result ?? {});
+  check('a Claude Code chat leaves a file on its computer', /written/.test(wrote), wrote.slice(0, 200));
+  const computer = (await api('GET', '/v1/overview')).body.computers.find((c) => c.spec?.labels?.['husk.session'] === sid);
+  if (computer) created.push(computer.id);
+  chat.child.stdin.end();
+
+  const spec = { name: 'e2e-cc-bot', persona: 'Say what the chat left.', engine: { type: 'claude-code', resume: sid } };
+  const saved = await api('POST', '/v1/husks', { spec });
+  check('a bot that goes on with the chat, on Claude Code, is saved', saved.status === 201, JSON.stringify(saved.body).slice(0, 200));
+  const ran = await api('POST', '/v1/husks/e2e-cc-bot/run', { input: 'What did the chat leave?' });
+  check("the bot runs on the person's Claude Code, through Husk's tools", ran.status === 200 && ran.body.stopReason === 'complete', JSON.stringify(ran.body).slice(0, 300));
+  check("on the chat's own computer, with the chat's file", /chat-was-here/.test(ran.body.text ?? '') && /from-the-bot/.test(ran.body.text ?? ''), (ran.body.text ?? '').slice(0, 300));
+  const argv = JSON.parse(readFileSync(join(home, 'claude-argv.json'), 'utf8'));
+  check(
+    'Claude Code went on with a fork of the chat, with no tool of its own',
+    argv.join(' ').includes(`--resume ${sid} --fork-session`) && argv[argv.indexOf('--tools') + 1] === '' && argv.includes('--strict-mcp-config'),
+    argv.join(' ').slice(0, 300),
+  );
+  const runs = (await api('GET', '/v1/runs?husk=e2e-cc-bot')).body.runs ?? [];
+  check("the run is the shared Husk's, named for Claude Code", runs[0]?.model === 'claude-code', JSON.stringify(runs[0] ?? {}).slice(0, 200));
+  check('the bot is deleted', (await api('DELETE', '/v1/husks/e2e-cc-bot')).status === 204);
+  if (computer) {
+    const gone = await api('DELETE', `/v1/computers/${computer.id}?confirm=${computer.id}`, undefined, rec.token, { 'x-husk-as': 'person' });
+    if (gone.status === 204) created.splice(created.indexOf(computer.id), 1);
+  }
+}
+
 try {
   // 1. A fresh home and a non-interactive setup, as the README's line runs it:
   // Husk added to one chat app on the computer chosen, the image with the
@@ -1494,6 +1574,9 @@ try {
   check('setup starts the shared Husk, which writes daemon.json', Boolean(rec?.token), rec?.url);
   check('the console page loads without the token', (await fetch(`${rec.url}/`)).status === 200);
   check('the API refuses a request without the token', (await fetch(`${rec.url}/v1/computers`)).status === 401);
+
+  // 1c. A bot on the person's own Claude Code goes on with a chat, on the chat's computer.
+  await checkClaudeCodeBot();
 
   // 2. A Docker computer with a browser.
   // Unique: the name is the container's, and another `e2e` container would clash.

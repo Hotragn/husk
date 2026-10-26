@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import { HuskError, formatDuration, paths } from '@husk-ai/core';
-import type { ApprovalMode, ChatRequest, ChatResponse, HuskSpec, StreamEvent } from '@husk-ai/core';
+import type { ApprovalMode, ChatRequest, ChatResponse, HuskSpec, RunResult, StreamEvent } from '@husk-ai/core';
 import type { AgentRunEvent, ApprovalRequest, RouterLike } from '@husk-ai/agent';
 import { UsageError, parse, parseChoice, parseCount,
   parseAmount, required } from '../args.js';
@@ -55,6 +55,9 @@ export async function run(argv: string[]): Promise<number> {
     parseChoice(values.approve as string | undefined, APPROVAL_MODES, '--approve', 'run') ??
     spec.guardrails.approvalMode;
 
+  if (spec.engine.type !== 'builtin' && approvalMode !== 'auto') {
+    throw new UsageError(`the ${spec.engine.type} engine runs Husk's tools without asking; --approve ${approvalMode} needs the builtin engine`, 'run');
+  }
   if (approvalMode === 'ask' && !interactive()) {
     throw new UsageError('--approve ask needs a terminal to ask on; use auto or readonly in a script', 'run');
   }
@@ -66,6 +69,36 @@ export async function run(argv: string[]): Promise<number> {
   const maxSteps = parseCount(values['max-steps'] as string | undefined, '--max-steps', 'run') ?? spec.limits.maxSteps;
   const maxCostUsd =
     parseAmount(values['max-cost'] as string | undefined, '--max-cost', 'run') ?? spec.limits.maxCostUsd;
+
+  // The person's own Claude Code or Codex runs it, on its own login and model: nothing of Husk's to resolve.
+  if (spec.engine.type !== 'builtin') {
+    const engine = spec.engine.type;
+    if (values['max-steps'] !== undefined) ui.warn(`--max-steps does not apply to the ${engine} engine; --max-cost and limits.timeoutSec do`);
+    const ran = values['no-computer'] === true ? { ...spec, computer: { ...spec.computer, enabled: false } } : spec;
+    const tools = ran.computer.enabled && ran.tools.length > 0;
+    if (!values.json) {
+      ui.note(
+        ui.fields([
+          ['husk', `${ui.bold(spec.name)} ${ui.dim(spec.description || '')}`],
+          ['engine', spec.engine.resume ? `${engine} ${ui.dim(`continuing chat ${spec.engine.resume}`)}` : engine],
+          ['tools', tools ? "Husk's, on its computer" : ui.dim('none')],
+        ]),
+      );
+      ui.note('');
+    }
+    const { CliAgent } = await import('@husk-ai/agent');
+    const started = Date.now();
+    const result = await new CliAgent({ spec: ran }).run({
+      input: prompt,
+      ...(values.model ? { model: values.model as string } : {}),
+      maxCostUsd,
+      timeoutSec: spec.limits.timeoutSec,
+      signal: interruptSignal(),
+      vars: parseVars(values.var as string[] | undefined),
+      onEvent: values.json ? () => {} : renderer(),
+    });
+    return finish(result, spec, { started, json: values.json === true, wantsComputer: tools, who: engine });
+  }
 
   // Resolve up front so an unreachable model fails before anything is created,
   // and so the header can name what will actually run.
@@ -149,16 +182,25 @@ export async function run(argv: string[]): Promise<number> {
     onApproval: askOperator,
     onEvent: render,
   });
+  return finish(result, spec, { started, json: values.json === true, wantsComputer, who: resolved.info.id, quiet: 'small local models often do this with tools attached — try a larger model, or --approve readonly to see its plan' });
+}
 
-  if (values.json) {
+/** What a finished run says, and the exit code it ends with. */
+function finish(
+  result: RunResult,
+  spec: HuskSpec,
+  opts: { started: number; json: boolean; wantsComputer: boolean; who: string; quiet?: string },
+): number {
+  const { started, wantsComputer } = opts;
+  if (opts.json) {
     ui.json(result);
   } else {
     // A run that produced nothing looks identical to a run that is still going.
     // Saying so beats leaving someone staring at an empty terminal wondering
     // whether husk swallowed the answer.
     if (!result.text.trim() && result.stopReason === 'complete') {
-      ui.warn(`${resolved.info.id} finished without saying anything and without calling a tool`);
-      ui.hint('small local models often do this with tools attached — try a larger model, or --approve readonly to see its plan');
+      ui.warn(`${opts.who} finished without saying anything and without calling a tool`);
+      if (opts.quiet) ui.hint(opts.quiet);
     }
     ui.print();
     ui.note(

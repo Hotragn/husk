@@ -126,6 +126,22 @@ export function signedBuild(platform, { appUpdate = '', codesign = '' } = {}) {
   return false;
 }
 
+/** Marks the PATH in what a login shell prints, around whatever its profile prints too. */
+export const PATH_MARK = '__HUSK_PATH__';
+
+/**
+ * The PATH a person's login shell gave, from what it printed, put before the
+ * one this app was started with, and without repeats. A Mac app opened from
+ * the Finder gets launchd's `/usr/bin:/bin:/usr/sbin:/sbin`, without Homebrew,
+ * the Docker CLI, or the person's claude and codex. Undefined when the shell
+ * said nothing usable.
+ */
+export function shellPath(printed, current = '', delimiter = ':') {
+  const found = new RegExp(`${PATH_MARK}(.*?)${PATH_MARK}`).exec(printed ?? '')?.[1];
+  if (!found?.includes('/')) return undefined;
+  return [...new Set([...found.split(delimiter), ...current.split(delimiter)].filter(Boolean))].join(delimiter);
+}
+
 /** The tray's item for each computer on the screen, which opens its window: its chat, and whether it needs the person. */
 export function trayComputers(list) {
   return list.map((c) => ({ id: c.id, label: `${c.label}${c.held ? ' · you have it' : c.waiting ? ' · waiting for you' : ''}` }));

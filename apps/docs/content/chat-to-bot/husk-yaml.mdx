@@ -54,6 +54,7 @@ bundle, a `cli` trigger, and every limit at its default.
 | `description` | string ≤ 280 | `""` | One line |
 | `model` | string | `auto` | An [alias](/models#aliases) or a `provider/model` id |
 | `fallbackModels` | string[] | `[]` | Tried in order when the primary is unavailable, rate limited or over budget |
+| `engine` | object | `{ type: builtin }` | What runs the husk: Husk's own loop, or your own Claude Code or Codex. See below |
 | `temperature` | number 0–2 | — | Passed to the provider when set |
 | `persona` | string | `""` | The system prompt. Supports `{{var}}` interpolation |
 | `knowledge` | object[] | `[]` | Stable reference text, appended to the prompt |
@@ -66,6 +67,42 @@ bundle, a `cli` trigger, and every limit at its default.
 | `triggers` | array | `[{ type: cli }]` | How the husk is reached |
 | `metadata` | record | `{}` | Free-form, carried through untouched |
 | `origin` | object | — | Provenance. Written by the distiller |
+
+### engine
+
+```yaml
+engine:
+  type: claude-code        # builtin (default) | claude-code | codex
+  resume: 4f1c2a9e-0b1d-4c3e-9a8f-1234567890ab   # claude-code only: the chat to go on with
+```
+
+`builtin` is Husk's own agent loop, on `model`: any provider you have set up, a local
+Ollama included.
+
+`claude-code` and `codex` run your own installed CLI, headless (`claude -p`,
+`codex exec`), under your own login. The run gets Husk's tools and nothing else: no
+built-in shell or file tools, no web search, no other MCP server, and none of a
+project's settings. So it acts only on the computer, where a take-over, a cancel and
+Husk's admission reach it as they reach a chat. Husk never reads or copies the CLI's
+login.
+
+- `resume` goes on with a Claude Code chat: each run is a fork of it
+  (`--resume <id> --fork-session`), so the chat itself is never written to, and it uses
+  the chat's own computer, with its files and logins. "Make this a bot" fills this in
+  when Claude Code is installed.
+- `model` names the CLI's model; `auto` leaves the CLI's own choice.
+- `limits.maxCostUsd` is passed to Claude Code as `--max-budget-usd`, which counts only
+  the run's own spend. Codex has no budget switch; `limits.timeoutSec` still applies to both.
+- A husk with no `tools`, or `computer.enabled: false`, only talks.
+- These engines run Husk's tools without asking, so a husk on them needs
+  `guardrails.approvalMode: auto` and no `denyCommands`, `allowCommands`, network `allow`
+  or `deny` lists or `computer.image`: saving one says so.
+- Husk looks for `claude` and `codex` on the PATH and where their installers put them.
+  `HUSK_CLAUDE_CLI` and `HUSK_CODEX_CLI` point it at a copy installed elsewhere.
+
+Running your Claude subscription on a schedule is ordinary use of your own CLI, but
+Anthropic's Pro and Max plans assume individual use: for frequent schedules, give
+Claude Code an API key.
 
 ### persona
 

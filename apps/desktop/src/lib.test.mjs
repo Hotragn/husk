@@ -25,6 +25,7 @@ import {
   runtimeBin,
   sameOrigin,
   shapeOf,
+  shellPath,
   signedBuild,
   toOpen,
   trayComputers,
@@ -263,4 +264,14 @@ test('an update installs itself only on a build whose signature it is checked ag
   assert.equal(signedBuild('darwin', { codesign: `${mac}Signature=adhoc\n` }), false, 'an ad-hoc signature does not count');
   assert.equal(signedBuild('darwin', { codesign: `${mac}Authority=Developer ID Application: Ada Lovelace (ABCDE12345)\nAuthority=Apple Root CA\n` }), true);
   assert.equal(signedBuild('linux', { appUpdate: 'publisherName: x' }), false);
+});
+
+test("the Husk this app starts gets the person's own PATH, with what it had kept after it", () => {
+  const launchd = '/usr/bin:/bin:/usr/sbin:/sbin';
+  // What a zsh with a chatty profile prints.
+  const printed = 'Welcome back!\n__HUSK_PATH__/opt/homebrew/bin:/Users/me/.local/bin:/usr/bin:/bin__HUSK_PATH__';
+  assert.equal(shellPath(printed, launchd), '/opt/homebrew/bin:/Users/me/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin');
+  assert.equal(shellPath('', launchd), undefined, 'a shell that printed nothing');
+  assert.equal(shellPath('__HUSK_PATH____HUSK_PATH__', launchd), undefined, 'an empty PATH');
+  assert.equal(shellPath(undefined, launchd), undefined, 'a shell that failed');
 });

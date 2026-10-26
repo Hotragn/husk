@@ -7,7 +7,7 @@
 // It never edits a chat app's settings by itself: that happens on the
 // console's Connect page, at the person's click.
 
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -23,9 +23,11 @@ import {
   launchFor,
   newlyWaiting,
   readDaemonRecord,
+  PATH_MARK,
   restartDelay,
   runtimeBin,
   sameOrigin,
+  shellPath,
   trayComputers,
   trayStatus,
 } from './lib.mjs';
@@ -633,6 +635,7 @@ async function smokeComputers() {
   // Closing the console window hides it: a command running in its Terminal keeps running.
   win?.close();
   check('closing the console window hides it, so its Terminal keeps running', win && !win.isDestroyed() && !win.isVisible());
+  if (process.platform !== 'win32') check("the person's login shell gave the Husk this app starts its PATH", personsPath);
   // Updates: a packaged app knows where they come from, and installs one only where its signature is checked.
   if (app.isPackaged) {
     check('the packaged app knows where its updates come from', existsSync(join(process.resourcesPath, 'app-update.yml')));
@@ -763,6 +766,30 @@ async function runMcp() {
   await import(pathToFileURL(BIN).href);
 }
 
+/**
+ * The PATH the person's own login shell has, before the Husk this app starts
+ * inherits this one's: opened from the Finder or a launcher, the app has only
+ * the system's, and the Husk would find no Docker CLI and no claude or codex
+ * to run a bot on. Asked once, as VS Code does; a shell that says nothing
+ * within five seconds leaves the PATH as it was.
+ */
+/** The login shell gave its PATH (the smoke checks it). */
+let personsPath = false;
+
+async function usePersonsPath() {
+  if (process.platform === 'win32') return;
+  const shell = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh');
+  // fish keeps PATH as a list, and joins it with spaces when quoted.
+  const path = /\/fish$/.test(shell) ? '(string join : $PATH)' : '"$PATH"';
+  const printed = await new Promise((resolve) => {
+    execFile(shell, ['-ilc', `printf '%s%s%s' '${PATH_MARK}' ${path} '${PATH_MARK}'`], { encoding: 'utf8', timeout: 5000 }, (_err, stdout) => resolve(stdout));
+  });
+  const found = shellPath(printed, process.env.PATH);
+  personsPath = Boolean(found);
+  if (found) process.env.PATH = found;
+  else log(`${shell} gave no PATH; keeping ${process.env.PATH}`);
+}
+
 async function startApp() {
   process.on('uncaughtException', (err) => log(`error: ${err.stack ?? err}`));
   process.on('unhandledRejection', (err) => log(`error: ${err?.stack ?? err}`));
@@ -792,6 +819,7 @@ async function startApp() {
   tray = new Tray(nativeImage.createFromPath(ICON).resize({ width: 16, height: 16 }));
   tray.on('click', () => openWindow());
   refreshTray(trayStatus(undefined));
+  await usePersonsPath();
   try {
     rec = await ensureHusk();
   } catch (err) {

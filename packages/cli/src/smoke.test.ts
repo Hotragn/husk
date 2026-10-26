@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -96,12 +96,12 @@ interface Result {
   stderr: string;
 }
 
-function husk(args: string[], opts: { cwd?: string; input?: string } = {}): Result {
+function husk(args: string[], opts: { cwd?: string; input?: string; env?: Record<string, string> } = {}): Result {
   const r = spawnSync(process.execPath, [BIN, ...args], {
     encoding: 'utf8',
     cwd: opts.cwd ?? home,
     input: opts.input ?? '',
-    env: { ...process.env, HUSK_HOME: home, NO_COLOR: '1', FORCE_COLOR: '' },
+    env: { ...process.env, HUSK_HOME: home, NO_COLOR: '1', FORCE_COLOR: '', ...opts.env },
   });
   return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
@@ -360,6 +360,36 @@ describe.skipIf(!built)('init and validate round trip', { timeout: 30_000 }, () 
       expect(second.status).toBe(1);
       expect(second.stderr).toContain('--force');
       expect(husk(['init', 'x', '--yes', '--force'], { cwd: dir }).status).toBe(0);
+    } finally {
+      removeDir(dir);
+    }
+  });
+});
+
+describe.skipIf(!built)("a husk on the person's own Claude Code", { timeout: 30_000 }, () => {
+  it('runs with husk run, and says why --approve ask cannot apply', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'husk-cli-engine-'));
+    try {
+      // A stand-in for `claude -p`: answers with what it was asked.
+      writeFileSync(
+        join(dir, 'claude.mjs'),
+        `let input = '';
+process.stdin.on('data', (d) => (input += d)).on('end', () => {
+  for (const line of [
+    { type: 'system', subtype: 'init', mcp_servers: [] },
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Asked: ' + input }] } },
+    { type: 'result', subtype: 'success', is_error: false, result: 'Asked: ' + input, usage: { input_tokens: 1, output_tokens: 2 } },
+  ]) console.log(JSON.stringify(line));
+});`,
+      );
+      writeFileSync(join(dir, 'husk.yaml'), 'name: asker\ntools: []\nengine:\n  type: claude-code\n');
+      const env = { HUSK_CLAUDE_CLI: join(dir, 'claude.mjs') };
+      const ran = husk(['run', 'husk.yaml', 'Is it up?', '--json'], { cwd: dir, env });
+      expect(ran.status, ran.stderr).toBe(0);
+      expect(JSON.parse(ran.stdout)).toMatchObject({ text: 'Asked: Is it up?', stopReason: 'complete' });
+      const asked = husk(['run', 'husk.yaml', 'Is it up?', '--approve', 'ask'], { cwd: dir, env });
+      expect(asked.status).not.toBe(0);
+      expect(asked.stderr).toContain('without asking');
     } finally {
       removeDir(dir);
     }
