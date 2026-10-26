@@ -79,6 +79,8 @@ server.stdin.end();
 `,
 );
 env.HUSK_CLAUDE_CLI = join(home, 'claude.mjs');
+// Where the shared Husk looks for Codex's sessions (J5-d): this run's own folder.
+env.CODEX_HOME = join(home, 'codex');
 
 const steps = [];
 function check(name, ok, detail = '') {
@@ -1560,6 +1562,46 @@ async function checkJobHost() {
 }
 
 /**
+ * A Codex chat becomes a bot (J5-d). Codex hands its MCP servers no session
+ * id, so the chat names its computer by the id the first answer carries, and
+ * Make this a bot finds the chat's rollout by that id.
+ */
+async function checkCodexChatBot() {
+  const chat = mcpSession(['--provider', 'docker'], { command: process.execPath, args: [bin] });
+  await chat.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'codex-mcp-client', version: '0' } });
+  chat.notify('notifications/initialized');
+  const first = textOf((await chat.request('tools/call', { name: 'shell', arguments: { computer: 'new', command: 'uptime' } })).result ?? {});
+  const id = /Your computer id is (cmp_[A-Za-z0-9]+)/.exec(first)?.[1];
+  check('a Codex chat gets a computer, its id in the first answer', Boolean(id), first.slice(0, 200));
+  created.push(id);
+  chat.child.stdin.end();
+
+  // What Codex keeps of that chat: one rollout, with Husk's answer in it.
+  const day = join(env.CODEX_HOME, 'sessions', '2026', '10', '25');
+  mkdirSync(day, { recursive: true });
+  const line = (type, payload) => JSON.stringify({ timestamp: new Date().toISOString(), type, payload });
+  writeFileSync(
+    join(day, 'rollout-2026-10-25T10-00-00-e2e0c0de.jsonl'),
+    [
+      line('session_meta', { id: 'e2e-codex-chat', cwd: '/work', cli_version: '0.147.0' }),
+      line('response_item', { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Check the uptime every hour and tell me if it restarts.' }] }),
+      line('response_item', { type: 'function_call', namespace: 'mcp__husk', name: 'shell', arguments: '{"command":"uptime"}', call_id: 'c1' }),
+      line('response_item', { type: 'function_call_output', call_id: 'c1', output: first }),
+    ].join('\n'),
+  );
+  const draft = await api('POST', `/v1/computers/${id}/bot`, {});
+  check('Make this a bot reads the Codex chat back by its rollout', draft.status === 200 && draft.body.transcriptId === 'e2e-codex-chat', JSON.stringify(draft.body).slice(0, 300));
+  // No Codex here, but the stand-in Claude Code is: the draft runs on it, fresh, with the computer.
+  check(
+    'the draft runs on an installed CLI, from what was distilled, with the computer',
+    draft.body.spec?.engine?.type === 'claude-code' && !draft.body.spec.engine.resume && draft.body.spec.tools?.includes('computer'),
+    JSON.stringify(draft.body.spec?.engine),
+  );
+  const gone = await api('DELETE', `/v1/computers/${id}?confirm=${id}`, undefined, rec.token, { 'x-husk-as': 'person' });
+  if (gone.status === 204) created.splice(created.indexOf(id), 1);
+}
+
+/**
  * A bot on the person's own Claude Code, going on with a chat (J5-c): the chat
  * leaves a file on its computer; the bot, run by the shared Husk, starts the
  * stand-in `claude` on a fork of that chat, with no tool of its own, and its
@@ -1631,6 +1673,9 @@ try {
 
   // 1c. A bot on the person's own Claude Code goes on with a chat, on the chat's computer.
   await checkClaudeCodeBot();
+
+  // 1d. A Codex chat becomes a bot, read back by the rollout that names its computer.
+  await checkCodexChatBot();
 
   // 2. A Docker computer with a browser.
   // Unique: the name is the container's, and another `e2e` container would clash.
