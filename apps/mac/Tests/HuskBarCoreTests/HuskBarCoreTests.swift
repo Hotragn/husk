@@ -68,6 +68,49 @@ final class ServerConfigTests: XCTestCase {
     }
 }
 
+final class SharedHuskTests: XCTestCase {
+    private let record = DaemonRecord(url: "http://127.0.0.1:52411", token: "t0ken")
+
+    func testFindsTheSharedHuskFromItsRecord() {
+        let c = ServerConfig(environment: [:], record: record)
+        XCTAssertEqual(c?.baseURL.absoluteString, "http://127.0.0.1:52411")
+        XCTAssertEqual(c?.request().value(forHTTPHeaderField: "Authorization"), "Bearer t0ken")
+        XCTAssertNil(ServerConfig(environment: [:], record: DaemonRecord(url: "http://127.0.0.1:52411", token: nil))?.token)
+    }
+
+    func testTheEnvironmentWinsWhenSetByHand() {
+        let both = ServerConfig(environment: ["HUSK_URL": "http://localhost:9000", "HUSK_TOKEN": "mine"], record: record)
+        XCTAssertEqual(both?.baseURL.absoluteString, "http://localhost:9000")
+        XCTAssertEqual(both?.token, "mine")
+        let tokenOnly = ServerConfig(environment: ["HUSK_TOKEN": "mine"], record: record)
+        XCTAssertEqual(tokenOnly?.baseURL.absoluteString, "http://127.0.0.1:7377")
+        XCTAssertEqual(tokenOnly?.token, "mine")
+    }
+
+    func testRefusesARecordThatIsNotLoopback() {
+        XCTAssertNil(ServerConfig(environment: [:], record: DaemonRecord(url: "http://10.0.0.2:7377", token: nil)))
+    }
+
+    func testReadsTheRecordWhereHuskWritesIt() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let file = daemonRecordURL(environment: [:], home: home)
+        XCTAssertEqual(file.path, home.appendingPathComponent(".husk/daemon.json").path)
+        XCTAssertEqual(daemonRecordURL(environment: ["HUSK_HOME": "/tmp/h"], home: home).path, "/tmp/h/daemon.json")
+        XCTAssertNil(readDaemonRecord(at: file))
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"url":"http://127.0.0.1:52411","token":null,"pid":42,"version":"0.2.0","startedAt":"x"}"#.utf8).write(to: file)
+        XCTAssertEqual(readDaemonRecord(at: file), DaemonRecord(url: "http://127.0.0.1:52411", token: nil))
+    }
+
+    func testThePillMakesWayForTheDesktopApp() {
+        XCTAssertTrue(showsPill(.running(1), desktopAppRunning: false))
+        XCTAssertFalse(showsPill(.running(1), desktopAppRunning: true))
+        XCTAssertFalse(showsPill(.waiting(1), desktopAppRunning: true))
+        XCTAssertFalse(showsPill(.idle, desktopAppRunning: false))
+    }
+}
+
 final class NotchGeometryTests: XCTestCase {
     // A 14-inch MacBook Pro's built-in display, in points.
     private let frame = CGRect(x: 0, y: 0, width: 1512, height: 982)

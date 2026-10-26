@@ -8,13 +8,17 @@ A menu-bar companion for a local Husk server.
 - **The notch pill, on Macs with a notch.** A pill sits under the notch: hidden when
   nothing runs, "1 computer" while one runs, amber "Waiting for you" on a handoff.
   Hovering over it expands it into the list. On external displays and Macs without a
-  notch there is no pill; the menu-bar icon covers it.
+  notch there is no pill; the menu-bar icon covers it. While the Husk desktop app runs,
+  its own notch shows the computers and Husk Bar's pill makes way: one notch, not two.
 
-It reads `GET /v1/overview` from the local server every 3 seconds. It talks only to a
-loopback address, reads `HUSK_URL` and `HUSK_TOKEN` from its environment the way the CLI
-and SDK do, stores nothing, and never asks for credentials. It needs no Full Disk
-Access, Accessibility or screen-recording permission. **Open** and **Take over** open
-the console in your browser, without the token in the URL.
+It reads `GET /v1/overview` from the local server every 3 seconds. It finds the shared
+Husk the way the desktop app and your chats do, from the record the shared Husk writes
+as it starts (`~/.husk/daemon.json`, or `$HUSK_HOME/daemon.json`), read again on every
+poll, since a Husk that restarted has a new token. `HUSK_URL` and `HUSK_TOKEN`, when
+set, win, as the CLI and SDK read them. It talks only to a loopback address, stores
+nothing, and never asks for credentials. It needs no Full Disk Access, Accessibility or
+screen-recording permission. **Open** and **Take over** open the console in your
+browser, without the token in the URL.
 
 ## What CI proves, and what it can't
 
@@ -26,6 +30,8 @@ cover:
 - computer and handoff states, and the pill text;
 - choosing the notch or the menu-bar fallback from given screen geometry;
 - reading `HUSK_URL` and `HUSK_TOKEN`, and refusing a non-loopback server;
+- finding the shared Husk from its record, with the environment winning when set;
+- the pill making way for the desktop app;
 - decoding the overview.
 
 CI cannot show how the notch pill looks and feels on real hardware: its position against
@@ -57,8 +63,9 @@ open "build/Husk Bar.app"
 notch geometry). `xcodebuild` builds the app target from `Package.swift`; there is no
 `.xcodeproj` to keep in sync. `open` launches the bundled app.
 
-A GUI app does not inherit your shell's environment. If your server uses `HUSK_TOKEN` or
-a non-default `HUSK_URL`, launch it from a terminal that has them set, for example
+A GUI app does not inherit your shell's environment. The shared Husk needs nothing from
+it. If you run a server of your own with `HUSK_TOKEN` or a non-default `HUSK_URL`, launch
+Husk Bar from a terminal that has them set, for example
 `HUSK_TOKEN=... open "build/Husk Bar.app"`, or set them with `launchctl setenv`.
 
 ## Test checklist
@@ -85,7 +92,11 @@ Against a real `husk serve`, with Docker running:
 - [ ] Set `HUSK_URL=http://example.com:7377`: the menu says the address is not loopback
       and no request is made (check with Little Snitch or `nettop`).
 - [ ] With `HUSK_TOKEN` set on the server and not in the app's environment, the menu says
-      Husk asks for a token, and nothing crashes.
+      Husk refused it, and nothing crashes.
+- [ ] With the shared Husk a chat started (no environment at all), the icon and the pill
+      follow it; quit it and let a chat start it again, and they follow the new one.
+- [ ] Start the Husk desktop app: Husk Bar's pill goes away while the app's notch shows
+      the computers. Quit the app: the pill comes back.
 - [ ] System Settings > Privacy & Security shows no new permission requests.
 - [ ] Quit from the menu works; Activity Monitor shows HuskBar using next to no CPU.
 
