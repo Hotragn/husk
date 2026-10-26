@@ -5,6 +5,8 @@ import type { Logger, ModelProvider } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
 import { startChatIdleStop } from './chat-idle.js';
+import { JobsLink, clearJobsRecord, createJobsApp, dismissJobHost, remoteRunner, writeJobsRecord } from './jobs.js';
+import type { SharedHusk } from './jobs.js';
 import type { CreateAppOptions } from './app.js';
 import { resolveConfig } from './deps.js';
 import type { ManagerLike, RouterLike, ServerConfig, ServerDeps } from './deps.js';
@@ -24,6 +26,13 @@ export interface ServeOptions extends Partial<ServerConfig> {
    * old contract: tokenless on loopback, and a refusal to bind further without one.
    */
   mintToken?: boolean;
+  /**
+   * Start the job host (jobs.ts). The Husk chats start passes it: it then mounts
+   * no trigger of its own, forwards the trigger routes to the job host, and
+   * starts it whenever a bot has a trigger. Without it, as for `husk serve`,
+   * triggers run in this process as before.
+   */
+  startJobs?: () => void;
 }
 
 export interface RunningServer {
@@ -133,7 +142,7 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
   const log = opts.logger ?? createLogger({ scope: 'husk' });
   ensurePaths();
 
-  const { logger: _logger, deps: injected, reaperIntervalMs, daemon, mintToken, ...configish } = opts;
+  const { logger: _logger, deps: injected, reaperIntervalMs, daemon, mintToken, startJobs, ...configish } = opts;
   const config = resolveConfig(configish);
   if (mintToken && !config.token) config.token = randomBytes(32).toString('hex');
   const built = await createDefaultDeps(config, log);
@@ -151,6 +160,9 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
   // The machine's one Husk keeps holds across its restarts. A second server on
   // the same home would fight it over the file, so only the shared one does.
   if (daemon) appOptions.holdsFile = join(ensurePaths().root, 'holds.json');
+  // Bots' triggers live in a job host of their own, apart from the Husk the chats start (F-15).
+  const jobs = daemon && startJobs ? new JobsLink({ start: startJobs, store: appOptions.store, log }) : undefined;
+  if (jobs) appOptions.jobs = jobs;
 
   const app = await createApp(appOptions);
   const ctx = app.husk;
@@ -177,6 +189,9 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
     });
   }
   if (!config.token) log.info('no HUSK_TOKEN set -- loopback connections only');
+  // A bot with a trigger has its job host from the start, not from the first webhook.
+  if (jobs) void jobs.sync().catch((err: unknown) => log.error('the job host could not be started', err));
+  else if (daemon) void dismissJobHost();
 
   let closing: Promise<void> | undefined;
   const close = async (): Promise<void> => {
@@ -213,5 +228,44 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
 
+  return { app, url, host: config.host, port, close };
+}
+
+/**
+ * Be the job host (jobs.ts): the husks' triggers on a loopback port of its
+ * own (HUSK_JOBS_PORT, or any free one), with a minted token, and every run
+ * asked of the shared Husk that `shared` finds or starts. Writes
+ * ~/.husk/jobs.json so the shared Husk finds it. `leave` runs once no husk
+ * has a trigger left.
+ */
+export async function serveJobs(opts: { shared: () => Promise<SharedHusk>; logger?: Logger; leave?: (why: string) => void }): Promise<RunningServer> {
+  const log = opts.logger ?? createLogger({ scope: 'husk jobs' });
+  ensurePaths();
+  const config = resolveConfig({ host: '127.0.0.1', port: Number(process.env.HUSK_JOBS_PORT) || 0 });
+  const token = randomBytes(32).toString('hex');
+  config.token = token;
+  const built = await createDefaultDeps(config, log);
+  const app = await createJobsApp({
+    deps: { ...built, logger: log, config },
+    runner: remoteRunner(opts.shared),
+    token,
+    ...(opts.leave ? { leave: opts.leave } : {}),
+  });
+  await app.listen({ host: config.host, port: config.port });
+  const address = app.server.address();
+  const port = typeof address === 'object' && address ? address.port : config.port;
+  const url = `http://127.0.0.1:${port}`;
+  writeJobsRecord({ url, token, pid: process.pid, version: HUSK_VERSION, startedAt: new Date().toISOString() });
+  log.info(`husk jobs listening on ${url}`);
+  let closing: Promise<void> | undefined;
+  const close = async (): Promise<void> => {
+    closing ??= (async () => {
+      clearJobsRecord();
+      await app.husk.triggers?.stop();
+      await app.close();
+      await built.store.close();
+    })();
+    return closing;
+  };
   return { app, url, host: config.host, port, close };
 }

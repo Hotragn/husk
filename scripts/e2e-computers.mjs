@@ -12,6 +12,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -21,7 +22,19 @@ const bin = join(root, 'packages', 'mcp', 'dist', 'bin.js');
 const cli = join(root, 'packages', 'cli', 'dist', 'bin.js');
 const { resolveImage } = await import(pathToFileURL(join(root, 'packages', 'runtime', 'dist', 'index.js')).href);
 const home = mkdtempSync(join(tmpdir(), 'husk-e2e-'));
-const env = { ...process.env, HUSK_HOME: home };
+
+// Just enough of Ollama's API for a bot to get one answer, with no model and no key.
+const ollama = createServer((req, res) => {
+  req.resume().on('end', () => {
+    const said = { model: 'qwen2.5:7b', message: { role: 'assistant', content: 'Hello from the stub model.' }, done: true, done_reason: 'stop', prompt_eval_count: 12, eval_count: 6 };
+    const answer = { '/api/tags': { models: [{ name: 'qwen2.5:7b', model: 'qwen2.5:7b' }] }, '/api/show': { capabilities: ['completion', 'tools'] }, '/api/chat': said }[req.url];
+    res.writeHead(answer ? 200 : 404, { 'content-type': req.url === '/api/chat' ? 'application/x-ndjson' : 'application/json' });
+    res.end(answer ? `${JSON.stringify(answer)}\n` : '');
+  });
+});
+await new Promise((r) => ollama.listen(0, '127.0.0.1', r));
+
+const env = { ...process.env, HUSK_HOME: home, OLLAMA_HOST: `http://127.0.0.1:${ollama.address().port}` };
 delete env.HUSK_DAEMON;
 delete env.HUSK_TOKEN;
 
@@ -47,17 +60,30 @@ let mcp;
 let appEntry;
 const created = [];
 
-/** The running shared Husk's record, or undefined. */
-function readDaemon() {
+/** A running process's record in the home -- the shared Husk's, the job host's -- or undefined. */
+function readRecord(file) {
   try {
-    return JSON.parse(readFileSync(join(home, 'daemon.json'), 'utf8'));
+    return JSON.parse(readFileSync(join(home, file), 'utf8'));
   } catch {
     return undefined;
   }
 }
+const readDaemon = () => readRecord('daemon.json');
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 async function cleanup() {
   mcp?.child.kill();
+  ollama.close();
+  // A job host left by a failed run: it would otherwise wait for a bot that is never coming.
+  const jobs = readRecord('jobs.json');
+  if (jobs && alive(jobs.pid)) process.kill(jobs.pid);
   // As the owner, so a run that failed while it held a computer still tidies it away.
   for (const id of created) await api('DELETE', `/v1/computers/${id}?confirm=${id}`, undefined, rec.token, { 'x-husk-as': 'person' }).catch(() => undefined);
   // Setup started the shared Husk detached, and a chat may have started it again: ask it to stop.
@@ -1466,6 +1492,31 @@ async function checkDeleteErases(id) {
   check('and its volume is gone: delete means delete', Boolean(volume) && spawnSync('docker', ['volume', 'inspect', volume], { stdio: 'ignore' }).status !== 0, volume);
 }
 
+/**
+ * A bot's trigger, in a job host of its own (J5-a): the shared Husk chats
+ * start mounts no trigger. Saving a bot with one starts the job host, the
+ * trigger keeps the shared Husk's address, the job host asks the shared Husk
+ * to run the bot, and it leaves once no bot has a trigger.
+ */
+async function checkJobHost() {
+  const spec = { name: 'e2e-bot', model: 'ollama/qwen2.5:7b', persona: 'Answer in one line.', tools: [], triggers: [{ type: 'http', path: '/ask', auth: 'token' }] };
+  check('the shared Husk starts with no job host: no bot has a trigger', !readRecord('jobs.json'));
+  const saved = await api('POST', '/v1/husks', { spec });
+  check('a bot with a trigger is saved', saved.status === 201, JSON.stringify(saved.body).slice(0, 200));
+  const jobs = readRecord('jobs.json');
+  check('saving it starts the job host, a process of its own', alive(jobs?.pid) && jobs.pid !== rec.pid, `shared Husk ${rec.pid}, job host ${jobs?.pid}`);
+  const mounted = (await api('GET', '/v1/triggers')).body.triggers ?? [];
+  check('the shared Husk lists the trigger the job host mounted', mounted.some((t) => t.husk === 'e2e-bot' && t.at === '/v1/t/e2e-bot/ask'), JSON.stringify(mounted));
+  check('the trigger keeps the shared Husk’s token', (await fetch(`${rec.url}/v1/t/e2e-bot/ask`, { method: 'POST' })).status === 401);
+  const fired = await api('POST', '/v1/t/e2e-bot/ask', { input: 'Say hello.' });
+  check('it fires at the shared Husk’s address, and the bot answers', fired.status === 200 && /Hello from the stub model/.test(fired.body.text ?? ''), JSON.stringify(fired.body).slice(0, 200));
+  const runs = (await api('GET', '/v1/runs?husk=e2e-bot')).body;
+  check('the shared Husk ran it: the run is in its own list', Boolean(fired.body.runId) && JSON.stringify(runs).includes(fired.body.runId), JSON.stringify(runs).slice(0, 200));
+  check('the bot is deleted', (await api('DELETE', '/v1/husks/e2e-bot')).status === 204);
+  for (let i = 0; i < 40 && alive(jobs.pid); i++) await sleep(250);
+  check('the job host leaves once no bot has a trigger', !alive(jobs.pid) && !readRecord('jobs.json'), `pid ${jobs.pid}`);
+}
+
 try {
   // 1. A fresh home and a non-interactive setup, as the README's line runs it:
   // Husk added to one chat app on the computer chosen, the image with the
@@ -1494,6 +1545,9 @@ try {
   check('setup starts the shared Husk, which writes daemon.json', Boolean(rec?.token), rec?.url);
   check('the console page loads without the token', (await fetch(`${rec.url}/`)).status === 200);
   check('the API refuses a request without the token', (await fetch(`${rec.url}/v1/computers`)).status === 401);
+
+  // 1b. A bot's trigger runs in a job host of its own, through the shared Husk.
+  await checkJobHost();
 
   // 2. A Docker computer with a browser.
   // Unique: the name is the container's, and another `e2e` container would clash.

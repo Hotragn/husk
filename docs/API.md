@@ -546,6 +546,17 @@ ALL  /v1/t/*       an `http` trigger. Body or `?input=`; SSE when the client ask
 POST /v1/w/*       a `webhook` trigger. HMAC-verified when the husk sets a secret.
 ```
 
+In the shared Husk that chats start (`husk-mcp --daemon`), the triggers run in a
+job host of their own, `husk-mcp --jobs`: the shared Husk starts it when a husk
+has a trigger (anything but `cli`) and forwards these routes, and `/v1/a/*` for
+chat apps, to it, so a trigger keeps the shared Husk's address and token. The
+job host listens on a loopback port with a token of its own, recorded in
+`~/.husk/jobs.json` and logging to `~/.husk/jobs.log`. It runs each bot by asking
+the shared Husk (`POST /v1/husks/:name/run`, or `/run/stream`), starting it if
+need be, so the bot's runs, computers and take-overs are the shared Husk's like
+any chat's. It outlives the shared Husk, so a schedule does not wait for a chat,
+and leaves once no husk has a trigger. `husk serve` mounts the triggers itself.
+
 `MountedTrigger` is `{ husk, type, at, detail? }`; `CronBinding` is
 `{ jobId, husk, schedule, prompt, nextAt }`. A webhook with a secret must carry
 `X-Husk-Signature: sha256=<hmac-sha256 hex>` over the exact bytes sent

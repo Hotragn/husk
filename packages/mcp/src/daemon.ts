@@ -253,14 +253,23 @@ function client(first: DaemonRecord, doFetch: typeof fetch, read: () => DaemonRe
  * to ~/.husk/daemon.log, since nobody is watching its terminal.
  */
 function launchDaemon(): void {
+  launch('--daemon', 'daemon.log');
+}
+
+/** Start the job host (`--jobs`), detached and logging to ~/.husk/jobs.log, as the shared Husk is started. */
+export function launchJobs(): void {
+  launch('--jobs', 'jobs.log');
+}
+
+function launch(flag: '--daemon' | '--jobs', log: string): void {
   const bin = fileURLToPath(new URL('./bin.js', import.meta.url));
-  const logPath = join(ensurePaths().root, 'daemon.log');
+  const logPath = join(ensurePaths().root, log);
   const fd = openSync(logPath, 'a', 0o600);
   try {
     // Inside the desktop app's Linux AppImage (run with --husk-mcp, not as
     // Node), the daemon is the AppImage again: the current mount goes away.
     const appImage = process.versions.electron && !process.env.ELECTRON_RUN_AS_NODE ? process.env.APPIMAGE : undefined;
-    const [command, args] = appImage ? [appImage, ['--husk-mcp', '--daemon']] : [process.execPath, [bin, '--daemon']];
+    const [command, args] = appImage ? [appImage, ['--husk-mcp', flag]] : [process.execPath, [bin, flag]];
     // From the home folder: not the chat's project, which may hold anything.
     spawn(command, args, { cwd: homedir(), detached: true, stdio: ['ignore', fd, fd], windowsHide: true }).unref();
   } finally {
