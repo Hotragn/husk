@@ -39,6 +39,8 @@ describe('a chat handoff on the control plane', { timeout: 30_000 }, () => {
     const { id, handoffId, link } = await setup();
     expect((await harness.app.inject({ method: 'GET', url: '/v1/scoped/computer', headers: link })).json()).toMatchObject({
       computerId: id,
+      // Where it runs: on ssh and fly the link's view shows the screen only when asked.
+      provider: expect.any(String),
       handoff: { handoffId },
     });
     expect((await harness.app.inject({ method: 'GET', url: `/v1/handoffs/${handoffId}`, headers: link })).statusCode).toBe(200);

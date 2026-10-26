@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 import { toDisplayError } from '../api/client';
 import type { ActiveRunInfo, ActivityEntry, ComputerInfo, ComputerStats, DoctorReport, Overview, PendingHandoff } from '../api/wire';
 import { Badge, Button, EmptyState, ErrorBlock, Icon, StatusDot, formatBytes, formatWhen } from '../components/primitives';
+import { PUSHED_SCREEN } from '../components/useScreenFeed';
 import { AppBadge } from '../desktop/AppGlyph';
 import { useConnection } from '../state/connection';
 import { useResource } from '../state/useResource';
@@ -237,9 +238,6 @@ function ComputerCard({
     </article>
   );
 }
-
-/** Where the screen is a pushed screencast, which never counts as using the computer. */
-const PUSHED_SCREEN = new Set(['docker', 'podman', 'local']);
 
 /**
  * Whether the card shows the screen live. Always, where the screen is pushed.

@@ -32,6 +32,8 @@ export interface WorkspaceViewerOptions {
 export interface ScopedComputer {
   computerId: string;
   label?: string;
+  /** Where it runs: on ssh and fly every picture of its screen is a command on it, so the link's view shows it when asked. */
+  provider?: string;
   state: string;
 }
 

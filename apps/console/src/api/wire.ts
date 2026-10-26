@@ -320,6 +320,8 @@ export interface BrowserStatus {
 export interface ScopedComputer {
   computerId: string;
   label?: string;
+  /** Where it runs; absent from an older Husk. */
+  provider?: string;
   state: string;
   handoff: PendingHandoff | null;
 }

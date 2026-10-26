@@ -17,7 +17,7 @@ import type { DisplayError } from '../api/client';
 import type { ActivityEntry, BotDraft, ComputerInfo, HandoffInput, HandoffKey, Overview, PendingHandoff } from '../api/wire';
 import { Button, ErrorBlock, Icon, StatusDot, formatWhen } from '../components/primitives';
 import { Screen, useInputQueue } from '../components/Screen';
-import { useScreenFeed } from '../components/useScreenFeed';
+import { ON_DEMAND_NOTE, PUSHED_SCREEN, useLook, useScreenFeed } from '../components/useScreenFeed';
 import { AppBadge } from '../desktop/AppGlyph';
 import { takingText } from '../desktop/bridge';
 import { useConnection } from '../state/connection';
@@ -74,6 +74,7 @@ export function ChatPanel({ computerId, onOpen }: { computerId: string | null; o
           control={handoff ? hold.send : undefined}
           onTakeOver={computer.state === 'running' ? () => void hold.take() : undefined}
           taking={hold.busy}
+          onDemand={!PUSHED_SCREEN.has(computer.provider)}
         />
         <div className="chat-side">
           <Control
@@ -298,7 +299,9 @@ export function TakeOver({
 /**
  * The browser, live, while this tab is visible. `fps` below the server's 4 for
  * a small screen among many. With `control` it is the person's to use; with
- * `onTakeOver`, clicking it offers Take over.
+ * `onTakeOver`, clicking it offers Take over. `onDemand` (ssh and fly, where
+ * every picture is a command on the computer) shows it only for a Look, unless
+ * the person has it.
  */
 export function LiveScreen({
   id,
@@ -307,6 +310,7 @@ export function LiveScreen({
   onTakeOver,
   taking,
   className,
+  onDemand = false,
 }: {
   id: string;
   fps?: number;
@@ -314,16 +318,19 @@ export function LiveScreen({
   onTakeOver?: (() => void) | undefined;
   taking?: boolean;
   className?: string;
+  onDemand?: boolean;
 }) {
-  const { frame, note } = useScreenFeed(id, fps ? { fps } : {});
+  const { looking, look } = useLook(onDemand && !control);
+  const { frame, note } = useScreenFeed(id, { ...(fps ? { fps } : {}), enabled: looking });
 
   return (
     <Screen
-      frame={frame}
+      frame={looking ? frame : null}
       alt={`The browser on ${id}, live`}
-      note={note}
+      note={looking ? note : ON_DEMAND_NOTE}
       control={control}
       onTakeOver={onTakeOver}
+      onLook={looking ? undefined : look}
       taking={taking ?? false}
       {...(className ? { className } : {})}
     />

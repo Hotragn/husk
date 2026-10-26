@@ -24,6 +24,7 @@ import type { HandoffInput, HandoffKey, PendingHandoff, ScopedComputer } from '.
 import { Button, EmptyState, ErrorBlock, StatusDot, formatWhen } from '../components/primitives';
 import { Screen, useInputQueue } from '../components/Screen';
 import type { Frame } from '../components/Screen';
+import { ON_DEMAND_NOTE, PUSHED_SCREEN, useLook } from '../components/useScreenFeed';
 import { useConnection } from '../state/connection';
 
 const LIST_EVERY_MS = 2_000;
@@ -166,17 +167,21 @@ export function LinkedComputer() {
   const [handedBack, setHandedBack] = useState<string | null>(null);
   const [taking, setTaking] = useState(false);
   const [takeError, setTakeError] = useState<DisplayError | null>(null);
+  // ssh and fly: every picture is a command on the computer, so it shows when the person looks. Unknown until read.
+  const { looking, look } = useLook(!computer || (computer.provider !== undefined && !PUSHED_SCREEN.has(computer.provider)));
 
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let url: string | null = null;
+    // A Look starts this again, so the screen comes at once.
     const tick = async () => {
       try {
         const next = await api.scopedComputer(controller.signal);
         setComputer(next);
         setError(null);
-        if (!next.handoff) {
+        if (!looking) setFrame(null);
+        else if (!next.handoff) {
           try {
             const shot = await api.scopedComputerScreen(controller.signal);
             const objectUrl = URL.createObjectURL(shot.image);
@@ -198,7 +203,7 @@ export function LinkedComputer() {
       if (timer) clearTimeout(timer);
       if (url) URL.revokeObjectURL(url);
     };
-  }, [api]);
+  }, [api, looking]);
 
   const take = async () => {
     setTaking(true);
@@ -240,8 +245,9 @@ export function LinkedComputer() {
       <Screen
         frame={frame}
         alt="What this computer's browser is showing"
-        note="No browser is open on this computer."
+        note={looking ? 'No browser is open on this computer.' : ON_DEMAND_NOTE}
         onTakeOver={running ? () => void take() : undefined}
+        onLook={running && !looking ? look : undefined}
         taking={taking}
       />
       <div className="chat-side">

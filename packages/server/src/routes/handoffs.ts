@@ -213,7 +213,7 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
       const c = await ctx.deps.manager.get(id);
       if (!c) return undefined;
       const label = c.info.spec?.labels?.['husk.chat'];
-      return { computerId: id, ...(label ? { label } : {}), state: c.info.state };
+      return { computerId: id, ...(label ? { label } : {}), provider: c.info.provider, state: c.info.state };
     },
     registry: ctx.runner.handoffs,
     takeOver: (id) => take(id, 'link'),
@@ -326,6 +326,8 @@ export function programCall(
 export interface ScopedComputer {
   computerId: string;
   label?: string;
+  /** Where it runs: on ssh and fly every picture of its screen is a command on it, so the link's view shows it when asked. */
+  provider?: string;
   state: string;
 }
 

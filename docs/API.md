@@ -454,7 +454,7 @@ DELETE /v1/handoffs/:handoffId     -> PendingHandoff   (the chat went away; the 
 GET    /v1/handoffs/:handoffId/state -> { handoffId, state: "open"|"done"|"aborted"|"unknown" }
 POST   /v1/computers/:id/link      -> { token }        (for a chat's card or plain link)
 POST   /v1/computers/:id/in-chat   -> 204              (the chat runs this computer in its own process)
-GET    /v1/scoped/computer         -> { computerId, label?, state, handoff: PendingHandoff | null }
+GET    /v1/scoped/computer         -> { computerId, label?, provider?, state, handoff: PendingHandoff | null }
 GET    /v1/scoped/computer/screen  -> image/jpeg, read-only
 POST   /v1/scoped/computer/takeover -> 201 PendingHandoff (runId "person"), or the handoff already open
 ```

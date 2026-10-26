@@ -16,7 +16,7 @@ import type { ReactNode } from 'react';
 import type { PendingHandoff } from '../api/wire';
 import { ErrorBlock } from '../components/primitives';
 import { Screen } from '../components/Screen';
-import { useScreenFeed } from '../components/useScreenFeed';
+import { ON_DEMAND_NOTE, useLook, useScreenFeed } from '../components/useScreenFeed';
 import { SIDE_KEYS, useHold } from '../panels/ChatPanel';
 import { useTheme } from '../state/theme';
 import { AppGlyph } from './AppGlyph';
@@ -131,8 +131,11 @@ function Pane({ desk, computer: c, away }: { desk: DesktopBridge; computer: Desk
     : undefined;
   const hold = useHold(c.id, handoff, () => void desk.act({ type: 'refresh' }));
   const running = c.state === 'running';
+  // ssh and fly: every picture is a command on the computer, so the screen shows when the person looks, or has it.
+  const { looking, look } = useLook(!c.live && !handoff);
+  const showing = running && !away && looking;
   // With Husk away, the last frame is not the screen any more: it is cleared, and no feed is asked for.
-  const { frame, note } = useScreenFeed(c.id, { enabled: running && !away });
+  const { frame, note } = useScreenFeed(c.id, { enabled: showing });
   const [confirming, setConfirming] = useState(false);
   const status = statusOf(c);
   // While a take-over waits for the AI's call to stop, say which.
@@ -182,11 +185,12 @@ function Pane({ desk, computer: c, away }: { desk: DesktopBridge; computer: Desk
 
       <main className={`cw-body cw-${status}`} role="tabpanel" aria-label={c.label}>
         <Screen
-          frame={running && !away ? frame : null}
+          frame={showing ? frame : null}
           alt={`The browser on ${c.label}, live`}
-          note={away ? 'Husk is not answering.' : running ? note : 'This computer is stopped. It starts again when its chat uses it.'}
+          note={away ? 'Husk is not answering.' : !running ? 'This computer is stopped. It starts again when its chat uses it.' : looking ? note : ON_DEMAND_NOTE}
           control={handoff && !away ? hold.send : undefined}
           onTakeOver={running && !handoff && !away ? () => void hold.take() : undefined}
+          onLook={running && !away && !looking ? look : undefined}
           taking={hold.busy}
           className="cw-screen"
         />
