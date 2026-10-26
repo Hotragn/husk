@@ -94,9 +94,11 @@ npm run smoke       # start the packaged app, check the console loads and two co
 `npm start` runs it from the checkout, using the monorepo's own build instead of a staged
 copy. Logs go to `~/.husk/desktop.log` and `~/.husk/daemon.log`.
 
-The installers come out unsigned: Windows SmartScreen and macOS Gatekeeper warn on them.
-Signing needs an Apple Developer ID and a Windows code-signing certificate, which belong
-to the maintainer and are not in this repository.
+Built this way, the installers come out unsigned: Windows SmartScreen and macOS
+Gatekeeper warn on them. A release signs them (`release.yml`'s `desktop` job), with an
+Apple Developer ID and a Windows code-signing certificate the maintainer sets as
+secrets. They are never in this repository. See
+[the desktop installers](../../docs/RELEASING.md#the-desktop-installers).
 
 ## Checked
 
