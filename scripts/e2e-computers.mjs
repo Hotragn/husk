@@ -611,6 +611,79 @@ async function checkFrames(id) {
   check('a frame that loads another page takes its refs with it', stale.isError === true && /from an earlier page/.test(textOf(stale)), textOf(stale).slice(0, 200));
 }
 
+/**
+ * A hard page, end to end (the J3 gate). A shop whose consent banner, in a
+ * cross-site frame, veils the page; whose order button is disabled until a size
+ * is chosen; that confirms before it orders; that downloads an invoice, opens
+ * tracking in a new tab, and has a support link that sends the page to an
+ * internal address. The chat's own tools do each step, and each refusal says
+ * why: what a model meets on a real site, all on one page.
+ */
+async function checkHardPageJourney(id) {
+  const pages = {
+    'shop.html':
+      '<!doctype html><title>shop</title>' +
+      '<style>#veil{position:fixed;inset:0;background:rgba(0,0,0,.3)} #consent{position:fixed;left:20px;bottom:20px;width:420px;height:90px;border:0;z-index:2;background:#fff}</style>' +
+      '<h1>Husk shop</h1>' +
+      "<button onclick=\"document.getElementById('order').hidden = false\">Buy</button>" +
+      '<div id="order" hidden>' +
+      "<label>Size <select onchange=\"document.getElementById('place').disabled = !this.value\"><option value=\"\">Choose</option><option value=\"m\">M</option><option value=\"l\">L</option></select></label> " +
+      "<button id=\"place\" disabled onclick=\"if (confirm('Place the order?')) { document.getElementById('done').hidden = false; document.getElementById('placed').textContent = 'Order placed' }\">Place order</button>" +
+      '<p id="placed"></p>' +
+      '<div id="done" hidden><a href="/journey/invoice.txt" download>Invoice</a> <a href="/journey/track.html" target="_blank">Track it</a> <a href="/journey/support.html">Support</a></div>' +
+      '</div>' +
+      '<div id="veil"></div>' +
+      `<iframe id="consent" title="consent" src="http://localhost:${FIXTURE_PORT}/journey/consent.html"></iframe>` +
+      "<script>addEventListener('message', (e) => { if (e.data === 'accepted') { document.getElementById('veil').remove(); document.getElementById('consent').remove(); } });</script>",
+    'consent.html': "<!doctype html><title>consent</title><p>We use cookies.</p><button onclick=\"parent.postMessage('accepted', '*')\">Accept</button>",
+    'track.html': '<!doctype html><title>track</title><h1>Tracking</h1><p>Your order ships tomorrow.</p>',
+    'support.html': "<!doctype html><title>support</title><script>location.href = 'http://10.255.255.1/support'</script>",
+    'invoice.txt': 'invoice 42\n',
+  };
+  for (const [name, content] of Object.entries(pages)) await tool(id, 'write_file', { path: `/work/fixture/journey/${name}`, content });
+  const refOf = (snap, role, label) => new RegExp(`^ *((?:f\\d+)?e\\d+) {2}${role} "${label}"`, 'm').exec(snap)?.[1];
+
+  await tool(id, 'browser_goto', { url: `${FIXTURE}journey/shop.html` });
+  const shopTab = /^\* (\S+)/m.exec(textOf(await tool(id, 'browser_tabs')))?.[1];
+  const snap = textOf(await tool(id, 'browser_snapshot'));
+  const veiled = await tool(id, 'browser_click', { ref: refOf(snap, 'button', 'Buy') });
+  check('J3 gate: a click under the consent veil is refused, naming the veil', veiled.isError === true && /covered: .*<div#veil>/.test(textOf(veiled)), textOf(veiled).slice(0, 200));
+  const accepted = await tool(id, 'browser_click', { ref: refOf(snap, 'button', 'Accept') });
+  check('J3 gate: the consent in a cross-site frame is accepted through its frame ref', !accepted.isError && /^Clicked f\d+e\d+/.test(textOf(accepted)), textOf(accepted).slice(0, 200));
+  const bought = textOf(await tool(id, 'browser_click', { ref: refOf(snap, 'button', 'Buy') }));
+  const off = await tool(id, 'browser_click', { ref: refOf(bought, 'button', 'Place order') });
+  check('J3 gate: the order button is refused while it is disabled', off.isError === true && /is disabled/.test(textOf(off)), textOf(off).slice(0, 200));
+  await tool(id, 'browser_select', { ref: refOf(bought, 'combobox', 'Size'), value: 'M' });
+  const placed = await tool(id, 'browser_click', {
+    ref: refOf(bought, 'button', 'Place order'),
+    dialog: 'accept',
+    waitFor: { text: 'Order placed', timeoutSec: 5 },
+  });
+  check(
+    'J3 gate: the confirm is accepted and said, and the wait sees the order placed',
+    /confirm dialog: "Place the order\?"\. Husk accepted it/.test(textOf(placed)) && /Then waited for text "Order placed": it appeared/.test(textOf(placed)),
+    textOf(placed).slice(0, 300),
+  );
+  const done = textOf(placed);
+  const invoiceRef = refOf(done, 'link', 'Invoice');
+  const invoice = await tool(id, 'browser_click', { ref: invoiceRef });
+  const file = textOf(await tool(id, 'read_file', { path: '/work/downloads/invoice.txt' }));
+  check('J3 gate: the invoice downloads into /work/downloads', /downloaded invoice\.txt/.test(textOf(invoice)) && /invoice 42/.test(file), textOf(invoice).slice(0, 200));
+  const tracked = textOf(await tool(id, 'browser_click', { ref: refOf(done, 'link', 'Track it') }));
+  const tab = /switchTo "([^"]+)"/.exec(tracked)?.[1];
+  const tracking = tab ? textOf(await tool(id, 'browser_tabs', { switchTo: tab })) : '';
+  check('J3 gate: tracking opens in a new tab, named so one call goes there', /heading "Tracking"/.test(tracking), tracked.slice(0, 200));
+  if (shopTab) await tool(id, 'browser_tabs', { switchTo: shopTab });
+  const support = await tool(id, 'browser_click', { ref: refOf(done, 'link', 'Support') });
+  check(
+    'J3 gate: a link that sends the page to an internal address is stopped',
+    /network policy stopped the page from loading http:\/\/10\.255\.255\.1\/support/.test(textOf(support)),
+    textOf(support).slice(0, 300),
+  );
+  const stale = await tool(id, 'browser_click', { ref: invoiceRef });
+  check('J3 gate: a ref from the shop is refused once the page has left it', stale.isError === true && /from an earlier page/.test(textOf(stale)), textOf(stale).slice(0, 200));
+}
+
 /** The Playwright MCP the benchmark measures Husk against: pinned, so two runs measure the same thing. */
 const PLAYWRIGHT_MCP = '@playwright/mcp@0.0.83';
 
@@ -1518,7 +1591,10 @@ try {
   await checkFewerTurns(id);
   await checkEveryBrowserTool(id);
 
-  // 8e. Husk against Playwright MCP, measured; a measurement never fails the run.
+  // 8e. The J3 gate: a hard page, end to end.
+  await checkHardPageJourney(id);
+
+  // 8f. Husk against Playwright MCP, measured; a measurement never fails the run.
   try {
     await benchmarkAgainstPlaywright(id, made.body.name);
   } catch (err) {

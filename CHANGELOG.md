@@ -70,6 +70,24 @@ not here.
 - **Honest clicks.** A click on something covered, disabled, hidden or still moving, or a
   role and name that match two elements, is refused, saying why; `force` clicks anyway
   ([#211](https://github.com/Hotragn/husk/pull/211)).
+- **Refs that expire, and frames.** A ref acts only on the document whose snapshot showed
+  it, so a ref from an earlier page is refused rather than landing on whatever has its id
+  now ([#213](https://github.com/Hotragn/husk/pull/213)). A snapshot reads every frame, cross-site ones included, with refs like
+  `f2e7`, and typing, clicks, hover, scroll and upload reach into them ([#216](https://github.com/Hotragn/husk/pull/216)).
+- **Dialogs, downloads and new tabs.** A dialog is answered the moment it opens and the
+  result says so; a confirm is dismissed unless the call passes `dialog: "accept"`. A
+  download lands in `/work/downloads`, and a tab a page opens is named with its id, so
+  switching to it is one call ([#215](https://github.com/Hotragn/husk/pull/215), [#223](https://github.com/Hotragn/husk/pull/223)).
+- **Fewer turns.** Every browser result ends with where the page is. A snapshot can be of
+  one part of the page, and `browser_click` and `browser_type` take `waitFor`, watched
+  from just before they act. A call on a computer you hold opens with `E_COMPUTER_HELD`
+  ([#220](https://github.com/Hotragn/husk/pull/220)).
+- **A benchmark against Playwright MCP** on the same computer and Chromium, published in
+  every e2e run's summary, with the latest numbers in [docs/BENCHMARK.md](docs/BENCHMARK.md)
+  ([#223](https://github.com/Hotragn/husk/pull/223)).
+- **Strict network enforcement.** `strict: true` under `computer.network`, or
+  `husk-mcp --network-strict`, refuses a provider that cannot enforce the policy for every
+  process. Without it, Husk says what is not enforced ([#219](https://github.com/Hotragn/husk/pull/219)).
 
 ### Changed
 
@@ -91,6 +109,12 @@ not here.
 
 ### Fixed
 
+- **A Chromium that died stayed dead** until the shared Husk restarted. The next call now
+  starts it again, keeping its logins. A failed launch, and a computer reaped for
+  idleness, no longer leave a Chromium behind ([#217](https://github.com/Hotragn/husk/pull/217)).
+- **Fly computers could not browse**, because the driver needed stdin, which Fly's exec
+  refuses ([#222](https://github.com/Hotragn/husk/pull/222)).
+- **Stopping a wedged browser on `local` killed other computers' scripts** ([#222](https://github.com/Hotragn/husk/pull/222)).
 - **Stopping a command stopped only the client.** On Docker, Podman and SSH the command
   ran on inside the computer while the chat was told it "was killed". It is now ended
   where it runs, on every provider, and a chat's cancel reaches it
@@ -143,6 +167,10 @@ not here.
 - **Chromium keeps its own sandbox outside containers**, falling back with a warning only
   where it cannot start. Every new tab and every redirect hop is checked against the
   address filter, which reads IPv6 addresses whole ([#202](https://github.com/Hotragn/husk/pull/202)).
+- **The network policy holds for every page load**, not only the URLs Husk opens. The
+  browser driver checks each redirect, link, frame and pop-up, and stops a refused load
+  before anything is sent ([#218](https://github.com/Hotragn/husk/pull/218)).
+- **A browser script is held to `shell`'s rules** for what it hands a shell ([#222](https://github.com/Hotragn/husk/pull/222)).
 
 ## [0.1.4] - 2026-09-22
 
