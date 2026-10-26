@@ -169,6 +169,9 @@ export function LinkedComputer() {
   const [takeError, setTakeError] = useState<DisplayError | null>(null);
   // ssh and fly: every picture is a command on the computer, so it shows when the person looks. Unknown until read.
   const { looking, look } = useLook(!computer || (computer.provider !== undefined && !PUSHED_SCREEN.has(computer.provider)));
+  // Take-overs from this page, counted as asked and as answered: a reading asked
+  // for before one finished must not undo it by answering after.
+  const takes = useRef(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -176,20 +179,23 @@ export function LinkedComputer() {
     let url: string | null = null;
     // A Look starts this again, so the screen comes at once.
     const tick = async () => {
+      const seen = takes.current;
       try {
         const next = await api.scopedComputer(controller.signal);
-        setComputer(next);
-        setError(null);
-        if (!looking) setFrame(null);
-        else if (!next.handoff) {
-          try {
-            const shot = await api.scopedComputerScreen(controller.signal);
-            const objectUrl = URL.createObjectURL(shot.image);
-            if (url) URL.revokeObjectURL(url);
-            url = objectUrl;
-            setFrame({ src: objectUrl, width: shot.width, height: shot.height });
-          } catch {
-            setFrame(null);
+        if (takes.current === seen) {
+          setComputer(next);
+          setError(null);
+          if (!looking) setFrame(null);
+          else if (!next.handoff) {
+            try {
+              const shot = await api.scopedComputerScreen(controller.signal);
+              const objectUrl = URL.createObjectURL(shot.image);
+              if (url) URL.revokeObjectURL(url);
+              url = objectUrl;
+              setFrame({ src: objectUrl, width: shot.width, height: shot.height });
+            } catch {
+              setFrame(null);
+            }
           }
         }
       } catch (err) {
@@ -208,8 +214,10 @@ export function LinkedComputer() {
   const take = async () => {
     setTaking(true);
     setTakeError(null);
+    takes.current++;
     try {
       const handoff = await api.scopedTakeOver();
+      takes.current++;
       setComputer((c) => (c ? { ...c, handoff } : c));
     } catch (err) {
       setTakeError(toDisplayError(err));
