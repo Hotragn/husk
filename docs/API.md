@@ -297,6 +297,7 @@ GET    /v1/setup               -> { apps: ChatApp[], computers: ProviderStatus[]
 POST   /v1/setup/apps/:app     body: { provider?, flavor? } -> ConnectResult
 DELETE /v1/setup/apps/:app     -> ConnectResult
 POST   /v1/setup/test          body: { provider?, flavor? } -> { ok, provider, output, ms }
+POST   /v1/setup/follow        body: { launch } -> { moved: ConnectResult[] }
 ```
 
 `:app` is one of `claude-desktop`, `claude-code`, `cursor`, `vscode`, `windsurf`,
@@ -308,6 +309,12 @@ JSON config, the file is backed up first (`ConnectResult.backup`), only the `hus
 entry changes, and a file that is not plain JSON is refused and left untouched.
 Claude Code and Codex are changed through their own `mcp add` / `mcp remove`
 commands. `test` makes a throwaway computer, runs `uname -sr`, and removes it.
+
+`follow` is the desktop app's, after it updates or moves. Every chat app whose `husk`
+entry starts a Husk desktop app's own copy by another line moves to this Husk's line,
+keeping its own flags and env. An entry the person pointed elsewhere, such as `npx`,
+stays as it is. It acts only while this Husk runs the line the app sends as `launch`.
+That line is compared, never written: Husk writes its own.
 
 ## Husks
 

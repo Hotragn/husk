@@ -432,14 +432,19 @@ async function moveProjects(def: CliApp, exe: string, stale: Entry[], launch: Hu
  * Add Husk to one app, or update its entry, keeping any fields, flags and env
  * the person added to it. An entry from an older Husk moves to this launch line.
  */
-export async function connectChatApp(id: ChatAppId, launch: HuskLaunch, opts: { home?: string; now?: Date } = {}): Promise<ConnectResult> {
+export async function connectChatApp(
+  id: ChatAppId,
+  launch: HuskLaunch,
+  // `keepChoice`: the entry keeps its own computer choice too, as when it only follows the desktop app.
+  opts: { home?: string; now?: Date; keepChoice?: boolean } = {},
+): Promise<ConnectResult> {
   const def = chatAppDefs(opts.home).find((d) => d.id === id);
   if (!def) return { id, ok: false, message: `unknown app ${id}` };
   if (def.kind === 'cli') {
     const refused = cliRefused(def, opts.home);
     if (refused) return refused;
     const entries = def.entries();
-    const args = def.add(keepingTheirs(launch, entries.find((e) => !e.project)));
+    const args = def.add(keepingTheirs(launch, entries.find((e) => !e.project), opts.keepChoice));
     if (!shellSafe(args)) return { id, ok: false, message: 'the launch line has characters Husk will not pass to a shell' };
     const exe = findOnPath(def.bin);
     if (!exe || /[&|<>^%"!]/.test(exe)) return { id, ok: false, message: `${def.bin} is not on PATH; install ${def.name} first` };
@@ -463,7 +468,7 @@ export async function connectChatApp(id: ChatAppId, launch: HuskLaunch, opts: { 
       ...prev,
       ...(def.extra ?? {}),
       command: launch.command,
-      args: keepingTheirs(launch, entryOf(prev)).args,
+      args: keepingTheirs(launch, entryOf(prev), opts.keepChoice).args,
       ...(launch.env ? { env: { ...prevEnv, ...launch.env } } : {}),
     };
     const backup = backupOf(def.file, opts.now ?? new Date());
@@ -472,6 +477,41 @@ export async function connectChatApp(id: ChatAppId, launch: HuskLaunch, opts: { 
   } catch (err) {
     return { id, ok: false, message: (err as Error).message };
   }
+}
+
+/**
+ * Whether a `husk` entry starts a Husk desktop app's own copy: the app's
+ * binary run as Node on its bundled bin.js, or a Linux AppImage's --husk-mcp.
+ */
+function startsDesktopApp(e: { args: string[]; env?: Record<string, string> }): boolean {
+  if (e.args[0] === '--husk-mcp') return true;
+  return e.env?.ELECTRON_RUN_AS_NODE === '1' && /[\\/]runtime[\\/]node_modules[\\/]@husk-ai[\\/]mcp[\\/]dist[\\/]bin\.js$/.test(e.args[0] ?? '');
+}
+
+/** Whether two launch lines start the same Husk the same way. `b` is unchecked input. */
+export function sameLaunch(a: HuskLaunch, b: unknown): boolean {
+  const l = b as Partial<HuskLaunch> | null | undefined;
+  if (!l || typeof l.command !== 'string' || !Array.isArray(l.args)) return false;
+  const env = (x: unknown) => JSON.stringify(Object.entries(x && typeof x === 'object' ? x : {}).sort());
+  return a.command === l.command && a.args.length === l.args.length && a.args.every((x, i) => x === l.args![i]) && env(a.env) === env(l.env);
+}
+
+/**
+ * The desktop app updated, or moved: every chat app whose `husk` entry starts
+ * a desktop app's Husk by another line than `launch` moves to it, keeping the
+ * person's own flags and env. An entry the person pointed elsewhere, such as
+ * npx, stays theirs, and nothing moves unless `launch` is a desktop app's own.
+ */
+export async function followDesktopApp(launch: HuskLaunch, opts: { home?: string; now?: Date } = {}): Promise<ConnectResult[]> {
+  if (!startsDesktopApp(launch)) return [];
+  const moved: ConnectResult[] = [];
+  for (const def of chatAppDefs(opts.home)) {
+    const found = def.kind === 'file' ? existsSync(def.dir) : onPath(def.bin) || existsSync(def.dir);
+    if (found && entriesOf(def).some((e) => startsDesktopApp(e) && !isCurrent(e, launch))) {
+      moved.push(await connectChatApp(def.id, launch, { ...opts, keepChoice: true }));
+    }
+  }
+  return moved;
 }
 
 /** Take Husk out of one app, Claude Code's projects included. Its other servers are left as they are. */
