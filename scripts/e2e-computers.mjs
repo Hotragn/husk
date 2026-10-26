@@ -2166,7 +2166,13 @@ async function checkRemoteAccess() {
       await tab.getByRole('button', { name: 'Done', exact: true }).click();
       await tab.getByRole('button', { name: 'Yes, hand back to the agent' }).click();
       await tab.getByText('Handed back').waitFor({ timeout: 30_000 });
-      const tabs = textOfCall(await app.callTool({ name: 'browser_tabs', arguments: { computer: id } }));
+      // As in the sign-in check: the hold lifts a moment after the person's Done, not with it.
+      let tabs = '';
+      for (let i = 0; i < 20; i++) {
+        tabs = textOfCall(await app.callTool({ name: 'browser_tabs', arguments: { computer: id } }));
+        if (!/E_COMPUTER_HELD/.test(tabs)) break;
+        await sleep(500);
+      }
       check(
         'in a real browser, the link takes the owner’s passkey, shows the computer, and what they type reaches it',
         shown && /typed:from-the-web/.test(tabs),
