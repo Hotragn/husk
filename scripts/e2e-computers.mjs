@@ -11,9 +11,11 @@
 //   node scripts/e2e-computers.mjs
 
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
+import { createHash, createPublicKey, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, request as httpRequest } from 'node:http';
+import { connect as connectTcp } from 'node:net';
+import { createServer as createTlsServer } from 'node:tls';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
@@ -1894,6 +1896,10 @@ function softwarePasskey(rpId, origin) {
       const signed = Buffer.concat([authData, createHash('sha256').update(Buffer.from(clientDataJSON, 'base64url')).digest()]);
       return { id: id.toString('base64url'), clientDataJSON, authenticatorData: authData.toString('base64url'), signature: sign('sha256', signed, privateKey).toString('base64url') };
     },
+    /** The same passkey for a real browser's virtual authenticator (CDP `WebAuthn.addCredential`), its counter where this one left it. */
+    forBrowser() {
+      return { credentialId: id.toString('base64'), isResidentCredential: false, rpId, privateKey: privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64'), signCount: count };
+    },
   };
 }
 
@@ -1918,11 +1924,33 @@ const freePort = () =>
  */
 async function checkRemoteAccess() {
   const NAME = 'e2e.husk.test';
-  const PUBLIC = `https://${NAME}`;
   const own = join(home, 'remote');
   mkdirSync(own, { recursive: true });
   const port = await freePort();
   const remotePort = await freePort();
+
+  // The tunnel's TLS end, on this machine, as Tailscale Funnel ends it on the
+  // owner's: a certificate of its own, which the real browser below trusts by
+  // its key, in front of remote access's port. The public URL carries its port.
+  const certDir = mkdtempSync(join(tmpdir(), 'husk-e2e-tls-'));
+  const keyPath = join(certDir, 'key.pem');
+  const certPath = join(certDir, 'cert.pem');
+  const minted = spawnSync(
+    'openssl',
+    ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-days', '1', '-subj', `/CN=${NAME}`, '-addext', `subjectAltName=DNS:${NAME}`, '-keyout', keyPath, '-out', certPath],
+    { encoding: 'utf8' },
+  );
+  if (minted.status !== 0) throw new Error(`openssl could not make the test certificate: ${minted.stderr}`);
+  const tlsPort = await freePort();
+  const tlsFront = createTlsServer({ key: readFileSync(keyPath), cert: readFileSync(certPath) }, (socket) => {
+    const up = connectTcp(remotePort, '127.0.0.1');
+    socket.pipe(up).pipe(socket);
+    up.on('error', () => socket.destroy());
+    socket.on('error', () => up.destroy());
+  });
+  await new Promise((r) => tlsFront.listen(tlsPort, '127.0.0.1', r));
+  const PUBLIC = `https://${NAME}:${tlsPort}`;
+  const under = (path) => new RegExp(`(${PUBLIC.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${path})`);
 
   try {
     const res = await fetch('https://registry.npmjs.org/-/npm/v1/security/advisories/bulk', {
@@ -2036,7 +2064,7 @@ async function checkRemoteAccess() {
     const command = 'echo remote-ok; uname -s';
     // A command waits for the owner's word: the first call answers with the page, and runs nothing.
     const asked = textOfCall(await app.callTool({ name: 'shell', arguments: { computer: 'new', command } }));
-    const link = /(https:\/\/e2e\.husk\.test\/oauth\/approve\?id=[\w-]+)/.exec(asked)?.[1];
+    const link = under('/oauth/approve\\?id=[\\w-]+').exec(asked)?.[1];
     const id = /computer: "(cmp_\w+)"/.exec(asked)?.[1];
     check('a command from the web waits for the owner’s approval, and nothing runs', Boolean(link && id) && !/remote-ok/.test(asked), asked.slice(0, 240));
     const approval = new URL(link).searchParams.get('id');
@@ -2053,10 +2081,28 @@ async function checkRemoteAccess() {
       `${text.slice(0, 200)}; ${computer?.provider}`,
     );
 
+    // A call that changes things, approved as the owner would: its page, then the passkey.
+    const approvedCall = async (name, args) => {
+      const first = textOfCall(await app.callTool({ name, arguments: args }));
+      const waiting = /oauth\/approve\?id=([\w-]+)/.exec(first)?.[1];
+      if (!waiting) return first;
+      const s = await json('/oauth/approve/start', { id: waiting });
+      await json('/oauth/approve', { id: waiting, allow: true, credential: passkey.get(s.body.publicKey?.challenge) });
+      return textOfCall(await app.callTool({ name, arguments: args }));
+    };
+    // A page on the chat's computer that puts in its title whatever is typed into it.
+    const typedPage = '<!doctype html><title>typed:</title><input id="q" autofocus oninput="document.title = \'typed:\' + this.value">';
+    await approvedCall('shell', {
+      computer: id,
+      command: `mkdir -p /work/typed && echo ${Buffer.from(typedPage).toString('base64')} | base64 -d > /work/typed/index.html && cd /work/typed && (setsid python3 -m http.server 8767 --bind 127.0.0.1 >/dev/null 2>&1 &) ; sleep 1`,
+    });
+    const went = textOfCall(await app.callTool({ name: 'browser_goto', arguments: { computer: id, url: 'http://127.0.0.1:8767/' } }));
+    check('the remote chat opens a page on its computer', /now at http:\/\/127\.0\.0\.1:8767\//.test(went), went.slice(0, 200));
+
     // Sign in for me, from wherever the person is: the handoff's link is under
     // the public URL, and starts at the owner's passkey, since the chat holds the link too.
     const handed = textOfCall(await app.callTool({ name: 'hand_off', arguments: { computer: id, reason: 'e2e: sign in from the web.' } }));
-    const view = /(https:\/\/e2e\.husk\.test\/oauth\/link#handoff=([\w-]+)&token=([\w.-]+))/.exec(handed);
+    const view = under('/oauth/link#handoff=([\\w-]+)&token=([\\w.-]+)').exec(handed);
     const linkToken = view ? decodeURIComponent(view[3]) : '';
     const linkPage = view ? await f(view[1]) : undefined;
     const alone = view ? await f(`${PUBLIC}/v1/handoffs/${view[2]}`, { headers: { authorization: `Bearer ${linkToken}` } }) : undefined;
@@ -2068,8 +2114,73 @@ async function checkRemoteAccess() {
       linkPage?.status === 200 && alone?.status === 401 && Boolean(session) && opened?.status === 200,
       `${handed.slice(0, 160)}; page ${linkPage?.status}, alone ${alone?.status}, with the passkey ${opened?.status}`,
     );
-    const handoff = /^Handoff (\S+) is open/m.exec(handed)?.[1];
-    if (handoff) await app.callTool({ name: 'hand_off_done', arguments: { handoff } });
+    // Its screen, as the link's page asks for it: the link's token and the owner's session, under the public URL.
+    const shot = view
+      ? await f(`${PUBLIC}/v1/handoffs/${view[2]}/screen`, { headers: { authorization: `Bearer ${linkToken}`, 'x-husk-owner': session ?? '' }, signal: AbortSignal.timeout(30_000) }).catch((err) => err)
+      : undefined;
+    const shotType = shot instanceof Response ? (shot.headers.get('content-type') ?? '') : '';
+    const shotSays = shot instanceof Response ? `${shot.status} ${shotType} ${shot.ok ? '' : (await shot.text()).slice(0, 300)}` : `no answer: ${shot?.message ?? shot}`;
+    if (shot instanceof Response && shot.ok) await shot.arrayBuffer();
+    check('the link’s screen comes through the public URL, as a picture', shot instanceof Response && shot.status === 200 && /image\/jpeg/.test(shotType), shotSays);
+    // The same link in a real browser, as the owner opens it on their phone:
+    // the passkey (a virtual authenticator holding theirs), the computer's
+    // screen, and what they type there reaching the chat's own page.
+    const { chromium } = await import('playwright-core');
+    const spki = createHash('sha256').update(createPublicKey(readFileSync(certPath)).export({ type: 'spki', format: 'der' })).digest('base64');
+    const browser = await chromium.launch({ channel: 'chrome', args: [`--host-resolver-rules=MAP ${NAME} 127.0.0.1`, `--ignore-certificate-errors-spki-list=${spki}`] });
+    try {
+      const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+      const tab = await context.newPage();
+      const cdp = await context.newCDPSession(tab);
+      await cdp.send('WebAuthn.enable', { enableUI: false });
+      const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
+        options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
+      });
+      await cdp.send('WebAuthn.addCredential', { authenticatorId, credential: passkey.forBrowser() });
+      // What the page's frames meet, said if the screen never comes.
+      const frames = { asked: 0, answers: [], errors: [] };
+      const isFrame = (url) => /\/screen(\?|$)/.test(new URL(url).pathname + new URL(url).search);
+      tab.on('request', (r) => { if (isFrame(r.url())) frames.asked += 1; });
+      tab.on('response', (r) => { if (isFrame(r.url())) frames.answers.push(r.status()); });
+      tab.on('requestfailed', (r) => { if (isFrame(r.url())) frames.answers.push(`failed: ${r.failure()?.errorText}`); });
+      tab.on('console', (m) => { if (m.type() === 'error') frames.errors.push(m.text().slice(0, 200)); });
+      tab.on('pageerror', (e) => frames.errors.push(String(e).slice(0, 200)));
+      await tab.goto(view?.[1] ?? `${PUBLIC}/oauth/link`);
+      await tab.getByRole('button', { name: 'Use my passkey' }).click();
+      await tab.getByText('Paused, waiting for you').waitFor({ timeout: 30_000 });
+      const screen = tab.locator('img[alt^="The page the run is paused on"]');
+      await screen.waitFor({ timeout: 60_000 }).catch(async (err) => {
+        await tab.screenshot({ path: join(process.env.E2E_SHOTS ?? join(root, 'e2e-shots'), '21-remote-handoff-no-screen.png') }).catch(() => undefined);
+        const visibility = await tab.evaluate(() => document.visibilityState).catch(() => '?');
+        const said = (await tab.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
+        throw new Error(
+          `${String(err.message).split('\n')[0]} -- frames asked ${frames.asked}, answered ${JSON.stringify(frames.answers.slice(-5))}, ` +
+            `page ${visibility}, console errors ${JSON.stringify(frames.errors.slice(-3))}; the page said: ${said}`,
+        );
+      });
+      const shown = (await screen.evaluate((img) => img.naturalWidth)) > 0;
+      await tab.locator('input[aria-label="Type into the page"]').focus();
+      await tab.keyboard.type('from-the-web', { delay: 80 });
+      await sleep(2000);
+      await tab.screenshot({ path: join(process.env.E2E_SHOTS ?? join(root, 'e2e-shots'), '21-remote-handoff.png') }).catch(() => undefined);
+      await tab.getByRole('button', { name: 'Done', exact: true }).click();
+      await tab.getByRole('button', { name: 'Yes, hand back to the agent' }).click();
+      await tab.getByText('Handed back').waitFor({ timeout: 30_000 });
+      // As in the sign-in check: the hold lifts a moment after the person's Done, not with it.
+      let tabs = '';
+      for (let i = 0; i < 20; i++) {
+        tabs = textOfCall(await app.callTool({ name: 'browser_tabs', arguments: { computer: id } }));
+        if (!/E_COMPUTER_HELD/.test(tabs)) break;
+        await sleep(500);
+      }
+      check(
+        'in a real browser, the link takes the owner’s passkey, shows the computer, and what they type reaches it',
+        shown && /typed:from-the-web/.test(tabs),
+        `${shown ? 'screen shown' : 'no screen'}; ${tabs.slice(0, 200)}`,
+      );
+    } finally {
+      await browser.close();
+    }
     await app.close();
 
     // The owner's switch, on this machine: off signs every app out and makes the public URL a 404.
@@ -2092,6 +2203,8 @@ async function checkRemoteAccess() {
     // Whatever failed above: a server left open here keeps the whole run alive until the job's timeout.
     registry.closeAllConnections();
     registry.close();
+    tlsFront.close();
+    rmSync(certDir, { recursive: true, force: true });
   }
 }
 

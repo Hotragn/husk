@@ -96,7 +96,8 @@ describe('/mcp for a signed-in app', () => {
     const id = /computer: "(cmp_\w+)"/.exec(first.text)?.[1];
     expect(id).toBe('cmp_1');
     expect([...bindings.keys()][0]).toMatch(/^remote:owner-1:/);
-    expect(made[0]?.spec).toMatchObject({ provider: 'docker', labels: { 'husk.platform': 'Claude' } });
+    // The image that runs the browser the chat is offered.
+    expect(made[0]?.spec).toMatchObject({ provider: 'docker', flavor: 'full', labels: { 'husk.platform': 'Claude' } });
     expect((await call('shell', { computer: id, command: 'echo again' })).text).toContain('on cmp_1');
   });
 
