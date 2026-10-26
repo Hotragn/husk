@@ -6,6 +6,7 @@ export function readViewerToken(): { token: string; fromLink: boolean } {
   const linked = fragment.get('token');
   if (linked !== null) {
     storeViewerToken(linked);
+    storeOwnerSession(fragment.get('owner') ?? '');
     // A handoff or computer link keeps its (non-secret) id so the app knows what to open.
     const handoff = fragment.get('handoff');
     const computer = fragment.get('computer');
@@ -49,6 +50,28 @@ export function desktopView(): DesktopView | null {
 /** The computer a computer link (from a chat's card) opened, if this tab came from one. */
 export function linkedComputerId(): string | null {
   return new URLSearchParams(window.location.hash.slice(1)).get('computer');
+}
+
+const OWNER_KEY = 'husk.console.owner';
+
+/**
+ * The owner session a link under remote access's public URL brought: its
+ * passkey page (`/oauth/link`) adds it to the fragment, and the server needs it
+ * there besides the link's own token. Kept for this tab only, never in the URL.
+ */
+export function ownerSession(): string {
+  try {
+    return window.sessionStorage.getItem(OWNER_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function storeOwnerSession(session: string): void {
+  try {
+    if (session) window.sessionStorage.setItem(OWNER_KEY, session);
+    else window.sessionStorage.removeItem(OWNER_KEY);
+  } catch { /* Without storage, a reload asks for the passkey again. */ }
 }
 
 export function storeViewerToken(token: string): void {

@@ -2038,11 +2038,21 @@ async function checkRemoteAccess() {
       `${text.slice(0, 200)}; ${computer?.provider}`,
     );
 
-    // Sign in for me, from wherever the person is: the handoff's link is under the public URL.
+    // Sign in for me, from wherever the person is: the handoff's link is under
+    // the public URL, and starts at the owner's passkey, since the chat holds the link too.
     const handed = textOfCall(await app.callTool({ name: 'hand_off', arguments: { computer: id, reason: 'e2e: sign in from the web.' } }));
-    const view = /(https:\/\/e2e\.husk\.test\/#handoff=([\w-]+)&token=([\w.-]+))/.exec(handed);
-    const opened = view ? await f(`${PUBLIC}/v1/handoffs/${view[2]}`, { headers: { authorization: `Bearer ${decodeURIComponent(view[3])}` } }) : undefined;
-    check('a remote chat’s handoff link opens its handoff under the public URL', opened?.status === 200, `${handed.slice(0, 200)}; ${opened?.status}`);
+    const view = /(https:\/\/e2e\.husk\.test\/oauth\/link#handoff=([\w-]+)&token=([\w.-]+))/.exec(handed);
+    const linkToken = view ? decodeURIComponent(view[3]) : '';
+    const linkPage = view ? await f(view[1]) : undefined;
+    const alone = view ? await f(`${PUBLIC}/v1/handoffs/${view[2]}`, { headers: { authorization: `Bearer ${linkToken}` } }) : undefined;
+    const presence = await json('/oauth/link/start', {});
+    const session = (await json('/oauth/link', { id: presence.body.id, credential: passkey.get(presence.body.publicKey?.challenge) })).body.session;
+    const opened = view ? await f(`${PUBLIC}/v1/handoffs/${view[2]}`, { headers: { authorization: `Bearer ${linkToken}`, 'x-husk-owner': session ?? '' } }) : undefined;
+    check(
+      'a remote chat’s handoff link opens under the public URL only after the owner’s passkey',
+      linkPage?.status === 200 && alone?.status === 401 && Boolean(session) && opened?.status === 200,
+      `${handed.slice(0, 160)}; page ${linkPage?.status}, alone ${alone?.status}, with the passkey ${opened?.status}`,
+    );
     const handoff = /^Handoff (\S+) is open/m.exec(handed)?.[1];
     if (handoff) await app.callTool({ name: 'hand_off_done', arguments: { handoff } });
     await app.close();

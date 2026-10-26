@@ -131,8 +131,11 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
     if (state === 'open' && lastSeen.has(handoffId)) lastSeen.set(handoffId, Date.now());
     return { handoffId, state: state ?? 'unknown' };
   });
-  // `public`: for a remote chat's person, so the link opens under remote access's public URL.
-  const Opened = z.object({ reason: z.string().trim().min(1).max(500), label: z.string().max(120).optional(), public: z.boolean().optional() }).strict();
+  // `public`: for a remote chat's person, so the link opens under remote access's public URL;
+  // `holder`: the remote app it is for, whose sign-out ends it.
+  const Opened = z
+    .object({ reason: z.string().trim().min(1).max(500), label: z.string().max(120).optional(), public: z.boolean().optional(), holder: z.string().max(200).optional() })
+    .strict();
 
   app.post('/v1/computers/:id/handoffs', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
@@ -155,7 +158,8 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
       });
     if (opened) lastSeen.set(opened.handoffId, Date.now());
     ctx.bus.emit('runs', 'handoff_requested', opened);
-    return reply.code(201).send({ ...opened!, token: ctx.scoped.mint(`computer:${id}`, { public: parsed.data.public === true }) });
+    const { public: pub, holder } = parsed.data;
+    return reply.code(201).send({ ...opened!, token: ctx.scoped.mint(`computer:${id}`, { public: pub === true, ...(holder ? { holder } : {}) }) });
   });
 
   // The person takes a computer whenever they choose, from the console or from
@@ -202,11 +206,13 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // A fresh link to look at one computer, for a chat's card or plain link;
-  // `{ public: true }` for a remote chat's person, under the public URL.
+  // `{ public: true, holder }` for a remote chat's person, under the public URL.
   app.post('/v1/computers/:id/link', async (req: FastifyRequest) => {
     const { id } = req.params as { id: string };
     if (!(await ctx.deps.manager.get(id))) throw notFound('computer', id);
-    return { token: ctx.scoped.mint(`computer:${id}`, { public: (req.body as { public?: unknown } | undefined)?.public === true }) };
+    const body = (req.body ?? {}) as { public?: unknown; holder?: unknown };
+    const holder = typeof body.holder === 'string' && body.holder.length <= 200 ? body.holder : undefined;
+    return { token: ctx.scoped.mint(`computer:${id}`, { public: body.public === true, ...(holder ? { holder } : {}) }) };
   });
 
   registerScopedComputerRoutes(app, {

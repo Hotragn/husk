@@ -191,15 +191,22 @@ to show on the page is never put to you, and never runs; the chat is told to spl
 The box "Also let … for the next hour" lets that app make any call of that one tool, on
 any of its computers, without asking, for an hour. It is never ticked for you.
 
+## When the chat hands you the computer
+
+For a login, a 2FA code or a CAPTCHA, the chat gives you a link instead of typing for you.
+The link opens with your passkey first, since the chat, and anyone you share the chat
+with, has the link too. Then you see the computer's browser and type into it yourself;
+what you type goes to that browser, not to the chat. Tell the chat when you are done.
+
 ## Switching it off, signing an app out, starting over
 
 From the console's **Connect** page, or with `husk remote` on the same computer:
 
 | | Console | Command |
 | --- | --- | --- |
-| Off: every app signed out, every token revoked, the public URL a 404 | Switch off | `husk remote off` |
+| Off: every app signed out, every token and link revoked, the public URL a 404 | Switch off | `husk remote off` |
 | On again: apps sign back in with your passkey | Switch on | `husk remote on` |
-| One app signed out, its tokens with it | Sign out | |
+| One app signed out, its tokens and links with it | Sign out | |
 | No owner, no apps, no tokens, and a new claim code | Start over | `husk remote reset` |
 
 Switching on is refused while a high or critical advisory stands. Starting Husk with

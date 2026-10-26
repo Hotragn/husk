@@ -21,6 +21,8 @@ export interface AccessClaims {
   nbf: number;
   exp: number;
   jti: string;
+  /** The refresh-token family it came from: a reuse that ends the family ends it too. */
+  fam?: string;
 }
 
 const PART = /^[A-Za-z0-9_-]+$/;

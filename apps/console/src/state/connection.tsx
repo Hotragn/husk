@@ -14,7 +14,7 @@ import { backoffMs, openManagedSocket } from '../api/sockets';
 import type { ManagedSocket } from '../api/sockets';
 import { EVENT_TOPICS, isWireEvent } from '../api/wire';
 import type { HealthReport, HuskWireEvent } from '../api/wire';
-import { readViewerToken, storeViewerToken } from './viewerToken';
+import { ownerSession, readViewerToken, storeViewerToken } from './viewerToken';
 
 const BASE_URL_KEY = 'husk.console.baseUrl';
 const MAX_EVENTS = 200;
@@ -67,7 +67,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [baseUrl, setBaseUrl] = useState(() => initialToken.fromLink || initialToken.token ? window.location.origin : readStored(BASE_URL_KEY, window.location.origin));
   const [token, setToken] = useState(initialToken.token);
 
-  const api = useMemo(() => new HuskApi({ baseUrl, token }), [baseUrl, token]);
+  // A link under remote access's public URL also carries the owner session its passkey page added.
+  const api = useMemo(() => new HuskApi({ baseUrl, token, owner: ownerSession() }), [baseUrl, token]);
 
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [health, setHealth] = useState<HealthReport | null>(null);

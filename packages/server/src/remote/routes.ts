@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { PUBLIC_HEADER } from '../auth.js';
 import { huskError } from '../errors.js';
 import type { Verdict } from './approvals.js';
+import type { AccessClaims } from './jwt.js';
 import { LIMITS } from './limits.js';
 import { accessTokenOf } from './oauth.js';
 import type { Remote } from './oauth.js';
@@ -44,21 +45,29 @@ function webRequest(req: FastifyRequest, url: string, signal: AbortSignal): Requ
 export async function remoteRoutes(app: FastifyInstance, remote: Remote, mcp: RemoteMcp | undefined): Promise<void> {
   remote.routes(app);
 
+  const signedIn = new WeakMap<FastifyRequest, AccessClaims>();
   app.route({
     method: ['GET', 'POST', 'DELETE'],
     url: '/mcp',
-    handler: async (req, reply) => {
+    // The token and the budget first, before a byte of the body is read: a
+    // request without a good token costs its headers, not its body.
+    onRequest: async (req, reply) => {
       const token = accessTokenOf(req);
       const claims = token ? await remote.verify(token) : undefined;
       // A signed-in app has a budget of its own; requests without a good token share one.
       if (!remote.allow(reply, claims ? [`app:${claims.sub}:${claims.client_id}`, LIMITS.app] : ['mcp', LIMITS.mcp])) return reply;
       if (!claims) return remote.challenge(reply, Boolean(token));
+      signedIn.set(req, claims);
+      return undefined;
+    },
+    handler: async (req, reply) => {
+      const claims = signedIn.get(req)!;
       if (!mcp) throw huskError('E_NOT_IMPLEMENTED', 'this Husk was started without the chat tools', { hint: 'start it with `husk serve --remote`' });
       const gone = new AbortController();
       reply.raw.on('close', () => {
         if (!reply.raw.writableFinished) gone.abort();
       });
-      const app = { owner: claims.sub, client: claims.client_id, name: remote.store.current.clients[claims.client_id]?.name ?? 'A chat app', origin: remote.origin };
+      const app = { owner: claims.sub, client: claims.client_id, name: remote.appName(claims.client_id), origin: remote.origin };
       const res = await mcp(webRequest(req, remote.resource, gone.signal), {
         ...app,
         approve: (call) => remote.approvals.check({ owner: app.owner, client: app.client, app: app.name, ...call }),

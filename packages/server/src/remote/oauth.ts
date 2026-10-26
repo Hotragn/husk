@@ -8,8 +8,8 @@ import { checkClaim, formatClaim, newClaim } from './claim.js';
 import { signAccessToken, verifyAccessToken } from './jwt.js';
 import type { AccessClaims } from './jwt.js';
 import { LIMITS, Limits } from './limits.js';
-import { approvalPage, authorizePage, errorPage } from './page.js';
-import { RemoteStore } from './state.js';
+import { approvalPage, authorizePage, errorPage, linkPage } from './page.js';
+import { RemoteStore, hashToken } from './state.js';
 import { ALGORITHMS, WebAuthnError, verifyAssertion, verifyRegistration } from './webauthn.js';
 
 /**
@@ -55,6 +55,10 @@ export function isRemotePath(route: string): boolean {
 const ACCESS_TTL_SEC = 3600;
 const PENDING_TTL_MS = 10 * 60 * 1000;
 const CODE_TTL_MS = 60 * 1000;
+/** How long the owner's passkey keeps the links under the public URL open in one browser. */
+const OWNER_SESSION_MS = 8 * 3600 * 1000;
+/** The most a sign-in step's body may be: they carry an id and a passkey's answer, never more. */
+const STEP_BODY = 64 * 1024;
 /**
  * Apps register themselves without signing in, so their number is capped. At
  * the cap, apps that never got a token and registered over an hour ago make way.
@@ -121,6 +125,16 @@ export class Remote {
   private readonly codes = new Map<string, { client: string; redirectUri: string; challenge: string; owner: string; expiresAt: number }>();
   /** Bumped by off and reset: a token request that began before either gets nothing. */
   private epoch = 0;
+  /**
+   * Owner sessions, by hash: the owner's passkey proved in one browser, for
+   * which links under the public URL then open (auth.ts). A link is in the
+   * chat, so it is never enough alone.
+   */
+  private readonly sessions = new Map<string, { expiresAt: number }>();
+  /** The passkey challenges for those, by id, one try each. */
+  private readonly presence = new Map<string, { challenge: string; expiresAt: number }>();
+  /** Told when links under the public URL must stop opening: every one, or one app's (app.ts). */
+  private readonly revokers: Array<(client?: string) => void> = [];
 
   constructor(opts: RemoteOptions) {
     const url = parsePublicUrl(opts.publicUrl);
@@ -143,7 +157,38 @@ export class Remote {
     this.approvals.clear();
     this.pending.clear();
     this.codes.clear();
+    this.revokeLinks();
     return this.newClaimCode();
+  }
+
+  /** Call `fn` whenever links under the public URL must stop opening: with an app's id for that app's, without one for all. */
+  onRevoke(fn: (client?: string) => void): void {
+    this.revokers.push(fn);
+  }
+
+  private revokeLinks(client?: string): void {
+    if (client === undefined) {
+      this.sessions.clear();
+      this.presence.clear();
+    }
+    for (const fn of this.revokers) fn(client);
+  }
+
+  /** Whether `session` is an owner session still in date: what links under the public URL need besides their own token. */
+  ownerSession(session: string | undefined): boolean {
+    const s = session ? this.sessions.get(hashToken(session)) : undefined;
+    return s !== undefined && this.now() < s.expiresAt;
+  }
+
+  /** A registered app, by its own key only: `__proto__` and the like are no app at all. */
+  private clientOf(id: unknown) {
+    const clients = this.store.current.clients;
+    return typeof id === 'string' && Object.hasOwn(clients, id) ? clients[id] : undefined;
+  }
+
+  /** What an app registered as, for the computers it makes. */
+  appName(id: string): string {
+    return this.clientOf(id)?.name ?? 'A chat app';
   }
 
   /**
@@ -157,6 +202,7 @@ export class Remote {
     this.pending.clear();
     this.codes.clear();
     this.approvals.clear();
+    this.revokeLinks();
     await this.store.revokeAll();
   }
 
@@ -177,6 +223,7 @@ export class Remote {
     this.approvals.forget(client);
     for (const [k, p] of this.pending) if (p.client === client) this.pending.delete(k);
     for (const [k, c] of this.codes) if (c.client === client) this.codes.delete(k);
+    this.revokeLinks(client);
     return this.store.forget(client);
   }
 
@@ -266,6 +313,8 @@ export class Remote {
     if (this.store.current.owner) throw huskError('E_CONFIG', 'this Husk already has an owner', { hint: 'run `husk remote reset` on the machine to start over' });
     const { code, stored } = newClaim(this.now());
     this.store.current.claim = stored;
+    // A new code ends the old one everywhere, a sign-in that already typed it included.
+    for (const p of this.pending.values()) delete p.claimed;
     await this.store.save();
     return formatClaim(code);
   }
@@ -275,7 +324,9 @@ export class Remote {
     const { kid, publicKey } = await this.store.signingKey();
     const claims = verifyAccessToken(token, publicKey, kid, { iss: this.origin, aud: this.resource, now: Math.floor(this.now() / 1000) });
     const state = this.store.current;
-    if (!claims || state.owner?.id !== claims.sub || !state.clients[claims.client_id]) return undefined;
+    if (!claims || state.owner?.id !== claims.sub || !this.clientOf(claims.client_id)) return undefined;
+    // From a family a reused refresh token ended: dead with it, not at the end of its hour.
+    if (claims.fam && state.revoked && Object.hasOwn(state.revoked, claims.fam)) return undefined;
     return claims;
   }
 
@@ -287,7 +338,7 @@ export class Remote {
   private async issue(client: string, owner: string, family: string, epoch: number) {
     const { kid, privateKey } = await this.store.signingKey();
     const state = this.store.current;
-    const app = state.clients[client];
+    const app = this.clientOf(client);
     if (epoch !== this.epoch || this.offReason !== undefined || state.owner?.id !== owner || !app) return undefined;
     const refresh = this.store.mintRefresh(family, client, owner, this.now());
     if (!refresh) return undefined;
@@ -303,6 +354,7 @@ export class Remote {
       nbf: now,
       exp: now + ACCESS_TTL_SEC,
       jti: randomUUID(),
+      fam: family,
     });
     await this.store.save();
     return { access_token: access, token_type: 'Bearer', expires_in: ACCESS_TTL_SEC, refresh_token: refresh, scope: 'husk' };
@@ -313,7 +365,7 @@ export class Remote {
     if (room(this.pending, this.now())) return true;
     if (!signedIn) return false;
     for (const [k, p] of this.pending) {
-      if (!this.store.current.clients[p.client]?.signedIn) {
+      if (!this.clientOf(p.client)?.signedIn) {
         this.pending.delete(k);
         return true;
       }
@@ -392,7 +444,7 @@ export class Remote {
       authorization_response_iss_parameter_supported: true,
     }));
 
-    app.post('/oauth/register', async (req, reply) => {
+    app.post('/oauth/register', { bodyLimit: STEP_BODY }, async (req, reply) => {
       if (!this.allow(reply, ['register', LIMITS.register])) return reply;
       const body = (req.body ?? {}) as Record<string, unknown>;
       const uris = body.redirect_uris;
@@ -427,7 +479,7 @@ export class Remote {
 
     app.get('/oauth/authorize', async (req, reply) => {
       const q = (req.query ?? {}) as Record<string, string | undefined>;
-      const client = q.client_id ? this.store.current.clients[q.client_id] : undefined;
+      const client = this.clientOf(q.client_id);
       // An app the owner already let in has a budget of its own; everyone else shares one.
       if (!this.allow(reply, client?.signedIn ? [`authorize:${q.client_id}`, LIMITS.signIn] : ['sign-in', LIMITS.signIn])) return reply;
       // Nothing is sent back before the owner has signed in: anyone can register
@@ -459,7 +511,7 @@ export class Remote {
     });
 
     // The owner's sign-in options: the passkey to use.
-    app.post('/oauth/start', async (req, reply) => {
+    app.post('/oauth/start', { bodyLimit: STEP_BODY }, async (req, reply) => {
       const id = (req.body as { request?: unknown } | undefined)?.request;
       const p = this.live(id);
       if (!this.allowStep(reply, p && `request:${String(id)}`)) return reply;
@@ -467,7 +519,7 @@ export class Remote {
       return this.passkeyOptions(p);
     });
 
-    app.post('/oauth/claim', async (req, reply) => {
+    app.post('/oauth/claim', { bodyLimit: STEP_BODY }, async (req, reply) => {
       const body = (req.body ?? {}) as { request?: unknown; code?: unknown };
       const p = this.live(body.request);
       // The claim code itself dies on its fifth wrong guess, whoever is guessing.
@@ -488,7 +540,7 @@ export class Remote {
       return this.passkeyOptions(p);
     });
 
-    app.post('/oauth/passkey', async (req, reply) => {
+    app.post('/oauth/passkey', { bodyLimit: STEP_BODY }, async (req, reply) => {
       const body = (req.body ?? {}) as { request?: unknown; credential?: Record<string, unknown> };
       const p = this.live(body.request);
       if (!this.allowStep(reply, p && `request:${String(body.request)}`)) return reply;
@@ -521,7 +573,7 @@ export class Remote {
       return { ok: true };
     });
 
-    app.post('/oauth/consent', async (req, reply) => {
+    app.post('/oauth/consent', { bodyLimit: STEP_BODY }, async (req, reply) => {
       const body = (req.body ?? {}) as { request?: unknown; allow?: unknown };
       const p = this.live(body.request);
       if (!this.allowStep(reply, p && `request:${String(body.request)}`)) return reply;
@@ -540,6 +592,58 @@ export class Remote {
       return { redirect: u.toString() };
     });
 
+    // A link a remote chat gave its person (a handoff, a look at a computer)
+    // starts here: the chat holds the link too, and so may whoever it was
+    // shown to, so it opens only once the owner's passkey has been used in
+    // this browser. The page then goes on to the console with an owner session.
+    app.get('/oauth/link', async (_req, reply) => {
+      if (!this.allow(reply, ['sign-in', LIMITS.signIn])) return reply;
+      const { html, csp } = linkPage();
+      return reply.header('content-security-policy', csp).header('cache-control', 'no-store').header('x-frame-options', 'DENY').type('text/html').send(html);
+    });
+
+    app.post('/oauth/link/start', { bodyLimit: STEP_BODY }, async (_req, reply) => {
+      if (!this.allow(reply, ['sign-in', LIMITS.signIn])) return reply;
+      const owner = this.store.current.owner;
+      if (!owner) return reply.code(400).send({ error: 'invalid_request', error_description: 'this Husk has no owner yet' });
+      if (!room(this.presence, this.now())) return reply.code(400).send({ error: 'temporarily_unavailable', error_description: 'too many sign-ins are in progress: try again in a few minutes' });
+      const id = randomBytes(16).toString('base64url');
+      const challenge = randomBytes(32).toString('base64url');
+      this.presence.set(id, { challenge, expiresAt: this.now() + PENDING_TTL_MS });
+      return {
+        id,
+        create: false,
+        publicKey: { challenge, rpId: this.host, allowCredentials: [{ type: 'public-key', id: owner.credential.id }], userVerification: 'required', timeout: 120_000 },
+      };
+    });
+
+    app.post('/oauth/link', { bodyLimit: STEP_BODY }, async (req, reply) => {
+      const body = (req.body ?? {}) as { id?: unknown; credential?: Record<string, unknown> };
+      const p = typeof body.id === 'string' ? this.presence.get(body.id) : undefined;
+      if (!this.allowStep(reply, p && `link:${String(body.id)}`)) return reply;
+      // One try per challenge, right or wrong.
+      if (p) this.presence.delete(body.id as string);
+      const owner = this.store.current.owner;
+      if (!p || this.now() >= p.expiresAt || !owner) return reply.code(400).send({ error: 'invalid_request', error_description: 'this sign-in has expired: open the link again' });
+      const c = body.credential ?? {};
+      const str = (k: string) => (typeof c[k] === 'string' ? (c[k] as string) : '');
+      try {
+        owner.credential.signCount = verifyAssertion(
+          { id: str('id'), clientDataJSON: str('clientDataJSON'), authenticatorData: str('authenticatorData'), signature: str('signature') },
+          owner.credential,
+          { challenge: p.challenge, origin: this.origin, rpId: this.host },
+        );
+      } catch (err) {
+        if (err instanceof WebAuthnError) return reply.code(403).send({ error: 'access_denied', error_description: err.message });
+        throw err;
+      }
+      await this.store.save();
+      const session = randomBytes(32).toString('base64url');
+      for (const [k, s] of this.sessions) if (this.now() >= s.expiresAt) this.sessions.delete(k);
+      this.sessions.set(hashToken(session), { expiresAt: this.now() + OWNER_SESSION_MS });
+      return { session, expiresIn: OWNER_SESSION_MS / 1000 };
+    });
+
     // A remote chat's tool call waiting for the owner's word (approvals.ts).
     app.get('/oauth/approve', async (req, reply) => {
       const a = this.approvals.pending((req.query as { id?: unknown } | undefined)?.id);
@@ -549,7 +653,7 @@ export class Remote {
       return reply.header('content-security-policy', csp).header('cache-control', 'no-store').header('x-frame-options', 'DENY').type('text/html').send(html);
     });
 
-    app.post('/oauth/approve/start', async (req, reply) => {
+    app.post('/oauth/approve/start', { bodyLimit: STEP_BODY }, async (req, reply) => {
       const a = this.approvals.pending((req.body as { id?: unknown } | undefined)?.id);
       if (!this.allowStep(reply, a && `approve:${a.id}`)) return reply;
       const owner = this.store.current.owner;
@@ -561,7 +665,7 @@ export class Remote {
       };
     });
 
-    app.post('/oauth/approve', async (req, reply) => {
+    app.post('/oauth/approve', { bodyLimit: STEP_BODY }, async (req, reply) => {
       const body = (req.body ?? {}) as { id?: unknown; allow?: unknown; hour?: unknown; credential?: Record<string, unknown> };
       const a = this.approvals.pending(body.id);
       if (!this.allowStep(reply, a && `approve:${a.id}`)) return reply;
@@ -592,12 +696,12 @@ export class Remote {
       return { ok: true };
     });
 
-    app.post('/oauth/token', async (req, reply) => {
+    app.post('/oauth/token', { bodyLimit: STEP_BODY }, async (req, reply) => {
       void reply.header('cache-control', 'no-store').header('pragma', 'no-cache');
       const form = new URLSearchParams(typeof req.body === 'string' ? req.body : '');
       const deny = (error: string, why: string, status = 400) => reply.code(status).send({ error, error_description: why });
       const client = form.get('client_id') ?? '';
-      const known = this.store.current.clients[client];
+      const known = this.clientOf(client);
       // An app the owner let in, or one holding a code they just gave it, has a budget of its own; everyone else shares one.
       const own = Boolean(known?.signedIn) || [...this.codes.values()].some((c) => c.client === client);
       if (!this.allow(reply, own ? [`token:${client}`, LIMITS.token] : ['tokens', LIMITS.tokens])) return reply;

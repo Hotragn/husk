@@ -63,8 +63,19 @@ export interface HuskMcpOptions {
    * no computer a chat on this machine made, nor they its. `approve` is the
    * owner's word on a call that changes things (approvals.ts).
    */
-  remote?: { owner: string; platform: string; approve?: RemoteApp['approve']; /** The public URL, for the links its person opens. */ origin?: string };
+  remote?: {
+    owner: string;
+    platform: string;
+    approve?: RemoteApp['approve'];
+    /** The public URL, for the links its person opens. */
+    origin?: string;
+    /** The app, whose sign-out ends the links it was given. */
+    client?: string;
+  };
 }
+
+/** Where a remote chat's links open: the owner's passkey first, since the chat holds the link too. */
+const REMOTE_LINK_PAGE = '/oauth/link';
 
 /**
  * Husk as an MCP server.
@@ -787,8 +798,8 @@ export class HuskMcpServer {
     let remote: { handoffId: string; token: string } | undefined;
     if (daemon && computer) {
       try {
-        // A remote chat's person opens it under the public URL, which takes only links minted for it.
-        remote = await daemon.openHandoff(computer.id, reason, computer.info.spec.labels?.[IDENTITY_LABELS.chat], Boolean(this.remote));
+        // A remote chat's person opens it under the public URL, which takes only links minted for its app.
+        remote = await daemon.openHandoff(computer.id, reason, computer.info.spec.labels?.[IDENTITY_LABELS.chat], this.remote?.client);
       } catch (err) {
         if (err instanceof RunLocally) this.localComputers.add(computer.id);
         this.log.warn(`handing off in this process: ${(err as Error).message}`);
@@ -818,7 +829,7 @@ export class HuskMcpServer {
       this.handoffLinks.delete(handoffId);
     });
     const link = remote
-      ? handoffLink(origin, remote.handoffId, remote.token)
+      ? handoffLink(origin, remote.handoffId, remote.token, this.remote ? REMOTE_LINK_PAGE : '/')
       : handoffLink(origin, handoffId, this.tokens.mint(computer ? `computer:${computer.id}` : `handoff:${handoffId}`));
     this.handoffLinks.set(handoffId, link);
 
@@ -945,12 +956,13 @@ export class HuskMcpServer {
     const daemon = this.localComputers.has(computerId) ? undefined : await this.shared();
     if (daemon) {
       try {
-        const token = await daemon.linkToken(computerId, Boolean(this.remote));
+        const token = await daemon.linkToken(computerId, this.remote?.client);
         const held = this.handoffs.list().find((h) => h.computerId === computerId);
         const remoteId = held ? this.remoteHandoffs.get(held.handoffId) : undefined;
-        // A remote chat's person is wherever they are: the link is under the public URL.
+        // A remote chat's person is wherever they are: the link is under the public URL, behind their passkey.
         const base = this.remote?.origin ?? daemon.url;
-        return remoteId ? handoffLink(base, remoteId, token) : computerLink(base, computerId, token);
+        const page = this.remote ? REMOTE_LINK_PAGE : '/';
+        return remoteId ? handoffLink(base, remoteId, token, page) : computerLink(base, computerId, token, page);
       } catch (err) {
         // The shared Husk has no such computer: this process's viewer can still open it.
         if (!(err instanceof RunLocally)) throw err;

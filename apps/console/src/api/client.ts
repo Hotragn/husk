@@ -70,6 +70,8 @@ const PROVISION_BUDGET_MS = 600_000;
 export interface HuskApiOptions {
   baseUrl: string;
   token?: string;
+  /** Under remote access's public URL: the owner session a link needs besides its token (`x-husk-owner`). */
+  owner?: string;
 }
 
 /** A shell command to run in a computer. Mirrors the server's `ExecSchema`. */
@@ -87,9 +89,10 @@ export interface ExecRequest {
  * The console acts as the person: what they change on a computer goes through
  * while they hold it, where a program's change is refused.
  */
-function asPerson(init?: RequestInit): RequestInit {
+function asPerson(init?: RequestInit, owner?: string): RequestInit {
   const headers = new Headers(init?.headers);
   headers.set('x-husk-as', 'person');
+  if (owner) headers.set('x-husk-owner', owner);
   return { ...init, headers };
 }
 
@@ -97,10 +100,13 @@ export class HuskApi {
   readonly baseUrl: string;
   private readonly client: HuskClient;
   private readonly token: string | undefined;
+  private readonly owner: string | undefined;
 
   constructor(opts: HuskApiOptions) {
     this.baseUrl = stripTrailingSlash(opts.baseUrl);
     this.token = opts.token && opts.token.length > 0 ? opts.token : undefined;
+    this.owner = opts.owner || undefined;
+    const owner = this.owner;
     this.client = new HuskClient({
       baseUrl: this.baseUrl,
       ...(this.token ? { token: this.token } : {}),
@@ -109,7 +115,7 @@ export class HuskApi {
       // which detaches it from `window`. In Node that is fine; in a browser it
       // is `TypeError: Illegal invocation` on the first request. Handing it a
       // closure keeps the receiver intact.
-      fetch: (input, init) => globalThis.fetch(input, asPerson(init)),
+      fetch: (input, init) => globalThis.fetch(input, asPerson(init, owner)),
     });
   }
 
@@ -587,6 +593,7 @@ export class HuskApi {
     const url = this.client.http.url(path);
     const headers: Record<string, string> = {};
     if (this.token) headers.authorization = `Bearer ${this.token}`;
+    if (this.owner) headers['x-husk-owner'] = this.owner;
     let res: Response;
     try {
       res = await fetch(url, { headers, cache: 'no-store', ...(signal ? { signal } : {}) });

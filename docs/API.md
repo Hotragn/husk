@@ -235,6 +235,9 @@ POST /oauth/start | /oauth/claim | /oauth/passkey | /oauth/consent   the page's 
 POST /oauth/token                                    authorization_code (PKCE S256) or refresh_token
 GET  /oauth/approve                                  the page that approves one tool call (?id=)
 POST /oauth/approve/start | /oauth/approve           its passkey, and the owner's answer
+GET  /oauth/link                                     where a remote chat's links start: the owner's passkey
+POST /oauth/link/start | /oauth/link                 its passkey, then an owner session for links
+GET  /health                                         { ok: true } and nothing more
 ```
 
 - **Approvals.** A remote chat's call that changes things (`shell`, `write_file`,
@@ -263,12 +266,24 @@ POST /oauth/approve/start | /oauth/approve           its passkey, and the owner'
   that is not claude.ai, ChatGPT or an app on the owner's own device. Every answer sent
   back carries `iss` (RFC 9207, advertised in the metadata).
 - **Links a remote chat gives its person** (a handoff, a look at a computer) are under
-  the public URL. There, only these answer:
-  - the console's page and files, which hold nothing;
-  - the scoped routes behind the link (`/v1/handoffs/:id/…`, `/v1/scoped/…`), with that
-    link's token in `Authorization`. Only a token minted for a remote chat
-    (`{ "public": true }` on `POST /v1/computers/:id/link` or `/handoffs`), never one made
-    on this machine, never this machine's own token, and never a token in the URL.
+  the public URL, at `/oauth/link#handoff=…&token=…`. The chat holds the link too, and so
+  may whoever it was shown to, so it opens only after the owner's passkey:
+  - `/oauth/link` asks for the passkey, then goes on to the console with an owner session
+    in the fragment, which no server sees.
+  - Under the public URL, only the console's page and files answer without both. They
+    hold nothing.
+  - The scoped routes behind the link (`/v1/handoffs/:id/…`, `/v1/scoped/…`) need the
+    link's token in `Authorization` and the owner session in `X-Husk-Owner`. Without the
+    session, the answer is a 401 with `details.passkey: true`.
+  - Only a token minted for a remote chat counts: `{ "public": true, "holder": <app> }` on
+    `POST /v1/computers/:id/link` or `/handoffs`. Never one made on this machine, never
+    this machine's own token, and never a token in the URL.
+  - Owner sessions last eight hours. Switching off or resetting ends every link and
+    session, and signing an app out ends the links it was given.
+- **What the public port takes.** Sign-in bodies are at most 64 KB. `/mcp` checks its token
+  and budget before it reads a byte of the body. Nothing there is recorded for
+  `Idempotency-Key`. App ids are looked up as registered, never through the object
+  prototype.
 
 - **`/mcp`.** It takes a bearer access token in `Authorization`, never in a URL. Without
   a good one it answers 401 with
@@ -277,11 +292,13 @@ POST /oauth/approve/start | /oauth/approve           its passkey, and the owner'
   `aud` is `<public URL>/mcp`. Any other algorithm or key id is refused, and so is a
   token for another URL.
 - **Refresh tokens.** They last 30 days and change on every use. Using one twice ends
-  its whole family, including any token a request still in flight would have minted in it.
-- **Who signs in.** Only the owner: whoever first types the claim code the server prints
-  (80 bits, 15 minutes, 5 tries), registering a passkey as they do. Every later sign-in
-  needs that passkey. A passkey whose counter does not go up is refused; one that keeps no
-  count (zero every time) is fine.
+  its whole family: the access tokens minted in it, and any token a request still in
+  flight would have minted in it.
+- **Who signs in.** Only the owner: whoever first types the claim code (80 bits, 15
+  minutes, 5 tries), registering a passkey as they do. The code is printed on a terminal
+  and never into a log; otherwise `husk remote claim` gives one. A new code ends any
+  sign-in that typed the old one. Every later sign-in needs that passkey. A passkey whose
+  counter does not go up is refused; one that keeps no count (zero every time) is fine.
 - **Redirects.** Only ones the app registered, https or loopback http.
 - **A new public URL.** The passkey and every token belong to the name they were made
   under, so starting with another `--public-url` forgets the owner, the apps and the

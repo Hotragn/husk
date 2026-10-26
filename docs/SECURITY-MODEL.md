@@ -194,6 +194,9 @@ in the guide (`apps/docs/content/guides/remote-access.mdx`); the routes are in
   It serves the sign-in, `/mcp`, and the links Husk minted for a remote chat, and nothing
   else, whatever `Host` header a request carries. The console and the API stay on their
   own port, on loopback, behind the machine's token.
+- **Links.** A link a remote chat gives its person opens only after the owner's passkey,
+  used in that browser: the chat holds the link too, and a chat can be shared. Off, reset
+  and signing the app out end it.
 - **What a remote chat runs on.** Computers from an isolated provider only, bound apart
   from this machine's own chats. The workspace tools, which work on this machine's files,
   are not offered.
@@ -211,7 +214,7 @@ in the guide (`apps/docs/content/guides/remote-access.mdx`); the routes are in
   can its provider: Tailscale Funnel and ngrok with TLS ended at the agent cannot,
   Cloudflare and Fly can. The guide has the table.
 
-A security review of remote access, in October 2026, found these, and each is fixed and
+Two security reviews of remote access, in October 2026, found these. Each is fixed and
 has a test:
 
 | Found | Now |
@@ -225,6 +228,14 @@ has a test:
 | A passkey whose counter fell back to zero was accepted | Refused, as WebAuthn asks |
 | The approval page showed a cut, redacted line, which could hide what a command ran | It shows every argument exactly, with hidden characters escaped |
 | The claim code was printed into a service's log | It is printed on a terminal only |
+| A link the chat was given could take over the computer and type into its browser, with no passkey | A link opens only after the owner's passkey, used in that browser |
+| Links outlived off, reset and their app's sign-out | All three end them |
+| An access token outlived the reuse that ended its family, for up to an hour | It ends with its family |
+| A sign-in that had typed the old claim code still made its owner after a new code | A new code ends it |
+| The public port kept `Idempotency-Key` records, which strangers could fill, replay past a limit, or read another's answer from | It keeps none |
+| The public port read bodies of up to 32 MB before checking a token or a budget | `/mcp` checks first, and sign-in bodies are at most 64 KB |
+| An app id such as `__proto__` crashed the sign-in | Ids are looked up as registered |
+| A hand-off link opened in a browser under the public URL showed "Reconnect": the console's `/health` check was a 404 there | `/health` answers there, saying only that it is up |
 
 ## What we do not do
 

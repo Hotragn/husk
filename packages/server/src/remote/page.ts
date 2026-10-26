@@ -162,6 +162,36 @@ export function approvalPage(data: { id: string; app: string; tool: string; summ
   );
 }
 
+/**
+ * Where a link a remote chat gave its person starts (`/oauth/link#handoff=…&token=…`):
+ * the owner's passkey, then on to the console with an owner session added to
+ * the fragment, which no server ever sees. Only the link's own keys are kept,
+ * and it goes nowhere but this server's console.
+ */
+export function linkPage(): { html: string; csp: string } {
+  return page(
+    'Husk: open with your passkey',
+    {},
+    `<h1>Open this computer</h1>
+<p>A link from a chat opens only for this Husk's owner, since the chat has the link too.
+Use your passkey to go on.</p>
+<button id="go">Use my passkey</button>`,
+    `
+  const link = new URLSearchParams(location.hash.slice(1));
+  const kept = new URLSearchParams();
+  for (const k of ['handoff', 'computer', 'token']) if (link.get(k)) kept.set(k, link.get(k));
+  $('go').onclick = async () => {
+    try {
+      const step = await post('/oauth/link/start', {});
+      const opened = await post('/oauth/link', { id: step.id, credential: await passkey(step) });
+      kept.set('owner', opened.session);
+      location.replace('/#' + kept.toString());
+    } catch (err) { fail(err); }
+  };
+`,
+  );
+}
+
 /** A page for a request Husk cannot send back to the app: an unknown app, or a redirect it never registered. */
 export function errorPage(message: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Husk</title></head><body><h1>Husk cannot do that</h1><p>${escape(message)}</p></body></html>`;

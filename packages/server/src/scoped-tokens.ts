@@ -10,9 +10,10 @@ import { randomBytes } from 'node:crypto';
  *
  * Only a token minted `public` (for a remote chat's person) opens anything
  * under remote access's public URL: a link made on this machine stays on it.
+ * `holder` is the remote app it was given to, so signing that app out ends it.
  */
 export class ScopedTokens {
-  private readonly tokens = new Map<string, { scope: string; idleUntil: number; deadline: number; public: boolean }>();
+  private readonly tokens = new Map<string, { scope: string; idleUntil: number; deadline: number; public: boolean; holder?: string }>();
 
   constructor(
     private readonly idleMs = 10 * 60 * 1000,
@@ -20,12 +21,23 @@ export class ScopedTokens {
     private readonly now: () => number = Date.now,
   ) {}
 
-  mint(scope: string, opts: { public?: boolean } = {}): string {
+  mint(scope: string, opts: { public?: boolean; holder?: string } = {}): string {
     this.sweep();
     const token = randomBytes(32).toString('hex');
     const t = this.now();
-    this.tokens.set(token, { scope, idleUntil: t + this.idleMs, deadline: t + this.maxMs, public: opts.public === true });
+    this.tokens.set(token, {
+      scope,
+      idleUntil: t + this.idleMs,
+      deadline: t + this.maxMs,
+      public: opts.public === true,
+      ...(opts.holder ? { holder: opts.holder } : {}),
+    });
     return token;
+  }
+
+  /** Remote access off or reset (every public token), or one app signed out (the ones it holds). */
+  revokePublic(holder?: string): void {
+    for (const [token, entry] of this.tokens) if (entry.public && (holder === undefined || entry.holder === holder)) this.tokens.delete(token);
   }
 
   /**

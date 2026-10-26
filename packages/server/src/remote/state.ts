@@ -84,7 +84,7 @@ export class RemoteStore {
 
   /** One app signed out from the console: forgotten, with every token it holds. */
   async forget(clientId: string): Promise<boolean> {
-    if (!this.state.clients[clientId]) return false;
+    if (!Object.hasOwn(this.state.clients, clientId)) return false;
     delete this.state.clients[clientId];
     for (const [h, e] of Object.entries(this.state.refresh)) if (e.clientId === clientId) delete this.state.refresh[h];
     await this.save();

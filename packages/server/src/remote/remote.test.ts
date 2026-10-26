@@ -344,7 +344,11 @@ describe('remote access, from a chat app to a call', () => {
   });
 
   /** A request under the public URL, as remote access's own port hands it on (serve.ts `servePublic`). */
-  const pub = (method: 'GET' | 'POST', url: string, opts: { json?: unknown; form?: Record<string, string>; token?: string; origin?: string } = {}) =>
+  const pub = (
+    method: 'GET' | 'POST',
+    url: string,
+    opts: { json?: unknown; form?: Record<string, string>; token?: string; origin?: string; owner?: string; headers?: Record<string, string>; payload?: Buffer } = {},
+  ) =>
     harness.app.inject({
       method,
       url,
@@ -353,11 +357,26 @@ describe('remote access, from a chat app to a call', () => {
         [PUBLIC_HEADER]: remote.mark,
         ...(opts.origin ? { origin: opts.origin } : {}),
         ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
+        ...(opts.owner ? { 'x-husk-owner': opts.owner } : {}),
         ...(opts.form ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
+        ...(opts.headers ?? {}),
       },
       ...(opts.json !== undefined ? { payload: opts.json as object } : {}),
       ...(opts.form ? { payload: new URLSearchParams(opts.form).toString() } : {}),
+      ...(opts.payload !== undefined ? { payload: opts.payload } : {}),
     });
+
+  /** On this machine, with its token. */
+  const here = (method: 'GET' | 'POST' | 'DELETE', url: string, payload?: object) =>
+    harness.app.inject({ method, url, headers: { authorization: 'Bearer local-token' }, ...(payload ? { payload } : {}) });
+
+  /** The owner's passkey used for links in a browser (`/oauth/link`): the session those links then need. */
+  async function ownerSessionOf(device: ReturnType<typeof authenticator>): Promise<string> {
+    const step = (await pub('POST', '/oauth/link/start', { json: {}, origin: ORIGIN })).json() as { id: string; publicKey: { challenge: string } };
+    const opened = await pub('POST', '/oauth/link', { json: { id: step.id, credential: device.get(step.publicKey.challenge) }, origin: ORIGIN });
+    expect(opened.statusCode).toBe(200);
+    return (opened.json() as { session: string }).session;
+  }
 
   async function register(): Promise<string> {
     const r = await pub('POST', '/oauth/register', { json: { redirect_uris: [CALLBACK], client_name: 'Claude' } });
@@ -533,12 +552,14 @@ describe('remote access, from a chat app to a call', () => {
   });
 
   it('opens only links minted for a remote chat under the public URL', async () => {
+    const { device } = await claimAndSignIn();
+    const owner = await ownerSessionOf(device);
     const local = (url: string, payload: object) => harness.app.inject({ method: 'POST', url, headers: { authorization: 'Bearer local-token' }, payload });
     const computer = (await local('/v1/computers', {})).json() as { id: string };
     const mine = (await local(`/v1/computers/${computer.id}/link`, {})).json() as { token: string };
-    expect((await pub('GET', '/v1/scoped/computer', { token: mine.token })).statusCode).toBe(401);
+    expect((await pub('GET', '/v1/scoped/computer', { token: mine.token, owner })).statusCode).toBe(401);
     const theirs = (await local(`/v1/computers/${computer.id}/link`, { public: true })).json() as { token: string };
-    expect((await pub('GET', '/v1/scoped/computer', { token: theirs.token })).statusCode).toBe(200);
+    expect((await pub('GET', '/v1/scoped/computer', { token: theirs.token, owner })).statusCode).toBe(200);
     // On this machine, both open it as before.
     const here = (token: string) => harness.app.inject({ method: 'GET', url: '/v1/scoped/computer', headers: { authorization: `Bearer ${token}` } });
     expect((await here(mine.token)).statusCode).toBe(200);
@@ -631,15 +652,97 @@ describe('remote access, from a chat app to a call', () => {
     expect((await pub('POST', '/oauth/register', { json: { redirect_uris: [CALLBACK] } })).statusCode).toBe(201);
   });
 
-  it('opens a handoff link under the public URL, with its own token in the header alone', async () => {
-    const local = (url: string, payload: object) => harness.app.inject({ method: 'POST', url, headers: { authorization: 'Bearer local-token' }, payload });
-    const computer = (await local('/v1/computers', {})).json() as { id: string };
-    const handoff = (await local(`/v1/computers/${computer.id}/handoffs`, { reason: 'Sign in to your bank.', public: true })).json() as { handoffId: string; token: string };
-    expect((await pub('GET', `/v1/handoffs/${handoff.handoffId}`, { token: handoff.token })).statusCode).toBe(200);
+  it('opens a handoff link under the public URL only with its own token and the owner’s passkey', async () => {
+    const { device } = await claimAndSignIn();
+    const computer = (await here('POST', '/v1/computers', {})).json() as { id: string };
+    const handoff = (await here('POST', `/v1/computers/${computer.id}/handoffs`, { reason: 'Sign in to your bank.', public: true })).json() as { handoffId: string; token: string };
+    // The chat holds the link too, so alone it opens nothing.
+    const alone = await pub('GET', `/v1/handoffs/${handoff.handoffId}`, { token: handoff.token });
+    expect(alone.statusCode).toBe(401);
+    expect(alone.json()).toMatchObject({ error: { details: { passkey: true } } });
+    const owner = await ownerSessionOf(device);
+    expect((await pub('GET', `/v1/handoffs/${handoff.handoffId}`, { token: handoff.token, owner })).statusCode).toBe(200);
     // Not this machine's own token, not a token in the URL, and not another route.
-    expect((await pub('GET', `/v1/handoffs/${handoff.handoffId}`, { token: 'local-token' })).statusCode).toBe(401);
-    expect((await pub('GET', `/v1/handoffs/${handoff.handoffId}?token=${handoff.token}`)).statusCode).toBe(401);
-    expect((await pub('GET', '/v1/handoffs', { token: handoff.token })).statusCode).toBe(404);
+    expect((await pub('GET', `/v1/handoffs/${handoff.handoffId}`, { token: 'local-token', owner })).statusCode).toBe(401);
+    expect((await pub('GET', `/v1/handoffs/${handoff.handoffId}?token=${handoff.token}`, { owner })).statusCode).toBe(401);
+    expect((await pub('GET', '/v1/handoffs', { token: handoff.token, owner })).statusCode).toBe(404);
+  });
+
+  it('lets nobody act through a link without the owner’s passkey, which is good for one try a challenge', async () => {
+    const { device } = await claimAndSignIn();
+    const computer = (await here('POST', '/v1/computers', {})).json() as { id: string };
+    const { token } = (await here('POST', `/v1/computers/${computer.id}/link`, { public: true })).json() as { token: string };
+    expect((await pub('POST', '/v1/scoped/computer/takeover', { token, origin: ORIGIN, json: {} })).statusCode).toBe(401);
+    // Another device's passkey gets no session, and its challenge is spent.
+    const step = (await pub('POST', '/oauth/link/start', { json: {}, origin: ORIGIN })).json() as { id: string; publicKey: { challenge: string } };
+    expect((await pub('POST', '/oauth/link', { json: { id: step.id, credential: authenticator().get(step.publicKey.challenge) }, origin: ORIGIN })).statusCode).toBe(403);
+    expect((await pub('POST', '/oauth/link', { json: { id: step.id, credential: device.get(step.publicKey.challenge) }, origin: ORIGIN })).statusCode).toBe(400);
+    const owner = await ownerSessionOf(device);
+    expect((await pub('POST', '/v1/scoped/computer/takeover', { token, owner, origin: ORIGIN, json: {} })).statusCode).toBe(201);
+    expect((await pub('POST', '/v1/scoped/computer/takeover', { token, owner: 'a-guess', origin: ORIGIN, json: {} })).statusCode).toBe(401);
+  });
+
+  it('ends the links a remote chat was given when its app signs out, and every link and owner session when remote access goes off', async () => {
+    const { client, device } = await claimAndSignIn();
+    const computer = (await here('POST', '/v1/computers', {})).json() as { id: string };
+    const mint = async (holder: string) => ((await here('POST', `/v1/computers/${computer.id}/link`, { public: true, holder })).json() as { token: string }).token;
+    const opens = async (token: string, owner: string) => (await pub('GET', '/v1/scoped/computer', { token, owner })).statusCode;
+    let owner = await ownerSessionOf(device);
+    const theirs = await mint(client);
+    const another = await mint('another-app');
+    expect(await opens(theirs, owner)).toBe(200);
+    await here('DELETE', `/v1/remote/apps/${client}`);
+    expect(await opens(theirs, owner)).toBe(401);
+    expect(await opens(another, owner)).toBe(200);
+    await here('POST', '/v1/remote/off');
+    await here('POST', '/v1/remote/on');
+    const after = await pub('GET', '/v1/scoped/computer', { token: another, owner });
+    expect(after.json()).toMatchObject({ error: { details: { passkey: true } } });
+    owner = await ownerSessionOf(device);
+    expect(await opens(another, owner)).toBe(401);
+  });
+
+  it('ends the access tokens of a family a reused refresh token ended, not at the end of their hour', async () => {
+    const { client, refresh_token } = await claimAndSignIn();
+    const refresh = (token: string) => pub('POST', '/oauth/token', { form: { grant_type: 'refresh_token', refresh_token: token, client_id: client } });
+    const copy = (await refresh(refresh_token)).json() as { access_token: string };
+    const list = { jsonrpc: '2.0', id: 1, method: 'tools/list' };
+    expect((await pub('POST', '/mcp', { token: copy.access_token, json: list })).statusCode).toBe(200);
+    // The first token used again: the family ends, and so does the access token minted in it.
+    await refresh(refresh_token);
+    expect((await pub('POST', '/mcp', { token: copy.access_token, json: list })).statusCode).toBe(401);
+  });
+
+  it('ends a sign-in that typed the old claim code once a new one is made', async () => {
+    const client = await register();
+    const { request } = await authorize(client, 'v'.repeat(43));
+    const options = (await pub('POST', '/oauth/claim', { json: { request, code: claim }, origin: ORIGIN })).json() as { publicKey: { challenge: string } };
+    await here('POST', '/v1/remote/claim');
+    const made = await pub('POST', '/oauth/passkey', { json: { request, credential: authenticator().create(options.publicKey.challenge) }, origin: ORIGIN });
+    expect(made.statusCode).toBe(403);
+    expect(remote.store.current.owner).toBeUndefined();
+  });
+
+  it('keeps no idempotency record for the public URL, reads no body before the token, and keeps sign-in bodies small', async () => {
+    const reg = () => pub('POST', '/oauth/register', { json: { redirect_uris: [CALLBACK] }, headers: { 'idempotency-key': 'k1' } });
+    const first = (await reg()).json() as { client_id: string };
+    const again = await reg();
+    expect(again.headers['idempotency-replayed']).toBeUndefined();
+    expect((again.json() as { client_id: string }).client_id).not.toBe(first.client_id);
+    // A body without a good token is not read: the answer is the 401, not a parse error.
+    const noToken = await pub('POST', '/mcp', { payload: Buffer.alloc(2 * 1024 * 1024, 0x7b), headers: { 'content-type': 'application/json' } });
+    expect(noToken.statusCode).toBe(401);
+    const big = await pub('POST', '/oauth/register', { payload: Buffer.from(JSON.stringify({ redirect_uris: [CALLBACK], client_name: 'x'.repeat(100 * 1024) })), headers: { 'content-type': 'application/json' } });
+    expect(big.statusCode).toBe(413);
+  });
+
+  it('takes no app id from the object prototype, and says only that it is up under the public URL', async () => {
+    for (const id of ['__proto__', 'constructor', 'toString']) {
+      expect((await pub('GET', `/oauth/authorize?client_id=${id}&redirect_uri=x`)).statusCode).toBe(400);
+      expect((await pub('POST', '/oauth/token', { form: { grant_type: 'refresh_token', refresh_token: 'x', client_id: id } })).statusCode).toBe(401);
+    }
+    expect((await pub('GET', '/health')).json()).toEqual({ ok: true });
+    expect((await harness.app.inject({ method: 'GET', url: '/health' })).json()).toMatchObject({ ok: true, version: expect.any(String) });
   });
 
   it('keeps the console’s API off the public URL, and the remote paths off this machine’s', async () => {

@@ -27,7 +27,7 @@ export function createRemoteMcp(opts: { provider: string; logger?: Logger; /** F
         ...opts.husk,
         spec: { provider: opts.provider },
         ephemeral: false,
-        remote: { owner: who.owner, platform: platformName(who.name), approve: who.approve, origin: who.origin },
+        remote: { owner: who.owner, platform: platformName(who.name), approve: who.approve, origin: who.origin, client: who.client },
         ...(opts.logger ? { logger: opts.logger } : {}),
       });
       husks.set(key, husk);
