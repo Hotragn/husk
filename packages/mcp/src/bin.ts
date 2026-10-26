@@ -181,13 +181,14 @@ async function runJobs(): Promise<void> {
     return { url: rec.url, token: rec.token };
   };
   let server: Awaited<ReturnType<typeof serveJobs>> | undefined;
-  let idle = false;
+  // Why it left before serveJobs returned, if it did: a sync at start found no trigger.
+  let idle = '';
   const leave = (why: string) => {
     log.info(`leaving: ${why}`);
     void (server?.close() ?? Promise.resolve()).then(() => process.exit(0));
   };
-  server = await serveJobs({ shared, logger: log, onIdle: () => (server ? leave('no bot has a trigger') : (idle = true)) });
-  if (idle) leave('no bot has a trigger');
+  server = await serveJobs({ shared, logger: log, leave: (why) => (server ? leave(why) : (idle = why)) });
+  if (idle) leave(idle);
   process.once('SIGINT', () => leave('SIGINT'));
   process.once('SIGTERM', () => leave('SIGTERM'));
 }

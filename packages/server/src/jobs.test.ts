@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +7,7 @@ import { createLogger } from '@husk-ai/core';
 import type { HuskSpec, RunResult } from '@husk-ai/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveConfig } from './deps.js';
-import { JobsLink, createJobsApp, readJobsRecord, remoteRunner, writeJobsRecord } from './jobs.js';
+import { JobsLink, createJobsApp, dismissJobHost, readJobsRecord, remoteRunner, writeJobsRecord } from './jobs.js';
 import type { JobsRecord } from './jobs.js';
 import type { RunRequestBody, Runner } from './runner.js';
 import type { Store } from './store.js';
@@ -30,12 +31,13 @@ afterEach(async () => {
 });
 
 /** A job host on a port of its own, over the same husks, running with `runner`. */
-async function jobHost(store: Store, runner: Pick<Runner, 'run' | 'stream'>) {
+async function jobHost(store: Store, runner: Pick<Runner, 'run' | 'stream'>, leave?: (why: string) => void) {
   const token = 'jobs-token';
   const app = await createJobsApp({
     deps: { manager: new FakeManager(), router: new FakeRouter(), store, logger: log, config: resolveConfig({ host: '127.0.0.1', port: 0, token }) },
     runner,
     token,
+    ...(leave ? { leave } : {}),
   });
   await app.listen({ host: '127.0.0.1', port: 0 });
   open.push(() => app.close());
@@ -74,6 +76,17 @@ describe('the job host', { timeout: 30_000 }, () => {
     const runner = remoteRunner(async () => ({ url, token: 'wrong-token' }));
     await expect(runner.run({ name: 'hello' } as HuskSpec, { input: 'hi' })).rejects.toThrow();
   });
+
+  it('leaves once no bot has a trigger, or when a Husk that mounts them itself asks', async () => {
+    const shared = await buildTestApp({ token: 'shared-token' });
+    open.push(() => shared.cleanup());
+    const left: string[] = [];
+    const jobs = await jobHost(shared.store, remoteRunner(async () => ({ url: 'http://127.0.0.1:9', token: null })), (why) => left.push(why));
+    expect(left).toEqual(['no bot has a trigger']);
+    writeJobsRecord(jobs.record);
+    await dismissJobHost();
+    await vi.waitFor(() => expect(left).toEqual(['no bot has a trigger', 'a Husk that mounts the triggers itself started']));
+  });
 });
 
 describe('the Husk chats start', { timeout: 30_000 }, () => {
@@ -85,7 +98,6 @@ describe('the Husk chats start', { timeout: 30_000 }, () => {
         asked.push(`${spec.name}: ${String(body.input)}`);
         return answer;
       },
-      // eslint-disable-next-line require-yield
       async *stream() {
         return;
       },
@@ -121,5 +133,25 @@ describe('the Husk chats start', { timeout: 30_000 }, () => {
     expect((await shared.app.inject({ method: 'POST', url: '/v1/t/hello/ask', payload: { input: 'hi' } })).statusCode).toBe(401);
     expect((await shared.app.inject({ method: 'POST', url: '/v1/t/nowhere', headers: bearer('shared-token'), payload: { input: 'hi' } })).statusCode).toBe(404);
     expect(started).toBe(1);
+  });
+
+  it('never hands the job host its own token, in a header or in the address', async () => {
+    const seen: Array<{ url: string; auth: string | undefined }> = [];
+    const fake = createServer((req, res) => {
+      seen.push({ url: req.url ?? '', auth: req.headers.authorization });
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end('event: done\ndata: {}\n\n');
+    });
+    await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
+    open.push(() => new Promise((r) => fake.close(r)));
+    writeJobsRecord({ url: `http://127.0.0.1:${(fake.address() as AddressInfo).port}`, token: 'jobs-token', pid: 1, version: 'test', startedAt: '' });
+    const shared = await buildTestApp({ token: 'shared-token', jobs: (store) => new JobsLink({ start: () => undefined, store, log }) });
+    open.push(() => shared.cleanup());
+
+    // An event stream may only carry its token in the address.
+    const res = await shared.app.inject({ method: 'GET', url: '/v1/t/hello/ask?input=hi&token=shared-token', headers: { accept: 'text/event-stream' } });
+    expect(res.statusCode).toBe(200);
+    expect(seen.find((s) => s.url.startsWith('/v1/t/'))).toEqual({ url: '/v1/t/hello/ask?input=hi', auth: 'Bearer jobs-token' });
+    expect(JSON.stringify(seen)).not.toContain('shared-token');
   });
 });

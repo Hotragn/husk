@@ -5,7 +5,7 @@ import type { Logger, ModelProvider } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
 import { startChatIdleStop } from './chat-idle.js';
-import { JobsLink, clearJobsRecord, createJobsApp, remoteRunner, writeJobsRecord } from './jobs.js';
+import { JobsLink, clearJobsRecord, createJobsApp, dismissJobHost, remoteRunner, writeJobsRecord } from './jobs.js';
 import type { SharedHusk } from './jobs.js';
 import type { CreateAppOptions } from './app.js';
 import { resolveConfig } from './deps.js';
@@ -191,6 +191,7 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
   if (!config.token) log.info('no HUSK_TOKEN set -- loopback connections only');
   // A bot with a trigger has its job host from the start, not from the first webhook.
   if (jobs) void jobs.sync().catch((err: unknown) => log.error('the job host could not be started', err));
+  else if (daemon) void dismissJobHost();
 
   let closing: Promise<void> | undefined;
   const close = async (): Promise<void> => {
@@ -234,10 +235,10 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
  * Be the job host (jobs.ts): the husks' triggers on a loopback port of its
  * own (HUSK_JOBS_PORT, or any free one), with a minted token, and every run
  * asked of the shared Husk that `shared` finds or starts. Writes
- * ~/.husk/jobs.json so the shared Husk finds it. `onIdle` runs once no husk
+ * ~/.husk/jobs.json so the shared Husk finds it. `leave` runs once no husk
  * has a trigger left.
  */
-export async function serveJobs(opts: { shared: () => Promise<SharedHusk>; logger?: Logger; onIdle?: () => void }): Promise<RunningServer> {
+export async function serveJobs(opts: { shared: () => Promise<SharedHusk>; logger?: Logger; leave?: (why: string) => void }): Promise<RunningServer> {
   const log = opts.logger ?? createLogger({ scope: 'husk jobs' });
   ensurePaths();
   const config = resolveConfig({ host: '127.0.0.1', port: Number(process.env.HUSK_JOBS_PORT) || 0 });
@@ -248,7 +249,7 @@ export async function serveJobs(opts: { shared: () => Promise<SharedHusk>; logge
     deps: { ...built, logger: log, config },
     runner: remoteRunner(opts.shared),
     token,
-    ...(opts.onIdle ? { onIdle: opts.onIdle } : {}),
+    ...(opts.leave ? { leave: opts.leave } : {}),
   });
   await app.listen({ host: config.host, port: config.port });
   const address = app.server.address();

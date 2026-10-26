@@ -132,14 +132,15 @@ async function* events(res: Response): AsyncGenerator<ServerRunEvent> {
 
 /**
  * The job host's app: the husks' trigger routes and nothing else, behind a
- * token of its own, with every run asked of the shared Husk. `onIdle` runs
- * when a sync finds no husk with a trigger left to host.
+ * token of its own, with every run asked of the shared Husk. `leave` runs
+ * when a sync finds no husk with a trigger left to host, or when a Husk that
+ * mounts the triggers itself asks (`POST /v1/shutdown`).
  */
 export async function createJobsApp(opts: {
   deps: ServerDeps;
   runner: Pick<Runner, 'run' | 'stream'>;
   token: string;
-  onIdle?: () => void;
+  leave?: (why: string) => void;
 }): Promise<FastifyInstance> {
   const deps = resolveDeps(opts.deps);
   await deps.store.init();
@@ -153,10 +154,14 @@ export async function createJobsApp(opts: {
   const host = createTriggerHost(app);
   const sync = async () => {
     const mounted = await host.sync();
-    if (!mounted.length) opts.onIdle?.();
+    if (!mounted.length) opts.leave?.('no bot has a trigger');
     return mounted;
   };
   app.post('/v1/triggers/sync', async () => ({ triggers: await sync() }));
+  app.post('/v1/shutdown', async () => {
+    setImmediate(() => opts.leave?.('a Husk that mounts the triggers itself started'));
+    return { ok: true };
+  });
   await sync();
   host.start();
   await app.ready();
@@ -235,6 +240,18 @@ export class JobsLink implements TriggerSync {
   async stop(): Promise<void> {}
 }
 
+/**
+ * Ask a running job host to leave. `husk serve` mounts the triggers itself,
+ * and a job host left by a Husk a chat started would fire each one again.
+ */
+export async function dismissJobHost(): Promise<void> {
+  const rec = readJobsRecord();
+  if (!rec) return;
+  await fetch(`${rec.url}/v1/shutdown`, { method: 'POST', headers: { authorization: `Bearer ${rec.token}` }, signal: AbortSignal.timeout(2000) }).catch(
+    () => undefined,
+  );
+}
+
 /** Headers a hop sets for itself, and the shared Husk's own token, which the job host never sees. */
 const HOP = new Set(['host', 'authorization', 'connection', 'keep-alive', 'content-length', 'transfer-encoding', 'content-encoding', 'upgrade']);
 
@@ -261,7 +278,11 @@ export function proxyTriggers(app: FastifyInstance, link: JobsLink): void {
     for (const [name, value] of Object.entries(req.headers)) {
       if (value !== undefined && !HOP.has(name)) headers[name] = Array.isArray(value) ? value.join(', ') : value;
     }
-    const res = await fetch(`${rec.url}${req.url}`, {
+    // An event stream may carry the shared Husk's token in the address (auth.ts): not passed on.
+    const url = new URL(req.url, rec.url);
+    url.searchParams.delete('token');
+    url.searchParams.delete('access_token');
+    const res = await fetch(url, {
       method: req.method,
       headers,
       ...(req.rawBody?.length && req.method !== 'GET' && req.method !== 'HEAD' ? { body: req.rawBody } : {}),
