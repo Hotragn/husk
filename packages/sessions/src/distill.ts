@@ -111,6 +111,9 @@ const TOOL_BUNDLES: Array<{ bundle: string; re: RegExp }> = [
   { bundle: 'web', re: /^(webfetch|websearch|web_search|browse|browser|fetch|navigate|http|curl|url|search)/i },
 ];
 
+/** A tool's own name: `mcp__husk__browser_goto` is `browser_goto`, a computer's browser, not a tool of its own. */
+const bare = (name: string): string => name.replace(/^mcp__.+?__/, '');
+
 /** Orchestration plumbing. Real in the transcript, meaningless in a husk.yaml. */
 const IGNORED_TOOLS = /^(task|todowrite|todoread|exitplanmode|enterplanmode|sendmessage|taskoutput|taskstop|toolsearch|skill|monitor|askuserquestion|thinking)$/i;
 
@@ -406,8 +409,8 @@ export function observedTools(transcript: Transcript): ObservedTools {
   const bundles = new Set<string>();
   const passthrough = new Set<string>();
   for (const name of raw) {
-    if (IGNORED_TOOLS.test(name)) continue;
-    const hit = TOOL_BUNDLES.find((b) => b.re.test(name));
+    if (IGNORED_TOOLS.test(bare(name))) continue;
+    const hit = TOOL_BUNDLES.find((b) => b.re.test(bare(name)));
     if (hit) bundles.add(hit.bundle);
     else passthrough.add(name);
   }
@@ -830,7 +833,7 @@ export function normaliseTools(suggested: string[], needsComputer: boolean): str
       out.add(lower);
       continue;
     }
-    const hit = TOOL_BUNDLES.find((b) => b.re.test(name));
+    const hit = TOOL_BUNDLES.find((b) => b.re.test(bare(name)));
     if (hit) out.add(hit.bundle);
   }
   if (needsComputer) out.add('computer');

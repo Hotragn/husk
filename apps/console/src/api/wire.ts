@@ -166,6 +166,8 @@ export interface HuskSummary {
   displayName: string;
   description: string;
   model: string;
+  /** `builtin`, or the person's own `claude-code` or `codex`. Absent from an older Husk. */
+  engine?: string;
   version: string;
   tools: string[];
   triggers: string[];
@@ -363,14 +365,32 @@ export interface ActivityEntry {
 export interface BotDraft {
   transcriptId: string;
   yaml: string;
-  spec: { name: string; engine?: { type: BotEngine | 'codex'; resume?: string } };
+  spec: { name: string; engine?: { type: BotEngine; resume?: string } };
   distilled: { confidence?: number; notes?: string[] };
-  /** The person's own Claude Code is installed where the shared Husk can start it. */
-  claudeCode?: boolean;
+  /** What the draft can run on, best first; absent from an older Husk. */
+  engines?: BotEngine[];
+  /** On Claude Code, the bot would go on with this chat rather than start from the draft. */
+  continues?: boolean;
 }
 
-/** What a bot made from a chat runs on: the person's Claude Code, continuing the chat, or Husk's own engine. */
-export type BotEngine = 'claude-code' | 'builtin';
+/** What a bot made from a chat runs on: the person's own Claude Code or Codex, or Husk's own engine. */
+export type BotEngine = 'claude-code' | 'codex' | 'builtin';
+
+/** A chat Husk found on this machine, as `GET /v1/sessions/discover` lists it. */
+export interface FoundChat {
+  id: string;
+  source: string;
+  title: string;
+  messageCount: number;
+  updatedAt: string;
+  /** The file it is in. */
+  origin: string;
+}
+
+/** `POST /v1/sessions/import`: the chat, or, for a file that holds many, which one. */
+export type ImportedChat =
+  | { transcript: { id: string; title?: string; source: string } }
+  | { source: string; choices: Array<{ id: string; title: string; messages: number; updatedAt?: string }> };
 
 /** A chat app Husk can connect, as `GET /v1/setup` reports it. */
 export interface ChatApp {

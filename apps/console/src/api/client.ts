@@ -47,6 +47,8 @@ import type {
   ActivityEntry,
   BotDraft,
   BotEngine,
+  FoundChat,
+  ImportedChat,
   ComputerChoice,
   ConnectResult,
   SetupState,
@@ -199,6 +201,22 @@ export class HuskApi {
   makeBot(id: string, opts: { useModel?: boolean; engine?: BotEngine } = {}): Promise<BotDraft> {
     const body = { useModel: opts.useModel ?? false, ...(opts.engine ? { engine: opts.engine } : {}) };
     return this.client.http.request<BotDraft>('POST', `/v1/computers/${enc(id)}/bot`, { body, timeoutMs: 600_000 });
+  }
+
+  /** `GET /v1/sessions/discover`: chats found where each app keeps them, newest first. */
+  async findChats(signal?: AbortSignal): Promise<FoundChat[]> {
+    const res = await this.client.http.request<{ sessions: FoundChat[] }>('GET', '/v1/sessions/discover', { ...(signal ? { signal } : {}), timeoutMs: 60_000 });
+    return res.sessions;
+  }
+
+  /** `POST /v1/sessions/import`: a chat by its file or its text; `pick` chooses one from a file that holds many. */
+  importChat(input: { path?: string; content?: string; pick?: string }): Promise<ImportedChat> {
+    return this.client.http.request<ImportedChat>('POST', '/v1/sessions/import', { body: input, timeoutMs: 600_000 });
+  }
+
+  /** `POST /v1/sessions/distill`: a bot draft from an imported chat. */
+  draftBot(transcriptId: string, opts: { engine?: BotEngine } = {}): Promise<BotDraft> {
+    return this.client.http.request<BotDraft>('POST', '/v1/sessions/distill', { body: { transcriptId, ...opts }, timeoutMs: 600_000 });
   }
 
   // -- setup ----------------------------------------------------------------

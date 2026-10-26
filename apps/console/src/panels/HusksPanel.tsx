@@ -34,8 +34,11 @@ import {
   StatusLine,
   formatWhen,
 } from '../components/primitives';
+import { MakeBotFromChat } from './MakeBotFromChat';
 
 const APPROVAL_TIMEOUT_MS = 120_000;
+/** A bot on the person's own CLI shows it where a model would be. */
+const ENGINE_NAME: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
 
 export function HusksPanel() {
   const { api, revision } = useConnection();
@@ -62,6 +65,8 @@ export function HusksPanel() {
         Husks
       </span>
 
+      <MakeBotFromChat />
+
       {husks.error ? <ErrorBlock error={husks.error} retry={husks.reload} /> : null}
       {!husks.data && husks.loading && husks.slow ? <StatusLine text="Reading ~/.husk/husks…" /> : null}
       {!husks.data && husks.showSkeleton && !husks.slow ? <Skeleton rows={4} /> : null}
@@ -82,7 +87,7 @@ export function HusksPanel() {
               <thead>
                 <tr>
                   <th scope="col">Name</th>
-                  <th scope="col">Model</th>
+                  <th scope="col">Runs on</th>
                   <th scope="col">Tools</th>
                   <th scope="col">Triggers</th>
                   <th scope="col">Computer</th>
@@ -109,7 +114,7 @@ export function HusksPanel() {
                       {h.name}
                       {h.displayName !== h.name ? <span className="field-note"> · {h.displayName}</span> : null}
                     </td>
-                    <td className="mono">{h.model}</td>
+                    <td className="mono">{h.engine && h.engine !== 'builtin' ? `${ENGINE_NAME[h.engine] ?? h.engine}${h.model !== 'auto' ? ` · ${h.model}` : ''}` : h.model}</td>
                     <td className="mono">{h.tools.join(', ') || '—'}</td>
                     <td className="mono">{h.triggers.join(', ') || '—'}</td>
                     <td>{h.computer.enabled ? <Badge>{h.computer.flavor}</Badge> : <Badge>off</Badge>}</td>

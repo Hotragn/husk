@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { discover, prettyTitle } from './discover.js';
 
 /**
@@ -127,5 +127,23 @@ describe('prettyTitle', () => {
     await expect(prettyTitle('chat-with-dashes.json', 'chatgpt')).resolves.toBe(
       'chat-with-dashes.json',
     );
+  });
+
+  it('finds Codex sessions where Codex keeps them, titled by what the person asked', async () => {
+    const codexHome = await cwd();
+    const day = join(codexHome, 'sessions', '2026', '10', '25');
+    await mkdir(day, { recursive: true });
+    const rollout = [
+      { timestamp: '2026-10-25T10:00:00.000Z', type: 'session_meta', payload: { id: 'codex-1' } },
+      { timestamp: '2026-10-25T10:00:01.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Tidy the release notes every Friday' }] } },
+    ];
+    await writeFile(join(day, 'rollout-2026-10-25T10-00-00-c0de.jsonl'), rollout.map((l) => JSON.stringify(l)).join('\n'));
+    vi.stubEnv('CODEX_HOME', codexHome);
+    try {
+      const found = await discover({ cwd: codexHome, source: 'codex' });
+      expect(found).toEqual([expect.objectContaining({ source: 'codex', title: 'Tidy the release notes every Friday' })]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

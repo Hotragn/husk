@@ -58,7 +58,8 @@ beforeEach(() => {
         const asked = (JSON.parse(String(init?.body ?? '{}')) as { engine?: string }).engine;
         const type = asked ?? (claudeCode ? 'claude-code' : 'builtin');
         const engine = type === 'claude-code' ? { type, resume: 'sess-1' } : { type };
-        return Response.json({ transcriptId: 'tr_1', yaml: `name: ci-triage\nengine:\n  type: ${type}\n`, spec: { name: 'ci-triage', engine }, distilled: { confidence: 0.16, notes: ['Review the persona before shipping.'] }, claudeCode });
+        const engines = claudeCode ? ['claude-code', 'builtin'] : ['builtin'];
+        return Response.json({ transcriptId: 'tr_1', yaml: `name: ci-triage\nengine:\n  type: ${type}\n`, spec: { name: 'ci-triage', engine }, distilled: { confidence: 0.16, notes: ['Review the persona before shipping.'] }, engines, continues: true });
       }
       if (path === '/v1/husks/ci-triage' && (init?.method ?? 'GET') === 'GET')
         return existing ? Response.json({ spec: { name: 'ci-triage' }, yaml: '' }) : Response.json({ error: { code: 'E_HUSK_NOT_FOUND', message: 'no' } }, { status: 404 });
@@ -226,7 +227,8 @@ describe('Chat panel', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Make this a bot' }));
     const runsOn = (await screen.findByLabelText('Runs on')) as HTMLSelectElement;
     expect(runsOn.value).toBe('claude-code');
-    expect(screen.getByText(/goes on with this chat on this computer/)).toBeTruthy();
+    expect(screen.getByText(/goes on with this chat on its computer/)).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Your Claude Code, continuing this chat' })).toBeTruthy();
     fireEvent.change(runsOn, { target: { value: 'builtin' } });
     await waitFor(() => expect((screen.getByLabelText('Runs on') as HTMLSelectElement).value).toBe('builtin'));
     expect(calls.filter((c) => c.path === '/v1/computers/cmp_chat/bot').at(-1)?.body).toContain('"engine":"builtin"');

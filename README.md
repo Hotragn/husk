@@ -188,8 +188,9 @@ husk distill <id> --out triage.yaml  # conversation → agent spec
 husk run triage.yaml "check the build"
 ```
 
-Importers read Claude Code JSONL, ChatGPT, Cursor, Gemini and markdown into one
-`Transcript`. Branched threads are rebuilt by walking `parentUuid` back from the last
+Importers read Claude Code JSONL, Codex rollouts, ChatGPT, Cursor, Gemini and markdown
+into one `Transcript`. In the console, **Husks › Make a bot from a chat** does the same
+from a chat it finds on this computer, an export, or pasted text. Branched threads are rebuilt by walking `parentUuid` back from the last
 leaf. The distiller runs with no API key at all, and the model-backed mode falls back to
 that free path rather than failing. Secrets are stripped before the file is written,
 not after.
@@ -223,7 +224,8 @@ engine:
 ```
 
 From a Claude Code chat, the console's **Make this a bot** sets this up when Claude Code
-is installed, so the bot is that chat going on. The
+is installed, so the bot is that chat going on; a Codex chat runs on Codex when Codex is
+installed. The
 [husk.yaml reference](apps/docs/content/chat-to-bot/husk-yaml.mdx#engine) has the details.
 
 ## What is in it

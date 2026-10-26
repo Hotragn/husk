@@ -1,12 +1,17 @@
 ---
 title: Importing a transcript
 navTitle: Importing
-description: Claude Code, ChatGPT, Cursor, Gemini and markdown, normalised into one Transcript.
+description: Claude Code, Codex, ChatGPT, Cursor, Gemini and markdown, normalised into one Transcript.
 order: 1
 ---
 
 The conversation you had yesterday is a bot you can run today, and the first step is
 getting it out of whatever tool it happened in.
+
+In the console, a Claude Code or Codex chat that used Husk has **Make this a bot** on its
+page: Husk reads the chat back itself. For any other chat, **Husks › Make a bot from a
+chat** finds the chats on this computer, or takes an export or pasted text, and shows the
+draft before anything is saved. At the terminal:
 
 ```bash
 husk import
@@ -43,15 +48,21 @@ husk import ~/.claude/projects/-home-me-api/4f2a91c3.jsonl
 Imported transcripts are cached under `~/.husk/transcripts/` and get an id you can hand
 to `husk distill`.
 
-## The five importers
+## The six importers
 
 | Source | Format | Where it looks |
 | --- | --- | --- |
 | `claude-code` | JSONL event log | `~/.claude/projects/**/*.jsonl`, `~/.config/claude/projects/**/*.jsonl`, or `$CLAUDE_CONFIG_DIR/projects` |
+| `codex` | One JSONL rollout per session | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`, or `$CODEX_HOME/sessions` |
 | `chatgpt` | `conversations.json` from a data export | `~/Downloads`, `~/Documents` |
 | `cursor` | `state.vscdb`, or an exported JSON/markdown chat | The platform's Cursor `globalStorage` directory |
 | `gemini` | CLI checkpoints, or a Takeout "My Activity" export | `~/.gemini/tmp/**` |
 | `markdown` | A pasted conversation with role markers | Nowhere — pass a path |
+
+A Codex rollout carries Codex's own context beside the chat: the environment, AGENTS.md,
+permission notes. The importer keeps only what you and Codex said and the tools it called.
+A file that holds many chats, such as a ChatGPT export or Cursor's `state.vscdb`, asks
+which one in the console; `husk import` keeps them all.
 
 Detection is a cheap sniff over the first 32 KB, scoring each importer 0–1, and the
 highest scorer that actually parses wins. `--source` skips it entirely.

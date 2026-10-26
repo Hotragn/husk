@@ -7,7 +7,7 @@ import type { Transcript, TranscriptImporter, TranscriptSource } from '@husk-ai/
 export async function importers(): Promise<TranscriptImporter[]> {
   const m = await import('@husk-ai/sessions');
   const built: TranscriptImporter[] = [];
-  for (const Ctor of [m.ClaudeCodeImporter, m.ChatGPTImporter, m.CursorImporter, m.GeminiImporter, m.MarkdownImporter, m.UniversalImporter]) {
+  for (const Ctor of [m.ClaudeCodeImporter, m.ChatGPTImporter, m.CodexImporter, m.CursorImporter, m.GeminiImporter, m.MarkdownImporter, m.UniversalImporter]) {
     if (typeof Ctor === 'function') built.push(new Ctor() as TranscriptImporter);
   }
   return built;

@@ -2,7 +2,7 @@ import { open, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { TranscriptSource } from '@husk-ai/core';
-import { parseClaudeJsonl, parseMarkdownChat } from '@husk-ai/sessions';
+import { CursorImporter, codexSessions, parseClaudeJsonl, parseCodexRollout, parseMarkdownChat } from '@husk-ai/sessions';
 
 /**
  * Find transcripts without being told where they are.
@@ -58,6 +58,10 @@ function roots(cwd: string): Root[] {
     // Claude Code keeps one JSONL per session under a per-project directory.
     { dir: join(home, '.claude', 'projects'), source: 'claude-code', match: /\.jsonl$/i, depth: 2 },
     { dir: join(home, '.claude'), source: 'claude-code', match: /\.jsonl$/i, depth: 1 },
+    // Codex keeps one rollout per session, by date: sessions/YYYY/MM/DD.
+    { dir: codexSessions(), source: 'codex', match: /^rollout-.*\.jsonl$/i, depth: 3 },
+    // Cursor keeps every chat in one SQLite file; importing it asks which one.
+    { dir: new CursorImporter().defaultLocations()[0] ?? join(home, '.cursor'), source: 'cursor', match: /^state\.vscdb$/i, depth: 0 },
     // A ChatGPT export lands in Downloads as conversations.json.
     { dir: join(home, 'Downloads'), source: 'chatgpt', match: /^conversations.*\.json$/i, depth: 1 },
     { dir: join(home, 'Downloads'), source: 'universal', match: /chat.*\.json$/i, depth: 1 },
@@ -91,7 +95,8 @@ async function walk(dir: string, root: Root, depth: number, out: Map<string, Can
 
   let entries;
   try {
-    entries = await readdir(dir, { withFileTypes: true });
+    // Newest first where names are dates (Codex's YYYY/MM/DD), so the file cap keeps the recent ones.
+    entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) => b.name.localeCompare(a.name));
   } catch {
     // A root that does not exist is the normal case, not an error worth showing.
     return;
@@ -155,5 +160,21 @@ export async function prettyTitle(path: string, source: TranscriptSource): Promi
     }
     return project && project !== '.claude' ? `${project}  ${file.slice(0, 8)}` : file;
   }
+  if (source === 'codex') {
+    // A rollout's name is a time and a uuid; what the person first asked says more.
+    try {
+      const fh = await open(path, 'r');
+      try {
+        const buf = Buffer.alloc(SNIFF_BYTES);
+        const { bytesRead } = await fh.read(buf, 0, SNIFF_BYTES, 0);
+        return parseCodexRollout(buf.subarray(0, bytesRead).toString('utf8'), path)[0]?.title ?? file;
+      } finally {
+        await fh.close();
+      }
+    } catch {
+      return file;
+    }
+  }
+  if (source === 'cursor' && file.endsWith('.vscdb')) return 'Every Cursor chat (pick one when importing)';
   return file;
 }

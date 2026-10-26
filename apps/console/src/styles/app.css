@@ -1796,6 +1796,46 @@ pre.code {
   white-space: pre;
 }
 
+/* Chats to make a bot from: a title that truncates, when, and a button. */
+.found-chats,
+.found-chats ul {
+  list-style: none;
+  margin: var(--space-3) 0;
+  padding: 0;
+  font-size: var(--font-size-sm);
+}
+
+fieldset.found-chats {
+  border: var(--border-width-thin) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+.found-chats li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content max-content;
+  align-items: center;
+  gap: 0 var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: var(--border-width-thin) solid var(--color-border);
+}
+
+.found-chats li:last-child {
+  border-bottom: 0;
+}
+
+.found-chats li > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-bot .field + .field,
+.chat-bot > .btn-row {
+  margin-top: var(--space-3);
+}
+
 /* -----------------------------------------------------------------------------
    Connect
    -------------------------------------------------------------------------- */
