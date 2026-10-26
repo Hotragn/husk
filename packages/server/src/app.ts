@@ -2,12 +2,15 @@ import { HUSK_PROTOCOL, HUSK_VERSION } from '@husk-ai/core';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import { assertBindIsSafe, installAuth, isLoopbackHost } from './auth.js';
+import { installBodyParsers } from './body.js';
 import { installConsole } from './console.js';
 import { createContext } from './context.js';
 import type { ServerContext } from './context.js';
 import { resolveDeps } from './deps.js';
 import type { ServerDeps } from './deps.js';
 import { huskError, installErrorHandling } from './errors.js';
+import { proxyTriggers } from './jobs.js';
+import type { JobsLink } from './jobs.js';
 import { approvalRoutes } from './routes/approvals.js';
 import { actorOf, handoffRoutes, refuseIfHeld } from './routes/handoffs.js';
 import { archiveRoutes } from './routes/archive.js';
@@ -30,6 +33,11 @@ export interface CreateAppOptions extends ServerDeps {
   unsafeAllowAnyBind?: boolean;
   approvalTimeoutMs?: number;
   workspaceStore?: WorkspaceStore;
+  /**
+   * The job host's link (jobs.ts): with it, this app mounts no trigger, forwards
+   * the trigger routes to the job host and starts it when a bot has one.
+   */
+  jobs?: JobsLink;
 }
 
 /**
@@ -131,7 +139,10 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   await app.register(eventRoutes);
   await registerWorkspaceRoutes(app, options.workspaceStore);
 
-  if (config.triggers !== false) {
+  if (options.jobs) {
+    ctx.triggers = options.jobs;
+    proxyTriggers(app, options.jobs);
+  } else if (config.triggers !== false) {
     const host = createTriggerHost(app);
     await host.sync();
     host.start();
@@ -145,50 +156,6 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
 
   await app.ready();
   return app;
-}
-
-/**
- * Raw body capture plus the parsers the API needs.
- *
- * Webhook signatures are computed over the exact bytes received. Re-serialising a
- * parsed object changes key order and whitespace, and then every signature fails
- * for a reason that is invisible in a log.
- */
-function installBodyParsers(app: FastifyInstance): void {
-  app.addContentTypeParser(
-    'application/json',
-    { parseAs: 'buffer' },
-    (req, body: Buffer, done: (err: Error | null, value?: unknown) => void) => {
-      req.rawBody = body;
-      if (body.length === 0) return done(null, undefined);
-      try {
-        done(null, JSON.parse(body.toString('utf8')));
-      } catch (err) {
-        const e = err as Error & { statusCode?: number };
-        e.statusCode = 400;
-        done(e);
-      }
-    },
-  );
-
-  app.addContentTypeParser(
-    ['text/plain', 'application/x-www-form-urlencoded'],
-    { parseAs: 'string' },
-    (req, body: string, done: (err: Error | null, value?: unknown) => void) => {
-      req.rawBody = Buffer.from(body, 'utf8');
-      done(null, body);
-    },
-  );
-
-  // Everything else -- file writes, tarballs, unknown webhook payloads -- stays bytes.
-  app.addContentTypeParser(
-    '*',
-    { parseAs: 'buffer' },
-    (req, body: Buffer, done: (err: Error | null, value?: unknown) => void) => {
-      req.rawBody = body;
-      done(null, body);
-    },
-  );
 }
 
 /**

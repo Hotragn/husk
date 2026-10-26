@@ -43,9 +43,30 @@ not here.
   - a notch when it is minimized;
   - a tray that tells you when a chat is waiting.
 
-  It is not released or signed yet
+  Each release attaches its installers for Windows, macOS and Linux, signed and
+  notarized when the release has the signing keys
   ([#178](https://github.com/Hotragn/husk/pull/178),
-  [#185](https://github.com/Hotragn/husk/pull/185)).
+  [#185](https://github.com/Hotragn/husk/pull/185),
+  [#231](https://github.com/Hotragn/husk/pull/231)).
+- **The desktop app updates itself.** A signed build looks on GitHub Releases at start and
+  every six hours, downloads in the background, and **Restart to update** in the tray
+  installs it. Husk keeps running, so chats keep their computers. An unsigned build, or
+  Linux, only says a new version is out. Chat apps that start the app's Husk follow it
+  when it updates or moves, keeping their flags and computer choice; an entry you pointed
+  elsewhere is left alone ([#232](https://github.com/Hotragn/husk/pull/232)).
+- **The desktop app says when Husk stops answering.** The Computers window shows a banner
+  and clears its screen, the tray, the corner and the notch say so too, and Take over
+  waits until Husk is back. The app starts Husk again, waiting longer after each failed
+  start, up to a minute ([#225](https://github.com/Hotragn/husk/pull/225)).
+- **The corner and the notch work by keyboard.** Ctrl+Alt+Shift+H (Cmd+Option+Shift+H on
+  a Mac) hands them the keyboard, and the tray lists every computer. With reduced motion
+  on, nothing pulses or flies in ([#226](https://github.com/Hotragn/husk/pull/226)).
+- **The desktop app on every platform and screen.** On Linux, clicks pass through around
+  the corner and the notch. They follow the main screen as screens come and go, and a
+  Computers window left on no screen comes back. On a Mac, minimizing to the notch keeps
+  the Dock icon; on Windows, a chat reopening the window no longer takes focus from what
+  you are typing. Closing the console window keeps its Terminal running
+  ([#227](https://github.com/Hotragn/husk/pull/227)).
 - **Take over at any moment**, from the console, the desktop app or a chat's link
   ([#180](https://github.com/Hotragn/husk/pull/180),
   [#182](https://github.com/Hotragn/husk/pull/182)).
@@ -106,6 +127,10 @@ not here.
   ([#205](https://github.com/Hotragn/husk/pull/205)).
 - **Only the shared Husk stops a chat's computer**, after ten idle minutes, and never one
   you hold ([#197](https://github.com/Hotragn/husk/pull/197)).
+- **An ssh or Fly computer's screen shows when you ask.** Each picture there is a command
+  on the computer, which kept it awake: **Look** shows it for a minute, and a computer you
+  hold shows all the time. Docker, Podman and local push their screen as before
+  ([#228](https://github.com/Hotragn/husk/pull/228)).
 
 ### Fixed
 
@@ -127,6 +152,13 @@ not here.
   behind drops frames ([#199](https://github.com/Hotragn/husk/pull/199), [#200](https://github.com/Hotragn/husk/pull/200)).
 - **Connecting Claude Code or Codex was refused** once the launch line pinned a version
   range ([#205](https://github.com/Hotragn/husk/pull/205)).
+- **Husk Bar could not reach the shared Husk**: it read only `HUSK_TOKEN`, and the shared
+  Husk makes its own. It now reads `~/.husk/daemon.json` on every poll, as the desktop app
+  does, and its pill makes way while the desktop app's notch shows the computers
+  ([#230](https://github.com/Hotragn/husk/pull/230)).
+- **A take-over from a computer's link could flick back** to Take over for a few seconds,
+  when a reading sent before it answered after it
+  ([#233](https://github.com/Hotragn/husk/pull/233)).
 - **Open bugs from the first users:** chat triggers, symlinks, duplicate names, `~/.husk`,
   a cold WSL and the model choice
   ([#174](https://github.com/Hotragn/husk/pull/174)).
@@ -171,6 +203,10 @@ not here.
   browser driver checks each redirect, link, frame and pop-up, and stops a refused load
   before anything is sent ([#218](https://github.com/Hotragn/husk/pull/218)).
 - **A browser script is held to `shell`'s rules** for what it hands a shell ([#222](https://github.com/Hotragn/husk/pull/222)).
+- **Deleting a chat's computer kept its logins.** On Docker and Podman, a chat's or a
+  bot's files and browser profile, cookies included, outlived it. The console's Delete,
+  once you type the id back, now removes them too. `husk rm` still means "stop for now",
+  and says what it keeps ([#229](https://github.com/Hotragn/husk/pull/229)).
 
 ## [0.1.4] - 2026-09-22
 

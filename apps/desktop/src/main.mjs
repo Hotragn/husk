@@ -641,7 +641,24 @@ async function smokeComputers() {
     check('the packaged app knows where its updates come from', existsSync(join(process.resourcesPath, 'app-update.yml')));
     check('it would only announce an update on this unsigned CI build, not install one', (await isSignedBuild()) === false);
   }
+  // The smoke script's stand-in for Ollama answers, so a bot can run with no model and no key.
+  if (process.env.OLLAMA_HOST) await smokeBot(check);
   return passed();
+}
+
+/** A bot with no tools, made and run through the Husk this app carries: the built-in engine ships with it. */
+async function smokeBot(check) {
+  const api = (method, path, body) =>
+    fetch(`${rec.url}${path}`, {
+      method,
+      headers: { 'content-type': 'application/json', ...(rec.token ? { authorization: `Bearer ${rec.token}` } : {}) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(60_000),
+    }).catch((err) => err);
+  const made = await api('POST', '/v1/husks', { spec: { name: 'smoke-bot', persona: 'Answer in one line.', tools: [], triggers: [] } });
+  const run = made instanceof Response && made.ok ? await api('POST', '/v1/husks/smoke-bot/run', { input: 'Say hello.' }) : made;
+  const said = run instanceof Response ? await run.text() : String(run?.message ?? run);
+  check('a bot runs on the built-in engine in the Husk this app carries', run instanceof Response && run.ok && said.includes('Hello from the stub model.'), `${run?.status ?? ''} ${said.slice(0, 240)}`);
 }
 
 /**
