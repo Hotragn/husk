@@ -38,14 +38,23 @@
       "perMachine": false
     },
     "mac": {
-      "target": "dmg",
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.developer-tools"
     },
     "linux": {
       "target": "AppImage",
       "category": "Development"
     },
-    "publish": null,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Hotragn",
+        "repo": "husk"
+      }
+    ],
     "afterPack": "scripts/after-pack.cjs",
     "electronFuses": {
       "runAsNode": true,
@@ -60,5 +69,8 @@
     "type": "git",
     "url": "git+https://github.com/Hotragn/husk.git",
     "directory": "apps/desktop"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.10"
   }
 }
