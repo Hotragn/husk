@@ -25,6 +25,10 @@
     "./tools": {
       "types": "./dist/tools.d.ts",
       "import": "./dist/tools.js"
+    },
+    "./remote": {
+      "types": "./dist/remote.d.ts",
+      "import": "./dist/remote.js"
     }
   },
   "files": [

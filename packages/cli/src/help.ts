@@ -243,12 +243,31 @@ export const COMMANDS: HelpEntry[] = [
     name: 'serve',
     group: 'system',
     summary: 'Start the control plane and any bots the husk declares',
-    usage: 'husk serve [--port 7377] [--host 127.0.0.1]',
+    usage: 'husk serve [--port 7377] [--host 127.0.0.1] [--remote --public-url https://<host> [--provider docker]]',
+    details:
+      'With --remote, chat apps on the web reach this Husk at <public URL>/mcp, published by a tunnel\n'
+      + 'you run (Tailscale Funnel keeps TLS on this machine). Only its owner can sign in: whoever first\n'
+      + 'types the claim code it prints, with a passkey after that. Remote chats get computers from an\n'
+      + 'isolated provider only, never this machine itself. Off unless you pass --remote.',
     flags: [
       ['--port <n>', 'default: 7377'],
       ['--host <h>', 'default: 127.0.0.1 -- loopback only unless you change it'],
+      ['--remote', 'serve /mcp to chat apps on the web, for the owner only'],
+      ['--public-url <url>', 'the fixed https name your tunnel gives this port; needed with --remote'],
+      ['--provider <name>', 'where remote chats get computers: docker (default), podman, fly or ssh'],
     ],
-    examples: ['husk serve', 'husk serve --port 8080'],
+    examples: ['husk serve', 'husk serve --port 8080', 'husk serve --remote --public-url https://box.tail1234.ts.net'],
+  },
+  {
+    name: 'remote',
+    group: 'system',
+    summary: 'Remote access: who may sign in, and a new claim code',
+    usage: 'husk remote [claim|reset]',
+    details:
+      'Talks to the Husk started with `husk serve --remote`, on this machine. `claim` prints a new\n'
+      + 'claim code while it has no owner. `reset` removes the owner, every app that signed in and\n'
+      + 'every token, and prints a claim code for a new owner.',
+    examples: ['husk remote', 'husk remote claim', 'husk remote reset'],
   },
   {
     name: 'mcp',

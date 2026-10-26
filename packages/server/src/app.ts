@@ -25,6 +25,9 @@ import { sessionRoutes } from './routes/sessions.js';
 import { createTriggerHost } from './triggers/index.js';
 import { toolRoutes } from './routes/tools.js';
 import { setupRoutes } from './routes/setup.js';
+import { isRemotePath } from './remote/oauth.js';
+import type { Remote } from './remote/oauth.js';
+import { remoteRoutes } from './remote/routes.js';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 
@@ -38,6 +41,8 @@ export interface CreateAppOptions extends ServerDeps {
    * the trigger routes to the job host and starts it when a bot has one.
    */
   jobs?: JobsLink;
+  /** Remote access, started: its OAuth server and `/mcp` under the public URL. */
+  remote?: Remote;
 }
 
 /**
@@ -83,11 +88,13 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   const websocket = (await import('@fastify/websocket')).default;
   await app.register(websocket, { options: { maxPayload: 4 * 1024 * 1024 } });
 
+  const remote = options.remote;
   installAuth(app, {
     token: config.token,
     publicPrefixes: ['/assets/', '/favicon', '/v1/a/'],
     scopeOf: (t) => ctx.scoped.verify(t),
     loopbackOnly: isLoopbackHost(config.host),
+    ...(remote ? { remote: { host: remote.host, origin: remote.origin, paths: isRemotePath } } : {}),
   });
 
   app.addHook('onSend', async (_req, reply, payload) => {
@@ -121,6 +128,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   await app.register(handoffRoutes);
   await app.register(toolRoutes);
   await app.register(setupRoutes);
+  if (remote) await app.register(async (scope) => remoteRoutes(scope, remote, deps.remoteMcp));
 
   // A newer Husk asks an older one to step aside, and the desktop app's "Quit
   // and stop Husk" uses it. Only when nobody is mid-run or mid-handoff: an

@@ -55,6 +55,12 @@ export interface HuskMcpOptions {
   logger?: Logger;
   profile?: WorkspaceProfile;
   workspaceStore?: WorkspaceStore;
+  /**
+   * A signed-in app over remote access (remote.ts): its chats carry their
+   * computer ids, its computers are bound under the owner, and it can reach
+   * no computer a chat on this machine made, nor they its.
+   */
+  remote?: { owner: string; platform: string };
 }
 
 /**
@@ -220,6 +226,7 @@ export class HuskMcpServer {
   /** Each open handoff's link, to give again when the person answers "not yet". */
   private readonly handoffLinks = new Map<string, string>();
   private stdio?: StdioServerHandle;
+  private readonly remote: { owner: string; platform: string } | undefined;
 
   constructor(opts: HuskMcpOptions = {}) {
     this.manager = opts.manager ?? new ComputerManager();
@@ -229,7 +236,8 @@ export class HuskMcpServer {
     // CLAUDE_CODE_SESSION_ID (https://code.claude.com/docs/en/env-vars). Other
     // hosts may share one process across every chat, so there the chat itself
     // carries its computer id forward.
-    this.identity = this.namedSession ? 'named' : this.hostSessionId ? 'session' : 'first-call';
+    this.remote = opts.remote;
+    this.identity = opts.remote ? 'first-call' : this.namedSession ? 'named' : this.hostSessionId ? 'session' : 'first-call';
     this.spec = opts.spec ?? {};
     this.ephemeral = opts.ephemeral ?? true;
     this.useDaemon = opts.daemon ?? true;
@@ -243,48 +251,63 @@ export class HuskMcpServer {
     // stderr only: stdout is the protocol.
     this.log = opts.logger ?? createLogger({ scope: 'mcp' });
 
-    this.mcp = new Server(
+    this.mcp = this.newServer();
+  }
+
+  /**
+   * A protocol instance over this Husk's state: the one stdio serves, or one
+   * for each request when remote access serves an app over HTTP (remote.ts).
+   */
+  newServer(): Server {
+    const server = new Server(
       { name: 'husk', version: HUSK_VERSION },
       {
         // `listChanged` is declared because the tool descriptions are not final
         // at this point: see `announceDegradation`.
         capabilities: { tools: { listChanged: true }, prompts: {}, resources: {} },
-        instructions: WORKSPACE_INSTRUCTIONS + '\n' + (this.profile === 'starter'
-          ? 'This session starts with workspace tools only. The user can enable computer tools in the viewer Advanced settings after reviewing the environment.'
-          :
-          COMPUTER_INSTRUCTIONS),
+        instructions: this.remote
+          ? COMPUTER_INSTRUCTIONS
+          : WORKSPACE_INSTRUCTIONS + '\n' + (this.profile === 'starter'
+            ? 'This session starts with workspace tools only. The user can enable computer tools in the viewer Advanced settings after reviewing the environment.'
+            :
+            COMPUTER_INSTRUCTIONS),
         requestState: { verify: this.asked.verify },
       },
     );
-
-    this.registerHandlers();
+    this.registerHandlers(server);
+    return server;
   }
 
-  private registerHandlers(): void {
-    this.mcp.setRequestHandler('tools/list', async (_request, ctx) => {
+  private registerHandlers(server: Server): void {
+    server.setRequestHandler('tools/list', async (_request, ctx) => {
       this.noteClient(ctx);
       // Plain JSON Schema objects, each with `type: 'object'`, which ToolDef does not spell out.
-      return { tools: [...WORKSPACE_TOOLS, ...(this.profile === 'computer' ? this.computerTools() : [])] as Tool[] };
+      // Workspaces live on the machine Husk runs on, and fetch from its network: never a remote chat's.
+      const workspace = this.remote ? [] : WORKSPACE_TOOLS;
+      return { tools: [...workspace, ...(this.profile === 'computer' ? this.computerTools() : [])] as Tool[] };
     });
 
     // The computer card, for clients that render MCP Apps. CSP is left empty on
     // purpose: the card makes no network requests, so the host's restrictive default fits.
-    this.mcp.setRequestHandler('resources/list', async () => ({
+    server.setRequestHandler('resources/list', async () => ({
       resources: [{ uri: CARD_URI, name: 'Husk computer card', mimeType: CARD_MIME }],
     }));
-    this.mcp.setRequestHandler('resources/read', async (request) => {
+    server.setRequestHandler('resources/read', async (request) => {
       if (request.params.uri !== CARD_URI) throw new Error(`Unknown resource ${request.params.uri}`);
       return { contents: [{ uri: CARD_URI, mimeType: CARD_MIME, text: CARD_HTML, _meta: { ui: { csp: {} } } }] };
     });
 
-    this.mcp.setRequestHandler('prompts/list', async () => ({ prompts: this.profile === 'computer' ? PROMPTS : [] }));
-    this.mcp.setRequestHandler('prompts/get', async (request) => getPrompt(request.params.name, request.params.arguments));
+    server.setRequestHandler('prompts/list', async () => ({ prompts: this.profile === 'computer' ? PROMPTS : [] }));
+    server.setRequestHandler('prompts/get', async (request) => getPrompt(request.params.name, request.params.arguments));
 
-    this.mcp.setRequestHandler('tools/call', async (request, ctx): Promise<CallToolResult | InputRequiredResult> => {
+    server.setRequestHandler('tools/call', async (request, ctx): Promise<CallToolResult | InputRequiredResult> => {
       this.noteClient(ctx);
       const extra = ctx.mcpReq;
       const { name, arguments: args } = request.params;
-      if (WORKSPACE_TOOL_NAMES.has(name)) return this.workspaceTools.call(name, (args ?? {}) as Record<string, unknown>);
+      if (WORKSPACE_TOOL_NAMES.has(name)) {
+        if (this.remote) return { isError: true, content: [{ type: 'text', text: 'Workspace tools are not offered remotely: they work on the files of the machine Husk runs on.' }] };
+        return this.workspaceTools.call(name, (args ?? {}) as Record<string, unknown>);
+      }
       if (this.profile !== 'computer') return { isError: true, content: [{ type: 'text', text: 'Computer tools are disabled. The user can enable them from Advanced in the workspace viewer after reviewing the environment.' }] };
       if (CARD_APP_TOOL_NAMES.has(name)) return this.cardTool(name, (args ?? {}) as Record<string, unknown>);
       if (name === OPEN_UI_TOOL.name) return this.openUi((args ?? {}) as Record<string, unknown>);
@@ -577,7 +600,7 @@ export class HuskMcpServer {
   private async wake(id: string): Promise<Computer | undefined> {
     if (this.identity !== 'first-call') return undefined;
     const key = await this.manager.keyFor(id);
-    if (!key?.startsWith(CHAT_KEY_PREFIX)) return undefined;
+    if (!key?.startsWith(this.keyPrefix())) return undefined;
     const found = await this.manager.get(id);
     if (!found || found.info.state === 'destroyed') return undefined;
     this.computers.set(found.id, found);
@@ -642,7 +665,7 @@ export class HuskMcpServer {
   }
 
   private async createComputer(): Promise<Computer> {
-    const platform = platformName(this.clientName());
+    const platform = this.remote?.platform ?? platformName(this.clientName());
     const n = this.computers.size;
     const spec = {
       name: n === 0 ? `mcp-${this.sessionKey}` : `mcp-${this.sessionKey}-${n + 1}`,
@@ -674,7 +697,12 @@ export class HuskMcpServer {
   private bindingKey(): string {
     if (this.identity === 'named') return this.sessionKey;
     if (this.identity === 'session') return `claude-code:${this.hostSessionId}`;
-    return `${CHAT_KEY_PREFIX}${randomUUID()}`;
+    return `${this.keyPrefix()}${randomUUID()}`;
+  }
+
+  /** What this process's chat computers are bound under: a remote owner's apart from this machine's chats. */
+  private keyPrefix(): string {
+    return this.remote ? `remote:${this.remote.owner}:` : CHAT_KEY_PREFIX;
   }
 
   /**
@@ -801,13 +829,15 @@ export class HuskMcpServer {
       const onCallAbort = (): void => stop.abort();
       callSignal.addEventListener('abort', onCallAbort, { once: true });
       try {
-        const asked = this.mcp
-          .elicitInput(
+        // On the instance that served this call: over HTTP that is not the stdio one.
+        const elicit = ctx ? ctx.mcpReq.elicitInput : this.mcp.elicitInput.bind(this.mcp);
+        const asked = Promise.resolve()
+          .then(() => elicit(
             done,
             // Under the app's own limit on a call, so the model still gets the
             // link back. When this fires the handoff stays open.
             { signal: stop.signal, timeout: Math.min(ELICIT_WAIT_MS, this.waitMs() || ELICIT_WAIT_MS) },
-          )
+          ))
           .then((r) => (r.action === 'accept' && r.content?.done === true ? 'done' : 'not-yet'))
           .catch(() => 'not-yet' as const);
         // The person may press Done in the viewer before answering the prompt.

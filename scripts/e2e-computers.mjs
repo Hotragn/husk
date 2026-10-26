@@ -11,10 +11,12 @@
 //   node scripts/e2e-computers.mjs
 
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -1844,6 +1846,137 @@ async function checkClient(c, entry, fromFile) {
   }
 }
 
+/** fetch to a port on this machine under another name, as a tunnel delivers a request: Node's own fetch will not set Host. */
+function tunnelFetch(port, host) {
+  return (url, init = {}) =>
+    new Promise((resolveFetch, reject) => {
+      const u = new URL(String(url instanceof Request ? url.url : url));
+      const headers = { ...Object.fromEntries(new Headers(init.headers ?? {})), host };
+      const req = httpRequest({ host: '127.0.0.1', port, method: init.method ?? 'GET', path: `${u.pathname}${u.search}`, headers }, (res) => {
+        const h = new Headers();
+        for (const [k, v] of Object.entries(res.headers)) for (const x of [v].flat()) if (x !== undefined) h.append(k, String(x));
+        const empty = res.statusCode === 204 || res.statusCode === 304;
+        resolveFetch(new Response(empty ? null : Readable.toWeb(res), { status: res.statusCode, headers: h }));
+      });
+      req.on('error', reject);
+      init.signal?.addEventListener('abort', () => req.destroy(new Error('aborted')));
+      req.end(init.body === undefined || init.body === null ? undefined : typeof init.body === 'string' ? init.body : Buffer.from(init.body));
+    });
+}
+
+/** CBOR for a software authenticator's answers: unsigned and negative integers, strings, bytes, maps. */
+function cbor(value) {
+  const head = (major, n) => (n < 24 ? Buffer.from([(major << 5) | n]) : n < 256 ? Buffer.from([(major << 5) | 24, n]) : Buffer.from([(major << 5) | 25, n >> 8, n & 255]));
+  if (typeof value === 'number') return value >= 0 ? head(0, value) : head(1, -1 - value);
+  if (typeof value === 'string') return Buffer.concat([head(3, Buffer.byteLength(value)), Buffer.from(value)]);
+  if (value instanceof Uint8Array) return Buffer.concat([head(2, value.length), Buffer.from(value)]);
+  return Buffer.concat([head(5, value.size), ...[...value].flatMap(([k, v]) => [cbor(k), cbor(v)])]);
+}
+
+/** A passkey, made and used in software: what a phone or a security key does for the owner. */
+function softwarePasskey(rpId, origin) {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = publicKey.export({ format: 'jwk' });
+  const id = randomBytes(16);
+  let count = 0;
+  const rpHash = createHash('sha256').update(rpId).digest();
+  const counter = () => Buffer.from([0, 0, 0, ++count]);
+  const clientData = (type, challenge) => Buffer.from(JSON.stringify({ type, challenge, origin, crossOrigin: false })).toString('base64url');
+  return {
+    create(challenge) {
+      const cose = new Map([[1, 2], [3, -7], [-1, 1], [-2, Buffer.from(jwk.x, 'base64url')], [-3, Buffer.from(jwk.y, 'base64url')]]);
+      const authData = Buffer.concat([rpHash, Buffer.from([0x45]), counter(), Buffer.alloc(16), Buffer.from([0, id.length]), id, cbor(cose)]);
+      return { clientDataJSON: clientData('webauthn.create', challenge), attestationObject: cbor(new Map([['fmt', 'none'], ['attStmt', new Map()], ['authData', authData]])).toString('base64url') };
+    },
+  };
+}
+
+/**
+ * Remote access (J6-c), as a chat app on the web reaches it: `husk serve
+ * --remote` on a home and port of its own, requests on loopback named for the
+ * public URL, as Tailscale Funnel delivers them, the owner's first sign-in with
+ * the claim code and a new passkey, then MCP over HTTP on 2026-07-28 to a real
+ * Docker computer, which remote chats alone can reach.
+ */
+async function checkRemoteAccess() {
+  const NAME = 'e2e.husk.test';
+  const PUBLIC = `https://${NAME}`;
+  const own = join(home, 'remote');
+  mkdirSync(own, { recursive: true });
+  const port = await new Promise((r) => {
+    const probe = createServer().listen(0, '127.0.0.1', () => {
+      const p = probe.address().port;
+      probe.close(() => r(p));
+    });
+  });
+  const serving = spawn(process.execPath, [cli, 'serve', '--remote', '--public-url', PUBLIC, '--port', String(port), '--provider', 'docker'], {
+    env: { ...env, HUSK_HOME: own, NO_COLOR: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  serving.stdout.on('data', (c) => (out += c));
+  serving.stderr.on('data', (c) => (out += c));
+  let computer;
+  let ownRec;
+  try {
+    for (let i = 0; i < 240 && !/claim code/.test(out) && serving.exitCode === null; i++) await sleep(250);
+    const claim = /claim code ([0-9A-Z-]{19})/.exec(out)?.[1];
+    check('husk serve --remote starts on docker computers, and prints the claim code', Boolean(claim), out.slice(-400));
+    ownRec = JSON.parse(readFileSync(join(own, 'daemon.json'), 'utf8'));
+    const f = tunnelFetch(port, NAME);
+    const json = async (path, body, extra = {}) => {
+      const r = await f(`${PUBLIC}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', origin: PUBLIC, ...extra }, body: JSON.stringify(body) });
+      return { status: r.status, body: await r.json().catch(() => ({})) };
+    };
+
+    const bare = await f(`${PUBLIC}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    check('/mcp without a token answers where to sign in', bare.status === 401 && /resource_metadata=/.test(bare.headers.get('www-authenticate') ?? ''), String(bare.status));
+    const api = await f(`${PUBLIC}/v1/computers`, { headers: { authorization: `Bearer ${ownRec.token}` } });
+    check('the API is not under the public URL, even with this machine’s token', api.status === 404, String(api.status));
+
+    // The owner's first sign-in, as claude.ai or ChatGPT would send them through it.
+    const callback = 'https://claude.ai/api/mcp/auth_callback';
+    const reg = await json('/oauth/register', { redirect_uris: [callback], client_name: 'e2e-app' });
+    const client = reg.body.client_id;
+    const verifier = randomBytes(32).toString('base64url');
+    const q = new URLSearchParams({
+      response_type: 'code', client_id: client, redirect_uri: callback, state: 's1', resource: `${PUBLIC}/mcp`,
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256',
+    });
+    const page = await (await f(`${PUBLIC}/oauth/authorize?${q}`)).text();
+    const request = /"request":"([^"]+)"/.exec(page)?.[1];
+    const passkey = softwarePasskey(NAME, PUBLIC);
+    const options = await json('/oauth/claim', { request, code: claim });
+    const made = await json('/oauth/passkey', { request, credential: passkey.create(options.body.publicKey?.challenge) });
+    const allowed = await json('/oauth/consent', { request, allow: true });
+    const code = new URL(allowed.body.redirect ?? callback).searchParams.get('code');
+    const form = new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: callback, client_id: client, code_verifier: verifier, resource: `${PUBLIC}/mcp` });
+    const tokens = await (await f(`${PUBLIC}/oauth/token`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form.toString() })).json();
+    check('the owner claims it with the code and a new passkey, and the app gets its tokens', reg.status === 201 && made.status === 200 && Boolean(tokens.access_token), JSON.stringify({ reg: reg.status, made: made.status, token: tokens.error }));
+
+    // The app's chat, over MCP on 2026-07-28, on a computer of its own.
+    const { Client, StreamableHTTPClientTransport } = await import('@modelcontextprotocol/client');
+    const signed = (url, init = {}) => f(url, { ...init, headers: { ...Object.fromEntries(new Headers(init.headers ?? {})), authorization: `Bearer ${tokens.access_token}` } });
+    const app = new Client({ name: 'e2e-app', version: '0' }, { versionNegotiation: { mode: { pin: '2026-07-28' } } });
+    await app.connect(new StreamableHTTPClientTransport(new URL(`${PUBLIC}/mcp`), { fetch: signed }));
+    const ran = await app.callTool({ name: 'shell', arguments: { computer: 'new', command: 'echo remote-ok; uname -s' } });
+    const text = (ran.content ?? []).map((c) => c.text ?? '').join('\n');
+    const overview = await (await fetch(`${ownRec.url}/v1/overview`, { headers: { authorization: `Bearer ${ownRec.token}` } })).json();
+    computer = overview.computers.find((c) => c.spec?.labels?.['husk.platform'] === 'e2e-app');
+    check(
+      'a chat on the web runs a command on a docker computer of its own, named for its app',
+      app.getProtocolEra() === 'modern' && /remote-ok/.test(text) && /Linux/.test(text) && computer?.provider === 'docker',
+      `${text.slice(0, 200)}; ${computer?.provider}`,
+    );
+    await app.close();
+  } finally {
+    if (computer && ownRec) {
+      await fetch(`${ownRec.url}/v1/computers/${computer.id}?confirm=${computer.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${ownRec.token}`, 'x-husk-as': 'person' } }).catch(() => undefined);
+    }
+    serving.kill('SIGTERM');
+  }
+}
+
 try {
   // 1. A fresh home and a non-interactive setup, as the README's line runs it:
   // Husk added to one chat app on the computer chosen, the image with the
@@ -1887,6 +2020,9 @@ try {
 
   // 1f. Every chat app in the support matrix, as it starts and speaks to Husk (J6-a).
   await checkClients();
+
+  // 1g. A chat app on the web, through a tunnel: remote access (J6-c).
+  await checkRemoteAccess();
 
   // 2. A Docker computer with a browser.
   // Unique: the name is the container's, and another `e2e` container would clash.

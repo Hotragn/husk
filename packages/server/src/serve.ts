@@ -10,6 +10,9 @@ import type { SharedHusk } from './jobs.js';
 import type { CreateAppOptions } from './app.js';
 import { resolveConfig } from './deps.js';
 import type { ManagerLike, RouterLike, ServerConfig, ServerDeps } from './deps.js';
+import { isLoopbackHost } from './auth.js';
+import { huskError } from './errors.js';
+import { Remote } from './remote/oauth.js';
 import { Store } from './store.js';
 
 export interface ServeOptions extends Partial<ServerConfig> {
@@ -33,11 +36,19 @@ export interface ServeOptions extends Partial<ServerConfig> {
    * triggers run in this process as before.
    */
   startJobs?: () => void;
+  /**
+   * Remote access (remote/oauth.ts): `/mcp` under the fixed public URL a
+   * tunnel gives this loopback port, for the owner alone, on computers from
+   * an isolated provider.
+   */
+  remote?: { publicUrl: string; provider: string };
 }
 
 export interface RunningServer {
   app: FastifyInstance;
   url: string;
+  /** Remote access is on and has no owner yet: the code to show the person, here and nowhere else. */
+  claimCode?: string;
   host: string;
   port: number;
   close(): Promise<void>;
@@ -142,9 +153,11 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
   const log = opts.logger ?? createLogger({ scope: 'husk' });
   ensurePaths();
 
-  const { logger: _logger, deps: injected, reaperIntervalMs, daemon, mintToken, startJobs, ...configish } = opts;
+  const { logger: _logger, deps: injected, reaperIntervalMs, daemon, mintToken, startJobs, remote: remoteOpts, ...configish } = opts;
   const config = resolveConfig(configish);
-  if (mintToken && !config.token) config.token = randomBytes(32).toString('hex');
+  // Remote access always has one: its owner controls are on this API, and without a
+  // token any process on the machine could reset the owner and claim it.
+  if ((mintToken || remoteOpts) && !config.token) config.token = randomBytes(32).toString('hex');
   const built = await createDefaultDeps(config, log);
 
   const appOptions: CreateAppOptions = {
@@ -157,6 +170,24 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
   };
   if (injected?.agentFactory) appOptions.agentFactory = injected.agentFactory;
   if (injected?.runTool) appOptions.runTool = injected.runTool;
+  if (injected?.remoteMcp) appOptions.remoteMcp = injected.remoteMcp;
+  let claimCode: string | undefined;
+  if (remoteOpts) {
+    // A tunnel connects to loopback; anything wider would put the API itself on the network.
+    if (!isLoopbackHost(config.host)) {
+      throw huskError('E_CONFIG', 'remote access serves on loopback, where the tunnel connects', { hint: 'leave out --host' });
+    }
+    // Never this machine's own files: a computer from a provider with a real boundary, or none.
+    const provider = (await appOptions.manager.status()).find((p) => p.name === remoteOpts.provider);
+    if (!provider?.available || provider.isolated !== true || provider.isolationKind === 'guardrails') {
+      throw huskError('E_CONFIG', `remote access needs an isolated computer, and ${remoteOpts.provider} is not one here: ${provider?.reason ?? 'it is not available'}`, {
+        hint: 'start Docker, or pass --provider podman, fly or ssh',
+      });
+    }
+    const remote = new Remote({ publicUrl: remoteOpts.publicUrl, dir: join(ensurePaths().root, 'remote') });
+    claimCode = (await remote.start()).claimCode;
+    appOptions.remote = remote;
+  }
   // The machine's one Husk keeps holds across its restarts. A second server on
   // the same home would fight it over the file, so only the shared one does.
   if (daemon) appOptions.holdsFile = join(ensurePaths().root, 'holds.json');
@@ -228,7 +259,7 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
 
-  return { app, url, host: config.host, port, close };
+  return { app, url, host: config.host, port, close, ...(claimCode ? { claimCode } : {}) };
 }
 
 /**

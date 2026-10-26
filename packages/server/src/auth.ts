@@ -69,6 +69,12 @@ export interface AuthOptions {
   scopeOf?: (token: string) => string | undefined;
   /** The server is bound to a loopback address: answer only loopback Host names, even with a token. */
   loopbackOnly?: boolean;
+  /**
+   * Remote access is on (remote/oauth.ts): requests named for the public URL's
+   * host reach the remote paths, which check their own credentials, and
+   * nothing else. The console and the API stay on this machine.
+   */
+  remote?: { host: string; origin: string; paths: (route: string) => boolean };
 }
 
 /** The only routes a link token reaches. The handoff list is not among them. */
@@ -90,6 +96,22 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
     reply.code(status).send({ error: { code: 'E_NO_CREDENTIALS', message, hint } });
 
   app.addHook('onRequest', async (req, reply) => {
+    const remote = opts.remote;
+    const route = req.routeOptions?.url;
+    // Named for the public URL: its own paths only, each with its own check.
+    // The sign-in page's posts come from that origin and nowhere else; /mcp
+    // takes a bearer token, never a cookie, so a page elsewhere gains nothing.
+    if (remote && hostnameOf(req.headers.host).toLowerCase() === remote.host) {
+      if (!route || !remote.paths(route)) return reply.code(404).send({ error: { code: 'E_NOT_FOUND', message: 'not found' } });
+      const from = req.headers.origin;
+      if (route.startsWith('/oauth/') && from && from !== remote.origin) {
+        return refuse(reply, 403, `requests from ${from} are refused`, 'sign in from the page Husk sends you to');
+      }
+      return;
+    }
+    // The remote paths answer only under the public URL's name.
+    if (remote && route && remote.paths(route)) return reply.code(404).send({ error: { code: 'E_NOT_FOUND', message: 'not found' } });
+
     // A web page may not drive this server, token or not. A browser sends
     // Origin on every cross-site request and on every WebSocket, and nothing
     // stops a page from opening a WebSocket to 127.0.0.1. A loopback origin is
@@ -127,7 +149,6 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
 
     // Decide on the route the router matched, never on the raw URL: the router
     // decodes the path first, so `/%761/computers` is `/v1/computers` to it.
-    const route = req.routeOptions?.url;
     if (route === undefined) {
       // Nothing matched: a 404 follows, and answering it without a token says nothing.
       if (req.method === 'GET' || req.method === 'HEAD') return;

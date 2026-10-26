@@ -23,6 +23,7 @@ import type {
 } from '@husk-ai/core';
 import { Store } from './store.js';
 import { huskError } from './errors.js';
+import type { RemoteMcp } from './remote/routes.js';
 
 /**
  * The computer surface the server actually uses.
@@ -145,6 +146,8 @@ export interface ServerDeps {
   createAdapter?: AdapterFactory;
   /** Runs one chat tool on a computer: `@husk-ai/mcp`'s tools. Without it, the tool route answers 501. */
   runTool?: ToolRunner;
+  /** Serves `/mcp` to a signed-in app when remote access is on: `@husk-ai/mcp`'s `createRemoteMcp`. */
+  remoteMcp?: RemoteMcp;
   /** Whose chat apps the Connect page reads and edits. The real home unless a test says otherwise. */
   chatAppsHome?: string;
   /** Where holds outlive a restart: the machine's one Husk keeps them in ~/.husk/holds.json. */
@@ -171,6 +174,7 @@ export interface ResolvedDeps extends Required<Pick<ServerDeps, 'manager' | 'rou
   startedAt: number;
   createAdapter: AdapterFactory;
   runTool?: ToolRunner;
+  remoteMcp?: RemoteMcp;
   chatAppsHome?: string;
   holdsFile?: string;
 }
@@ -205,6 +209,7 @@ export function resolveDeps(deps: ServerDeps): ResolvedDeps {
     startedAt: (deps.now ?? Date.now)(),
     createAdapter: deps.createAdapter ?? createAdapter,
     ...(deps.runTool ? { runTool: deps.runTool } : {}),
+    ...(deps.remoteMcp ? { remoteMcp: deps.remoteMcp } : {}),
     ...(deps.chatAppsHome ? { chatAppsHome: deps.chatAppsHome } : {}),
     ...(deps.holdsFile ? { holdsFile: deps.holdsFile } : {}),
   };

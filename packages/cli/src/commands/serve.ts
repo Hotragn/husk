@@ -15,20 +15,39 @@ interface RunningServer {
   url: string;
   host: string;
   port: number;
+  claimCode?: string;
   close(): Promise<void>;
 }
 
 interface ServerModule {
-  serve(opts: { host: string; port: number; daemon?: boolean; deps?: { runTool?: unknown } }): Promise<RunningServer>;
+  serve(opts: {
+    host: string;
+    port: number;
+    daemon?: boolean;
+    deps?: { runTool?: unknown; remoteMcp?: unknown };
+    remote?: { publicUrl: string; provider: string };
+  }): Promise<RunningServer>;
+  parsePublicUrl(raw: string): URL;
 }
 
 export async function run(argv: string[]): Promise<number> {
-  const { values } = parse(argv, { port: { type: 'string' }, host: { type: 'string' } }, 'serve');
+  const { values } = parse(
+    argv,
+    { port: { type: 'string' }, host: { type: 'string' }, remote: { type: 'boolean' }, 'public-url': { type: 'string' }, provider: { type: 'string' } },
+    'serve',
+  );
   ui.configure(values);
   orientBriefly('open the console it prints, or POST /v1/husks/<name>/run');
 
   const port = parseCount(values.port as string | undefined, '--port', 'serve') ?? DEFAULT_CONFIG.port;
   const host = (values.host as string | undefined) ?? DEFAULT_CONFIG.host;
+  const publicUrl = values['public-url'] as string | undefined;
+  if ((values.remote === true) !== Boolean(publicUrl)) {
+    throw new HuskError('E_CONFIG', '--remote and --public-url go together: the public URL is the fixed https name your tunnel gives this port', {
+      hint: 'for example: husk serve --remote --public-url https://box.tail1234.ts.net',
+    });
+  }
+  const provider = (values.provider as string | undefined) ?? 'docker';
 
   let mod: ServerModule;
   try {
@@ -48,7 +67,13 @@ export async function run(argv: string[]): Promise<number> {
     // ~/.husk/daemon.json and run their computer tools here, so the console
     // sees every chat as well as every husk run.
     const { runTool } = await import('@husk-ai/mcp/tools');
-    server = await mod.serve({ host, port, daemon: true, deps: { runTool } });
+    if (values.remote === true && publicUrl) {
+      mod.parsePublicUrl(publicUrl);
+      const { createRemoteMcp } = await import('@husk-ai/mcp/remote');
+      server = await mod.serve({ host, port, daemon: true, deps: { runTool, remoteMcp: createRemoteMcp({ provider }) }, remote: { publicUrl, provider } });
+    } else {
+      server = await mod.serve({ host, port, daemon: true, deps: { runTool } });
+    }
   } catch (err) {
     spin.stop();
     if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
@@ -65,10 +90,22 @@ export async function run(argv: string[]): Promise<number> {
 
   ui.print(`${ui.green('✓')} control plane on ${ui.bold(server.url)}`);
   // Never the token itself: terminals keep scrollback and logs get shared.
-  ui.print(`  console  ${server.url}/${process.env.HUSK_TOKEN ? ui.dim('  (sign in with your HUSK_TOKEN)') : ''}`);
+  const signIn = process.env.HUSK_TOKEN ? '  (sign in with your HUSK_TOKEN)' : values.remote === true ? '  (its token is in ~/.husk/daemon.json, readable only by you)' : '';
+  ui.print(`  console  ${server.url}/${signIn ? ui.dim(signIn) : ''}`);
   ui.print(ui.dim(`  health   ${server.url}/health`));
   ui.print(ui.dim(`  doctor   ${server.url}/v1/doctor`));
   ui.print(ui.dim(`  clients  new HuskClient({ baseUrl: "${server.url}" })  // @husk-ai/sdk`));
+  if (publicUrl && values.remote === true) {
+    const origin = new URL(publicUrl).origin;
+    ui.print('');
+    ui.print(`${ui.green('✓')} remote access on ${ui.bold(`${origin}/mcp`)}, for its owner only, on ${provider} computers`);
+    ui.print(`  publish port ${port} at that name with your tunnel, e.g. ${ui.cyan(`tailscale funnel ${port}`)}`);
+    ui.print(`  then add ${origin}/mcp to your chat app as a custom connector, and sign in when it asks`);
+    // Shown here, never logged: whoever types it first becomes the owner.
+    if (server.claimCode) {
+      ui.print(`  claim code ${ui.bold(server.claimCode)}  ${ui.dim('good for 15 minutes; `husk remote claim` makes a new one')}`);
+    }
+  }
   ui.note('');
   ui.note(ui.dim('Ctrl-C to stop.'));
 

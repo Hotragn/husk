@@ -1,4 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HUSK_VERSION } from '@husk-ai/core';
 import { defaultProviders as defaultModelProviders } from '@husk-ai/models';
@@ -6,6 +8,7 @@ import { defaultProviders as defaultComputerProviders } from '@husk-ai/runtime';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { statusForCode } from './errors.js';
 import type { ServerErrorCode } from './errors.js';
+import { Remote } from './remote/oauth.js';
 import { buildTestApp } from './testing.js';
 import type { TestApp } from './testing.js';
 
@@ -74,14 +77,20 @@ describe('docs/API.md', () => {
   let harness: TestApp;
   let markdown: string;
 
+  let remoteDir = '';
   beforeAll(async () => {
     markdown = await readFile(DOC, 'utf8');
-    // `triggers: true` so `/v1/triggers` and the wildcard mounts are registered.
-    harness = await buildTestApp({ triggers: true });
+    // `triggers: true` so `/v1/triggers` and the wildcard mounts are registered,
+    // and remote access on, so its routes are too.
+    remoteDir = await mkdtemp(join(tmpdir(), 'husk-api-doc-'));
+    const remote = new Remote({ publicUrl: 'https://box.tail1234.ts.net', dir: remoteDir });
+    await remote.start();
+    harness = await buildTestApp({ triggers: true, remote });
   });
 
   afterAll(async () => {
     await harness.cleanup();
+    await rm(remoteDir, { recursive: true, force: true });
   });
 
   it('finds routes to check, so a broken parser cannot pass silently', () => {
