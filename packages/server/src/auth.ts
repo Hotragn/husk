@@ -102,12 +102,29 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
     // The sign-in page's posts come from that origin and nowhere else; /mcp
     // takes a bearer token, never a cookie, so a page elsewhere gains nothing.
     if (remote && hostnameOf(req.headers.host).toLowerCase() === remote.host) {
-      if (!route || !remote.paths(route)) return reply.code(404).send({ error: { code: 'E_NOT_FOUND', message: 'not found' } });
       const from = req.headers.origin;
-      if (route.startsWith('/oauth/') && from && from !== remote.origin) {
-        return refuse(reply, 403, `requests from ${from} are refused`, 'sign in from the page Husk sends you to');
+      if (route && remote.paths(route)) {
+        if (route.startsWith('/oauth/') && from && from !== remote.origin) {
+          return refuse(reply, 403, `requests from ${from} are refused`, 'sign in from the page Husk sends you to');
+        }
+        return;
       }
-      return;
+      // A link a remote chat gave its person: one handoff, or a look at one
+      // computer. The console's page and files, which hold nothing, and the
+      // routes that link opens, with its own token in the header: never the
+      // server's token, never a token in the URL.
+      const read = req.method === 'GET' || req.method === 'HEAD';
+      if (read && (route === '/' || route === '/*')) return;
+      if (route && SCOPED_PREFIXES.some((p) => route.startsWith(p)) && (!from || from === remote.origin)) {
+        const supplied = bearerToken(req);
+        const scope = supplied && !(token && constantTimeEquals(supplied, token)) ? opts.scopeOf?.(supplied) : undefined;
+        if (scope) {
+          req.huskScope = scope;
+          return;
+        }
+        return refuse(reply, 401, 'this link has expired', 'ask the chat for a new link');
+      }
+      return reply.code(404).send({ error: { code: 'E_NOT_FOUND', message: 'not found' } });
     }
     // The remote paths answer only under the public URL's name.
     if (remote && route && remote.paths(route)) return reply.code(404).send({ error: { code: 'E_NOT_FOUND', message: 'not found' } });

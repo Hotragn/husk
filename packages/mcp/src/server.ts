@@ -28,6 +28,8 @@ import type { WorkspaceProfile } from '@husk-ai/server/workspace-viewer';
 import { PROMPTS, getPrompt } from './prompts.js';
 import { HANDED_BACK, HANDOFF_TOOLS, HANDOFF_TOOL_NAMES, MAX_REASON, heldText, relayText } from './handoff-tools.js';
 import { WORKSPACE_TOOLS, WORKSPACE_TOOL_NAMES, WORKSPACE_INSTRUCTIONS, WorkspaceTools } from './workspace-tools.js';
+import { DANGEROUS_TOOLS, approvalText, digestOf, summarize } from './approvals.js';
+import type { RemoteApp } from '@husk-ai/server';
 
 export interface HuskMcpOptions {
   /**
@@ -58,9 +60,10 @@ export interface HuskMcpOptions {
   /**
    * A signed-in app over remote access (remote.ts): its chats carry their
    * computer ids, its computers are bound under the owner, and it can reach
-   * no computer a chat on this machine made, nor they its.
+   * no computer a chat on this machine made, nor they its. `approve` is the
+   * owner's word on a call that changes things (approvals.ts).
    */
-  remote?: { owner: string; platform: string };
+  remote?: { owner: string; platform: string; approve?: RemoteApp['approve']; /** The public URL, for the links its person opens. */ origin?: string };
 }
 
 /**
@@ -226,7 +229,7 @@ export class HuskMcpServer {
   /** Each open handoff's link, to give again when the person answers "not yet". */
   private readonly handoffLinks = new Map<string, string>();
   private stdio?: StdioServerHandle;
-  private readonly remote: { owner: string; platform: string } | undefined;
+  private readonly remote: HuskMcpOptions['remote'];
 
   constructor(opts: HuskMcpOptions = {}) {
     this.manager = opts.manager ?? new ComputerManager();
@@ -353,6 +356,11 @@ export class HuskMcpServer {
     if (held && name !== 'computer_info') {
       // Taken from a link, not handed off by the model: only the person's Give back ends it.
       return { isError: true, content: [{ type: 'text', text: refusalText(held) }] };
+    }
+    // Remotely, a call that changes things waits for the owner's word, every time.
+    if (this.remote?.approve && DANGEROUS_TOOLS.has(name)) {
+      const verdict = this.remote.approve(name, summarize(name, toolArgs), digestOf(name, computer.id, toolArgs));
+      if (!verdict.ok) return { content: [{ type: 'text', text: approvalText(name, verdict, computer.id) }], ...(verdict.state === 'denied' ? { isError: true } : {}) };
     }
 
     // Every call, at the one place they all pass through. An audit log that
@@ -784,7 +792,7 @@ export class HuskMcpServer {
     }
     // Before the handoff opens: if the viewer cannot start, nothing is left
     // holding the computer with no link to finish it.
-    const origin = remote && daemon ? daemon.url : (await this.openViewerServer()).origin;
+    const origin = remote && daemon ? (this.remote?.origin ?? daemon.url) : (await this.openViewerServer()).origin;
     let handoffId = '';
     const finished = this.handoffs.request(
       {
@@ -936,7 +944,9 @@ export class HuskMcpServer {
         const token = await daemon.linkToken(computerId);
         const held = this.handoffs.list().find((h) => h.computerId === computerId);
         const remoteId = held ? this.remoteHandoffs.get(held.handoffId) : undefined;
-        return remoteId ? handoffLink(daemon.url, remoteId, token) : computerLink(daemon.url, computerId, token);
+        // A remote chat's person is wherever they are: the link is under the public URL.
+        const base = this.remote?.origin ?? daemon.url;
+        return remoteId ? handoffLink(base, remoteId, token) : computerLink(base, computerId, token);
       } catch (err) {
         // The shared Husk has no such computer: this process's viewer can still open it.
         if (!(err instanceof RunLocally)) throw err;

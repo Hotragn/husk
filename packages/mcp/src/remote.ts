@@ -1,7 +1,7 @@
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import { platformName } from '@husk-ai/core';
 import type { Logger } from '@husk-ai/core';
-import type { RemoteMcp } from '@husk-ai/server';
+import type { RemoteApp, RemoteMcp } from '@husk-ai/server';
 import { HuskMcpServer } from './server.js';
 import type { HuskMcpOptions } from './server.js';
 
@@ -18,7 +18,7 @@ import type { HuskMcpOptions } from './server.js';
 export function createRemoteMcp(opts: { provider: string; logger?: Logger; /** For tests. */ husk?: HuskMcpOptions }): RemoteMcp {
   const husks = new Map<string, HuskMcpServer>();
   const handler = createMcpHandler((ctx) => {
-    const who = ctx.authInfo?.extra as { owner: string; client: string; name: string } | undefined;
+    const who = ctx.authInfo?.extra as RemoteApp | undefined;
     if (!who) throw new Error('a remote MCP request without a signed-in app');
     const key = `${who.owner}\n${who.client}`;
     let husk = husks.get(key);
@@ -27,12 +27,12 @@ export function createRemoteMcp(opts: { provider: string; logger?: Logger; /** F
         ...opts.husk,
         spec: { provider: opts.provider },
         ephemeral: false,
-        remote: { owner: who.owner, platform: platformName(who.name) },
+        remote: { owner: who.owner, platform: platformName(who.name), approve: who.approve, origin: who.origin },
         ...(opts.logger ? { logger: opts.logger } : {}),
       });
       husks.set(key, husk);
     }
     return husk.newServer();
   });
-  return (request, who) => handler.fetch(request, { authInfo: { token: '', clientId: who.client, scopes: ['husk'], extra: who } });
+  return (request, who) => handler.fetch(request, { authInfo: { token: '', clientId: who.client, scopes: ['husk'], extra: who as unknown as Record<string, unknown> } });
 }

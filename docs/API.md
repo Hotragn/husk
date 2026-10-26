@@ -222,7 +222,28 @@ POST /oauth/register                                 RFC 7591 registration (publ
 GET  /oauth/authorize                                the sign-in page
 POST /oauth/start | /oauth/claim | /oauth/passkey | /oauth/consent   the page's own steps
 POST /oauth/token                                    authorization_code (PKCE S256) or refresh_token
+GET  /oauth/approve                                  the page that approves one tool call (?id=)
+POST /oauth/approve/start | /oauth/approve           its passkey, and the owner's answer
 ```
+
+- **Approvals.** A remote chat's call that changes things (`shell`, `write_file`,
+  `edit_file`, `expose_port`, and clicking, typing, selecting, uploading or scripting in
+  the browser) runs only with the owner's word.
+  - The call answers at once, with a link to `/oauth/approve?id=…` for the model to
+    relay. The owner approves there with their passkey, from anywhere, and the model
+    calls again with the same arguments.
+  - An approval covers that one call, once. Ten minutes unanswered is a no.
+  - Saying no needs no passkey. Letting that app use that tool unasked for an hour is a
+    box the owner ticks, never the default.
+- **Limits** are per minute and keyed on what a tunnel does not hide: the signed-in app
+  on `/mcp`, the app asking for tokens, each route as a whole. Never the address. Over
+  a limit is a 429 with `Retry-After`.
+- **Links a remote chat gives its person** (a handoff, a look at a computer) are under
+  the public URL. Under that name, only these answer:
+  - the console's page and files, which hold nothing;
+  - the scoped routes behind the link (`/v1/handoffs/:id/…`, `/v1/scoped/…`), with that
+    link's token in `Authorization`. Never this machine's token, and never a token in the
+    URL.
 
 - **`/mcp`.** It takes a bearer access token in `Authorization`, never in a URL. Without
   a good one it answers 401 with

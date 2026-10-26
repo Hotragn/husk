@@ -66,7 +66,8 @@ export type { AuthOptions } from './auth.js';
 
 export { Remote, parsePublicUrl } from './remote/oauth.js';
 export type { RemoteOptions } from './remote/oauth.js';
-export type { RemoteMcp } from './remote/routes.js';
+export type { RemoteApp, RemoteMcp } from './remote/routes.js';
+export type { Verdict } from './remote/approvals.js';
 
 export { CronScheduler, nextFireTime, nextFireTimes, parseCron } from './cron.js';
 export type { CronExpression, CronJob } from './cron.js';
