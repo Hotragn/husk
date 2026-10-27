@@ -1,5 +1,5 @@
 import { HuskError } from '@husk-ai/core';
-import { compareModelPreference, resolveAlias } from '@husk-ai/models';
+import { compareModelPreference, priceOf, resolveAlias } from '@husk-ai/models';
 import type { ChatRequest, ChatResponse, ModelInfo, ModelProvider, StreamEvent } from '@husk-ai/core';
 
 /**
@@ -26,8 +26,12 @@ export interface ResolvedModel {
  * Accepts a fully-qualified `provider/model`, a bare model name, or one of the
  * aliases from the build contract. When it fails, the error lists what *is*
  * reachable -- "no model available" on its own sends people to the docs.
+ *
+ * `maxCostUsd` is the run's ceiling. At $0, `auto`, `free` and `local` pick only a
+ * model that costs nothing, as the router's aliases do: a priced one would be
+ * stopped before its first call.
  */
-export async function resolveModel(asked: string, overrides: Record<string, string> = {}): Promise<ResolvedModel> {
+export async function resolveModel(asked: string, overrides: Record<string, string> = {}, maxCostUsd?: number): Promise<ResolvedModel> {
   // A modelAliases entry from ~/.husk/config.json, followed as the router follows it.
   const override = overrides[asked] ? resolveAlias(asked, overrides) : undefined;
   const ref = !override ? asked : override.kind === 'dynamic' ? override.strategy : override.id;
@@ -71,12 +75,21 @@ export async function resolveModel(asked: string, overrides: Record<string, stri
     }
   }
 
-  if (ref === 'auto' || ref === 'free' || ref === 'local') {
+  const dynamic = ref === 'auto' || ref === 'free' || ref === 'local';
+  if (dynamic) {
+    // A free tier is still priced in the catalog, so `free` alone would pick it.
+    const costsNothing = (m: ModelInfo) => priceOf(m).input === 0 && priceOf(m).output === 0;
     const preferred = ref === 'local' ? reachable.filter((r) => r.provider.id === 'ollama' || r.provider.id === 'lmstudio') : reachable;
     for (const { provider, models } of preferred) {
-      const free = ref === 'free' ? models.find((m) => m.free) : undefined;
-      const chosen = ref === 'free' ? free : models[0];
+      const pool = maxCostUsd === 0 ? models.filter(costsNothing) : models;
+      const chosen = ref === 'free' ? (pool.find((m) => m.free) ?? (maxCostUsd === 0 ? pool[0] : undefined)) : pool[0];
       if (chosen) return { provider, info: chosen };
+    }
+    if (maxCostUsd === 0) {
+      throw new HuskError('E_BUDGET_EXCEEDED', `no reachable ${ref} model costs nothing, and the ceiling is $0`, {
+        hint: 'Raise maxCostUsd, or run `ollama pull qwen2.5:7b` for a model that costs nothing.',
+        details: { maxCostUsd, rejected },
+      });
     }
   }
 

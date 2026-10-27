@@ -116,7 +116,7 @@ export async function run(argv: string[]): Promise<number> {
   let lastErr: unknown;
   for (const candidate of chain) {
     try {
-      resolved = await resolveModel(candidate, config.modelAliases);
+      resolved = await resolveModel(candidate, config.modelAliases, Math.min(maxCostUsd, config.maxCostUsd));
       if (candidate !== requested) downgradedFrom = requested;
       break;
     } catch (err) {

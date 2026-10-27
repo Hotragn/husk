@@ -5,7 +5,8 @@ order: 5
 ---
 
 A husk becomes a bot through triggers declared in its spec. `husk serve` reads them and
-mounts what it can.
+mounts what it can, and so does the shared Husk your chat apps start, through a job host
+([below](#where-triggers-run)).
 
 ```yaml
 triggers:
@@ -33,15 +34,29 @@ The spec accepts seven trigger types. `husk serve` mounts six; `cli` needs nothi
 | `cron` | yes | The in-process scheduler |
 | `cli` | n/a | It is the default; it means "no server surface", which is correct |
 | `discord` | yes | A Discord gateway connection, when `DISCORD_BOT_TOKEN` is set |
-| `slack` | yes | Socket Mode with `SLACK_APP_TOKEN`, or the Events API at `POST /v1/a/<husk>/slack/events` with `SLACK_SIGNING_SECRET` |
+| `slack` | yes | `SLACK_BOT_TOKEN`, and either Socket Mode with `SLACK_APP_TOKEN` or the Events API at `POST /v1/a/<husk>/slack/events` with `SLACK_SIGNING_SECRET`. The Events API wins when both are set |
 | `telegram` | yes | Long polling, when `TELEGRAM_BOT_TOKEN` is set |
+
+## Where triggers run
+
+`husk serve` mounts them in its own process. The shared Husk does not: when a husk has
+any trigger but `cli`, it starts a job host, `husk-mcp --jobs`, on a loopback port of its
+own (`HUSK_JOBS_PORT`, or any free one), recorded in `~/.husk/jobs.json` and logging to
+`~/.husk/jobs.log`. The shared Husk forwards `/v1/t`, `/v1/w`, `/v1/a` and
+`GET /v1/triggers` to it, so every trigger keeps the shared Husk's address. The job host
+runs nothing itself: each bot's run is asked of the shared Husk, starting it again if it
+has gone, so a take-over reaches that run as it reaches a chat. The job host leaves once
+no husk has a trigger, or when a `husk serve` starts, which mounts them itself.
+
+Each process reads the bot tokens from its own environment and from `~/.husk/.env`. The
+job host's environment is the shared Husk's.
 
 ## discord, slack and telegram
 
 ```yaml
 triggers:
   - type: discord
-    channels: ['1234567890123456789']   # empty means every channel the bot can see
+    channels: ['1234567890123456789']   # required: with none, the trigger is not started
     mentionOnly: true                   # DMs always count as a mention
   - type: slack
     channels: []
@@ -49,8 +64,9 @@ triggers:
     allowlist: [alice, '123456789']     # usernames or numeric ids
 ```
 
-Each one starts a chat adapter from `@husk-ai/adapters` inside `husk serve`. A message
-the adapter accepts becomes a run of that husk, and the run's final text is the reply.
+Each one starts a chat adapter from `@husk-ai/adapters` in the process that runs the
+triggers. A message the adapter accepts becomes a run of that husk, and the run's final
+text is the reply, or `(the agent produced no text)`.
 
 Three rules, each logged and shown in `GET /v1/triggers` when it stops a trigger:
 
@@ -62,9 +78,24 @@ Three rules, each logged and shown in `GET /v1/triggers` when it stops a trigger
 - **One computer per husk.** Everyone the bot answers shares that husk's computer and
   its files.
 
-The token is read from the server's environment when the adapter starts, so set it
-before `husk serve`. With no token the adapter stays idle, and `GET /v1/triggers` says
-which variable it is waiting for:
+A second trigger of the same type in one husk is ignored, with a log line and nothing
+in `GET /v1/triggers`.
+
+Who gets an answer:
+
+- **Discord and Slack** answer in the listed channels only. A DM is a channel too, so it
+  needs its channel id listed; once there it counts as a mention. On Discord, a reply to
+  the bot's message also counts as one.
+- **Telegram** takes a message whose sender's username or numeric id, or whose chat id,
+  is on the `allowlist`. Usernames match without regard to case, with or without the
+  `@`. In a group the bot answers only when the message has its `@username`; a private
+  chat always counts.
+- **Every adapter** answers each person at most 5 times in 60 seconds. Past that it
+  replies `Rate limited. Try again in 42s.`, with the real wait.
+
+The token is read from the environment when the adapter starts, so set it before the
+process that runs the triggers starts. With no token the adapter stays idle, and
+`GET /v1/triggers` says which variable it is waiting for:
 
 ```json
 { "husk": "support-bot", "type": "discord", "at": "discord", "detail": "idle -- DISCORD_BOT_TOKEN is not set" }
@@ -72,13 +103,16 @@ which variable it is waiting for:
 
 An adapter whose trigger did not change keeps running when you edit the husk, so saving
 an unrelated change does not drop the Discord connection. Deleting the husk stops it.
-`husk serve` with `adapters: false` in its config starts none of them.
+Code that calls `serve()` from `@husk-ai/server` can pass `adapters: false` to start none
+of them; `husk serve` has no switch for it.
 
 The Slack Events API route is the one route under `/v1/` that does not take the server
-token, because Slack cannot send it. It is only reachable through a tunnel when
-`husk serve` has a `HUSK_TOKEN`: without one, the server answers loopback addresses
-only. Socket Mode needs neither. The adapter checks Slack's signature on the raw
-body before anything runs, and answers only on the path it mounted.
+token, because Slack cannot send it. On the default loopback bind, Husk answers only
+loopback names, its defence against DNS rebinding, token or not. So a tunnel has to pass
+a loopback `Host`: `ngrok http 7377 --host-header=rewrite`, or `cloudflared` with
+`--http-host-header 127.0.0.1:7377`. The other way is to bind another address with
+`HUSK_TOKEN` set. Socket Mode needs none of this. The adapter checks Slack's signature
+on the raw body before anything runs, and answers only on the path it mounted.
 
 ## http
 
@@ -135,13 +169,19 @@ HMAC-SHA256 over the **raw** bytes, and the signature is read from the first of
 `X-Husk-Signature`, `X-Hub-Signature-256`, `X-Signature-256`, with a leading `sha256=`
 stripped. A mismatch is a 403 `E_EXEC_DENIED`.
 
+A signed request needs no server token: the signature is its credential, so a sender
+that cannot add one, such as GitHub, reaches the webhook wherever `husk serve` is
+exposed ([Self-hosting](/guides/self-hosting)). Without a `secret`, the webhook takes the
+server's token like any other route, and a request that carries a signature anyway is
+refused with a 403, since there is nothing to check it against.
+
 `${GITHUB_WEBHOOK_SECRET}` is read from the server's environment when the trigger is
 mounted. If it is unset or empty, the webhook is not mounted at all, and the server logs
 why: mounted unsigned, anyone could start the husk, and the placeholder's own text is
 printed right here.
 
 Without a `secret`, `GET /v1/triggers` reports the mount as
-`UNSIGNED -- set 'secret' on the trigger`. Anyone who can reach the port can spend your
+``UNSIGNED -- set `secret` on the trigger``. Anyone who can reach the port can spend your
 model budget.
 
 Without a `secret`, the prompt is found as for `http`. With one, it comes from the signed
@@ -161,10 +201,16 @@ triggers:
 Both `schedule` and `prompt` are required; the schema gives them no defaults, because a
 cron trigger with nothing to say is not a trigger.
 
-Standard five-field cron. The scheduler runs in the `husk serve` process — there is no
-external cron and no persistence, so a missed window while the server was down is not
-replayed. An invalid schedule is logged as `husk <name>: <message>` and that one job is
-skipped; the rest of the husk still mounts.
+Standard five-field cron, in the host's local time. Names such as `mon` and `jan` work,
+and so do `@hourly`, `@daily`, `@midnight`, `@weekly`, `@monthly`, `@yearly` and
+`@annually`. A sixth field is refused: seconds are not supported. When both day fields
+are restricted the job runs on either, as Vixie cron does, so `0 0 1 * mon` is the 1st
+and every Monday.
+
+The scheduler runs in the process that runs the triggers — there is no external cron and
+no persistence, so a missed window while it was down is not replayed. An invalid
+schedule is logged as `husk <name>: <message>` and that one job is skipped; the rest of
+the husk still mounts.
 
 `GET /v1/triggers` reports each binding's next fire time, or `never fires`.
 

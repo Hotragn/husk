@@ -146,8 +146,17 @@ describe('observedTools', () => {
 
   it("reads a chat's MCP tools by their own names: one that used Husk's needs the computer", () => {
     const tools = observedTools(t([], { meta: { tools: ['mcp__husk__shell', 'mcp__husk__browser_goto', 'mcp__husk__read_file'] } }));
-    expect(tools.suggested).toEqual(['computer', 'files', 'web']);
+    expect(tools.suggested).toEqual(['computer', 'files', 'browser']);
     expect(tools.needsComputer).toBe(true);
+  });
+
+  it("gives a chat that drove Husk's browser the browser, and the computer it runs in", () => {
+    const tools = observedTools(t([], { meta: { tools: ['mcp__husk__browser_goto', 'mcp__husk__browser_click'] } }));
+    expect(tools.suggested).toEqual(['browser']);
+    expect(tools.needsComputer).toBe(true);
+    const spec = toSpec({ ...distillHeuristic(RUNBOOK), suggestedTools: ['browser'], needsComputer: false });
+    expect(spec.tools).toEqual(['browser']);
+    expect(spec.computer.enabled).toBe(true);
   });
 
   it('includes tools that only a sidechain revealed', () => {

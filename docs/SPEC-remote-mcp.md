@@ -1,6 +1,9 @@
 # Spec — reach a husk from any chat surface (remote MCP)
 
-**Status:** proposed, not started
+**Status:** implemented in 0.2. `husk serve --remote` serves streamable-HTTP MCP at
+`/mcp`, on a port of its own, for its owner alone (#245, #247, #248), following the
+reviewed design in #169. This document is kept as the record of why; §2 and §5 describe
+the tree as it was when it was filed.
 **Filed by:** QA session, 11 September 2026
 **Why it exists:** the product goal is that a husk is usable *wherever the user already chats* — Claude, ChatGPT, Kimi — rather than behind a separate console at `husk serve`. Most of the machinery for that already works. This spec records what was verified, what blocks the rest, and the smallest change that unblocks it.
 
@@ -20,6 +23,8 @@ The MCP server was exercised live from a real chat client (Claude Code) against 
 So "the bot's own computer, driven from a chat" is a working capability today, not a future one. It needs no new concept — only a transport.
 
 ## 2. The blocker
+
+*Resolved since: see the status above.*
 
 ```
 packages/mcp/src/server.ts:126      new StdioServerTransport()    <- the only transport
@@ -64,6 +69,12 @@ This is not a theoretical objection. See §6.5 — from inside one husk computer
 - **Kimi:** support unknown. **Unverified — do not scope work to it until someone checks.**
 
 ## 5. The interface gap — §1–§4 do not deliver a "live interface"
+
+*Since filed: a chat's link opens the console's live view of its computer, under the
+public URL for a remote chat and after the owner's passkey (#247, #248), and chat apps
+that render MCP Apps show the computer's card (#166). The server now declares `tools`,
+`prompts` (three starters) and `resources`, so §5a no longer holds; its one resource
+is the card, and `/work` files are still not resources.*
 
 **This section corrects an error in the first draft of this spec.** The draft
 put "a web UI" out of scope and stopped there. That conflated two different

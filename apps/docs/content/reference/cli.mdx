@@ -1,7 +1,7 @@
 ---
 title: CLI reference
 navTitle: CLI
-description: Every command, every flag it actually parses, its exit code, and the flags that exist in the parser but not in --help.
+description: Every command, every flag it actually parses, and its exit code.
 order: 1
 ---
 
@@ -13,7 +13,7 @@ husk <command> [flags]
 mistake, so probing for the binary in a script does not look like a failure.
 
 <Terminal title="husk --help">
-{`husk 0.1.0 — give your agent a computer, and turn a chat into a bot.
+{`husk 0.2.0 — give your agent a computer, and turn a chat into a bot.
 
 USAGE
   husk <command> [flags]
@@ -21,7 +21,7 @@ USAGE
 COMPUTERS
   up        Create a Linux computer
   ps        List your computers
-  rm        Destroy a computer and its filesystem
+  rm        Destroy a computer; a chat’s stops for now
   stop      Stop a computer without destroying it
   start     Start a stopped computer
   exec      Run a command inside a computer
@@ -38,13 +38,19 @@ CHATS
   distill   Turn a chat into a husk.yaml
 
 SYSTEM
+  onboard   Guided setup — run this first
+  setup     Pick the computer, connect your chat apps, start Husk
   doctor    Show exactly what this machine can and cannot do
   serve     Start the control plane and any bots the husk declares
+  remote    Remote access: who may sign in, a new claim code, and the switch
   mcp       Run the MCP server on stdio
   models    List the models you can actually reach
   version   Print the version
-  help      Show help for a command`}
+  help      Show help for a command
+…`}
 </Terminal>
+
+The `…` stands for the global flags, five commands to start with, and the exit codes.
 
 ## Global flags
 
@@ -60,9 +66,7 @@ Every command accepts these. Their meaning never changes between commands.
 | `-y`, `--yes` | Answer every confirmation with yes |
 | `-h`, `--help` | Help for any command |
 
-`--color` and `-y`/`--yes` are parsed by every command but are only listed in the help
-for the commands that use them. `--version` and `-V` work only on the bare `husk`
-invocation, not after a subcommand.
+`--version` and `-V` work only on the bare `husk` invocation, not after a subcommand.
 
 Parsing is strict: a typo'd flag is a usage error, not a silently ignored string.
 
@@ -94,12 +98,12 @@ so `husk exec box -- test -f /work/x && echo yes` behaves the way you expect.
 | `destroy`, `delete` | `rm` |
 | `sh` | `shell` |
 | `check` | `doctor` |
+| `quickstart` | `onboard` |
 
 <Note>
-`husk ls` lists **computers**, not husks. Some error hints in the control plane say
-"run `husk ls` to list husks", which is wrong on two counts — that alias goes to `ps`,
-and there is no CLI command that lists registered husks. Use `curl -s
-localhost:7377/v1/husks` while `husk serve` is running.
+`husk ls` lists **computers**, not husks: the alias goes to `ps`. No CLI command lists
+registered husks. Use `curl -s localhost:7377/v1/husks` while `husk serve` is running,
+or look in `~/.husk/husks`.
 </Note>
 
 ---
@@ -121,13 +125,20 @@ it until you `exec`.
 | `--flavor` | `base` \| `python` \| `node` \| `full` | `base` |
 | `--memory` | `2g`, `512m`, or a plain number of MB | provider default |
 | `--cpus` | a positive number | provider default |
-| `--network` | `none` \| `egress` \| `full` | `egress` |
+| `--network` | `none` \| `egress` \| `full` | no policy: all but internal addresses |
+| `--packages` | package names, comma-separated or repeated | — |
 | `--persist` | boolean | off |
 | `--env` | `KEY=VALUE`, repeatable | — |
-| `--idle-timeout` | seconds | `900` |
+| `--idle-timeout` | seconds unused, after which the shared Husk destroys it | never |
 | `--json` | print the `ComputerInfo` record | — |
 
-`--env` and `--idle-timeout` are parsed but are **not** in `husk help up`.
+Without `--network` there is no policy, which allows what `full` allows: everything but
+internal addresses. `egress` allows only the hosts on an allow list, and `husk up` has no
+flag for one.
+
+`--packages` installs at create time. Docker and Podman build them into an image of the
+computer's own, with the flavor's package manager (apt, pip or npm). `local` tries `uv`,
+`pip` and `npm`, and goes on without them if all three fail. `ssh` and `fly` refuse them.
 
 <Terminal>
 {`$ husk up docsbox
@@ -138,8 +149,9 @@ warn  [runtime] using the local provider: guarded working directory -- process g
   id         cmp_hmqrgjny3m83
   provider   local  (WSL2 (Ubuntu))
   isolation  guardrails only — not a sandbox
+  image      local:wsl
   workdir    /work
-  network    egress
+  network    full (internal addresses refused)
 
   Try it:
   $ husk exec docsbox -- uname -sr
@@ -185,14 +197,15 @@ husk rm <name|id> [--all] [--erase] [--yes] [--force]
 | Flag | Effect |
 | --- | --- |
 | `--all` | Destroy every computer |
-| `--erase` | Also erase what a chat's or bot's computer keeps on Docker and Podman: its files and browser logins |
+| `--erase` | Also erase what a chat's computer, or a bot's with `computer.persist: true`, keeps on Docker and Podman: its files and browser logins |
 | `-y`, `--yes` | Skip the confirmation |
 | `-f`, `--force` | Skip the confirmation, and with `--all` destroy computers used in the last minute too |
 
 <Danger>
 Destructive and not recoverable. The filesystem goes with the machine, except that on
-Docker and Podman a chat's or a bot's computer keeps its files and browser logins for its
-next computer. `--erase` takes those too, as the console's Delete does.
+Docker and Podman a chat's computer, or a bot's with `computer.persist: true`, keeps its
+files and browser logins for its next computer. `--erase` takes those too, as the
+console's Delete does.
 </Danger>
 
 Asks first unless `--yes` or `--force` is given; `--json` does not skip the question. On
@@ -202,8 +215,8 @@ a non-interactive stdin without one of those it refuses rather than guessing:
 error refusing to destroy 3 computers without confirmation on a non-interactive stdin
 ```
 
-`--all --yes` still refuses computers used in the last minute, since one may belong to a
-run in another terminal; `--force` destroys them too.
+`--all --yes` still refuses, and destroys nothing, when a computer was used in the last
+minute, since it may belong to a run in another terminal; `--force` destroys them all.
 
 ### `husk stop` and `husk start`
 
@@ -232,8 +245,6 @@ husk exec <name|id> [flags] -- <command...>
 | `--stdin` | text piped to the command | — |
 | `--json` | buffer and print the full `ExecResult` | stream |
 
-`--stdin` is parsed but is not in `husk help exec`.
-
 Everything after `--` belongs to the command, flags included. Without `--`, leftover
 positionals are still accepted, so `husk exec box ls` works — but `--` is the only form
 that can carry flags safely.
@@ -252,7 +263,7 @@ husk exec docsbox --json -- ls /work | jq .exitCode
 husk shell <name|id> [--cwd <path>]
 ```
 
-`--cwd` is parsed but is not in `husk help shell`.
+`--cwd` sets the directory the prompt starts in. Default: the computer's workdir.
 
 <Warning>
 A readline loop, **not** a pty. Each line is a separate exec, so Husk tracks `cd` for
@@ -335,8 +346,6 @@ husk run <husk.yaml|name> [prompt] [flags]
 | `--var` | `KEY=VALUE`, repeatable, for `{{KEY}}` in the persona. `KEY` is letters, digits and `_`; anything else is refused | — |
 | `--json` | print the `RunResult` instead of streaming | — |
 
-`--max-cost` and `--var` are parsed but are not in `husk help run`.
-
 The prompt is the remaining positionals, or piped stdin:
 
 ```bash
@@ -370,6 +379,11 @@ exits 130.
 `--max-cost` and `--max-steps` are checked before anything runs: `--max-cost abc` and
 `--max-steps 0` are usage errors. `--max-cost 0` is allowed, and means a free model.
 
+A husk whose `engine` is `claude-code` or `codex` runs Husk's tools without asking, so an
+approval mode other than `auto`, from `--approve` or from `guardrails.approvalMode`, is a
+usage error there. `--max-steps` does not apply to those engines and says so;
+`--max-cost` and `limits.timeoutSec` do.
+
 <Note>
 `husk run` falls back through the husk's `fallbackModels` when its `model` is not
 reachable. See [the router page](/models#fallback).
@@ -397,19 +411,21 @@ husk import [path] [--source <s>] [--pick <n>] [--limit <n>]
 
 | Flag | Value | Default |
 | --- | --- | --- |
-| `--source` | `claude-code` \| `chatgpt` \| `cursor` \| `gemini` \| `markdown` \| `universal` | detected |
+| `--source` | `claude-code` \| `chatgpt` \| `codex` \| `cursor` \| `gemini` \| `markdown` \| `universal` | detected |
 | `--pick` | choose by number without being asked | — |
 | `--limit` | how many candidates to list | `20` |
 | `--json` | the discovered list, or the imported transcript | — |
 
 With no path, Husk searches its own list of locations, lists what it found, and asks you
-to choose:
+to choose. When it finds nothing, it says where it looked:
 
 ```text
 husk looked in:
   ~/.claude/projects   Claude Code sessions
-  ~/Downloads          ChatGPT and Gemini exports
-  ~/.cursor            Cursor chat history
+  ~/.codex/sessions    Codex sessions
+  ~/Downloads          ChatGPT exports, and ~/Documents
+  ~/.gemini/tmp        Gemini CLI chats
+  Cursor's state.vscdb Cursor chat history
   ./                   markdown and jsonl
 ```
 
@@ -444,14 +460,55 @@ reachable, `husk distill` degrades to it rather than failing.
 
 ## System
 
+### `husk onboard`
+
+```bash
+husk onboard [--yes] [--skip-checks] [--json]
+```
+
+| Flag | Effect |
+| --- | --- |
+| `-y`, `--yes` | Do not ask, and create the throwaway computer even without a terminal |
+| `--skip-checks` | Do not create the throwaway computer |
+| `--json` | The same decisions as a machine-readable plan |
+
+Five steps: what this machine gives you and how isolated it is, a throwaway computer
+created and destroyed in front of you, the shortest route to a model if you have none,
+where you will use Husk, and one command to run next. It never asks for an API key; it
+prints the `export` line and checks again. With no terminal it prints the whole path as
+text and creates nothing unless `--yes` is given. `husk quickstart` is the same command.
+
+### `husk setup`
+
+```bash
+husk setup [--computer <name>] [--flavor <f>] [--apps all|<id,id>] [--yes] [--remove] [--no-start]
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--computer` | Where chats' computers run: `docker`, `podman`, `local`, `ssh`, `fly` or `auto` |
+| `--flavor` | The image: `base`, `python`, `node` or `full`, the one with the browser. Containers only |
+| `--apps` | `all` for every chat app found, or ids such as `claude-desktop,cursor` |
+| `-y`, `--yes` | Do not ask. Without a terminal, nothing changes without it |
+| `--remove` | Take Husk out of every chat app it is in |
+| `--no-start` | Do not get the computer's image or start Husk |
+| `--json` | What was chosen and changed |
+
+Picks where your chats' computers run, adds Husk to the chat apps you choose, gets a
+container computer's image, and starts the one Husk every chat goes through, printing its
+console link. The apps it knows are `claude-desktop`, `claude-code`, `cursor`, `vscode`,
+`windsurf`, `zed`, `codex` and `gemini`. For an app with a JSON config it backs the file
+up and changes only its own `husk` entry, and it refuses a file it cannot parse; Claude
+Code and Codex are changed through their own commands. Run it again to change the
+computer. The console's Connect page does the same.
+
 ### `husk doctor`
 
 ```bash
 husk doctor [--json] [--force]
 ```
 
-`--force` bypasses the 30-second availability-probe cache. It is parsed but is not in
-`husk help doctor`.
+`--force` bypasses the 30-second availability-probe cache.
 
 The first thing to run when something is confusing. [Reading the report](/start/doctor)
 walks through the output.
@@ -467,16 +524,45 @@ husk models [--all] [--json]
 ### `husk serve`
 
 ```bash
-husk serve [--port 7377] [--host 127.0.0.1]
+husk serve [--port 7377] [--host 127.0.0.1] [--remote --public-url https://<host> [--provider docker] [--remote-port <n>] [--remote-host <h>]]
 ```
 
 | Flag | Default |
 | --- | --- |
 | `--port` | `7377`, or `HUSK_PORT` |
 | `--host` | `127.0.0.1`, or `HUSK_HOST` — loopback only unless you change it |
+| `--remote` | off. Serves `/mcp` to chat apps on the web, for the owner only |
+| `--public-url` | none. The fixed https name your tunnel gives remote access; `--remote` needs it |
+| `--provider` | `docker`. Where remote chats get computers: `docker`, `podman`, `fly` or `ssh` |
+| `--remote-port` | `--port` plus one. Remote access's own port, the one the tunnel publishes |
+| `--remote-host` | `127.0.0.1`. Where that port listens |
 
 Binding a non-loopback host without `HUSK_TOKEN` is a hard error, because this API can
 execute shell commands. [Self-hosting](/guides/self-hosting) is the full setup.
+
+`--remote` and `--public-url` go together, and `--remote-port` and `--remote-host` are
+refused without them. Remote access will not start while a high or critical security
+advisory stands against the install. [Chat apps on the web](/guides/remote-access) is
+the full setup.
+
+### `husk remote`
+
+```bash
+husk remote [claim|off|on|reset] [--json]
+```
+
+Remote access's owner controls, asked of the Husk that `husk serve --remote` started on
+this machine. With no action it says whether remote access is on, whether it has an
+owner, and which apps are signed in.
+
+| Action | Effect |
+| --- | --- |
+| `claim` | A new claim code, while there is no owner |
+| `off` | Signs every app out, and makes the public URL a 404 until `on` |
+| `on` | Turns it back on; refused while a high or critical advisory stands |
+| `reset` | Removes the owner, every app that signed in and every token, and prints a claim code for a new owner |
+
+`--json` prints the status as JSON, or `{ "code": "…" }` for `claim` and `reset`.
 
 ### `husk mcp`
 
@@ -529,14 +615,21 @@ Identical to `<command> --help`.
 | `HUSK_HOME` | everything | State directory. Default `~/.husk` |
 | `HUSK_HOST`, `HUSK_PORT` | `husk serve` | Bind address and port |
 | `HUSK_TOKEN` | `husk serve`, `@husk-ai/sdk` | Bearer token |
+| `HUSK_URL` | `@husk-ai/sdk` | Control-plane address. Default `http://127.0.0.1:7377` |
 | `HUSK_LOG_LEVEL`, `HUSK_LOG_JSON` | everything | Logger verbosity and format |
 | `NO_COLOR`, `HUSK_NO_COLOR`, `FORCE_COLOR` | the CLI | Colour |
 | `HUSK_SESSION` | `@husk-ai/mcp` | Default session key |
+| `HUSK_DAEMON` | `@husk-ai/mcp` | `off` runs a chat's tools in its own process, not through the shared Husk |
+| `HUSK_JOBS_PORT` | the job host | Its loopback port. Default: any free one |
+| `HUSK_AUTO_FLY` | choosing a provider | `1` lets `auto` pick Fly, which it leaves out because Fly is paid |
 | `HUSK_REGISTRY`, `HUSK_IMAGE_TAG` | container providers | Override the Husk image pair |
 | `HUSK_SSH_TARGET`, `HUSK_SSH_KEY` | the `ssh` provider | Remote host and key |
 | `HUSK_FLY_TOKEN` (or `FLY_API_TOKEN`, `FLY_ACCESS_TOKEN`) | the `fly` provider | Fly credentials: a deploy token for the computers' app is enough |
 | `HUSK_FLY_APP` (or `FLY_APP_NAME`), `HUSK_FLY_REGION` (or `FLY_REGION`), `HUSK_FLY_API` | the `fly` provider | App, region, API base |
+| `HUSK_ADVISORY_ENDPOINT` | remote access | Where the security-advisory check is sent. Default npm's bulk advisory endpoint |
+| `HUSK_CLAUDE_CLI`, `HUSK_CODEX_CLI` | the `claude-code` and `codex` engines | Path to your `claude` or `codex`, when it is not where Husk looks |
 | `TAVILY_API_KEY`, `BRAVE_API_KEY` (or `BRAVE_SEARCH_API_KEY`) | the `web` bundle | Enables `web_search`; Tavily wins if both are set |
 | `CLAUDE_CONFIG_DIR` | the Claude Code importer | Where to look for sessions |
+| `CODEX_HOME` | the Codex importer, `husk import` | Where Codex keeps its sessions. Default `~/.codex` |
 
 Model provider keys are listed on [Providers](/models/providers).

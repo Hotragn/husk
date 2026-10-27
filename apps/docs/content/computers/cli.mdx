@@ -6,11 +6,11 @@ order: 3
 ---
 
 Eight commands drive a machine. Every flag below is what `parse()` accepts in the
-command's source; where `husk help <command>` disagrees, that is called out.
+command's source, and `husk help <command>` lists the same ones.
 
-Five global flags work everywhere: `--json`, `-q/--quiet`, `--no-color`, `--debug`,
-`-h/--help`. `-y/--yes` is also global, which is why `husk rm --yes` works even though
-`rm` declares no `yes` option of its own.
+Seven global flags work everywhere: `--json`, `-q/--quiet`, `--no-color`, `--color`,
+`--debug`, `-y/--yes` and `-h/--help`. `-y/--yes` being global is why `husk rm --yes`
+works even though `rm` declares no `yes` option of its own.
 
 Exit codes are an API and are frozen: `0` ok, `1` error, `2` usage, `130` interrupted.
 `husk exec` is the one deliberate exception — it exits with the child's own code.
@@ -30,16 +30,16 @@ Creates a computer. With no name, Husk generates one. Nothing runs inside it unt
 | `--flavor <f>` | `base`, `python`, `node`, `full`. Default: `base` |
 | `--memory <size>` | `2g`, `512m`, or a plain number of MB |
 | `--cpus <n>` | A positive number |
-| `--network <mode>` | `none`, `egress`, `full`. Default: `egress` |
+| `--network <mode>` | `none`, `egress`, `full`. Default: no policy, which allows everything but internal addresses, as `full` does |
+| `--packages <p,..>` | Install these at create time. Comma-separated or repeatable |
 | `--persist` | Keep the filesystem across restarts |
 | `--env K=V` | Set a variable inside the machine. Repeatable |
-| `--idle-timeout <sec>` | Destroy after this long idle. `0` disables |
+| `--idle-timeout <sec>` | Destroy after this long idle, while the shared Husk runs. A positive number. Default: never |
 | `--json` | Print the computer record instead of the summary |
 
-<Note>
-`--env` and `--idle-timeout` are accepted by the parser but missing from
-`husk help up`.
-</Note>
+`egress` allows only the hosts on an allow list, and `husk up` has no flag for one.
+Packages from `--packages` are built into an image of the computer's own on Docker and
+Podman, tried with `uv`, `pip` and `npm` on `local`, and refused on `ssh` and `fly`.
 
 `--memory` accepts `2g`, `2gb`, `512m`, `512mb` or a bare number of MB, and rejects
 anything else with a usage error rather than guessing.
@@ -90,10 +90,6 @@ it as an unknown Husk flag.
 | `--stdin <text>` | Text piped to the command on stdin |
 | `--json` | Buffer and print the full `ExecResult` instead of streaming |
 
-<Note>
-`--stdin` is accepted by the parser but missing from `husk help exec`.
-</Note>
-
 stdout and stderr stream live, and Husk exits with the command's own exit code:
 
 ```bash
@@ -114,11 +110,8 @@ husk shell <name|id> [--cwd <path>]
 
 A readline loop, **not a pty**. Each line is a separate `exec`, so Husk tracks `cd` for
 you, but full-screen programs — `vim`, `top`, `less` — and anything that checks `isatty`
-will not work. Leave with `exit`, `quit`, or Ctrl-D.
-
-<Note>
-`--cwd` is accepted but missing from `husk help shell`.
-</Note>
+will not work. Leave with `exit`, `quit`, or Ctrl-D. `--cwd` sets the directory it
+starts in.
 
 ## husk cp
 
@@ -141,7 +134,11 @@ scratch:/work/` does what a Windows user expects. A path starting `//` after the
 treated as a URL scheme separator and left alone, so `http://…` does not parse as a
 computer called `http`.
 
-Both sides go through the path jail. Copying out of `/etc` is refused.
+On `local` and `ssh` the computer's side goes through the path jail, as the file tools
+do, so copying out of `/etc` is refused; on `ssh`, a directory's links are followed, as
+`scp -r` follows them. On Docker, Podman and Fly the copy can reach any path inside the
+computer, which is the computer's own filesystem, not this machine's. The local side is
+yours, and is not checked.
 
 ## husk rm
 
@@ -151,8 +148,9 @@ husk rm <name|id> [--all] [--erase] [--yes] [--force]
 
 <Danger>
 Destroys the machine and its filesystem. There is no undo. On Docker and Podman a chat's
-or a bot's computer keeps its files and browser logins for its next computer, so for
-those it means "stop for now"; `--erase` takes them too, as the console's Delete does.
+computer, or a bot's with `computer.persist: true`, keeps its files and browser logins
+for its next computer, so for those it means "stop for now"; `--erase` takes them too, as
+the console's Delete does.
 Husk asks first unless `--yes` or `--force` is given, and refuses on a non-interactive
 stdin without one. `--json` does not skip the question.
 </Danger>
@@ -160,7 +158,7 @@ stdin without one. `--json` does not skip the question.
 | Flag | What it does |
 | --- | --- |
 | `--all` | Destroy every computer |
-| `--erase` | Also erase a chat's or bot's kept files and browser logins |
+| `--erase` | Also erase the files and browser logins a chat's or a persistent bot's computer keeps |
 | `--yes`, `-y` | Skip the confirmation (global flag) |
 | `--force`, `-f` | Skip the confirmation, and with `--all` destroy computers used in the last minute too |
 
@@ -171,7 +169,8 @@ husk stop <name|id>
 husk start <name|id>
 ```
 
-No flags beyond the globals. `stop` keeps the filesystem; `rm` does not.
+No flags beyond the globals. `stop` keeps the filesystem; `rm` does not, except what a
+chat's or a persistent bot's computer keeps for its next one.
 
 ## Errors
 

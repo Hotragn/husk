@@ -2,7 +2,16 @@ import { open, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { TranscriptSource } from '@husk-ai/core';
-import { CursorImporter, codexSessions, parseClaudeJsonl, parseCodexRollout, parseMarkdownChat } from '@husk-ai/sessions';
+import {
+  ChatGPTImporter,
+  ClaudeCodeImporter,
+  CursorImporter,
+  GeminiImporter,
+  codexSessions,
+  parseClaudeJsonl,
+  parseCodexRollout,
+  parseMarkdownChat,
+} from '@husk-ai/sessions';
 
 /**
  * Find transcripts without being told where they are.
@@ -55,15 +64,18 @@ async function sniffsAsChat(path: string): Promise<boolean> {
 function roots(cwd: string): Root[] {
   const home = homedir();
   return [
-    // Claude Code keeps one JSONL per session under a per-project directory.
-    { dir: join(home, '.claude', 'projects'), source: 'claude-code', match: /\.jsonl$/i, depth: 2 },
+    // Claude Code keeps one JSONL per session under a per-project directory, in
+    // each config directory its importer reads (CLAUDE_CONFIG_DIR's, when set).
+    ...new ClaudeCodeImporter().defaultLocations().map((dir): Root => ({ dir, source: 'claude-code', match: /\.jsonl$/i, depth: 2 })),
     { dir: join(home, '.claude'), source: 'claude-code', match: /\.jsonl$/i, depth: 1 },
     // Codex keeps one rollout per session, by date: sessions/YYYY/MM/DD.
     { dir: codexSessions(), source: 'codex', match: /^rollout-.*\.jsonl$/i, depth: 3 },
     // Cursor keeps every chat in one SQLite file; importing it asks which one.
     { dir: new CursorImporter().defaultLocations()[0] ?? join(home, '.cursor'), source: 'cursor', match: /^state\.vscdb$/i, depth: 0 },
-    // A ChatGPT export lands in Downloads as conversations.json.
-    { dir: join(home, 'Downloads'), source: 'chatgpt', match: /^conversations.*\.json$/i, depth: 1 },
+    // A ChatGPT export is conversations.json, in Downloads or Documents.
+    ...new ChatGPTImporter().defaultLocations().map((dir): Root => ({ dir, source: 'chatgpt', match: /^conversations.*\.json$/i, depth: 1 })),
+    // Gemini CLI saves a chat as checkpoint-<tag>.json, one directory per project.
+    ...new GeminiImporter().defaultLocations().map((dir): Root => ({ dir, source: 'gemini', match: /^checkpoint-.*\.json$/i, depth: 1 })),
     { dir: join(home, 'Downloads'), source: 'universal', match: /chat.*\.json$/i, depth: 1 },
     { dir: join(home, '.cursor'), source: 'cursor', match: /\.(json|jsonl)$/i, depth: 2 },
     // Anything the user is standing next to. Markdown is content-sniffed: a

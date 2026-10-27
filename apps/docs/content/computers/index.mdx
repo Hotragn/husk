@@ -24,7 +24,7 @@ interface Computer {
   exec(req: ExecRequest): Promise<ExecResult>;
 
   writeFile(path, content, opts?): Promise<void>;
-  readFile(path): Promise<Uint8Array>;
+  readFile(path, opts?: { maxBytes }): Promise<Uint8Array>;
   readTextFile(path, maxBytes?): Promise<string>;
   listDir(path): Promise<DirEntry[]>;
   stat(path): Promise<DirEntry | null>;
@@ -37,18 +37,28 @@ interface Computer {
 
   stop(): Promise<void>;
   start(): Promise<void>;
-  destroy(): Promise<void>;
+  destroy(opts?: { erase }): Promise<void>;
 
   // Optional. Callers feature-detect rather than catching.
+  spawn?(req): ComputerProcess;
+  markUsed?(): void;
   snapshot?(name?): Promise<{ id: string; sizeBytes?: number }>;
+  usage?(): Promise<ComputerUsage>;
   restore?(snapshotId): Promise<void>;
 }
 ```
 
-`snapshot` and `restore` are optional because not every backend can do them. They are
-implemented on the container providers (docker and podman, through the shared `OciComputer`
-base) and absent elsewhere. Feature-detect with `if (computer.snapshot)`; a `catch` around
-a missing method is a bug waiting to be misread as a runtime failure.
+`readFile` refuses a file over `maxBytes` with `E_QUOTA`, and stops reading at the limit.
+`destroy` keeps what a chat's or a bot's computer persists for its next one, unless
+`erase` is set; see [Lifetimes](/computers/lifetimes#stopping-versus-destroying).
+
+The optional methods are optional because not every backend can do them. `spawn` starts
+a process with its stdin held open, which the browser's long-lived driver needs: Docker,
+Podman and `local`. `markUsed` records use that did not go through `exec`, on every
+provider. `snapshot`, `restore` and `usage` (live CPU and memory) are implemented on the
+container providers, through the shared `OciComputer` base, and absent elsewhere.
+Feature-detect with `if (computer.snapshot)`; a `catch` around a missing method is a bug
+waiting to be misread as a runtime failure.
 
 ## States
 
@@ -65,7 +75,7 @@ or starts the container and writes the record; the first process starts on the f
 
 That matters most for MCP: adding the server to Claude Code has to cost nothing, or
 people uninstall it. `@husk-ai/mcp` creates no machine at startup and none on `tools/list`.
-The first `shell` call is what brings one up.
+The first tool call that needs a computer is what brings one up.
 
 ## One conversation, one machine
 
@@ -102,21 +112,22 @@ Every field a computer can be created with. In a `husk.yaml` these live under
 
 | Field | Type | Default | What it does |
 | --- | --- | --- | --- |
+| `enabled` | boolean | `true` | husk.yaml only. `false` gives the husk no computer at all |
 | `name` | string | generated id | Human label, and the container name when unique |
 | `provider` | string | best available | `docker`, `podman`, `local`, `ssh`, `fly` |
 | `image` | string | from `flavor` | Explicit image reference. Overrides `flavor` |
-| `flavor` | enum | `base` | `base`, `python`, `node`, `full`. The rendered browser needs `full` — see below |
-| `cpus` | number | `2` | CPU allocation |
-| `memoryMb` | number | `2048` | Memory ceiling |
+| `flavor` | enum | `base`; `full` for a chat's computer | `base`, `python`, `node`, `full`. The rendered browser needs `full` — see below |
+| `cpus` | number | `2`; `1` on Fly | CPU allocation |
+| `memoryMb` | number | `2048`; `1024` on Fly | Memory ceiling |
 | `diskMb` | number | `2048` | Size of the writable `/work` layer |
-| `idleTimeoutSec` | number | `900` | Destroy after this long with no exec. `0` disables |
+| `idleTimeoutSec` | number | `900` in a husk.yaml; none for `husk up`, the API or a chat | Destroy after this long with no exec. `0` disables |
 | `maxLifetimeSec` | number | `0` | Hard ceiling regardless of activity. `0` disables |
 | `network` | object | `{ mode: 'egress' }` | See [Networking](/computers/networking) |
 | `env` | record | `{}` | Variables passed in explicitly |
 | `mounts` | array | `[]` | Host paths. Read-only unless `readonly: false` |
 | `workdir` | string | `/work` | Default working directory |
 | `user` | string | `1000:1000` | The unprivileged user inside the machine |
-| `persist` | boolean | `false` | Keep the filesystem across restarts |
+| `persist` | boolean | `false`; `true` for a chat's computer | Keep the filesystem across restarts |
 | `packages` | array | `[]` | Installed by the flavor's package manager before the computer starts: see below |
 | `setup` | string | — | A shell snippet run once after creation |
 | `labels` | record | — | Free-form metadata, carried on the machine |
@@ -149,11 +160,12 @@ for when you want everything, and the browser is part of everything.
 with the public image still there to fall back on if that pull fails, and
 `HUSK_IMAGE_TAG` sets the tag. Left unset there is nothing to fall back from, because
 the public image is the image. The Dockerfiles in `sandbox/` are what you build if you
-want to host that mirror yourself.
+want to host that mirror yourself. Fly pulls the image itself and never uses the
+mirror: a Fly computer runs the public image, or `computer.image`.
 
 These are upstream images, so what is in them is not husk's to promise: no `huskinfo`,
-and no locked root account. The container still runs as uid 1000, because `-u 1000:1000`
-is passed regardless.
+and no locked root account. A container still runs as uid 1000, because `-u 1000:1000`
+is passed whatever the image says, unless `computer.user` names another user.
 
 Package installation is per-flavor:
 
@@ -198,17 +210,20 @@ network   egress reachable
 tools     git curl jq rg fd python3`}
 </Terminal>
 
-The `computer_info` tool runs `huskinfo` when it exists and reconstructs what it can from
-`uname`, `id`, `nproc` and `df` when it does not — which is the default path, since the
-public images do not carry it. The reconstruction is close, not equal: husk's own version
-and flavor are not discoverable from inside the machine, so a computer on a public image
-knows slightly less about itself than one built from `sandbox/`.
+The `computer_info` tool runs `huskinfo` when it exists and reconstructs what it can when
+it does not — which is the default path, since the public images do not carry it. The
+reconstruction reads `/etc/os-release`, `uname`, `id` and `df`, and takes CPUs and memory
+from the cgroup's limits where they are smaller than `nproc` and `/proc/meminfo` say,
+because a container's `/proc` describes the machine under it. It is close, not equal:
+husk's own version and flavor are not discoverable from inside the machine, so a
+computer on a public image knows slightly less about itself than one built from
+`sandbox/`.
 
 ## Where the records live
 
 | Provider | Where "what exists" is stored |
 | --- | --- |
-| `docker`, `podman` | Container labels. The engine is the registry |
+| `docker`, `podman` | Container labels. The engine is the registry, and `~/.husk/computers/<id>.used` holds the last use, which the engine does not record |
 | `local`, `ssh`, `fly` | JSON files under `~/.husk/computers/`, one per machine |
 
 The JSON files are written with write-then-rename, so `husk ps` works from another

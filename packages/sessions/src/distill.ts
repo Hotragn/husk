@@ -108,6 +108,8 @@ export const DIRECTIVES: DirectivePattern[] = [
 const TOOL_BUNDLES: Array<{ bundle: string; re: RegExp }> = [
   { bundle: 'computer', re: /^(bash|powershell|shell|sh|zsh|terminal|cmd|exec|execute|run|command|bashoutput|killshell|killbash|computer|container)/i },
   { bundle: 'files', re: /^(read|write|edit|multiedit|str_replace|create_file|notebook(read|edit)?|glob|grep|ls|listdir|list_files|search_files|file)/i },
+  // Husk's own browser, driven by ref: a bot that used it needs it, not a page fetch.
+  { bundle: 'browser', re: /^browser_/i },
   { bundle: 'web', re: /^(webfetch|websearch|web_search|browse|browser|fetch|navigate|http|curl|url|search)/i },
 ];
 
@@ -415,7 +417,7 @@ export function observedTools(transcript: Transcript): ObservedTools {
     else passthrough.add(name);
   }
 
-  const order = ['computer', 'files', 'web'];
+  const order = ['computer', 'files', 'web', 'browser'];
   const suggested = [
     ...order.filter((b) => bundles.has(b)),
     ...[...passthrough].sort().slice(0, 10),
@@ -424,7 +426,8 @@ export function observedTools(transcript: Transcript): ObservedTools {
     raw: [...raw].sort(),
     bundles: [...bundles],
     suggested,
-    needsComputer: bundles.has('computer'),
+    // The browser runs inside the computer.
+    needsComputer: bundles.has('computer') || bundles.has('browser'),
   };
 }
 
@@ -809,7 +812,7 @@ export interface ToSpecOverrides extends Partial<HuskSpecInput> {
 }
 
 /** The bundles `@husk-ai/agent` can actually resolve. Anything else is a typo. */
-const KNOWN_BUNDLES = new Set(['computer', 'files', 'web', 'http']);
+const KNOWN_BUNDLES = new Set(['computer', 'files', 'web', 'http', 'browser']);
 
 const FALLBACK_PERSONA = 'You are a careful, concise assistant.';
 
@@ -856,6 +859,7 @@ export function normaliseTools(suggested: string[], needsComputer: boolean): str
 export function toSpec(agent: DistilledAgent, overrides: ToSpecOverrides = {}): HuskSpec {
   const { transcript, ...rest } = overrides;
   const name = normaliseName(agent.name);
+  const tools = normaliseTools(agent.suggestedTools, agent.needsComputer);
 
   const base: HuskSpecInput = {
     apiVersion: 'husk/v1',
@@ -870,8 +874,9 @@ export function toSpec(agent: DistilledAgent, overrides: ToSpecOverrides = {}): 
       ...(k.source ? { source: k.source } : {}),
     })),
     examples: agent.examples,
-    tools: normaliseTools(agent.suggestedTools, agent.needsComputer),
-    computer: { enabled: agent.needsComputer },
+    tools,
+    // A model may name the browser without saying it needs a computer; it runs in one.
+    computer: { enabled: agent.needsComputer || tools.includes('browser') },
     metadata: {
       distilledConfidence: agent.confidence,
       distillerNotes: agent.notes,

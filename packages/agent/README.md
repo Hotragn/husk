@@ -3,12 +3,12 @@
 The tool-calling loop at the heart of Husk, plus the built-in tools.
 
 It streams tokens, runs a turn's tool calls in parallel while keeping their results in
-the model's order, enforces every ceiling *before* it spends, and treats approval as a
+the model's order, checks every ceiling *before* it spends, and treats approval as a
 control rather than a suggestion.
 
-This package depends on `@husk-ai/core` and nothing else in the workspace. The model
-router and the computer source are **injected** as structural interfaces, so the loop
-runs in a test with no network, no Docker, and no build-order coupling.
+This package depends on `@husk-ai/core`, and on `@husk-ai/browser` for the browser tools.
+The model router and the computer source are **injected** as structural interfaces, so
+the loop runs in a test with no network, no Docker, and no build-order coupling.
 
 ```ts
 export interface RouterLike {
@@ -90,19 +90,24 @@ for await (const event of agent.stream({ input: 'what is in /work?' })) {
   the tokens arrive, not from replaying a finished response.
 - **Deterministic parallelism.** Up to four tool calls run at once via `mapLimit`, and
   results are appended in the model's original order, so a run replays identically.
-- **Ceilings are never breached.** `Budget.check()` runs *before* each model call using
-  a pre-call estimate. With a price table that is arithmetic; without one it uses the
-  most expensive call observed so far.
+- **Ceilings are checked before the spend.** `Budget.check()` runs *before* each model
+  call using a pre-call estimate. With a price table that is arithmetic; without one it
+  uses the most expensive call observed so far, which is nothing on the first call. The
+  estimate assumes a reply of 1024 tokens and the request does not cap the reply, so one
+  long reply can carry a run past `maxCostUsd` or `maxTokens`; the next call is then
+  refused. A memory summary is counted after it is made, and not checked before.
 - **One abort for everything.** `opts.signal` and the timeout feed a single
   `AbortController` whose signal is handed to the model request *and* to every tool, so
   an expired run actually cancels the in-flight request and the running `docker exec`.
-- **Secrets never reach the model.** Every tool result is clamped to
-  `spec.limits.maxOutputBytes` and then passed through `redact()`.
+- **Known secret formats do not reach the model.** Every tool result is clamped to
+  `spec.limits.maxOutputBytes` and then, while `guardrails.redactSecrets` is on (the
+  default), passed through `redact()`, which masks the credential formats it knows and
+  nothing else.
 - **Lazy machines.** A tool asks for the computer with `ctx.acquireComputer()`. A husk
   that never touches the shell never pays for a container, and a parallel batch shares
   one machine rather than racing into four.
-- **Loop breaker.** Three byte-identical consecutive tool turns get a system nudge that
-  names the repetition; five end the run.
+- **Loop breaker.** Three byte-identical consecutive tool turns get a nudge, sent as a
+  user message marked `[husk]`, that names the repetition; five end the run.
 
 ## Approval
 
@@ -112,9 +117,10 @@ for await (const event of agent.stream({ input: 'what is in /work?' })) {
 | `ask` | dangerous tools call `onApproval`; **no approver means denied** |
 | `readonly` | dangerous tools are always denied, approver or not |
 
-`shell`, `write_file`, `edit_file`, `move`, `delete`, `expose_port` and `http_request`
-are `dangerous`. `read_file`, `list_dir`, `search_files`, `computer_info`, `fetch_url`
-and `web_search` are not.
+`shell`, `write_file`, `edit_file`, `move`, `delete`, `expose_port`, `http_request`,
+`browser_click` and `browser_type` are `dangerous`. `read_file`, `list_dir`,
+`search_files`, `computer_info`, `fetch_url`, `web_search`, `browse`, `browser_goto`,
+`browser_snapshot`, `browser_screenshot` and `hand_off` are not.
 
 ## Tools
 
@@ -125,19 +131,23 @@ always fails.
 | bundle | tools |
 | --- | --- |
 | `computer` | `shell`, `expose_port`, `computer_info` |
+| `browser` | `browse`, and the real Chromium's `browser_goto`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_screenshot` |
 | `files` | `read_file`, `write_file`, `edit_file`, `list_dir`, `search_files`, `move`, `delete` |
 | `web` | `fetch_url`, and `web_search` when `TAVILY_API_KEY` or `BRAVE_API_KEY` is set |
 | `http` | `http_request` (opt-in, dangerous) |
+
+`hand_off`, which pauses the run until a person says they are done, is in no bundle: a
+husk gets it only by naming it.
 
 - `edit_file` fails loudly when `oldString` is absent or ambiguous. It never silently
   no-ops, and it never writes on a failed match.
 - `search_files` uses ripgrep inside the machine when it is there, and a bounded JS
   walk when it is not. Both are capped.
-- `fetch_url` and `http_request` honour `spec.computer.network` through `isHostAllowed`
-  in `src/net.ts`, re-implemented locally because `agent` may not import `runtime`.
-  They also refuse loopback, link-local and RFC1918 addresses unless the operator named
-  them in `computer.network.allow`, which keeps `mode: full` from meaning "and also the
-  cloud metadata endpoint".
+- `fetch_url` and `http_request` honour `spec.computer.network` through `isHostAllowed`,
+  which `src/net.ts` re-exports from `@husk-ai/core`: one floor, the one the runtime
+  uses too. They refuse loopback, link-local and RFC1918 addresses unless the operator
+  named them in `computer.network.allow`, which keeps `mode: full` from meaning "and also
+  the cloud metadata endpoint", and they check each redirect before following it.
 
 Write your own with `defineTool`, and hand it in as `tools: [...]`:
 

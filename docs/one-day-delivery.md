@@ -11,6 +11,7 @@ Lead with **“Keep your AI work: sources, results, and a place to return to.”
 > Workspaces stay in the hero as the supporting line rather than the headline. The
 > reasoning below is kept as it was written, including the point that generic file and
 > terminal access is available elsewhere.
+
 The first audience is people already using an AI desktop app for research and
 small decisions. Their first task is a cited brief from a few public pages.
 Success means they can finish, inspect, export, and reopen it without shell setup.
@@ -48,7 +49,7 @@ it is not a claim that eight hours of elapsed time or user testing has already o
 | Local viewer with authenticated downloads and ZIP export | Makes saved work visible and portable | Packaged archive checks exercise assets, auth, read, download and export |
 | Advanced provider review and explicit enablement | Makes command access and actual isolation understandable | [MCP tools guidance](https://modelcontextprotocol.io/specification/2025-06-18/server/tools) recommends clear exposed capabilities; provider is rechecked before enabling |
 | Named MCP computers stop on disconnect | Prevents accidental destruction of files intended for reuse | Dedicated lifecycle regression tests |
-| Unsupported messaging triggers fail validation | Replaces silent non-functionality with an actionable error | [Issue 114](https://github.com/Hotragn/husk/issues/114) |
+| Unsupported messaging triggers fail validation | Replaces silent non-functionality with an actionable error | [Issue 114](https://github.com/Hotragn/husk/issues/114). Superseded by [#174](https://github.com/Hotragn/husk/pull/174), which starts Discord, Slack and Telegram triggers in `husk serve` |
 | Confirmed model capabilities and deterministic default ordering | Avoids choosing the first tiny local model merely because it is listed first | [Issue 121](https://github.com/Hotragn/husk/issues/121); size tier is a heuristic, not a quality benchmark |
 | Sequential distillation, failure cutoff, accurate extraction notes | Reduces repeated failed model calls and explains fallback | Failed extraction reports attempted model and heuristic result |
 | Browser prerequisite inspection before downloads | Explains unavailable environments before spending time downloading | [Issue 122](https://github.com/Hotragn/husk/issues/122) |

@@ -52,7 +52,9 @@ Read this before the commands.
 
 Pick a tunnel and publish port **7378**. That is remote access's own port: the console
 and Husk's API stay on 7377, on loopback, and the tunnel reaches remote access and
-nothing else. (`husk serve --remote-port` changes it.)
+nothing else. (`husk serve --remote-port` changes it. `--remote-host` sets the address it
+listens on: leave it at loopback, where the tunnel connects, unless Husk runs in a
+container behind its own proxy, as on Fly.)
 
 ### Tailscale Funnel
 
@@ -128,7 +130,9 @@ and `cloudflared tunnel run husk`. See [Cloudflare's tunnel guide](https://devel
 husk serve --remote --public-url https://box.tail1234.ts.net
 ```
 
-Use your own name, with no path. Husk checks for security advisories first:
+Use your own name, with no path. The computers come from Docker unless you name another
+provider: add `--provider podman`, `--provider fly` or `--provider ssh`. Husk checks for
+security advisories first:
 
 <Terminal>
 {`✓ control plane on http://127.0.0.1:7377
@@ -232,7 +236,24 @@ From the console's **Connect** page, or with `husk remote` on the same computer:
 
 Switching on is refused while a high or critical advisory stands. Starting Husk with
 another `--public-url` forgets the owner, the apps and the tokens, since they belonged to
-the old name, and gives a new claim code.
+the old name, and gives a new claim code. `husk remote` on its own says whether remote
+access is on, and which apps are signed in.
+
+## Limits
+
+- An app's access token lasts an hour, and its refresh token 30 days. A refresh token
+  used twice is taken as stolen: every token from that sign-in stops working, and the
+  app signs in again with your passkey.
+- Your passkey keeps a link open in that browser for 8 hours. The link itself lapses
+  after ten minutes unused, and after 8 hours at most; ask the chat for a new one.
+- At most 50 apps are registered at once. At the cap, an app that registered over an
+  hour ago and never signed in makes way for a new one.
+- Requests are budgeted per minute. Over budget, the answer is a 429 with
+  `retry-after: 60`.
+- The advisory check runs at start and then daily, hourly after a check that failed to
+  reach the registry.
+- Remote chats get the computer's tools, not the workspace tools, which work on this
+  machine's own files.
 
 ## When your computer is off
 
@@ -251,6 +272,12 @@ The two files are in [`deploy/fly/`](https://github.com/Hotragn/husk/tree/main/d
 in Husk's repository: a `Dockerfile` that installs Husk from npm, and a `fly.toml`. Copy
 that folder, then replace `my-husk`, `my-husk-computers` and the region in `fly.toml` with
 your own. From that folder:
+
+<NotYet>
+The `Dockerfile` installs `@husk-ai/cli@latest`, and npm still has 0.1.4, which has no
+remote access: its `husk serve` does not know `--remote`, so the machine stops as it
+starts. This works once 0.2.0 is published.
+</NotYet>
 
 ```bash
 fly apps create my-husk                 # Husk itself

@@ -99,6 +99,10 @@ login.
   or `deny` lists or `computer.image`: saving one says so.
 - Husk looks for `claude` and `codex` on the PATH and where their installers put them.
   `HUSK_CLAUDE_CLI` and `HUSK_CODEX_CLI` point it at a copy installed elsewhere.
+- Claude Code runs with `--tools ""`, `--strict-mcp-config` and `--setting-sources user`:
+  your own settings apply, a project's do not. Codex runs with `--ignore-user-config`,
+  `--ignore-rules` and `--sandbox read-only`, its shell and web search turned off. Both
+  start in `~/.husk/bots/<name>`.
 
 Running your Claude subscription on a schedule is ordinary use of your own CLI, but
 Anthropic's Pro and Max plans assume individual use: for frequent schedules, give
@@ -145,6 +149,7 @@ Bundle names expand; individual names are also accepted.
 | Bundle | Tools |
 | --- | --- |
 | `computer` | `shell`, `expose_port`, `computer_info` |
+| `browser` | `browse`, and `browser_goto`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_screenshot` on a real Chromium |
 | `files` | `read_file`, `write_file`, `edit_file`, `list_dir`, `search_files`, `move`, `delete` |
 | `web` | `fetch_url`, and `web_search` when `TAVILY_API_KEY` or `BRAVE_API_KEY` is set |
 | `http` | `http_request` |
@@ -153,6 +158,11 @@ A tool that cannot work is skipped rather than registered-and-broken: a tool the
 can see is a promise that calling it will do something. Tools needing a machine are
 dropped when `computer.enabled` is false, and `http_request` is opt-in — naming the
 `http` bundle counts as naming it.
+
+`hand_off` is opt-in too, and in no bundle: name it, and the model can pause the run
+until a person has done what only they can, such as a sign-in or a 2FA code, and said
+so. The run's time limit stops counting while it waits. Under `husk run` nobody can
+take it, so the call fails with `nobody is connected to take over this run`.
 
 ## computer
 
@@ -176,20 +186,27 @@ computer:
 | `provider` | string | best available | `docker`, `podman`, `local`, `ssh`, `fly` |
 | `flavor` | enum | `base` | `base`, `python`, `node`, `full` |
 | `image` | string | — | Explicit image reference. Overrides `flavor` |
-| `cpus` | number > 0, ≤ 64 | `2` at create time | CPU allocation |
-| `memoryMb` | int > 0, ≤ 131072 | `2048` at create time | Memory ceiling |
-| `diskMb` | int > 0 | `2048` at create time | Size of the writable `/work` layer |
-| `idleTimeoutSec` | int ≥ 0 | `900` | Destroy after this long idle. `0` disables |
-| `maxLifetimeSec` | int ≥ 0 | `0` | Hard lifetime ceiling. `0` disables |
+| `cpus` | number > 0, ≤ 64 | `2` on Docker and Podman, `1` on Fly | CPU allocation. `local` and `ssh` set no limit |
+| `memoryMb` | int > 0, ≤ 131072 | `2048` on Docker and Podman, `1024` on Fly | Memory ceiling. Fly rounds it up to a multiple of 256 |
+| `diskMb` | int > 0 | `2048` | Docker and Podman only: the size of `/work` when it is not persisted |
+| `idleTimeoutSec` | int ≥ 0 | `900` | Destroy after this long with nothing run on it. `0` disables. See below |
+| `maxLifetimeSec` | int ≥ 0 | `0` | Destroy this long after creation, busy or not. `0` disables |
 | `network` | object | `{ mode: 'egress' }` | See below |
-| `packages` | string[] | `[]` | Installed on first boot by the flavor's package manager |
+| `packages` | string[] | `[]` | Installed when the computer is made: by the flavor's package manager on Docker and Podman, with uv, pip or npm on `local`. `ssh` and `fly` refuse them. See [Flavors](/computers#flavors) |
 | `setup` | string | — | A shell snippet run once after creation |
 | `env` | record | `{}` | Variables passed in explicitly |
 | `workdir` | string | `/work` | Default working directory |
-| `persist` | boolean | `false` | Keep the filesystem across restarts |
+| `persist` | boolean | `false` | Docker and Podman only: `/work` is a volume, not a tmpfs, so it survives a stop. See below |
 | `mounts` | object[] | `[]` | Host paths. `readonly` defaults to `true` |
-| `user` | string | provider's default | Unprivileged user inside the machine |
+| `user` | string | `1000:1000` | Docker and Podman only: the user commands run as. `root` is accepted and runs as root, still with no capabilities |
 | `labels` | record | — | Provider-specific overrides. See below |
+
+The idle and lifetime limits are enforced by the reaper, which `husk serve` and the shared
+Husk run every 60 seconds over every computer on the machine; with neither running,
+nothing is reaped. A reaped computer is destroyed, not stopped. On Docker and Podman a
+bot's computer with `persist: true` keeps its `/work` volume, browser logins included,
+and the bot's next run gets a new container on it. Otherwise the files go with the
+computer. See [Lifetimes](/computers/lifetimes).
 
 ### computer.labels
 
@@ -213,8 +230,9 @@ computer:
 | `husk.fly.ports` | fly | — |
 
 The label wins over the environment, so one machine can drive several boxes. Values are
-strings; anything else is rejected at parse time. Husk adds a `husk.key` label of its
-own when it binds a machine to a session — do not set that one.
+strings; anything else is rejected at parse time. Husk adds labels of its own: `husk.key`
+when it binds a machine to a session, and `husk.allowCommands` and `husk.denyCommands`
+from `guardrails`. Do not set those.
 
 ### computer.network
 
@@ -223,6 +241,7 @@ own when it binds a machine to a session — do not set that one.
 | `mode` | `none` \| `egress` \| `full` | `egress` | See [Networking](/computers/networking) |
 | `allow` | string[] | — | Hostnames. A single leading `*.` wildcard is supported |
 | `deny` | string[] | — | Always refused, including in `full` |
+| `strict` | boolean | — | Refuse to make the computer when its provider cannot hold every process to the policy. See [Networking](/computers/networking#where-each-mode-is-enforced) |
 
 An `egress` policy with no `allow` list permits nothing.
 
@@ -317,8 +336,9 @@ allows, which is the only safe default for a mode whose whole point is a human i
 loop.
 
 Dangerous tools: `shell`, `write_file`, `edit_file`, `move`, `delete`, `expose_port`,
-`http_request`. Not dangerous: `read_file`, `list_dir`, `search_files`, `computer_info`,
-`fetch_url`, `web_search`.
+`http_request`, `browser_click`, `browser_type`. Not dangerous: `read_file`, `list_dir`,
+`search_files`, `computer_info`, `fetch_url`, `web_search`, `browse`, `browser_goto`,
+`browser_snapshot`, `browser_screenshot`, `hand_off`.
 
 ## memory
 
@@ -368,16 +388,16 @@ triggers:
     prompt: Any red builds on main in the last 15 minutes?
 ```
 
-The schema accepts seven types. Three are wired into the server — see
-[Triggers](/chat-to-bot/triggers) for which and what happens to the rest.
+The schema accepts seven types. `husk serve` mounts all but `cli`, which needs nothing
+mounted: see [Triggers](/chat-to-bot/triggers).
 
 | Type | Fields |
 | --- | --- |
 | `http` | `path` (default `/`), `auth`: `none` \| `token` (default `token`) |
 | `cron` | `schedule` **required**, `prompt` **required** |
-| `discord` | `channels` (default `[]`), `mentionOnly` (default `true`) |
-| `slack` | `channels` (default `[]`), `mentionOnly` (default `true`) |
-| `telegram` | `allowlist` (default `[]`) |
+| `discord` | `channels` (default `[]`, and not started while empty), `mentionOnly` (default `true`) |
+| `slack` | `channels` (default `[]`, and not started while empty), `mentionOnly` (default `true`) |
+| `telegram` | `allowlist` (default `[]`, and not started while empty) |
 | `webhook` | `path` **required**, `secret` optional |
 | `cli` | none |
 
