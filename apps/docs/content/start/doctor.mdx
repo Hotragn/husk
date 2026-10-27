@@ -115,7 +115,12 @@ SELECTION  what husk would use right now
 This is the block to read first when a run behaved unexpectedly. It carries the *reason*
 next to the choice, because "husk picked local" is not actionable on its own.
 
-`isolation` is one of `kernel-level`, `guardrails only`, or `unknown`.
+`isolation` is one of `kernel-level`, `isolated from this machine, not from itself` (an
+`ssh` box), `guardrails only`, or `unknown`.
+
+When `~/.husk/config.json` sets a `provider` or a `model`, SELECTION shows it, as `auto`
+will use it, with the reason `set for auto in ~/.husk/config.json`. A provider it names
+that is not usable is shown as `none` with a warning, since `auto` does not pick another.
 
 ## WARNINGS
 

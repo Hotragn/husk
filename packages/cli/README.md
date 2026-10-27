@@ -89,8 +89,8 @@ name	state
 scratch	running
 ```
 
-Colour follows `NO_COLOR`, `FORCE_COLOR`, `TERM=dumb` and `--no-color`, and turns
-itself off when stdout is not a terminal.
+Colour follows `NO_COLOR`, `FORCE_COLOR`, `TERM=dumb` and `--no-color`, and each
+stream keeps it only when it is a terminal: `husk doctor > report.txt` carries none.
 
 ## Exit codes
 
