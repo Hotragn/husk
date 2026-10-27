@@ -116,6 +116,18 @@ describe('resolveProvider', () => {
     expect((await m.resolveProvider('auto')).name).toBe('podman');
   });
 
+  it('reads auto as the provider config.json names, and says so when it is down', async () => {
+    const docker = new FakeProvider('docker', 20, up(true));
+    const podman = new FakeProvider('podman', 18, down('machine is not started', 'podman machine start'));
+    const m = (provider: string) => new ComputerManager({ providers: [docker, podman], logger: silent, provider });
+    expect((await m('auto').resolveProvider('auto')).name).toBe('docker');
+    expect((await m('podman').resolveProvider('docker')).name).toBe('docker');
+    await expect(m('podman').resolveProvider('auto')).rejects.toMatchObject({
+      code: 'E_PROVIDER_UNAVAILABLE',
+      hint: expect.stringContaining('~/.husk/config.json sets for auto'),
+    });
+  });
+
   it('honours an explicit provider and never silently substitutes a weaker one', async () => {
     const m = manager([
       new FakeProvider('docker', 20, down('daemon is not running', 'start Docker Desktop')),

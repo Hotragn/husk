@@ -32,6 +32,13 @@ interface ServerModule {
   parsePublicUrl(raw: string): URL;
 }
 
+/** Where to listen: the flags, then HUSK_HOST and HUSK_PORT, as a service's unit file sets them, then the defaults. */
+export function listenOn(values: Record<string, unknown>, env: NodeJS.ProcessEnv = process.env): { host: string; port: number } {
+  const flag = values.port as string | undefined;
+  const port = parseCount(flag ?? (env.HUSK_PORT || undefined), flag === undefined ? 'HUSK_PORT' : '--port', 'serve') ?? DEFAULT_CONFIG.port;
+  return { host: (values.host as string | undefined) ?? (env.HUSK_HOST || DEFAULT_CONFIG.host), port };
+}
+
 export async function run(argv: string[]): Promise<number> {
   const { values } = parse(
     argv,
@@ -49,8 +56,7 @@ export async function run(argv: string[]): Promise<number> {
   ui.configure(values);
   orientBriefly('open the console it prints, or POST /v1/husks/<name>/run');
 
-  const port = parseCount(values.port as string | undefined, '--port', 'serve') ?? DEFAULT_CONFIG.port;
-  const host = (values.host as string | undefined) ?? DEFAULT_CONFIG.host;
+  const { host, port } = listenOn(values);
   const publicUrl = values['public-url'] as string | undefined;
   if ((values.remote === true) !== Boolean(publicUrl)) {
     throw new HuskError('E_CONFIG', '--remote and --public-url go together: the public URL is the fixed https name your tunnel gives this port', {

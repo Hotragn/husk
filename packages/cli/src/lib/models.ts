@@ -1,5 +1,5 @@
 import { HuskError } from '@husk-ai/core';
-import { compareModelPreference } from '@husk-ai/models';
+import { compareModelPreference, resolveAlias } from '@husk-ai/models';
 import type { ChatRequest, ChatResponse, ModelInfo, ModelProvider, StreamEvent } from '@husk-ai/core';
 
 /**
@@ -27,7 +27,10 @@ export interface ResolvedModel {
  * aliases from the build contract. When it fails, the error lists what *is*
  * reachable -- "no model available" on its own sends people to the docs.
  */
-export async function resolveModel(ref: string): Promise<ResolvedModel> {
+export async function resolveModel(asked: string, overrides: Record<string, string> = {}): Promise<ResolvedModel> {
+  // A modelAliases entry from ~/.husk/config.json, followed as the router follows it.
+  const override = overrides[asked] ? resolveAlias(asked, overrides) : undefined;
+  const ref = !override ? asked : override.kind === 'dynamic' ? override.strategy : override.id;
   const providers = await buildProviders();
   const reachable: Array<{ provider: ModelProvider; models: ModelInfo[] }> = [];
   const rejected: string[] = [];

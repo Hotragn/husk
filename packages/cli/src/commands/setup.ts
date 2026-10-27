@@ -70,7 +70,11 @@ export async function run(argv: string[], probes?: DoctorProbes): Promise<number
   const report: DoctorReport = await collect(false, probes).finally(() => spin.stop());
   const provider = await chooseComputer(report.providers, values.computer as string | undefined);
   if (!provider) return EXIT_USAGE;
-  const flavor = (values.flavor as string | undefined) ?? (await chooseFlavor(provider));
+  // `auto` is settled where a chat starts, by the runtime's rule: by priority,
+  // the first provider available that auto does not leave out. Its image is that one's.
+  const byPriority = [...report.providers].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+  const runsOn = provider === 'auto' ? (byPriority.find((p) => p.available && !leftOutOfAuto(String(p.name)))?.name ?? provider) : provider;
+  const flavor = (values.flavor as string | undefined) ?? (await chooseFlavor(runsOn));
 
   // 2. The chat apps.
   const chosen = await chooseApps(apps, values.apps as string | undefined);
@@ -93,7 +97,7 @@ export async function run(argv: string[], probes?: DoctorProbes): Promise<number
   // cannot show a download's progress. Then Husk itself, so the console can
   // show every chat from the first call. `--no-start` starts and pulls nothing.
   let consoleUrl: string | undefined;
-  if (values['no-start'] !== true) await pullImage(provider, flavor, values.json === true);
+  if (values['no-start'] !== true) await pullImage(runsOn, flavor, values.json === true);
   if (values['no-start'] !== true) {
     const started = ui.spinner('starting Husk');
     try {
@@ -176,7 +180,8 @@ async function chooseFlavor(provider: string): Promise<string | undefined> {
   // the browser tools, so the image that runs the browser.
   if (!interactive()) return 'full';
   const browser = await confirm('Include a browser? The image is larger, and pages render like in Chrome.', { defaultYes: true });
-  return browser ? 'full' : undefined;
+  // Written out either way: with no flavor, a chat gets `full` regardless.
+  return browser ? 'full' : 'base';
 }
 
 async function chooseApps(apps: ChatApp[], flag: string | undefined): Promise<ChatAppId[]> {

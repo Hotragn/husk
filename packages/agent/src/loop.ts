@@ -3,6 +3,7 @@ import {
   clampText,
   createLogger,
   estimateTokens,
+  expandEnvRefs,
   id,
   mapLimit,
   messageText,
@@ -763,9 +764,20 @@ class Run {
  * receives, so it is a free function rather than a private method: a test can
  * prove that a label set in a husk.yaml is the same label `resolveSshSettings`
  * reads, without booting an agent to find out.
+ *
+ * Two things become real here. `${NAME}` in `computer.env` is read from `env`.
+ * And `guardrails`' allow and deny lists become the labels every provider holds
+ * each command to (`commandRulesOf` in @husk-ai/runtime reads them), so an
+ * allow entry lifts a built-in refusal as the docs say. A computer reused by
+ * its key keeps the lists it was made with.
  */
-export function computerSpecFor(spec: HuskSpec): ComputerSpec {
+export function computerSpecFor(spec: HuskSpec, env: NodeJS.ProcessEnv = process.env): ComputerSpec {
   const c = spec.computer;
+  const { allowCommands, denyCommands } = spec.guardrails;
+  const rules = {
+    ...(allowCommands.length ? { 'husk.allowCommands': JSON.stringify(allowCommands) } : {}),
+    ...(denyCommands.length ? { 'husk.denyCommands': JSON.stringify(denyCommands) } : {}),
+  };
   return {
     name: spec.name,
     provider: c.provider,
@@ -777,14 +789,14 @@ export function computerSpecFor(spec: HuskSpec): ComputerSpec {
     idleTimeoutSec: c.idleTimeoutSec,
     maxLifetimeSec: c.maxLifetimeSec,
     network: c.network,
-    env: c.env,
+    env: Object.fromEntries(Object.entries(c.env).map(([k, v]) => [k, expandEnvRefs(v, env, `computer.env.${k}`)])),
     mounts: c.mounts,
     workdir: c.workdir,
     persist: c.persist,
     packages: c.packages,
     setup: c.setup,
     user: c.user,
-    labels: c.labels,
+    labels: Object.keys(rules).length ? { ...c.labels, ...rules } : c.labels,
   };
 }
 

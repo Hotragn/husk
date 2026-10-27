@@ -74,6 +74,9 @@ Anything else throws `E_MODEL_UNAVAILABLE` and lists the aliases it does know.
 }
 ```
 
+`"model": "free"` in the same file is shorthand for an `auto` override: it is what `auto`
+means on this machine, unless `modelAliases` has an `auto` entry of its own.
+
 An override may point at another alias. The resolver follows up to eight hops and
 refuses a cycle rather than hanging:
 

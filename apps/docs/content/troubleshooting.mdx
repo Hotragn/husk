@@ -353,7 +353,8 @@ guardrails:
     - '^sudo apt-get install'
 ```
 
-`allowCommands` beats both your deny list and the built-in one. [The full
+`allowCommands` beats both your deny list and the built-in one, where it matches: a
+command chained after `sudo apt-get install …` is still checked on its own. [The full
 list](/security/isolation#the-command-deny-list).
 
 ### Containers are never destroyed

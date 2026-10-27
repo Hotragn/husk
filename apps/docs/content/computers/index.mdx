@@ -117,7 +117,7 @@ Every field a computer can be created with. In a `husk.yaml` these live under
 | `workdir` | string | `/work` | Default working directory |
 | `user` | string | `1000:1000` | The unprivileged user inside the machine |
 | `persist` | boolean | `false` | Keep the filesystem across restarts |
-| `packages` | array | `[]` | Installed on first boot by the flavor's package manager |
+| `packages` | array | `[]` | Installed by the flavor's package manager before the computer starts: see below |
 | `setup` | string | — | A shell snippet run once after creation |
 | `labels` | record | — | Free-form metadata, carried on the machine |
 
@@ -163,6 +163,21 @@ Package installation is per-flavor:
 
 uv rather than bare pip because an agent installing a package should wait two seconds,
 not forty.
+
+On Docker and Podman a computer cannot install anything itself: its root filesystem is
+read-only and it holds no capabilities. So `packages` are installed in a build `FROM` the
+computer's image, with an empty context, before the computer exists. The result is
+tagged `husk-packages:<hash>` of the image and the list, and reused by every computer
+that asks for the same list. The computer runs that image, as hardened as any other. The
+build reaches the package mirror with the engine's own network, before the computer's
+network policy applies. `docker image ls husk-packages` shows what was built.
+
+A package is a name with a version if you like (`curl`, `requests==2.32`,
+`@scope/tool@1`). A name with a space, a quote, `$`, a backtick or a backslash is refused.
+
+On `local`, Python and npm packages install with uv, pip or npm. `ssh` and `fly`
+computers refuse `packages`: on SSH the host is yours to install on, and on Fly use a
+`computer.image` that has them.
 
 ## huskinfo
 

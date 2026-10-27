@@ -107,16 +107,18 @@ export const COMMANDS: HelpEntry[] = [
     name: 'rm',
     group: 'computers',
     summary: 'Destroy a computer; a chat’s or bot’s stops for now',
-    usage: 'husk rm <name|id> [--all] [--yes]',
+    usage: 'husk rm <name|id> [--all] [--erase] [--yes] [--force]',
     details:
       'Destructive and not recoverable, except that on docker and podman a chat’s or a bot’s computer keeps its ' +
-      'files and browser logins for its next computer: for those it means "stop for now". The console’s Delete ' +
-      'erases them too. Asks first unless --yes is given or --json is set.',
+      'files and browser logins for its next computer: for those it means "stop for now". --erase, like the ' +
+      'console’s Delete, erases them too. Asks first unless --yes or --force is given.',
     flags: [
       ['--all', 'destroy every computer'],
+      ['--erase', 'take what a chat’s or bot’s computer keeps too: its files and browser logins'],
       ['--yes, -y', 'skip the confirmation'],
+      ['--force, -f', 'skip the confirmation, and with --all destroy computers in use in the last minute too'],
     ],
-    examples: ['husk rm scratch', 'husk rm --all --yes'],
+    examples: ['husk rm scratch', 'husk rm my-bot --erase', 'husk rm --all --yes'],
   },
   {
     name: 'stop',
@@ -252,8 +254,8 @@ export const COMMANDS: HelpEntry[] = [
       + 'provider only, never this machine itself. It will not start while a high or critical security\n'
       + 'advisory stands against this install. Off unless you pass --remote.',
     flags: [
-      ['--port <n>', 'default: 7377'],
-      ['--host <h>', 'default: 127.0.0.1 -- loopback only unless you change it'],
+      ['--port <n>', 'default: HUSK_PORT, else 7377'],
+      ['--host <h>', 'default: HUSK_HOST, else 127.0.0.1 -- loopback only unless you change it'],
       ['--remote', 'serve /mcp to chat apps on the web, for the owner only'],
       ['--public-url <url>', 'the fixed https name your tunnel gives remote access; needed with --remote'],
       ['--provider <name>', 'where remote chats get computers: docker (default), podman, fly or ssh'],
@@ -278,10 +280,16 @@ export const COMMANDS: HelpEntry[] = [
     name: 'mcp',
     group: 'system',
     summary: 'Run the MCP server on stdio',
-    usage: 'husk mcp',
+    usage: 'husk mcp [--provider <name>] [--flavor <name>] [--session-key <key>] [--keep]',
     details:
       'This is what an MCP client launches. stdout is the protocol channel and carries\nnothing else; logs go to stderr.',
-    examples: ['claude mcp add husk -- npx -y @husk-ai/mcp', 'husk mcp'],
+    flags: [
+      ['--provider <name>', 'docker | podman | local | ssh | fly; default: the best available'],
+      ['--flavor <name>', 'base | python | node | full; default: full, the image that runs the browser'],
+      ['--session-key <key>', 'reuse a named machine; default: one for this server process'],
+      ['--keep', 'leave the machine running after the client disconnects'],
+    ],
+    examples: ['claude mcp add husk -- npx -y @husk-ai/mcp', 'husk mcp', 'husk mcp --provider podman --keep'],
   },
   {
     name: 'models',

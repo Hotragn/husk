@@ -135,6 +135,11 @@ HMAC-SHA256 over the **raw** bytes, and the signature is read from the first of
 `X-Husk-Signature`, `X-Hub-Signature-256`, `X-Signature-256`, with a leading `sha256=`
 stripped. A mismatch is a 403 `E_EXEC_DENIED`.
 
+`${GITHUB_WEBHOOK_SECRET}` is read from the server's environment when the trigger is
+mounted. If it is unset or empty, the webhook is not mounted at all, and the server logs
+why: mounted unsigned, anyone could start the husk, and the placeholder's own text is
+printed right here.
+
 Without a `secret`, `GET /v1/triggers` reports the mount as
 `UNSIGNED -- set 'secret' on the trigger`. Anyone who can reach the port can spend your
 model budget.

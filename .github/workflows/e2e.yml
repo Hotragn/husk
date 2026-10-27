@@ -40,8 +40,19 @@ jobs:
         timeout-minutes: 15
         run: |
           get='-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30'
+          mirrors=/etc/apt/apt-mirrors.txt
           for attempt in 1 2 3; do
-            if [ "$attempt" -gt 1 ]; then timeout 120 sudo apt-get update $get || true; fi
+            if [ "$attempt" -gt 1 ]; then
+              # The runner's Azure mirror stalls, on the same file each try, and a
+              # trickle is never a timeout. A retry leaves it out, for the next
+              # mirror in the runner's list, or Ubuntu's own when it was the only one.
+              if [ -f "$mirrors" ] && grep -q 'azure\.archive\.ubuntu\.com' "$mirrors"; then
+                sudo sed -i '/azure\.archive\.ubuntu\.com/d' "$mirrors"
+                grep -q . "$mirrors" || echo 'http://archive.ubuntu.com/ubuntu/' | sudo tee "$mirrors" >/dev/null
+                echo "attempt $attempt, from:"; cat "$mirrors"
+              fi
+              timeout 120 sudo apt-get update $get || true
+            fi
             timeout 180 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
               -o DPkg::Lock::Timeout=60 $get xvfb xauth xcompmgr ffmpeg && exit 0
             sudo dpkg --configure -a || true

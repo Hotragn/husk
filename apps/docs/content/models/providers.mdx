@@ -42,17 +42,19 @@ A provider with no key set is not an error. It is reported, with the fix:
 
 ## Setting a key
 
-Husk reads keys from the process environment. Nothing is stored in `~/.husk`, and no
-command writes a key to disk.
+Husk reads keys from the process environment, and from `~/.husk/.env` if you write one.
+No command writes a key to disk.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 husk doctor            # confirms it took
 ```
 
-For a persistent, non-shell-history setup, `~/.husk/.env` is the file Husk reserves for
-local overrides. On Windows, `setx ANTHROPIC_API_KEY "sk-ant-..."` and open a new
-terminal.
+For a persistent, non-shell-history setup, put them in `~/.husk/.env`, one `KEY=value`
+per line (`#` comments, `export ` and quotes are fine). Every `husk` command and the MCP
+server read it at start, for any key the environment does not already set: a key you
+export wins over the file. On Windows, `setx ANTHROPIC_API_KEY "sk-ant-..."` and open a
+new terminal also works.
 
 <Warning>
 A key in the environment is visible to every process you launch. It is **not** passed
