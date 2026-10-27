@@ -9,6 +9,7 @@
  * and instant.
  */
 import { describe, expect, it } from 'vitest';
+import * as ui from '../ui.js';
 import { belowNodeFloor, collect } from './doctor.js';
 import type { DoctorProbes } from './doctor.js';
 
@@ -119,6 +120,38 @@ describe('doctor', () => {
     // someone chasing Docker Desktop when the fix is upstream of both.
     const report = await collect(false, onWindows('wsl-broken'));
     expect(report.warnings.join(' ')).toMatch(/engine runs inside WSL2/);
+  });
+
+  it('calls an ssh box isolated from this machine, never kernel-level', async () => {
+    const withSsh: DoctorProbes = {
+      ...probes,
+      // In priority order, as the manager lists them: ssh (16) above local (10).
+      providerStatus: async () => [
+        { name: 'ssh', description: 'a box you own', priority: 16, available: true, isolated: true, isolationKind: 'machine' },
+        ...(await probes.providerStatus(false)),
+      ],
+    };
+    const report = await collect(false, withSsh);
+    expect(report.selection).toMatchObject({ provider: 'ssh', isolationKind: 'machine' });
+    ui.configure({ color: false });
+    expect(ui.isolation(report.selection.isolationKind ?? undefined, report.selection.isolated)).toBe('isolated from this machine, not from itself');
+    expect(ui.isolation('kernel', true)).toBe('kernel-level');
+  });
+
+  it('picks what ~/.husk/config.json sets for auto, as the manager and the router do', async () => {
+    const report = await collect(false, { ...probes, autoConfig: () => ({ provider: 'local', model: 'anthropic/claude-sonnet-5' }) });
+    expect(report.selection).toMatchObject({
+      provider: 'local',
+      providerReason: 'set for auto in ~/.husk/config.json',
+      model: 'anthropic/claude-sonnet-5',
+      modelReason: 'set for auto in ~/.husk/config.json',
+    });
+  });
+
+  it('says when ~/.husk/config.json names a provider that is not usable, rather than picking another', async () => {
+    const report = await collect(false, { ...probes, autoConfig: () => ({ provider: 'docker' }) });
+    expect(report.selection.provider).toBeNull();
+    expect(report.warnings.join(' ')).toMatch(/config\.json sets docker for auto, and it is not usable: docker is installed but the daemon/);
   });
 
   it('warns below Node 20.10, as engines says, and not only below 20', () => {

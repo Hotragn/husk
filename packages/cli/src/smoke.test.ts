@@ -394,4 +394,48 @@ process.stdin.on('data', (d) => (input += d)).on('end', () => {
       removeDir(dir);
     }
   });
+
+  it('puts the answer alone on a piped stdout, one JSON document under --json, and refuses a bad --var', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'husk-cli-engine-'));
+    try {
+      // A stand-in that narrates, then answers; or fails when asked to.
+      writeFileSync(
+        join(dir, 'claude.mjs'),
+        `let input = '';
+process.stdin.on('data', (d) => (input += d)).on('end', () => {
+  const failed = input.includes('fail');
+  for (const line of [
+    { type: 'system', subtype: 'init', mcp_servers: [] },
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Let me look.' }] } },
+    { type: 'assistant', message: { id: 'm2', content: [{ type: 'text', text: 'It is up.' }] } },
+    failed
+      ? { type: 'result', subtype: 'error_during_execution', is_error: true, result: 'it broke', usage: { input_tokens: 1, output_tokens: 2 } }
+      : { type: 'result', subtype: 'success', is_error: false, result: 'It is up.', usage: { input_tokens: 1, output_tokens: 2 } },
+  ]) console.log(JSON.stringify(line));
+});`,
+      );
+      writeFileSync(join(dir, 'husk.yaml'), 'name: asker\ntools: []\nengine:\n  type: claude-code\n');
+      const env = { HUSK_CLAUDE_CLI: join(dir, 'claude.mjs') };
+
+      const piped = husk(['run', 'husk.yaml', 'Is it up?'], { cwd: dir, env });
+      expect(piped.status, piped.stderr).toBe(0);
+      expect(piped.stdout).toBe('It is up.\n');
+
+      const failed = husk(['run', 'husk.yaml', 'please fail', '--json'], { cwd: dir, env });
+      expect(failed.status).toBe(1);
+      expect(JSON.parse(failed.stdout)).toMatchObject({ stopReason: 'error' });
+
+      const bad = husk(['run', 'husk.yaml', 'Is it up?', '--var', 'my-name=x'], { cwd: dir, env });
+      expect(bad.status).toBe(2);
+      expect(bad.stderr).toContain('--var takes name=value');
+    } finally {
+      removeDir(dir);
+    }
+  });
+
+  it('answers `validate --json` on a missing file in the same shape as an invalid one', () => {
+    const r = husk(['validate', 'nope.yaml', '--json']);
+    expect(r.status).toBe(1);
+    expect(JSON.parse(r.stdout)).toMatchObject({ valid: false, issues: [expect.stringContaining('no husk.yaml')] });
+  });
 });

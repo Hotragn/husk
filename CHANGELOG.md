@@ -325,6 +325,27 @@ not here.
   its hints suggest that token for the computers' app alone, as `HUSK_FLY_TOKEN`, rather
   than `fly auth token`, which reaches every app you can
   ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **`husk run` with stdout piped writes the answer alone there.** Every step's text went
+  to stdout, so `> answer.txt` caught the narration before each tool call too, and
+  disagreed with `--json`'s `text`. Piped, the steps' text now streams to stderr
+  ([#265](https://github.com/Hotragn/husk/pull/265)).
+- **`husk run --json` writes one document when a run fails**, the result with its `error`;
+  an error object followed it on stdout ([#265](https://github.com/Hotragn/husk/pull/265)).
+- **A malformed `--var` is refused** before anything runs, as `--env` is. One with no `=`,
+  or a name a `{{word}}` placeholder could never match, was dropped without a word
+  ([#265](https://github.com/Hotragn/husk/pull/265)).
+- **Colour follows the stream it is written to.** With only stdout piped,
+  `husk doctor > report.txt` and `husk validate | grep` carried escape codes
+  ([#265](https://github.com/Hotragn/husk/pull/265)).
+- **`husk doctor`'s SELECTION is what `auto` picks.** It now follows the `provider` and
+  `model` that `~/.husk/config.json` sets, and says when the provider it names is not
+  usable; `husk up`'s first-run welcome asks the manager too, so it no longer names Fly,
+  and neither does the starter viewer. An `ssh` box is called isolated from this machine,
+  not kernel-level, in doctor, `husk up` and the welcome
+  ([#265](https://github.com/Hotragn/husk/pull/265)).
+- **A one-letter computer name is refused**, which `husk cp` reads as a Windows drive, and
+  `husk validate` names the file as typed, with `--json` in its documented shape for a
+  missing or unreadable file too ([#265](https://github.com/Hotragn/husk/pull/265)).
 
 ### Security
 

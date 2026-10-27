@@ -211,6 +211,12 @@ export class ComputerManager {
   }
 
   async create(spec: ComputerSpec = {}): Promise<Computer> {
+    // `husk cp x:/work/a .` reads a one-letter name as a Windows drive, so such a computer could never be copied to.
+    if (spec.name !== undefined && spec.name.length < 2) {
+      throw new HuskError('E_SPEC_INVALID', `a computer name needs two characters or more: ${spec.name || '(empty)'}`, {
+        hint: '`husk cp` reads a one-letter name as a Windows drive',
+      });
+    }
     const all = await this.list();
     // One computer per name. A second one would be unreachable by name from the
     // moment it existed, and `husk rm <name>` would destroy one of two (#112).

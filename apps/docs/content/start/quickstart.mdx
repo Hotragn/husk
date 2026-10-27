@@ -197,8 +197,8 @@ same file in one turn, and the read lost the race. A larger model sequences the 
 turns; a small one does not. [The agent loop](/chat-to-bot/running#the-loop) covers the
 concurrency rule.
 
-The run cost nothing, and the footer says `free` rather than `$0.0000`, because the
-router knows a local model has no price.
+The run cost nothing, and the footer says `free` rather than `$0.0000`: it does whenever
+the run's counted cost is zero, as a local model's is.
 
 ## Next
 

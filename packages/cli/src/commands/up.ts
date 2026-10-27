@@ -42,10 +42,14 @@ export async function run(argv: string[]): Promise<number> {
   // read before a machine exists, not once it already does.
   const requested = (values.provider as string | undefined) ?? 'auto';
   const status = await mgr.status();
-  const picked = requested === 'auto' ? status.find((s) => s.available) : status.find((s) => s.name === requested);
+  // What `auto` picks, asked of the manager that will pick it: the provider
+  // ~/.husk/config.json names, and never Fly unasked.
+  const pickedName = requested === 'auto' ? await mgr.resolveProvider('auto').then((p) => String(p.name), () => undefined) : requested;
+  const picked = status.find((s) => s.name === pickedName);
   orient({
     provider: picked ? String(picked.name) : requested,
     isolated: picked?.isolated ?? null,
+    ...(picked?.isolationKind ? { isolationKind: picked.isolationKind } : {}),
     detail: picked?.version,
     hint: `husk exec ${name} -- uname -sr`,
   });
@@ -107,9 +111,9 @@ export async function run(argv: string[]): Promise<number> {
       ['provider', `${info.provider}${availability?.version ? ui.dim(`  (${availability.version})`) : ''}`],
       [
         'isolation',
-        availability?.isolated
-          ? ui.green('kernel-level')
-          : ui.yellow('guardrails only — not a sandbox'),
+        availability?.isolationKind === 'guardrails' || availability?.isolated === false
+          ? ui.yellow('guardrails only — not a sandbox')
+          : ui.isolation(availability?.isolationKind, availability?.isolated),
       ],
       ['image', info.imageFallback ? `${info.image} ${ui.yellow('(fallback)')}` : ui.dim(info.image)],
       ['workdir', info.workdir],

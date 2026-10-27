@@ -390,7 +390,7 @@ export function topLevelHelp(version: string, firstRun = false): string {
   out.push(`  ${gray('$')} husk rm scratch                  ${dim('# throw it away')}`);
   out.push('');
   out.push(dim('  Exit codes: 0 ok · 1 error · 2 usage · 130 interrupted.'));
-  out.push(dim('  husk sends nothing anywhere except the model provider you configure.'));
+  out.push(dim('  Husk has no product telemetry. Tasks can contact configured providers and requested websites.'));
   return out.join('\n');
 }
 
