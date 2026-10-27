@@ -261,6 +261,13 @@ describe('one computer per name (#112)', () => {
     });
   });
 
+  it('refuses a one-letter name, which `husk cp` would read as a Windows drive', async () => {
+    const p = new FakeProvider('docker', 1, up(true));
+    await expect(manager([p]).create({ name: 'x' })).rejects.toMatchObject({ code: 'E_SPEC_INVALID', message: expect.stringContaining('two characters') });
+    // Refused before any provider is asked.
+    expect(p.probes).toBe(0);
+  });
+
   it('gives a keyed computer its own name when a husk run and the server both want "triage"', async () => {
     const home = process.env.HUSK_HOME;
     process.env.HUSK_HOME = mkdtempSync(join(tmpdir(), 'husk-ensure-'));

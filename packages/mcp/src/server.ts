@@ -1156,9 +1156,10 @@ export class HuskMcpServer {
       getProfile: () => this.profile,
       getCapabilities: async () => {
         const providers = await this.manager.status();
-        const selected = this.spec.provider
-          ? providers.find((p) => p.name === this.spec.provider && p.available)
-          : providers.find((p) => p.available);
+        // What `auto` would give it, asked of the manager: what ~/.husk/config.json
+        // names, and never Fly unasked, which bills per machine.
+        const name = this.spec.provider ?? (await this.manager.resolveProvider('auto').then((p) => p.name, () => undefined));
+        const selected = providers.find((p) => p.name === name && p.available);
         this.confirmedProvider = selected?.name;
         return { providers, selected: selected ?? null };
       },
