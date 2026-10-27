@@ -230,7 +230,23 @@ From the console's **Connect** page, or with `husk remote` on the same computer:
 
 Switching on is refused while a high or critical advisory stands. Starting Husk with
 another `--public-url` forgets the owner, the apps and the tokens, since they belonged to
-the old name, and gives a new claim code.
+the old name, and gives a new claim code. `husk remote` on its own says whether remote
+access is on, and which apps are signed in.
+
+## Limits
+
+- An app's access token lasts an hour, and its refresh token 30 days. A refresh token
+  used twice is taken as stolen: every token from that sign-in stops working, and the
+  app signs in again with your passkey.
+- Your passkey keeps a link open in that browser for 8 hours.
+- At most 50 apps are registered at once. At the cap, an app that registered over an
+  hour ago and never signed in makes way for a new one.
+- Requests are budgeted per minute. Over budget, the answer is a 429 with
+  `retry-after: 60`.
+- The advisory check runs at start and then daily, hourly after a check that failed to
+  reach the registry.
+- Remote chats get the computer's tools, not the workspace tools, which work on this
+  machine's own files.
 
 ## When your computer is off
 

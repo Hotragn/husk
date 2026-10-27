@@ -1,7 +1,7 @@
 ---
 title: Giving an MCP client a computer
 navTitle: Setup
-description: "One line of config, seven tools, and no account. Also: what the model is told about its own containment."
+description: "One line of config, a computer's tools, and no account. Also: what the model is told about its own containment."
 order: 1
 ---
 
@@ -28,30 +28,29 @@ two lines of input list its tools:
 {`$ printf '%s\\n%s\\n' \\
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' \\
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \\
-  | npx -y @husk-ai/mcp 2>/dev/null | jq -r 'select(.id==2) | .result.tools[].name'
-shell
-read_file
-write_file
-edit_file
-list_dir
-expose_port
-computer_info`}
+  | npx -y @husk-ai/mcp 2>/dev/null | jq -r 'select(.id==2) | .result.tools[].name' | head -9
+workspace_create
+workspace_list
+workspace_open
+workspace_read
+workspace_write
+source_add
+workspace_export
+workspace_open_ui
+shell`}
 </Terminal>
+
+The rest of the list is the computer's: the file tools, `expose_port`, `browse`,
+`computer_info`, fifteen `browser_*` tools, `hand_off`, `hand_off_done` and
+`computer_open_ui`. An app that gives up on a long call, as this probe would, also gets
+`job_wait`, and an app that renders MCP Apps gets the computer card's two tools.
+`--profile starter` lists the workspace tools alone.
 
 ## Transports
 
-Stdio. That is the whole list.
-
-<NotYet>
-`docs/ARCHITECTURE.md` and `docs/BUILD-CONTRACT.md` both describe `@husk-ai/mcp` as
-"stdio + streamable HTTP". The package imports one transport, `StdioServerTransport`,
-and exposes one connect method, `connectStdio()`.
-
-There is a `get server()` accessor on `HuskMcpServer`, commented "for embedding in an
-existing HTTP server", which hands you the raw protocol server so you can attach a
-transport of your own. No HTTP server ships in the package, and there is no HTTP
-framework in its dependencies.
-</NotYet>
+Stdio, for the chat apps on this machine. Chat apps on the web (claude.ai, ChatGPT)
+reach Husk over streamable HTTP instead, through `husk serve --remote`: see
+[Chat apps on the web](/guides/remote-access).
 
 ## Nothing is created until it is used
 
@@ -61,9 +60,11 @@ Adding the server has to cost nothing, or people uninstall it. So:
 - No machine on `tools/list`.
 - The first tool call creates one, and only one even under concurrent calls.
 
-The machine is named `mcp-<session>` and created with `idleTimeoutSec: 3600`. When the
-client disconnects — SIGINT, SIGTERM, or stdin closing — the machine is destroyed, unless
-you passed `--keep`.
+The machine is named `mcp-<session key>` and kept: it has no idle or lifetime limit of
+its own. After ten minutes with no Husk call it is stopped, and the chat's next call
+starts it again. When the client disconnects (SIGINT, SIGTERM, or stdin closing) it is
+stopped, not destroyed; `--keep` leaves it running. Only you delete it, from the
+console's Delete or with `husk rm --erase`.
 
 ## What the model is told
 
@@ -80,10 +81,11 @@ On a container provider:
 On the `local` provider:
 
 ```text
-[husk] local computer cmp_8v9z on real Linux via wsl:Ubuntu. This is a guarded working
+[husk] local computer cmp_8v9z on real Linux via Ubuntu. This is a guarded working
 directory, NOT a sandbox: file tools are confined to /work and destructive commands are
 refused, but shell commands can still reach anything your user can on the host --
-filesystem, kernel and network. Keep secrets and untrusted input out of it.
+filesystem, kernel and network. Keep secrets and untrusted input out of it. Start Docker
+for real isolation.
 ```
 
 On anything else:
@@ -92,24 +94,42 @@ On anything else:
 [husk] computer cmp_8v9z on ssh. /work persists for this session.
 ```
 
-The server also sends MCP `instructions` at initialisation:
+The server also sends MCP `instructions` at initialisation: a paragraph on the workspace
+tools, then one on the computer's, which begins:
 
-> Husk gives you a Linux computer. Use `shell` for anything a command line can do; the
-> filesystem at `/work` persists across calls in this session. Call `computer_info` once
-> before assuming a runtime or tool is installed.
+> Husk gives you a computer, usually a Linux container; /work persists for this session.
+> Call `computer_info` once before assuming a runtime or even a POSIX shell: on Windows
+> without WSL it is cmd.exe.
+
+It goes on to say when to use `browse`, `browser_*` or `shell`, to take a
+`browser_snapshot` before clicking, to retry an error once and then explain, and to
+`hand_off` a login, 2FA, CAPTCHA or payment prompt rather than type the user's
+credentials. Under `--profile starter` the second paragraph says the computer tools are
+off until the user enables them; a remote chat gets the computer paragraph alone.
 
 ## Options
 
 ```text
---session <key>     reuse one machine across calls (default: unique to this server process)
+--profile <name>    starter (saved workspaces) | computer (all tools; default)
+--session <key>     reuse a named machine (default: unique to this server process)
 --provider <name>   docker | podman | local | ssh | fly  (default: best available)
 --flavor <name>     base | python | node | full          (default: full, which runs the browser)
 --network <mode>    none | egress | full                 (default: full, minus internal addresses)
+--network-strict    refuse a provider that cannot enforce --network for every process
 --memory <mb>       memory ceiling
 --cpus <n>          cpu ceiling
 --keep              leave the machine running after the client disconnects
+--daemon            run the shared Husk that every chat's tools go through
+                    (started for you on the first tool call; HUSK_DAEMON=off
+                    keeps tools in each chat's own process)
+--jobs              run the job host: bots' schedules, webhooks and chat
+                    triggers (the shared Husk starts it when a bot has one)
 -h, --help
 ```
+
+`--network-strict` needs `--network`, and refuses to start without it. The shared Husk
+logs to `~/.husk/daemon.log` and the job host to `~/.husk/jobs.log`; the shared Husk
+listens on `HUSK_PORT`, 7377 by default.
 
 `--session` also reads `$HUSK_SESSION`. Two sessions, two machines, two filesystems, one
 client:
@@ -149,10 +169,10 @@ note.
 
 ## Other clients
 
-Any MCP client that can launch a stdio server works the same way. Cursor and Zed take a
-JSON block rather than a CLI command:
+Any MCP client that can launch a stdio server works the same way, and `husk setup`
+writes each app's entry for you. Cursor takes a JSON block rather than a CLI command:
 
-```json title="mcp.json"
+```json title="~/.cursor/mcp.json"
 {
   "mcpServers": {
     "husk": {
@@ -163,15 +183,20 @@ JSON block rather than a CLI command:
 }
 ```
 
-The seven tools listed above are the whole surface, whatever the client. Their
-behaviour, their `dangerous` flags and their arguments are the same ones the agent loop
-uses — see [tools in a husk.yaml](/reference/husk-yaml#tools) and
+Zed names the key `context_servers`, in its `settings.json`, and VS Code `servers`.
+[docs/clients.md](https://github.com/Hotragn/husk/blob/main/docs/clients.md) has each
+app's file and what it supports.
+
+The tools listed above are the whole surface, whatever the client, apart from
+`job_wait` and the card's two. Their behaviour, their `dangerous` flags and their
+arguments are the same ones the agent loop uses — see
+[tools in a husk.yaml](/reference/husk-yaml#tools) and
 [Approvals](/security/approvals#which-tools-are-dangerous).
 
 ## Next
 
 - [Isolation](/security/isolation) — what the machine the model just got is actually
   worth.
-- [Concepts](/computers) — the interface behind those seven tools.
+- [Concepts](/computers) — the interface behind those tools.
 - [CLI reference](/reference/cli#husk-mcp) — the `husk mcp` subcommand, which takes a
   different flag set from the standalone binary.
