@@ -27,6 +27,8 @@ export interface ProviderStatus extends Availability {
 export interface ComputerManagerOptions {
   /** Hard ceiling on live machines. Defaults to 8. */
   maxComputers?: number;
+  /** What `auto` means here, `HuskConfig.provider`, when it names a provider. */
+  provider?: string;
   /** How long a provider availability probe stays fresh. Defaults to 30s. */
   probeTtlMs?: number;
   logger?: Logger;
@@ -73,6 +75,7 @@ export class ComputerManager {
   private readonly probes = new Map<ProviderName, { at: number; result: Availability }>();
   private readonly log: Logger;
   private readonly maxComputers: number;
+  private readonly preferred: ProviderName | undefined;
   private readonly probeTtlMs: number;
   private reaper: ReturnType<typeof setInterval> | undefined;
   /** In-flight creates, so two concurrent `ensure` calls cannot race into two machines. */
@@ -80,6 +83,7 @@ export class ComputerManager {
 
   constructor(opts: ComputerManagerOptions = {}) {
     this.maxComputers = opts.maxComputers ?? 8;
+    this.preferred = opts.provider && opts.provider !== 'auto' ? (opts.provider as ProviderName) : undefined;
     this.probeTtlMs = opts.probeTtlMs ?? 30_000;
     this.log = opts.logger ?? createLogger({ scope: 'runtime' });
     for (const p of opts.providers ?? defaultProviders()) this.register(p);
@@ -140,7 +144,8 @@ export class ComputerManager {
    * caller asked for. That substitution is exactly the kind of surprise that turns
    * into a security incident.
    */
-  async resolveProvider(name: ProviderName | 'auto' = 'auto'): Promise<ComputerProvider> {
+  async resolveProvider(asked: ProviderName | 'auto' = 'auto'): Promise<ComputerProvider> {
+    const name = asked === 'auto' ? (this.preferred ?? 'auto') : asked;
     if (name !== 'auto') {
       const p = this.providers.get(name);
       if (!p) {
@@ -151,7 +156,10 @@ export class ComputerManager {
       const a = await this.probe(name);
       if (!a.available) {
         throw new HuskError('E_PROVIDER_UNAVAILABLE', `provider "${name}" is not usable: ${a.reason ?? 'unknown'}`, {
-          hint: a.hint ?? 'run `husk doctor` to see what is available',
+          hint:
+            asked === 'auto'
+              ? `it is the provider ~/.husk/config.json sets for auto: ${a.hint ?? 'start it, or change that setting'}`
+              : (a.hint ?? 'run `husk doctor` to see what is available'),
         });
       }
       return p;
@@ -342,11 +350,11 @@ export class ComputerManager {
     return true;
   }
 
-  async destroyAll(): Promise<number> {
+  async destroyAll(opts: { erase?: boolean } = {}): Promise<number> {
     const all = await this.list();
     let n = 0;
     for (const info of all) {
-      if (await this.destroy(info.id)) n++;
+      if (await this.destroy(info.id, opts)) n++;
     }
     return n;
   }

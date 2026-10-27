@@ -95,7 +95,7 @@ while the machine runs.
 `husk doctor` says so in the hint rather than after the fact:
 
 ```text
-fix: run `fly auth token` and export it as FLY_API_TOKEN (fly machines are metered, not free)
+fix: make a token for the computers' app alone with `fly tokens create deploy --app <app>`, and export it as HUSK_FLY_TOKEN (fly machines are metered, not free)
 ```
 
 ## ssh
@@ -188,13 +188,18 @@ rootless containers use, and it is not a container.
 ## The path jail
 
 The jail presents `/work` and `/tmp` to the guest and maps them onto real directories.
+It runs on `local` and `ssh`. On Docker, Podman and Fly the filesystem API reaches the
+whole container, which is the boundary there: `read_file /etc/passwd` returns the
+container's own copy.
+
 It runs in two passes:
 
 1. **Lexical.** `toHostPath` normalises the guest path, rejects anything outside `/work`
    or `/tmp`, and re-checks containment after `resolve()` collapses `..`.
 2. **Resolved.** `assertInJail` calls `realpath` on the nearest existing ancestor and
    confirms the real target is still inside the workspace. This is the pass that catches
-   a symlink created inside the workspace and pointing out of it.
+   a symlink created inside the workspace and pointing out of it. A link whose target
+   does not exist yet is judged by that target, since writing through it would create it.
 
 ```text
 error path is outside the machine's writable area: /etc/passwd
@@ -207,8 +212,12 @@ hint:  husk refuses to follow links that leave the machine
 ```
 
 On `ssh` the resolved pass cannot be a local `realpath` — that would be a round trip per
-operation — so it is compiled into the same remote shell command that does the work,
-using `readlink -f`, and exits with code 77 on a violation.
+operation — so it is compiled into the same remote shell command that does the work.
+`readlink -m` resolves the path through every link, under directories not made yet
+included, and the command exits with code 77 when the result is outside the workspace or
+cannot be resolved at all. The box needs GNU `readlink`, from coreutils, and `husk doctor`
+says so when it is missing. `husk cp` is checked the same way before `scp` runs; `scp -r`
+then follows the links inside the directory it copies, as it always does.
 
 ### What the path jail does not cover
 

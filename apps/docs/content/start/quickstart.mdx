@@ -45,8 +45,8 @@ COMPUTERS
       fix: export HUSK_SSH_TARGET=user@host (an Oracle Cloud Always Free ARM instance costs nothing)
   ✗ fly      isolated
       A Fly.io microVM per computer. Real isolation, metered by the second.
-      FLY_API_TOKEN is not set
-      fix: run \`fly auth token\` and export it as FLY_API_TOKEN (fly machines are metered, not free)
+      no fly token is set: HUSK_FLY_TOKEN, or FLY_API_TOKEN
+      fix: make a token for the computers' app alone with \`fly tokens create deploy --app <app>\`, and export it as HUSK_FLY_TOKEN (fly machines are metered, not free)
   ✓ local    not isolated
       A guarded working directory on this machine. Free, always available, not isolated.
       via WSL2 (Ubuntu)
@@ -142,8 +142,8 @@ husk rm scratch --yes
 
 <Danger>
 `husk rm` destroys the machine and its filesystem. There is no undo and no snapshot
-taken on your behalf. Without `--yes` it asks first; with `--json` set it does not ask,
-because there is nobody at the terminal to answer.
+taken on your behalf. Without `--yes` it asks first, and in a script it refuses rather
+than guess.
 </Danger>
 
 ## Then: a whole agent, for zero dollars

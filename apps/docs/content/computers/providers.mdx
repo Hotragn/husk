@@ -124,19 +124,30 @@ are sitting at**. It does not mean the agent is contained on the remote box: it 
 your user there, with your user's reach. If the remote box has anything on it you care
 about, run Docker on the remote box rather than pointing `ssh` at it directly.
 
+A target that is this machine (`localhost`, `127.0.0.1`, `::1`) is reported as not
+isolated, whichever account it logs in to: it shares this machine's files, network and
+loopback services. [Remote access](/guides/remote-access) refuses it.
+
+The box needs a POSIX shell and GNU coreutils, which every mainstream distribution ships;
+on Alpine, `apk add coreutils`. The path jail resolves every path with GNU
+`readlink -m`, so without it the probe reports the box as unavailable.
+
 ## fly
 
 One Fly.io microVM per computer, created and destroyed through the Machines API. Real
 hardware-level isolation, metered by the second while it runs.
 
 ```bash
-export FLY_API_TOKEN=$(fly auth token)   # FLY_ACCESS_TOKEN also accepted
+fly apps create husk
+export HUSK_FLY_TOKEN="$(fly tokens create deploy --app husk)"   # or FLY_API_TOKEN
 export HUSK_FLY_APP=husk                 # or FLY_APP_NAME
 export HUSK_FLY_REGION=lhr               # optional; or FLY_REGION
 ```
 
-Run `fly apps create husk` first — the probe reports "a fly token is present but no app
-is configured" as a separate state from "no token", because they have different fixes.
+A deploy token reaches that one app, which is all Husk asks of it; `fly auth token`
+prints your own, which reaches every app you can. The probe reports "a fly token is
+present but no app is configured" as a separate state from "no token", because they have
+different fixes.
 
 Per-husk, the app and region go in the husk.yaml under
 [`computer.labels`](/chat-to-bot/husk-yaml#computerlabels) as `husk.fly.app` and

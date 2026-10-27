@@ -297,10 +297,9 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
   app.put('/v1/computers/:id/fs/write', async (req, reply) => {
     const { id } = req.params as { id: string };
     const computer = await mustGet(app, id);
-    const body = req.body;
-    const content =
-      body instanceof Buffer ? new Uint8Array(body) : typeof body === 'string' ? body : Buffer.from(String(body ?? ''));
-    await computer.writeFile(requirePath(req.query), content);
+    // The bytes as sent, whatever their type: every parser keeps them
+    // (body.ts). A JSON body went through `String()` and became `[object Object]`.
+    await computer.writeFile(requirePath(req.query), new Uint8Array(req.rawBody ?? Buffer.alloc(0)));
     return reply.code(204).send();
   });
 

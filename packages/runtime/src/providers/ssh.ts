@@ -3,7 +3,7 @@ import { unlink } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
-import { HuskError, READ_FILE_MAX_BYTES, fileTooLarge, headText, id as newId } from '@husk-ai/core';
+import { HuskError, READ_FILE_MAX_BYTES, fileTooLarge, headText, isLoopbackHost, id as newId } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -17,7 +17,16 @@ import type {
   ProviderName,
   WriteFileOptions,
 } from '@husk-ai/core';
-import { GUEST_ROOT, GUEST_TMP, OutputBuffer, commandRulesOf, evaluateCommand, normaliseGuestPath, shellQuote } from '../policy.js';
+import {
+  GUEST_ROOT,
+  GUEST_TMP,
+  OutputBuffer,
+  commandRulesOf,
+  evaluateCommand,
+  normaliseGuestPath,
+  rewriteGuestPaths,
+  shellQuote,
+} from '../policy.js';
 import { forgetInfo, loadInfos, persistInfo, reapExpired } from '../registry.js';
 import { EXEC_TAG, STOP_UNCONFIRMED, newExecTag, reapArgv, timerMs } from '../reap.js';
 import { parseLsLong } from './oci-common.js';
@@ -277,6 +286,11 @@ export function toRemotePath(guestPath: string, jail: RemoteJail, cwd: string = 
       return resolved;
     }
   }
+  // The shell sees the real directories, and a model echoes what it saw: those
+  // are accepted as well, as `local` accepts its host paths.
+  for (const base of [jail.root, jail.tmp]) {
+    if (g === base || g.startsWith(base + '/')) return g;
+  }
 
   throw new HuskError('E_FS_DENIED', `path is outside the machine's writable area: ${g}`, {
     hint: `this computer exposes ${GUEST_ROOT} and ${GUEST_TMP}; use a path under one of them`,
@@ -315,8 +329,12 @@ export function remoteJailGuard(remotePath: string, jail: RemoteJail): string {
   const tmp = shellQuote([jail.tmp]);
   return (
     `__h=${q}; ` +
-    // readlink -f resolves a path that does not exist yet, as long as its parent does.
-    `__r=$(readlink -f "$__h" 2>/dev/null || printf %s "$__h"); ` +
+    // `-m` resolves every link on the way, one under a directory not made yet
+    // and one whose target is missing included. `-f` gave up when a parent was
+    // missing, and checking the raw path then let `link/new/file` out through
+    // the link. A path neither can resolve is refused, never read lexically.
+    `__r=$(readlink -m -- "$__h" 2>/dev/null || realpath -m -- "$__h" 2>/dev/null) || ` +
+    `{ echo "husk: cannot resolve $__h: this computer needs GNU readlink, from coreutils" >&2; exit ${JAIL_EXIT}; }; ` +
     `case "$__r" in ${root}|${root}/*|${tmp}|${tmp}/*) ;; ` +
     `*) echo "husk: path resolves outside the workspace: $__h" >&2; exit ${JAIL_EXIT};; esac; `
   );
@@ -698,7 +716,9 @@ class SshComputer implements Computer {
       return { exitCode: 124, stdout: '', stderr: '', durationMs: 0, truncated: false, timedOut: true };
     }
     const cwd = toRemotePath(req.cwd ?? GUEST_ROOT, this.jail);
-    const script = typeof req.cmd === 'string' ? req.cmd : shellQuote(req.cmd);
+    // The box has no `/work`: a command's `/work` and `/tmp` are mapped onto
+    // the computer's directories, as `local` maps them when it has no mount.
+    const script = rewriteGuestPaths(typeof req.cmd === 'string' ? req.cmd : shellQuote(req.cmd), this.jail, toRemotePath);
     // Only what the spec asked for. Nothing from this laptop's environment goes
     // over the wire -- the remote already has its own, and ours holds secrets.
     // Inherited by everything the command starts, so a stop can find all of it
@@ -752,8 +772,12 @@ class SshComputer implements Computer {
       ...opts,
     });
     if (r.code === JAIL_EXIT) {
-      throw new HuskError('E_FS_DENIED', 'path resolves outside the workspace through a symlink', {
-        hint: 'husk refuses to follow links that leave the machine',
+      // The guard says which: a link out, or a path this box cannot resolve.
+      const said = r.stderr.trim().split('\n').find((l) => l.startsWith('husk: '))?.slice(6);
+      throw new HuskError('E_FS_DENIED', said ?? 'path resolves outside the workspace through a symlink', {
+        hint: said?.startsWith('cannot resolve')
+          ? 'install coreutils on that box (on Alpine: apk add coreutils)'
+          : 'husk refuses to follow links that leave the machine',
         details: { path: guestPath },
       });
     }
@@ -859,8 +883,9 @@ class SshComputer implements Computer {
 
   async upload(hostPath: string, targetPath: string): Promise<void> {
     this.assertLive();
-    const remote = toRemotePath(targetPath, this.jail);
-    const mk = await this.remote(`mkdir -p ${shellQuote([posix.dirname(remote)])}`, { timeoutMs: 30_000 });
+    // Resolved on the far end first, as every file call's path is: the lexical
+    // mapping cannot see a link that would carry the copy out of the workspace.
+    const { remote, ...mk } = await this.guarded(targetPath, (r) => `mkdir -p ${shellQuote([posix.dirname(r)])}`, { timeoutMs: 30_000 });
     if (mk.code !== 0) {
       throw new HuskError('E_FS_DENIED', `cannot create the destination directory: ${mk.stderr.trim()}`, {
         hint: 'check the remote user can write into the workspace',
@@ -888,7 +913,14 @@ class SshComputer implements Computer {
 
   async download(path: string, hostPath: string): Promise<void> {
     this.assertLive();
-    const remote = toRemotePath(path, this.jail);
+    // The path is resolved on the far end first, as every file call's is. scp
+    // then follows the links under it, as any `scp -r` does.
+    const { remote, ...checked } = await this.guarded(path, () => 'true', { timeoutMs: 30_000 });
+    if (checked.code !== 0) {
+      throw new HuskError('E_FS_DENIED', `cannot check ${normaliseGuestPath(path)}: ${checked.stderr.trim()}`, {
+        hint: 'check the computer is reachable',
+      });
+    }
     const r = await run(
       'scp',
       buildScpArgs({
@@ -1040,28 +1072,49 @@ export class SshProvider implements ComputerProvider {
       };
     }
 
+    // A target that is this machine is no boundary from it, whichever account
+    // ssh logs in to: it shares this machine's files, network and loopback services.
+    const self = isLoopbackHost(settings.target.host);
+    const isolation = self ? ({ isolated: false, isolationKind: 'guardrails' } as const) : ({ isolated: true, isolationKind: 'machine' } as const);
+
     const args = buildSshArgs({
       target: settings.target,
       ...(settings.keyPath ? { keyPath: settings.keyPath } : {}),
-      command: 'echo husk-ssh-ok; uname -sm',
+      // The path checks resolve with `readlink -m`: a box without it would refuse every file call.
+      command: 'echo husk-ssh-ok; uname -sm; readlink -m / >/dev/null 2>&1 || realpath -m / >/dev/null 2>&1 || echo husk-no-readlink',
     });
     const r = await run('ssh', args, { timeoutMs: 20_000 });
 
     if (r.code === 0 && r.stdout.includes('husk-ssh-ok')) {
       const uname = r.stdout.split('\n')[1]?.trim() ?? '';
+      if (r.stdout.includes('husk-no-readlink')) {
+        return {
+          available: false,
+          ...isolation,
+          reason: `${sshDestination(settings.target)} has no GNU readlink, which husk's path checks need`,
+          hint: 'install coreutils on that box (on Alpine: apk add coreutils)',
+        };
+      }
       return {
         available: true,
-        isolated: true,
-        isolationKind: 'machine',
+        ...isolation,
         version: `${sshDestination(settings.target)}${uname ? ` (${uname})` : ''}`,
-        reason: 'commands run as your user on that box -- isolated from this machine, not from itself',
+        reason: self
+          ? `${sshDestination(settings.target)} is this machine: commands run here, with no boundary from it`
+          : 'commands run as your user on that box -- isolated from this machine, not from itself',
       };
     }
 
-    return { available: false, isolated: true, ...diagnoseSsh(r, settings) };
+    return { available: false, ...isolation, ...diagnoseSsh(r, settings) };
   }
 
   async create(spec: ComputerSpec): Promise<Computer> {
+    // Said, not dropped: the box is someone's, and installing on it is theirs to do.
+    if (spec.packages?.length) {
+      throw new HuskError('E_SPEC_INVALID', 'ssh computers do not install packages', {
+        hint: 'install them on that host yourself, or use docker or podman, which build them into the computer',
+      });
+    }
     const settings = resolveSshSettings(spec, this.env);
     if (!settings) {
       throw new HuskError('E_PROVIDER_UNAVAILABLE', 'no ssh target is configured', {
@@ -1075,12 +1128,13 @@ export class SshProvider implements ComputerProvider {
     await master.open();
 
     // `$HOME` is resolved on the remote rather than assumed: the jail check needs
-    // a literal absolute path, and `~` only exists inside a shell.
+    // a literal absolute path, and `~` only exists inside a shell. Its real path,
+    // with any link in `$HOME` resolved, since the guard compares resolved paths.
     const probe = await runRemote(
       settings,
       master,
       `set -e; d="$HOME/${REMOTE_ROOT}/${id}"; mkdir -p "$d/work" "$d/tmp"; ` +
-        `chmod 700 "$HOME/${REMOTE_ROOT}" "$d"; printf %s "$d"`,
+        `chmod 700 "$HOME/${REMOTE_ROOT}" "$d"; printf %s "$(cd "$d" && pwd -P)"`,
       { timeoutMs: 30_000 },
     );
     if (probe.code !== 0 || !probe.stdout.trim().startsWith('/')) {

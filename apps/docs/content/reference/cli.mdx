@@ -179,27 +179,31 @@ Piped output is tab-separated with no colour and no truncation, so
 ### `husk rm`
 
 ```bash
-husk rm <name|id> [--all] [--yes]
+husk rm <name|id> [--all] [--erase] [--yes] [--force]
 ```
 
 | Flag | Effect |
 | --- | --- |
 | `--all` | Destroy every computer |
+| `--erase` | Also erase what a chat's or bot's computer keeps on Docker and Podman: its files and browser logins |
 | `-y`, `--yes` | Skip the confirmation |
-| `-f`, `--force` | The same as `--yes` |
+| `-f`, `--force` | Skip the confirmation, and with `--all` destroy computers used in the last minute too |
 
 <Danger>
-Destructive and not recoverable. The filesystem goes with the machine.
+Destructive and not recoverable. The filesystem goes with the machine, except that on
+Docker and Podman a chat's or a bot's computer keeps its files and browser logins for its
+next computer. `--erase` takes those too, as the console's Delete does.
 </Danger>
 
-Asks first unless `--yes`, `--force` or `--json` is given. On a non-interactive stdin
-without one of those it refuses rather than guessing:
+Asks first unless `--yes` or `--force` is given; `--json` does not skip the question. On
+a non-interactive stdin without one of those it refuses rather than guessing:
 
 ```text
 error refusing to destroy 3 computers without confirmation on a non-interactive stdin
 ```
 
-`-f`/`--force` is parsed but is not in `husk help rm`.
+`--all --yes` still refuses computers used in the last minute, since one may belong to a
+run in another terminal; `--force` destroys them too.
 
 ### `husk stop` and `husk start`
 
@@ -352,15 +356,12 @@ Model text goes to **stdout**; steps, tool calls and warnings go to **stderr**, 
 Ctrl-C stops the run cleanly and leaves the computer alone — nothing is destroyed — and
 exits 130.
 
-<Warning>
-`--max-cost` is not validated. It goes through a bare `Number()`, so `--max-cost abc`
-becomes `NaN` and silently disables the cost ceiling for that run. `--max-steps` is
-validated and rejects `0` with a usage error; `--max-cost` is not. Pass a number.
-</Warning>
+`--max-cost` and `--max-steps` are checked before anything runs: `--max-cost abc` and
+`--max-steps 0` are usage errors. `--max-cost 0` is allowed, and means a free model.
 
 <Note>
-`husk run` pins one model and does not read `fallbackModels`. See
-[the router page](/models#fallback).
+`husk run` falls back through the husk's `fallbackModels` when its `model` is not
+reachable. See [the router page](/models#fallback).
 </Note>
 
 ### `husk validate`
@@ -521,7 +522,7 @@ Identical to `<command> --help`.
 | `HUSK_SESSION` | `@husk-ai/mcp` | Default session key |
 | `HUSK_REGISTRY`, `HUSK_IMAGE_TAG` | container providers | Override the Husk image pair |
 | `HUSK_SSH_TARGET`, `HUSK_SSH_KEY` | the `ssh` provider | Remote host and key |
-| `FLY_API_TOKEN` (or `FLY_ACCESS_TOKEN`) | the `fly` provider | Fly credentials |
+| `HUSK_FLY_TOKEN` (or `FLY_API_TOKEN`, `FLY_ACCESS_TOKEN`) | the `fly` provider | Fly credentials: a deploy token for the computers' app is enough |
 | `HUSK_FLY_APP` (or `FLY_APP_NAME`), `HUSK_FLY_REGION` (or `FLY_REGION`), `HUSK_FLY_API` | the `fly` provider | App, region, API base |
 | `TAVILY_API_KEY`, `BRAVE_API_KEY` (or `BRAVE_SEARCH_API_KEY`) | the `web` bundle | Enables `web_search`; Tavily wins if both are set |
 | `CLAUDE_CONFIG_DIR` | the Claude Code importer | Where to look for sessions |

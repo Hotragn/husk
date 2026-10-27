@@ -107,16 +107,18 @@ export const COMMANDS: HelpEntry[] = [
     name: 'rm',
     group: 'computers',
     summary: 'Destroy a computer; a chat’s or bot’s stops for now',
-    usage: 'husk rm <name|id> [--all] [--yes]',
+    usage: 'husk rm <name|id> [--all] [--erase] [--yes] [--force]',
     details:
       'Destructive and not recoverable, except that on docker and podman a chat’s or a bot’s computer keeps its ' +
-      'files and browser logins for its next computer: for those it means "stop for now". The console’s Delete ' +
-      'erases them too. Asks first unless --yes is given or --json is set.',
+      'files and browser logins for its next computer: for those it means "stop for now". --erase, like the ' +
+      'console’s Delete, erases them too. Asks first unless --yes or --force is given.',
     flags: [
       ['--all', 'destroy every computer'],
+      ['--erase', 'take what a chat’s or bot’s computer keeps too: its files and browser logins'],
       ['--yes, -y', 'skip the confirmation'],
+      ['--force, -f', 'skip the confirmation, and with --all destroy computers in use in the last minute too'],
     ],
-    examples: ['husk rm scratch', 'husk rm --all --yes'],
+    examples: ['husk rm scratch', 'husk rm my-bot --erase', 'husk rm --all --yes'],
   },
   {
     name: 'stop',

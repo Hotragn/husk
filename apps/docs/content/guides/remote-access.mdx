@@ -18,7 +18,8 @@ script waiting for your passkey first. Reading pages and files does not wait.
 
 - Husk on a computer with Docker running, or Podman, or Fly or SSH computers. Remote
   chats never get the computer Husk runs on; Husk will not start remote access without
-  one of these.
+  one of these, and an SSH target that is this machine (`localhost`, `127.0.0.1`, `::1`)
+  does not count.
 - A phone, a laptop or a security key that can hold a passkey.
 - A tunnel with a **fixed** public name. The name is part of your passkey and of every
   sign-in, so a name that changes each run (ngrok's or Cloudflare's temporary ones) would
@@ -201,7 +202,8 @@ act.
 For a call that waits, the chat gives you a link instead of running it:
 
 1. Open the link, wherever you are.
-2. Read what the call sends: the page shows every argument, exactly as it will run.
+2. Read what the call sends: the page shows the computer it runs on, then every argument,
+   exactly as it will run.
 3. Approve with your passkey, or deny.
 4. Tell the chat, and it calls again.
 

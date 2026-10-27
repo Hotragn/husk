@@ -258,8 +258,10 @@ GET  /health                                         { ok: true } and nothing mo
   - What the owner already let in has budgets of its own: each signed-in app on `/mcp`
     and for tokens, each sign-in in flight, and each approval in flight, keyed on an id
     only whoever started it knows.
-  - Everyone else shares one budget per route, so a flood can delay only a new app's
-    first sign-in.
+  - Everyone else shares one budget per route, so a flood holds up only the route it is
+    aimed at: a new app's first sign-in, say. The page a link opens on (`/oauth/link`)
+    has a budget of its own, so a flood of sign-ins does not keep the owner from a
+    handoff; a flood aimed at that page itself still can.
 - **The sign-in.** Nothing is sent back to an app before the owner has signed in: an
   authorization request in error is shown as a page, not redirected, since anyone can
   register an app. The page names where it sends the owner back, and says plainly when
@@ -280,7 +282,8 @@ GET  /health                                         { ok: true } and nothing mo
     this machine's own token, and never a token in the URL.
   - Owner sessions last eight hours. Switching off or resetting ends every link and
     session, and signing an app out ends the links it was given.
-- **What the public port takes.** Sign-in bodies are at most 64 KB. `/mcp` checks its token
+- **What the public port takes.** Sign-in bodies are at most 64 KB, and a 413 names that
+  cap, not the API's 32 MB. `/mcp` checks its token
   and budget before it reads a byte of the body. Nothing there is recorded for
   `Idempotency-Key`. App ids are looked up as registered, never through the object
   prototype.
@@ -355,8 +358,12 @@ POST   /v1/computers/:id/fs/upload?path=/work           body: a tar.gz -> { path
 The archive is made and unmade by the computer's own `tar` and `gzip`; only bytes
 cross the boundary, over the same path `fs/read` and `fs/write` use. That is also
 why there is no multipart parser: the body *is* the archive, not a form wrapping
-one. Paths inside a downloaded archive are relative to the directory asked for,
-so it can be unpacked anywhere. Download refuses anything over 256 MB compressed.
+one. Entries in a downloaded archive start with the directory's own name (`work/…` for
+`path=/work`), so it can be unpacked anywhere; upload it to the parent, `/`, to put it
+back, since uploading it to `/work` gives `/work/work`. Download stops at 256 MiB
+compressed: the archive is cut off inside the computer as it passes that, so a path too
+big fails with `E_QUOTA` without filling the computer's `/tmp`. A path that is not there,
+and a file tar cannot read, are each said as such.
 
 ### Browser
 
@@ -467,13 +474,14 @@ computer: { enabled, flavor }, updatedAt, runCount }`.
 ```
 POST /v1/husks/:name/run
 body: { input: string | ModelMessage[], history?, model?, vars?, maxSteps?,
-        maxCostUsd?, approvalMode? }
+        maxCostUsd?, approvalMode?, computerId? }
  ->  RunResult
 ```
 
 `input` is required and must be non-empty; anything else is `E_SPEC_INVALID`.
-`maxCostUsd` is clamped down to the husk's own `limits.maxCostUsd` — a request
-can lower the ceiling, never raise it.
+`maxSteps` and `maxCostUsd` are clamped down to the husk's own `limits.maxSteps` and
+`limits.maxCostUsd`: a request can lower a limit, never raise it. `computerId` runs the
+husk on a computer that already exists. The router gets the husk's `fallbackModels`.
 
 Streaming, same body, SSE carrying `RunEvent` objects verbatim from `@husk-ai/core`:
 
@@ -494,9 +502,13 @@ under `request` — not the raw tool call:
 ```
 data: {"type":"approval_required","approvalId":"apr_x",
        "request":{"runId":"run_x","huskId":"triage","tool":"shell",
-                  "callId":"call_1","args":{"cmd":"rm -rf /tmp/x"},
-                  "prompt":"run `rm -rf /tmp/x`?","dangerous":true}}
+                  "callId":"call_1","args":{"command":"rm -rf /tmp/x"},
+                  "prompt":"Allow shell?","details":{"command":"rm -rf /tmp/x"},
+                  "dangerous":true}}
 ```
+
+`runId` is the run's own, the one `run_start` gave, and `callId` is the id of the
+`tool_start` the call will have once it is let through.
 
 ```
 GET  /v1/approvals              -> { "approvals": PendingApproval[] }
@@ -506,8 +518,11 @@ POST /v1/approvals/:approvalId  body: { "approve": true, "remember": false }
 
 `PendingApproval` is `{ approvalId, runId, husk, call, createdAt, expiresAt }` —
 the queue is keyed on a tool call, so a free-form `ctx.confirm` gets a synthetic
-one. `GET /v1/approvals` exists so a client that reconnects mid-run can find the
-question it missed.
+one, named after the tool that asked. `GET /v1/approvals` lists what is waiting for
+a client other than the one that started the run, such as the console, and for runs
+no client is attached to: cron, webhooks and chat triggers. A run started over this API
+lives as long as its client: when the client goes, the run stops, and its approval is
+denied.
 
 An unanswered approval times out after 120 s and the call is denied. Absent
 means no: approval is a security boundary.
@@ -515,7 +530,13 @@ means no: approval is a security boundary.
 ### Handoff to a person
 
 A husk that names the `hand_off` tool can stop and wait for someone to sign in or
-enter a 2FA code. The run is paused, not failed:
+enter a 2FA code. The run is paused, not failed, and its stream says so while it waits:
+
+```
+data: {"type":"handoff_required","handoffId":"hnd_x",
+       "request":{"runId":"run_x","huskId":"triage","reason":"Enter the 2FA code",
+                  "computerId":"cmp_x"}}
+```
 
 ```
 GET  /v1/handoffs                    -> { "handoffs": PendingHandoff[] }
@@ -689,7 +710,7 @@ effect without a restart.
 
 ```
 GET  /v1/triggers  -> { "triggers": MountedTrigger[], "cron": CronBinding[] }
-ALL  /v1/t/*       an `http` trigger. Body or `?input=`; SSE when the client asks.
+ALL  /v1/t/*       an `http` trigger. `?input=`, `?text=` or `?q=`, else the body; SSE when the client asks.
 POST /v1/w/*       a `webhook` trigger. HMAC-verified when the husk sets a secret.
 ```
 
@@ -708,7 +729,9 @@ and leaves once no husk has a trigger. `husk serve` mounts the triggers itself.
 `{ jobId, husk, schedule, prompt, nextAt }`. A webhook with a secret must carry
 `X-Husk-Signature: sha256=<hmac-sha256 hex>` over the exact bytes sent
 (`X-Hub-Signature-256` and `X-Signature-256` are accepted too); a bad signature
-is 403 `E_EXEC_DENIED`.
+is 403 `E_EXEC_DENIED`. Its prompt comes from the signed body alone: the query string
+is not signed, so `?input=` on a captured delivery would have run any prompt. There
+is no replay window, so the same signed delivery sent again runs again.
 
 ## Models
 

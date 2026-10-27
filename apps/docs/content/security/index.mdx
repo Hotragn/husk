@@ -46,7 +46,7 @@ husk doctor
       no remote host is configured
   ✗ fly      isolated
       A Fly.io microVM per computer. Real isolation, metered by the second.
-      FLY_API_TOKEN is not set
+      no fly token is set: HUSK_FLY_TOKEN, or FLY_API_TOKEN
   ✓ local    not isolated
       A guarded working directory on this machine. Free, always available, not isolated.
       via WSL2 (Ubuntu)
@@ -76,7 +76,7 @@ providers actually guarantees.
 | Control | Scope | Page |
 | --- | --- | --- |
 | Kernel isolation | `docker`, `podman`, `fly` | [Isolation](/security/isolation) |
-| Path jail | Filesystem **API** on every provider | [Isolation](/security/isolation#the-path-jail) |
+| Path jail | Filesystem **API** on `local` and `ssh`; on the others the container is the boundary | [Isolation](/security/isolation#the-path-jail) |
 | Command deny list | Every provider, every exec | [Isolation](/security/isolation#the-command-deny-list) |
 | Environment scrub | `local`, every exec; the other providers never pass this machine's environment in | [Secrets](/security/secrets) |
 | Output redaction | Every tool result, before the model sees it | [Secrets](/security/secrets#redaction) |

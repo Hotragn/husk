@@ -3,8 +3,9 @@
  * app, the sign-in or approval in flight, and each route as a whole for
  * everyone else. Never on the address, which behind a tunnel is loopback for
  * everyone, so one scanner would lock the owner out. What the owner already
- * let in has budgets of its own, so a flood can delay only a new app's first
- * sign-in.
+ * let in has budgets of its own, and every route its own for everyone else,
+ * so a flood holds up only the route it is aimed at: a new app's first
+ * sign-in, say, or the page a link opens on.
  * ponytail: fixed one-minute windows in memory, per process; a sliding window
  * if bursts at a window's edge ever matter.
  */

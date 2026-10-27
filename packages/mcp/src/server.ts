@@ -11,7 +11,7 @@ import {
 import type { CallToolResult, ClientCapabilities, Implementation, InputRequiredResult, ServerContext, Tool } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import type { StdioServerHandle } from '@modelcontextprotocol/server/stdio';
-import { HUSK_VERSION, IDENTITY_LABELS, chatClient, chatLabel, createLogger, networkEnforcement, platformName, quiet, redact } from '@husk-ai/core';
+import { HUSK_VERSION, IDENTITY_LABELS, chatClient, chatLabel, createLogger, loadConfig, networkEnforcement, platformName, quiet, redact } from '@husk-ai/core';
 import type { IdentitySource } from '@husk-ai/core';
 import type { Computer, ComputerInfo, ComputerSpec, Logger } from '@husk-ai/core';
 import { ComputerManager, ensureRunning } from '@husk-ai/runtime';
@@ -147,6 +147,12 @@ function envelopeOf(ctx: ServerContext): Record<string, unknown> {
   return (ctx.mcpReq.envelope ?? {}) as Record<string, unknown>;
 }
 
+/** This machine's computer settings, from ~/.husk/config.json: the quota, and what `auto` means. */
+function machineSettings(): { maxComputers: number; provider: string } {
+  const { maxComputers, provider } = loadConfig();
+  return { maxComputers, provider };
+}
+
 /** A call that outlasted its app's wait, still running or not yet collected. */
 interface Job {
   tool: string;
@@ -243,7 +249,7 @@ export class HuskMcpServer {
   private readonly remote: HuskMcpOptions['remote'];
 
   constructor(opts: HuskMcpOptions = {}) {
-    this.manager = opts.manager ?? new ComputerManager();
+    this.manager = opts.manager ?? new ComputerManager(machineSettings());
     this.namedSession = opts.sessionKey !== undefined || process.env.HUSK_SESSION !== undefined;
     this.sessionKey = opts.sessionKey ?? process.env.HUSK_SESSION ?? `mcp-${randomUUID()}`;
     // Claude Code runs one server process per session and says which, in
@@ -371,7 +377,8 @@ export class HuskMcpServer {
     // Remotely, a call that changes things waits for the owner's word, every
     // time, on a page that shows all of it; one too big to show never runs.
     if (this.remote?.approve && DANGEROUS_TOOLS.has(name)) {
-      const detail = exactly(toolArgs);
+      // The computer first: an app may have several, and the approval is for this one.
+      const detail = `computer: ${computer.id}\n${exactly(toolArgs)}`;
       if (detail.length > MAX_SHOWN) return { isError: true, content: [{ type: 'text', text: tooBigText(name, detail.length) }] };
       const verdict = this.remote.approve({ tool: name, summary: summarize(name, toolArgs), detail, digest: digestOf(name, computer.id, toolArgs) });
       if (!verdict.ok) return { content: [{ type: 'text', text: approvalText(name, verdict, computer.id) }], ...(verdict.state === 'denied' ? { isError: true } : {}) };

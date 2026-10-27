@@ -1,11 +1,13 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createLogger } from '@husk-ai/core';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ManagerLike } from './deps.js';
 import { UNREADABLE_HOLDS } from './handoffs.js';
 import { takeover } from './routes/tools.js';
-import { buildTestApp } from './testing.js';
+import { serve } from './serve.js';
+import { FakeManager, FakeRouter, buildTestApp, fakeAgentFactory, fakeModelProvider } from './testing.js';
 import type { TestApp } from './testing.js';
 
 /**
@@ -95,6 +97,20 @@ describe('a hold across a restart of the shared Husk', { timeout: 30_000 }, () =
     // As the chat's hand_off_done sends it: the server token, no person.
     expect((await done(second, handoffId)).statusCode).toBe(200);
     expect(await state()).toBe('done');
+  });
+
+  it('is still held after a clean stop of the real server, as Ctrl-C or SIGTERM stop it', async () => {
+    vi.stubEnv('HUSK_HOME', dir);
+    try {
+      const deps = { manager: new FakeManager(), router: new FakeRouter(), modelProviders: [fakeModelProvider], agentFactory: fakeAgentFactory() };
+      const server = await serve({ port: 0, daemon: true, reaperIntervalMs: 0, logger: createLogger({ level: 'silent' }), deps });
+      const id = ((await server.app.inject({ method: 'POST', url: '/v1/computers', payload: {} })).json() as { id: string }).id;
+      expect((await server.app.inject({ method: 'POST', url: `/v1/computers/${id}/takeover`, headers: PERSON })).json()).toHaveProperty('handoffId');
+      await server.close();
+      expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual([expect.objectContaining({ computerId: id, runId: 'person' })]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('fails closed when the holds cannot be read: every computer is held for the person', async () => {

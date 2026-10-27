@@ -136,6 +136,9 @@ export async function main(argv: string[]): Promise<number> {
     return EXIT_OK;
   }
 
+  // ~/.husk/.env before the command reads its keys. The environment the
+  // command was started with wins over the file.
+  (await import('@husk-ai/core')).loadEnvFile();
   const mod = await route();
   return mod.run(rest);
 }
@@ -153,7 +156,7 @@ function unknownCommandMessage(name: string): string {
 
 /**
  * Ctrl-C aborts in-flight work rather than killing the process, so a run stops
- * between steps and a computer is never left half-created. A second Ctrl-C from
+ * cleanly, mid-step if need be, and a computer is never left half-created. A second Ctrl-C from
  * an impatient user leaves immediately.
  */
 export function installSignalHandlers(): void {

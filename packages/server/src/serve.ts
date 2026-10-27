@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { HUSK_PROTOCOL, HUSK_VERSION, clearDaemonRecord, createLogger, ensurePaths, writeDaemonRecord } from '@husk-ai/core';
+import { HUSK_PROTOCOL, HUSK_VERSION, clearDaemonRecord, createLogger, ensurePaths, loadConfig, writeDaemonRecord } from '@husk-ai/core';
 import type { Logger, ModelProvider } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
@@ -104,11 +104,13 @@ export async function createDefaultDeps(
 ): Promise<{ manager: ManagerLike; router: RouterLike; store: Store; modelProviders: ModelProvider[] }> {
   const store = new Store();
   await store.init();
+  // This machine's settings, ~/.husk/config.json: what `auto` means, the model aliases, the router's ceiling.
+  const machine = loadConfig();
 
   let manager: ManagerLike;
   try {
     const { ComputerManager } = await import('@husk-ai/runtime');
-    manager = new ComputerManager({ maxComputers: config.maxComputers, logger: log.child('runtime') });
+    manager = new ComputerManager({ maxComputers: config.maxComputers, provider: machine.provider, logger: log.child('runtime') });
   } catch (err) {
     log.error(`@husk-ai/runtime failed to load: ${(err as Error).message}`);
     manager = unavailableManager((err as Error).message);
@@ -118,9 +120,9 @@ export async function createDefaultDeps(
   let modelProviders: ModelProvider[] = [];
   try {
     const models = (await import('@husk-ai/models')) as Record<string, unknown>;
-    const RouterCtor = models['ModelRouter'] as (new () => RouterLike) | undefined;
+    const RouterCtor = models['ModelRouter'] as (new (opts: { aliases: Record<string, string>; maxCostUsd: number }) => RouterLike) | undefined;
     if (!RouterCtor) throw new Error('@husk-ai/models does not export ModelRouter');
-    router = new RouterCtor();
+    router = new RouterCtor({ aliases: machine.modelAliases, maxCostUsd: machine.maxCostUsd });
     modelProviders = instantiateModelProviders(models, log);
   } catch (err) {
     log.error(`@husk-ai/models failed to load: ${(err as Error).message}`);
@@ -297,6 +299,9 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
       ctx.scheduler.stop();
       ctx.deps.manager.stopReaper?.();
       stopSweeping?.();
+      // Written as they are first: cancelling settles every hold, and each settle
+      // rewrote holds.json, so a clean stop left nothing held for the next start.
+      ctx.runner.handoffs.freeze();
       const cancelled = ctx.runner.cancelAll('server shutting down');
       if (cancelled) log.info(`cancelled ${cancelled} in-flight run(s)`);
       await app.close();

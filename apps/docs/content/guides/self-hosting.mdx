@@ -328,7 +328,11 @@ screens only by pattern, and `transcripts/` raw conversations — see
 
 `maxComputers` is the hard cap on live machines; a ninth returns `E_QUOTA` with 429.
 `maxCostUsd` is the router's per-call ceiling, independent of each husk's own
-`limits.maxCostUsd`.
+`limits.maxCostUsd`. `provider` and `model` say what `auto` means on this machine: a
+computer or a model asked for as `auto`, or not asked for at all, gets them. These five
+are all the file takes. A key it does not know, a value of the wrong type, or a file that
+is not JSON stops Husk with the setting's name, rather than run on a default you did not
+ask for.
 
 ### The reaper
 

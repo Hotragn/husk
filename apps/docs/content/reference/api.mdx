@@ -220,9 +220,9 @@ PUT    /v1/computers/:id/fs/write?path=/work/a.txt           body: raw bytes -> 
 DELETE /v1/computers/:id/fs?path=/work/a.txt&recursive=true  -> 204
 ```
 
-`fs/read` responds `application/octet-stream`. `fs/write` takes the raw request body —
-send `content-type: application/octet-stream` and the bytes; a JSON body would be
-written as its serialised form. A missing `path` is a 422 naming the parameter.
+`fs/read` responds `application/octet-stream`. `fs/write` writes the request body exactly
+as sent, whatever its content type, so a JSON body is a file of that JSON. A missing
+`path` is a 422 naming the parameter.
 
 ```text
 POST /v1/computers/:id/fs/upload?path=/work    body: a tar.gz -> { path, bytes, entries }
@@ -238,9 +238,12 @@ since on docker, podman, fly and ssh the host cannot see the directory at all.
 
 No multipart parser either: the body **is** the archive, not a form containing one.
 
-Download refuses anything over 256 MB compressed, and the size is checked inside the
-machine before a byte is read, so an accidental `path=/` fails fast instead of pulling a
-root filesystem into the server's memory to be rejected afterwards.
+Download stops at 256 MiB compressed. The archive is cut off inside the machine as it
+passes that, so an accidental `path=/` fails with `E_QUOTA` once its archive is that big,
+without filling the computer's `/tmp` or pulling a root filesystem into the server's
+memory to be rejected afterwards. A path that is not there, and a file tar cannot read,
+are each said as such. Entries start with the directory's own name (`work/…` for
+`path=/work`), so upload such an archive to the parent to put it back.
 
 `husk cp` still does directory copies through the provider's own mechanism (`docker cp`,
 `scp`, a recursive filesystem copy), which stays the faster path when you are at a
@@ -315,9 +318,10 @@ body: { input, history?, model?, vars?, maxSteps?, maxCostUsd?, approvalMode?, c
                  "hint": "POST { \"input\": \"your prompt\" } or an array of ModelMessage" } }
 ```
 
-`maxCostUsd` is clamped against the husk file — `Math.min(body.maxCostUsd ?? spec, spec)`
-— so a caller can lower the ceiling and cannot raise it. `maxTokens` and `timeoutSec`
-always come from the spec and are not accepted from the body.
+`maxSteps` and `maxCostUsd` are clamped against the husk file —
+`Math.min(body.maxSteps ?? spec, spec)`, and the same for the cost — so a caller can
+lower a limit and cannot raise it. `maxTokens` and `timeoutSec` always come from the spec
+and are not accepted from the body. The run's router gets the husk's `fallbackModels`.
 
 <Note>
 `computerId` pins the run to a machine that already exists -- a checkout you set up by
@@ -332,7 +336,7 @@ The streaming variant emits `RunEvent` objects verbatim from `@husk-ai/core`:
 data: {"type":"run_start","runId":"run_x","husk":"triage","model":"ollama/qwen2.5:7b"}
 data: {"type":"step_start","step":1}
 data: {"type":"tool_start","call":{"type":"tool_call","id":"c1","name":"shell","args":{}}}
-data: {"type":"tool_delta","callId":"c1","stream":"stdout","text":"…"}
+data: {"type":"tool_delta","callId":"c1","tool":"shell","stream":"stdout","text":"…"}
 data: {"type":"tool_end","call":{…},"output":"…","isError":false,"durationMs":812}
 data: {"type":"text_delta","text":"Look"}
 data: {"type":"usage","usage":{…},"cumulative":{…}}
@@ -340,8 +344,13 @@ data: {"type":"run_end","result":{…}}
 event: done
 ```
 
-The control plane assigns the run id, not the agent, and rewrites it on `run_start` and
-`run_end` so one id is true in the stream, in the store, and in the cancel call.
+The other events are `thinking_delta`, `message` (after every step), `tool_denied`,
+`approval_required`, `handoff_required`, `computer_ready`, `warning` and `error`; `RunEvent`
+in `@husk-ai/core` has every field.
+
+The control plane assigns the run id, not the agent, and rewrites it on `run_start`,
+`run_end`, `approval_required` and `handoff_required`, so one id is true in the stream, in
+the store, and in the cancel call.
 
 <Warning>
 `tool_delta` carries raw command output. It is **not** passed through `redact()` — only
@@ -353,8 +362,13 @@ the `tool_result` the model reads is. See [Secrets](/security/secrets#redaction)
 With `approvalMode: "ask"`, a dangerous tool call blocks and the stream emits:
 
 ```json
-{ "type": "approval_required", "approvalId": "apr_x", "request": { … } }
+{ "type": "approval_required", "approvalId": "apr_x",
+  "request": { "runId": "run_x", "huskId": "triage", "tool": "shell", "callId": "c1",
+               "args": { "command": "ls" }, "prompt": "Allow shell?",
+               "details": { "command": "ls" }, "dangerous": true } }
 ```
+
+`callId` is the id of the call's `tool_start`, once it is let through.
 
 ```text
 GET  /v1/approvals                 -> { approvals: PendingApproval[] }
@@ -373,18 +387,18 @@ POST /v1/handoffs/:handoffId/input   body: click | scroll | text | key  -> 204
 POST /v1/handoffs/:handoffId/done    -> { handoffId, outcome: "done" }
 ```
 
+While a run waits on a person, its stream says so, with the handoff to answer:
+
+```json
+{ "type": "handoff_required", "handoffId": "hnd_x",
+  "request": { "runId": "run_x", "huskId": "triage", "reason": "Enter the 2FA code", "computerId": "cmp_x" } }
+```
+
 A handoff resumes only when a person posts `/done`. A dropped connection or a timeout
 leaves the run paused, and cancelling the run ends the wait. The screen and input
 endpoints work only while the handoff is open, never launch a browser, and accept mouse
 and keyboard events only: no navigation, no script, no raw CDP. Typed text is not
 logged. The console's Handoffs panel uses all four.
-
-<Note>
-`docs/API.md` shows the event as `{"type":"approval_required","approvalId":"apr_x","call":{…}}`.
-The server emits `request`, an `ApprovalRequest`, not `call`. `call` is what the
-`PendingApproval` records in `GET /v1/approvals` carry — and `GET /v1/approvals` is not
-in `docs/API.md` at all.
-</Note>
 
 ### Runs
 

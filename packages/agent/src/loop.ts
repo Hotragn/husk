@@ -466,10 +466,16 @@ class Run {
     }
 
     if (done) return done;
-    if (streamError && !text && !toolCalls.length) {
+    // A stop, or a provider failing part-way, leaves a reply that is not an
+    // answer: the run ends as what happened, never `complete` with half a reply.
+    // Tool calls that arrived whole still run, and meet the stop themselves.
+    if (!toolCalls.length && this.abort.signal.aborted) {
+      throw new HuskError('E_ABORTED', streamError?.message ?? 'the run was stopped mid-reply');
+    }
+    if (streamError && !toolCalls.length) {
       throw new HuskError(
         streamError.code === 'E_MODEL_UNAVAILABLE' ? 'E_MODEL_UNAVAILABLE' : 'E_MODEL_ERROR',
-        streamError.message,
+        text ? `the model's reply was cut short: ${streamError.message}` : streamError.message,
         { hint: 'run `husk doctor` to see which models are reachable' },
       );
     }
@@ -556,6 +562,7 @@ class Run {
           runId: this.runId,
           huskId: this.spec.name,
           tool: tool.name,
+          callId: call.id,
           args: call.args,
           prompt: `Allow ${tool.name}?`,
           details: call.args,
@@ -665,6 +672,7 @@ class Run {
           runId: this.runId,
           huskId: this.spec.name,
           tool: call.name,
+          callId: call.id,
           args: call.args,
           prompt,
           details,
@@ -729,6 +737,8 @@ class Run {
     if (!this.spec.memory.enabled) return;
     const trimmed = await trimHistory(this.messages, {
       windowTurns: this.spec.memory.windowTurns,
+      // The examples come first, a user and an assistant message each: kept, so the anchor is the person's own message.
+      pinned: this.spec.examples.length * 2,
       summarise: this.spec.memory.summarise,
       summariser: (slice) => this.summarise(slice),
       onWarning: (message) => this.emit({ type: 'warning', message }),
@@ -809,7 +819,9 @@ export function computerSpecFor(spec: HuskSpec, env: NodeJS.ProcessEnv = process
  */
 export function buildAssistantMessage(response: ChatResponse): ModelMessage {
   const parts: ContentPart[] = [];
-  if (response.thinking) parts.push({ type: 'thinking', text: response.thinking });
+  if (response.thinking) {
+    parts.push({ type: 'thinking', text: response.thinking, ...(response.thinkingSignature ? { signature: response.thinkingSignature } : {}) });
+  }
   if (response.text) parts.push({ type: 'text', text: response.text });
   for (const call of response.toolCalls) parts.push(call);
   if (!parts.length) return { role: 'assistant', content: '' };

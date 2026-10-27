@@ -152,6 +152,9 @@ pre-release of 7 October.
     install.
   - The guide is *Chat apps on the web* in the docs. The Fly provider now also takes its
     token from `HUSK_FLY_TOKEN`.
+- **`husk rm --erase`** erases what a chat's or a bot's computer keeps on Docker and
+  Podman, its files and browser logins, as the console's Delete does
+  ([#259](https://github.com/Hotragn/husk/pull/259)).
 
 ### Changed
 
@@ -281,6 +284,75 @@ pre-release of 7 October.
   being dropped without a word ([#258](https://github.com/Hotragn/husk/pull/258)).
 - **`husk doctor` warns below Node 20.10**, the supported floor, not only below 20
   ([#258](https://github.com/Hotragn/husk/pull/258)).
+- **`~/.husk/config.json` and `~/.husk/.env` are read**, as the docs said. Nothing
+  opened either file. `config.json` takes `modelAliases`, `maxCostUsd`, `maxComputers`,
+  `provider` and `model`, the last two being what `auto` means on this machine. A file
+  that is not JSON, a value of the wrong type or a key it does not know stops Husk with
+  its name. `.env` fills in the keys the environment does not set
+  ([#259](https://github.com/Hotragn/husk/pull/259)).
+- **`packages` install on Docker and Podman.** A container computer's read-only root
+  refused every install; the packages are now built into an image of the computer's
+  own, `FROM` its image, and reused for the same list. A package name with a space, a
+  quote, `$`, a backtick or a backslash is refused. SSH and Fly computers refuse
+  `packages` rather than ignore them ([#259](https://github.com/Hotragn/husk/pull/259)).
+- **Runs on Mistral, Cerebras and LM Studio are counted.** Their streams report no usage,
+  so a run cost $0 and its budget never grew. Husk now counts them by its own estimate,
+  priced, as the docs said ([#260](https://github.com/Hotragn/husk/pull/260)).
+- **`--model llama`, `qwen` and `gemma` find the model you pulled.** Ollama lists it as
+  `llama3.2:latest`, and `husk run` never matched that
+  ([#260](https://github.com/Hotragn/husk/pull/260)).
+- **A run over the API falls back through `fallbackModels`**, as `husk run` does, and its
+  `maxSteps` can lower the husk's own limit but no longer raise it
+  ([#260](https://github.com/Hotragn/husk/pull/260)).
+- **`fs/write` with a JSON body writes that JSON**, exactly as sent, not
+  `[object Object]` ([#260](https://github.com/Hotragn/husk/pull/260)).
+- **`/work` in a command on an SSH computer is the computer's own.** The box has no
+  `/work`, and only the file tools mapped it, so `move`, `search_files` with ripgrep,
+  `browse`, setup scripts and the API's archive download and upload failed there. A
+  command's `/work` and `/tmp` paths are now mapped as on `local`, and the real
+  directories the shell prints are accepted back ([#262](https://github.com/Hotragn/husk/pull/262)).
+- **A take-over survives a clean stop of the shared Husk**, as it already survived a
+  crash. Ctrl-C, or SIGTERM from systemd or a shutdown, ended every hold on the way out
+  and wrote an empty `holds.json`, so nothing was held after the restart
+  ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **`approval_required` and `handoff_required` carry the run's own id**, the one
+  `run_start` and `/v1/runs` give, not the agent's. An approval names its tool call in
+  `callId`, so two in one run no longer share an id, and `handoff_required` names the
+  handoff to answer in `handoffId` ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **`fs/download` holds its 256 MiB cap inside the computer.** The archive is cut off as
+  it passes the cap, so a big path fails with `E_QUOTA` rather than filling a 512 MB
+  `/tmp` and being reported as a path that does not exist. A file tar cannot read is
+  said as such ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **A body too big names the cap of its route**, 64 KB on the sign-in pages, not the
+  API's 32 MB ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **`GET /v1/triggers` says when Slack is idle**, with only `SLACK_BOT_TOKEN` set, and
+  which way it listens otherwise ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **Fly takes the token `fly tokens create deploy` prints**, `FlyV1 …` scheme and all, and
+  its hints suggest that token for the computers' app alone, as `HUSK_FLY_TOKEN`, rather
+  than `fly auth token`, which reaches every app you can
+  ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **A run stopped part-way through a reply ends as what happened.** Cancelled, timed out,
+  or cut off by its provider while text was streaming, it ended `complete` with half an
+  answer; it now ends `aborted`, `timeout` or `error` ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **`memory` trims a long run.** A turn is a user message with its answer, or one step the
+  model takes after its tools answer, so a single `husk run`, cron or chat-triggered run
+  with many tool steps is trimmed too; it counted user messages only and never was. A
+  second trim summarises the first one's summary instead of dropping it, and a husk's
+  `examples` stay in place, so the anchor is the person's own message
+  ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **Model distillation works on Claude.** Anthropic's JSON mode prefills `{`, and the reply
+  came back without it, so every window failed to parse and the result fell back to the
+  heuristics. The brace is put back, in a whole reply and a stream
+  ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **Anthropic's thinking signatures are kept**, as `thinkingSignature` on a reply with one
+  thinking block, and sent back with the thinking, as a tool-use turn with thinking needs
+  ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **Gemini keeps a tool parameter named `default`, `const` or `examples`.** Pruning the
+  schema keywords it rejects removed properties by those names too
+  ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **A Claude Code transcript counts its thinking blocks** in the transcript's
+  `meta.thinkingBlocks`. The count went on the text that came with them, and Claude Code
+  writes a thinking block on a line of its own ([#264](https://github.com/Hotragn/husk/pull/264)).
 
 ### Security
 
@@ -311,6 +383,24 @@ pre-release of 7 October.
   ([#257](https://github.com/Hotragn/husk/pull/257)).
 - **`systemctl stop <unit>` is refused**, as the docs said. The rule caught only the
   `service <name> stop` order ([#257](https://github.com/Hotragn/husk/pull/257)).
+- **The path jail holds where it had holes.** `move` checks its destination, and
+  `search_files` its root, before a shell runs `mv` or `rg`. On `local`, a link whose
+  target does not exist yet is judged by that target, so `write_file` no longer creates
+  a file outside through it. On SSH, the check resolves a path under a link and a
+  directory not made yet, refusing what it cannot resolve, and `husk cp` is checked as
+  the file tools are. An SSH box needs GNU `readlink` for this, which `husk doctor` now
+  checks ([#262](https://github.com/Hotragn/husk/pull/262)).
+- **A signed webhook takes its prompt from the signed body alone.** `?input=` was read
+  first, and the signature covers only the body, so one captured delivery could be sent
+  again with any prompt ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **A flood of sign-ins no longer keeps the owner from a link.** The page a handoff or
+  computer link opens on shared one budget with every anonymous sign-in; each route now
+  has its own ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **A remote approval shows the computer the call runs on**, above its arguments
+  ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **An SSH target that is this machine is not isolated from it.** `localhost`, `127.0.0.1`
+  and `::1` report `isolated: false`, whatever the account, so remote access refuses
+  them; a remote chat could have had a shell here ([#263](https://github.com/Hotragn/husk/pull/263)).
 
 ## [0.1.4] - 2026-09-22
 

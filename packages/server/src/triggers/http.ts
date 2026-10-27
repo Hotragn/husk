@@ -22,8 +22,15 @@ export function wantsStream(req: FastifyRequest): boolean {
 export function extractInput(req: FastifyRequest): string | undefined {
   const q = (req.query ?? {}) as { input?: unknown; text?: unknown; q?: unknown };
   for (const v of [q.input, q.text, q.q]) if (typeof v === 'string' && v.trim()) return v;
+  return inputFromBody(req.body);
+}
 
-  const body = req.body;
+/**
+ * The prompt in a body alone. A signed webhook reads only this: its signature
+ * covers the body and not the address, so a prompt in the query string could
+ * be swapped on a captured delivery.
+ */
+export function inputFromBody(body: unknown): string | undefined {
   if (typeof body === 'string' && body.trim()) return body;
   if (Buffer.isBuffer(body) && body.length > 0) return body.toString('utf8');
   if (body && typeof body === 'object') {

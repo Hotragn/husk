@@ -137,7 +137,8 @@ export async function flyRequest<T>(
     res = await cfg.fetch(url, {
       method,
       headers: {
-        Authorization: `Bearer ${cfg.token}`,
+        // `fly tokens create` prints `FlyV1 fm2_…`, scheme included, as flyctl sends it; an older token is a bearer.
+        Authorization: cfg.token.startsWith('FlyV1 ') ? cfg.token : `Bearer ${cfg.token}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
@@ -162,13 +163,21 @@ export async function flyRequest<T>(
   }
 }
 
+/**
+ * Where to get a token, and which: one that reaches the computers' app alone.
+ * `fly auth token` prints the person's own, which reaches every app they can.
+ */
+export function flyTokenHint(app?: string): string {
+  return `make a token for the computers' app alone with \`fly tokens create deploy --app ${app || '<app>'}\`, and export it as HUSK_FLY_TOKEN`;
+}
+
 export function flyError(status: number, body: string, app: string, method: string, path: string): HuskError {
   const detail = extractMessage(body);
   const base = { status, body: clampText(body, 2000).text, method, path };
 
   if (status === 401 || status === 403) {
     return new HuskError('E_NO_CREDENTIALS', `fly rejected the token (${status})${detail ? `: ${detail}` : ''}`, {
-      hint: 'run `fly auth token` and export it as FLY_API_TOKEN',
+      hint: flyTokenHint(app),
       details: base,
     });
   }
@@ -612,8 +621,8 @@ export class FlyProvider implements ComputerProvider {
   private config(spec?: ComputerSpec): FlyConfig {
     const c = resolveFlyConfig(this.opts, spec);
     if (!c.token) {
-      throw new HuskError('E_NO_CREDENTIALS', 'FLY_API_TOKEN is not set', {
-        hint: 'run `fly auth token` and export it as FLY_API_TOKEN',
+      throw new HuskError('E_NO_CREDENTIALS', 'no fly token is set: HUSK_FLY_TOKEN, or FLY_API_TOKEN', {
+        hint: flyTokenHint(c.app),
       });
     }
     if (!c.app) {
@@ -636,8 +645,8 @@ export class FlyProvider implements ComputerProvider {
         available: false,
         isolated: true,
         isolationKind: 'kernel',
-        reason: 'FLY_API_TOKEN is not set',
-        hint: 'run `fly auth token` and export it as FLY_API_TOKEN (fly machines are metered, not free)',
+        reason: 'no fly token is set: HUSK_FLY_TOKEN, or FLY_API_TOKEN',
+        hint: `${flyTokenHint(c.app)} (fly machines are metered, not free)`,
       };
     }
     if (!c.app) {
@@ -679,6 +688,12 @@ export class FlyProvider implements ComputerProvider {
   }
 
   async create(spec: ComputerSpec): Promise<Computer> {
+    // Said, not dropped, and before a machine bills: Fly runs an image from a registry, and Husk builds none there.
+    if (spec.packages?.length) {
+      throw new HuskError('E_SPEC_INVALID', 'fly computers do not install packages', {
+        hint: 'use a computer.image that has them, or docker or podman, which build them into the computer',
+      });
+    }
     const cfg = this.config(spec);
     const id = newId('cmp');
     const workdir = spec.workdir ?? GUEST_ROOT;
