@@ -124,6 +124,10 @@ are sitting at**. It does not mean the agent is contained on the remote box: it 
 your user there, with your user's reach. If the remote box has anything on it you care
 about, run Docker on the remote box rather than pointing `ssh` at it directly.
 
+The box needs a POSIX shell and GNU coreutils, which every mainstream distribution ships;
+on Alpine, `apk add coreutils`. The path jail resolves every path with GNU
+`readlink -m`, so without it the probe reports the box as unavailable.
+
 ## fly
 
 One Fly.io microVM per computer, created and destroyed through the Machines API. Real

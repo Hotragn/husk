@@ -98,6 +98,23 @@ describe('assertInJail', () => {
     }
     await expect(assertInJail(join(link, 'x'), jail)).rejects.toThrowError(/symlink/);
   });
+
+  it('refuses a link whose target does not exist yet, which a write would create outside', async () => {
+    const jail = await makeJail();
+    const outside = await mkdtemp(join(tmpdir(), 'husk-outside-'));
+    const dangling = join(jail.root, 'later.txt');
+    const inside = join(jail.root, 'soon.txt');
+    try {
+      await symlink(join(outside, 'not-yet.txt'), dangling, 'file');
+      await symlink(join(jail.root, 'made-later.txt'), inside, 'file');
+    } catch {
+      return; // Windows without developer mode cannot create symlinks; nothing to assert.
+    }
+    await expect(assertInJail(dangling, jail)).rejects.toThrowError(/symlink/);
+    await expect(assertInJail(join(dangling, 'x'), jail)).rejects.toThrowError(/symlink/);
+    // A dangling link that points inside the jail is fine.
+    await expect(assertInJail(inside, jail)).resolves.toBeUndefined();
+  });
 });
 
 // `toHostPath` resolves through `node:path`, so a posix JailMap becomes

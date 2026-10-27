@@ -21,7 +21,7 @@ on your laptop.
 | --- | --- | --- |
 | `docker`, `podman` | tmpfs, `<diskMb or 2048>m`, `rw,exec,nosuid`. A named volume `husk-<id>` when `persist: true` | tmpfs, 512m |
 | `local` | `~/.husk/workspaces/<id>/root`, bind-mounted onto `/work` inside `unshare -mr` on WSL | `~/.husk/workspaces/<id>/tmp` |
-| `ssh` | A directory on the remote box | A directory on the remote box |
+| `ssh` | `$HOME/.husk-work/<id>/work` on the remote box | `$HOME/.husk-work/<id>/tmp` |
 | `fly` | The microVM's own filesystem | The microVM's own filesystem |
 
 On the container providers the root filesystem is mounted **read-only**. Anything written
@@ -36,6 +36,12 @@ from inside the namespace — Husk creates it once, as root, and says so.
 If WSL is unavailable, the `local` provider cannot present a `/work` at all, so it
 reports the real host path as the workdir instead. A fictional workdir is worse than an
 ugly one.
+
+On `ssh`, and on `local` on macOS or Linux, nothing mounts a `/work` either. There a
+command's `/work` and `/tmp` paths are rewritten to the real directories before it runs,
+so `cat /work/a.txt` reads the file `write_file` wrote. The rewrite reads the command as
+written: a path inside a heredoc's body, or one a program builds while it runs, still
+names a `/work` that is not there.
 
 ## Persistence
 
@@ -58,15 +64,17 @@ husk cp scratch:/work/out.json ./out.json
 husk cp ./src scratch:/work/src
 ```
 
-Directories are copied recursively. Both directions go through the path jail.
+Directories are copied recursively. On `local` and `ssh`, both directions go through
+the path jail.
 
 For an agent, the same job is done by the `write_file`, `read_file` and `edit_file`
 tools, or by the equivalent MCP tools.
 
 ## The path jail
 
-Every filesystem-API call resolves its target and rejects anything outside `/work` and
-`/tmp`. There are two checks and they do different jobs:
+On `local` and `ssh`, every filesystem-API call resolves its target and rejects anything
+outside `/work` and `/tmp`. On Docker, Podman and Fly the container is the boundary, and
+the API reaches all of it. There are two checks and they do different jobs:
 
 - **Lexical**, in `toHostPath`. Normalises the guest path, maps it onto the host
   directory, and refuses a result that is not inside. Correct for `..` traversal and for
@@ -74,7 +82,9 @@ Every filesystem-API call resolves its target and rejects anything outside `/wor
 - **Resolved**, in `assertInJail`. Calls `realpath` and confirms the real target is still
   inside, so a symlink created *inside* the workspace that points out of it is caught
   before any operation that would follow it. It checks the nearest existing ancestor
-  rather than the leaf, so it works for a path that is about to be created.
+  rather than the leaf, so it works for a path that is about to be created, and a link
+  whose target does not exist yet is judged by that target. On `ssh` the same check runs
+  on the remote box, with `readlink -m`.
 
 ```text
 error path escapes the workspace: /work/../../secrets
