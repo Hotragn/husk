@@ -1748,7 +1748,8 @@ async function checkClaudeCodeBot() {
 const UI = { extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app'] } } };
 const DESKTOP = { app: 'claude-desktop', file: ['.config', 'Claude', 'claude_desktop_config.json'], key: 'mcpServers' };
 const CLIENTS = [
-  { label: 'Claude Desktop', ...DESKTOP, name: 'claude-ai', protocol: '2025-11-25', caps: UI, platform: 'Claude Desktop' },
+  // It declares elicitation and never shows it, so Husk must give a link all the same.
+  { label: 'Claude Desktop', ...DESKTOP, name: 'claude-ai', protocol: '2025-11-25', caps: { elicitation: {}, ...UI }, platform: 'Claude Desktop' },
   { label: 'Claude Desktop’s Code tab', ...DESKTOP, name: 'local-agent-mode-husk', protocol: '2025-11-25', caps: { roots: {}, ...UI }, platform: 'Claude Desktop' },
   // Its v2 runtime opens on 2026-07-28, with no initialize; an older one, or MCP_PROTOCOL_NEGOTIATION=legacy, on 2025-11-25.
   { label: 'Claude Code', name: 'claude-code', protocol: '2026-07-28', modern: true, caps: { elicitation: {} }, session: `e2e-${process.pid}`, platform: 'Claude Code', inChat: true },

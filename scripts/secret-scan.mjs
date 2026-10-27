@@ -45,7 +45,7 @@ const RULES = [
   { name: 'Stripe key', re: /\b[rs]k_(?:live|test)_[A-Za-z0-9]{20,}\b/g },
   { name: 'npm token', re: /\bnpm_[A-Za-z0-9]{36}\b/g },
   { name: 'Fly.io token', re: /\bfo1_[A-Za-z0-9_-]{20,}/g },
-  { name: 'private key block', re: /-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/g },
+  { name: 'private key block', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY(?: BLOCK)?-----/g },
   { name: 'JWT', re: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g },
   { name: 'generic assigned secret', re: /\b(?:api[_-]?key|secret|passwd|password|token)\s*[:=]\s*["'][^"'\s${}]{16,}["']/gi },
   { name: 'connection string with password', re: /\b(?:postgres|postgresql|mysql|mongodb(?:\+srv)?|redis|amqp):\/\/[^:\s/]+:[^@\s]{4,}@/gi },
@@ -65,6 +65,7 @@ const KNOWN_SAFE = [
   /<your[- ]?[a-z-]*key>/i,             // docs placeholder
   /example\.com/,                       // docs
   /\bxxx+\b/i,
+  /AIzaSyTHISISNOTAREALGOOGLEKEY/,      // google.test.ts fixture, quoted in a commit message
 ];
 
 const isSafe = (text) => KNOWN_SAFE.some((re) => re.test(text));
@@ -125,23 +126,33 @@ console.log(`  ${scanned} text files scanned, ${files.length - scanned} binary/s
 
 // ------------------------------------------------------------------- history
 console.log('\ngit history (every commit, including deleted content)');
-const { stdout: log } = await git(['log', '-p', '--all', '--no-color', '--unified=0']);
+// A merge prints no diff of its own unless asked, so a conflict resolution --
+// and a stash, whose commit is a merge -- was never read. Against its first
+// parent, a merge shows what it brought in, a branch's work read twice included.
+const { stdout: log } = await git(['log', '-p', '--all', '--no-color', '--unified=0', '--diff-merges=first-parent']);
 const commits = log.split(/^commit /m).filter(Boolean);
 console.log(`  ${commits.length} commits`);
 
 for (const commit of commits) {
   const sha = commit.slice(0, 12);
   const lines = commit.split('\n');
+  // The message is the indented lines above the first diff.
+  const diffAt = lines.findIndex((l) => l.startsWith('diff --git'));
+  const inMessage = (l, k) => (diffAt === -1 || k < diffAt) && l.startsWith('    ');
 
   for (const rule of RULES) {
     const found = commit.match(rule.re);
     if (!found) continue;
 
     for (const hit of new Set(found)) {
-      // Only lines that were *added* count. A deletion contains the same string
-      // and would report every secret twice: once arriving, once leaving.
-      const at = lines.findIndex((l) => l.startsWith('+') && l.includes(hit));
+      // Only lines that were *added* count, and the message. A deletion contains
+      // the same string and would report every secret twice: once arriving, once leaving.
+      const at = lines.findIndex((l, k) => (l.startsWith('+') || inMessage(l, k)) && l.includes(hit));
       if (at === -1) continue;
+      if (inMessage(lines[at], at)) {
+        report(`commit ${sha} (message)`, 0, rule.name, hit, 'history');
+        continue;
+      }
 
       // Which file did it land in? The nearest `+++ b/path` above the hit.
       let path = '';
@@ -153,6 +164,16 @@ for (const commit of commits) {
       }
       report(`commit ${sha} ${path}`.trim(), 0, rule.name, hit, isTestOrDoc(path) ? 'test' : 'history');
     }
+  }
+}
+
+// An annotated tag's message is in no commit.
+const { stdout: tags } = await git(['for-each-ref', '--format=%(refname:short)%00%(contents)%00', 'refs/tags']);
+const tagged = tags.split('\0');
+for (let i = 0; i + 1 < tagged.length; i += 2) {
+  const [name, message] = [tagged[i].trim(), tagged[i + 1]];
+  for (const rule of RULES) {
+    for (const hit of new Set(message.match(rule.re) ?? [])) report(`tag ${name} (message)`, 0, rule.name, hit, 'history');
   }
 }
 
