@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
-import { HuskError, formatDuration, paths } from '@husk-ai/core';
+import { HuskError, formatDuration, loadConfig, paths } from '@husk-ai/core';
 import type { ApprovalMode, ChatRequest, ChatResponse, HuskSpec, RunResult, StreamEvent } from '@husk-ai/core';
 import type { AgentRunEvent, ApprovalRequest, RouterLike } from '@husk-ai/agent';
 import { UsageError, parse, parseChoice, parseCount,
@@ -69,6 +69,8 @@ export async function run(argv: string[]): Promise<number> {
   const maxSteps = parseCount(values['max-steps'] as string | undefined, '--max-steps', 'run') ?? spec.limits.maxSteps;
   const maxCostUsd =
     parseAmount(values['max-cost'] as string | undefined, '--max-cost', 'run') ?? spec.limits.maxCostUsd;
+  // This machine's settings: its model aliases, and the router's per-call ceiling.
+  const config = loadConfig();
 
   // The person's own Claude Code or Codex runs it, on its own login and model: nothing of Husk's to resolve.
   if (spec.engine.type !== 'builtin') {
@@ -113,7 +115,7 @@ export async function run(argv: string[]): Promise<number> {
   let lastErr: unknown;
   for (const candidate of chain) {
     try {
-      resolved = await resolveModel(candidate);
+      resolved = await resolveModel(candidate, config.modelAliases);
       if (candidate !== requested) downgradedFrom = requested;
       break;
     } catch (err) {
@@ -131,7 +133,7 @@ export async function run(argv: string[]): Promise<number> {
   // The router also emits a warning on every downgrade, so a quietly weaker
   // answer is impossible.
   const { ModelRouter } = await import('@husk-ai/models');
-  const modelRouter = new ModelRouter({ maxCostUsd });
+  const modelRouter = new ModelRouter({ maxCostUsd: Math.min(maxCostUsd, config.maxCostUsd), aliases: config.modelAliases });
   const fallbacks = spec.fallbackModels;
   const router: RouterLike = {
     chat: (req: ChatRequest): Promise<ChatResponse> => modelRouter.chat({ ...req, fallbacks }),

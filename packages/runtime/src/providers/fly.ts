@@ -679,6 +679,12 @@ export class FlyProvider implements ComputerProvider {
   }
 
   async create(spec: ComputerSpec): Promise<Computer> {
+    // Said, not dropped, and before a machine bills: Fly runs an image from a registry, and Husk builds none there.
+    if (spec.packages?.length) {
+      throw new HuskError('E_SPEC_INVALID', 'fly computers do not install packages', {
+        hint: 'use a computer.image that has them, or docker or podman, which build them into the computer',
+      });
+    }
     const cfg = this.config(spec);
     const id = newId('cmp');
     const workdir = spec.workdir ?? GUEST_ROOT;

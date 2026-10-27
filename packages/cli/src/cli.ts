@@ -136,6 +136,9 @@ export async function main(argv: string[]): Promise<number> {
     return EXIT_OK;
   }
 
+  // ~/.husk/.env before the command reads its keys. The environment the
+  // command was started with wins over the file.
+  (await import('@husk-ai/core')).loadEnvFile();
   const mod = await route();
   return mod.run(rest);
 }

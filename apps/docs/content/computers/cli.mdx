@@ -145,25 +145,23 @@ Both sides go through the path jail. Copying out of `/etc` is refused.
 ## husk rm
 
 ```bash
-husk rm <name|id> [--all] [--yes]
+husk rm <name|id> [--all] [--erase] [--yes] [--force]
 ```
 
 <Danger>
-Destroys the machine and its filesystem. There is no undo. Husk asks first unless
-`--yes` is given or `--json` is set — with `--json` there is nobody at the terminal to
-answer.
+Destroys the machine and its filesystem. There is no undo. On Docker and Podman a chat's
+or a bot's computer keeps its files and browser logins for its next computer, so for
+those it means "stop for now"; `--erase` takes them too, as the console's Delete does.
+Husk asks first unless `--yes` or `--force` is given, and refuses on a non-interactive
+stdin without one. `--json` does not skip the question.
 </Danger>
 
 | Flag | What it does |
 | --- | --- |
 | `--all` | Destroy every computer |
+| `--erase` | Also erase a chat's or bot's kept files and browser logins |
 | `--yes`, `-y` | Skip the confirmation (global flag) |
-| `--force`, `-f` | Also skips the confirmation |
-
-<Note>
-`--force`/`-f` is accepted by the parser but missing from `husk help rm`, which
-documents only `--yes`.
-</Note>
+| `--force`, `-f` | Skip the confirmation, and with `--all` destroy computers used in the last minute too |
 
 ## husk stop and husk start
 

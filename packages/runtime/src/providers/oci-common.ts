@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, connect as tcpConnect, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -1045,7 +1046,7 @@ export abstract class OciProvider implements ComputerProvider {
   async create(spec: ComputerSpec): Promise<Computer> {
     const cid = newId('cmp');
     const plan = resolveImage(spec);
-    const image = await this.pullable(plan);
+    const image = await this.withPackages(await this.pullable(plan), spec);
     const workdir = spec.workdir ?? '/work';
     // Before the container, not after: see initVolume.
     if (spec.persist) {
@@ -1088,13 +1089,6 @@ export abstract class OciProvider implements ComputerProvider {
 
     this.lastNative = nativeId;
     const comp = this.wrap(info);
-
-    // `computer.packages` used to be accepted and dropped on the floor here:
-    // `installScript` existed, was exported, and was called by nothing, so a
-    // husk.yaml asking for curl got a machine without curl and no complaint.
-    // It matters most on the fallback image, which is where the tools the
-    // browser needs are absent.
-    await this.installPackages(spec, image);
     if (spec.setup) await comp.exec({ cmd: spec.setup, timeoutSec: 300 });
     return comp;
   }
@@ -1165,36 +1159,44 @@ export abstract class OciProvider implements ComputerProvider {
   }
 
   /**
-   * Install `computer.packages`, as root.
+   * `computer.packages`, in an image of their own.
    *
-   * The container runs as an unprivileged user -- that is the point -- so the
-   * package manager has to be reached with `exec -u 0`. Installing is a
-   * create-time privilege, not one the agent ever holds: by the time the agent
-   * can run anything, this has already finished and every later exec is
-   * unprivileged again.
+   * A computer's root filesystem is read-only and it holds no capabilities, so
+   * no package manager can run in one, as root or not: installing into the
+   * running container failed every time. They are installed where that is
+   * normal instead, in a build FROM the computer's image with an empty
+   * context, once, cached under a tag named for the image and the list. The
+   * computer then runs that image as hardened as any other. The build reaches
+   * the package mirror with the engine's own network, before the computer and
+   * its network policy exist.
    */
-  protected async installPackages(spec: ComputerSpec, image: string): Promise<void> {
-    const script = installScript(spec.flavor, spec.packages ?? []);
-    if (!script) return;
+  protected async withPackages(image: string, spec: ComputerSpec): Promise<string> {
+    const packages = [...new Set(spec.packages ?? [])].sort();
+    const script = installScript(spec.flavor, packages);
+    if (!script) return image;
+    const key = createHash('sha256').update(JSON.stringify([image, spec.flavor ?? 'base', packages])).digest('hex');
+    const tag = `husk-packages:${key.slice(0, 16)}`;
     try {
-      await this.cli(['exec', '-u', '0', this.lastNative, 'sh', '-lc', script], 600_000);
+      await this.cli(['image', 'inspect', tag], 15_000);
+      return tag;
+    } catch {
+      // Not built yet.
+    }
+    const context = await mkdtemp(join(tmpdir(), 'husk-build-'));
+    try {
+      const build = this.cli(['build', '--quiet', '-t', tag, '-f', '-', context], 900_000);
+      build.child.stdin?.end(`FROM ${image}\nUSER root\nRUN ${script}\n`);
+      await build;
     } catch (e) {
-      // Not fatal: an agent can usually do its job without the extras, and a
-      // machine that refuses to exist because apt was unreachable is worse than
-      // one that comes up and says what is missing.
-      // Almost always the read-only rootfs rather than the network: husk starts
-      // these containers with `--read-only` and `--cap-drop ALL`, so apt cannot
-      // write to /var/lib/dpkg and its http method cannot setuid to `_apt`.
-      // Saying "check your egress" would send someone to their firewall for a
-      // problem that is entirely local and by design.
-      throw new HuskError('E_COMPUTER_FAILED', `could not install packages into ${image}`, {
-        hint:
-          'container computers run with a read-only root filesystem and no capabilities, so a ' +
-          'package manager cannot run in one. Use a flavor or `computer.image` whose image ' +
-          'already has what you need, or use `--provider local`, where packages do install.',
+      const said = String((e as { stderr?: string }).stderr || (e as Error).message).trim().split('\n').slice(-3).join(' ');
+      throw new HuskError('E_COMPUTER_FAILED', `could not install ${packages.join(', ')} into ${image}: ${said}`, {
+        hint: "check the names are this image's package manager's, and that the engine can reach its mirror",
         cause: e,
       });
+    } finally {
+      await rm(context, { recursive: true, force: true });
     }
+    return tag;
   }
 
   protected wrap(info: ComputerInfo): OciComputer {
