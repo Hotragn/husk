@@ -197,6 +197,17 @@ if (!SITES_ONLY) {
   }
   contains('plugins/husk/.claude-plugin/plugin.json', `"version": "${VERSION}"`, bump);
 
+  // The CHANGELOG has one heading per release. A scripted merge once pasted the
+  // file's own head into an entry, a second [Unreleased] and all, and every
+  // check passed, since none read it.
+  {
+    const headings = [...read('CHANGELOG.md').matchAll(/^## \[([^\]]+)\]/gm)].map((m) => m[1]);
+    const twice = headings.filter((h, i) => headings.indexOf(h) !== i);
+    const label = 'CHANGELOG.md has each release heading once, [Unreleased] first';
+    if (twice.length || headings[0] !== 'Unreleased') failures.push({ label, hint: `found ${headings.join(', ')}; a heading is there twice or [Unreleased] is not first` });
+    else passes.push(label);
+  }
+
   /* ---------------------------------------------------------------------------
      Every internal pin, in every dependency group.
 
