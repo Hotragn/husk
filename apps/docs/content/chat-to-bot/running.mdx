@@ -24,8 +24,9 @@ husk run husk.yaml "list the files" --json | jq -r .text
 `--max-cost` and `--var` are accepted by the parser but missing from `husk help run`.
 </Note>
 
-Ctrl-C stops the run cleanly between steps and leaves the machine alone. Nothing is
-destroyed — you interrupted the agent, not the filesystem you were about to inspect.
+Ctrl-C stops the run at once, the model call or command in flight included, and ends it
+`aborted`, a reply cut short too. It leaves the machine alone. Nothing is destroyed — you
+interrupted the agent, not the filesystem you were about to inspect.
 
 A bot whose computer you take over, from the console or the desktop app, pauses: a call
 it was running stops part-way, its next one waits until you press Give back, and the run

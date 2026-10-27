@@ -156,7 +156,7 @@ function unknownCommandMessage(name: string): string {
 
 /**
  * Ctrl-C aborts in-flight work rather than killing the process, so a run stops
- * between steps and a computer is never left half-created. A second Ctrl-C from
+ * cleanly, mid-step if need be, and a computer is never left half-created. A second Ctrl-C from
  * an impatient user leaves immediately.
  */
 export function installSignalHandlers(): void {

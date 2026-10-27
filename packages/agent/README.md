@@ -165,10 +165,12 @@ const wordCount = defineTool({
 ## Memory
 
 With `memory.enabled`, history is trimmed before each model call: the system prompt,
-the opening user message and the last `windowTurns` survive; the middle is summarised
-by `summaryModel` (or dropped with a marker when summarisation is unavailable). Cuts
-land on turn boundaries and a final pass prunes orphans, so a `tool_call` is never
-separated from its `tool_result` — the mistake every provider answers with a 400.
+the examples, the opening user message and the last `windowTurns` turns survive; the
+middle is summarised by `summaryModel` (or dropped with a marker when summarisation is
+unavailable). A turn is a user message with its answer, or one model step after its tool
+results, so one long run is trimmed too. Cuts land on turn boundaries and a final pass
+prunes orphans, so a `tool_call` is never separated from its `tool_result` — the mistake
+every provider answers with a 400.
 
 ## Scripts
 

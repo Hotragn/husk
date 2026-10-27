@@ -336,9 +336,11 @@ memory:
 | `windowTurns` | int > 0 | `20` | Turns kept verbatim before older ones are summarised |
 | `summarise` | boolean | `true` | Summarise the elided middle instead of dropping it |
 
-With `enabled: true`, the loop keeps the system messages, the first user message as an
-anchor, and the last `windowTurns` turns. The middle is either replaced by a model-written
-summary or by a marker:
+With `enabled: true`, the loop keeps the system messages, the husk's `examples`, the first
+user message as an anchor, and the last `windowTurns` turns. A turn is a message from the
+user with the answer to it, or one step the model takes after its tools answer, so a single
+long run is trimmed as a long chat is. The middle is either replaced by a model-written
+summary or by a marker, and a later trim summarises an earlier summary with the rest:
 
 ```text
 [husk: 42 earlier messages summarised]

@@ -104,6 +104,50 @@ describe('AnthropicProvider.stream', () => {
   });
 });
 
+describe('JSON mode and thinking signatures', () => {
+  const json = { type: 'json' } as const;
+
+  it('puts back the brace the JSON prefill opened, in a whole reply and a stream', async () => {
+    const whole = recordingFetch(() => jsonResponse({ content: [{ type: 'text', text: '"ok": true}' }], stop_reason: 'end_turn', usage: {} }));
+    const out = await new AnthropicProvider({ apiKey: KEY, fetch: whole.fetch }).chat({ model: 'anthropic/claude-sonnet-5', messages: [{ role: 'user', content: 'json please' }], responseFormat: json });
+    expect(JSON.parse(out.text)).toEqual({ ok: true });
+    expect((whole.calls[0]?.body as { messages: unknown[] }).messages.at(-1)).toEqual({ role: 'assistant', content: [{ type: 'text', text: '{' }] });
+
+    const streamed = recordingFetch(() =>
+      streamResponse([
+        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\\"ok\\": true}"}}\n\n',
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+      ]),
+    );
+    const events = await drain(new AnthropicProvider({ apiKey: KEY, fetch: streamed.fetch }).stream({ model: 'anthropic/claude-sonnet-5', messages: [{ role: 'user', content: 'json please' }], responseFormat: json }));
+    expect(events.filter((e) => e.type === 'text_delta').map((e) => (e as { text: string }).text).join('')).toBe('{"ok": true}');
+    expect(JSON.parse(doneOf(events).text)).toEqual({ ok: true });
+  });
+
+  it('keeps a lone thinking block’s signature, to be sent back with it', async () => {
+    const reply = (content: unknown[]) => recordingFetch(() => jsonResponse({ content, stop_reason: 'end_turn', usage: {} })).fetch;
+    const ask = (fetch: ReturnType<typeof recordingFetch>['fetch']) => new AnthropicProvider({ apiKey: KEY, fetch }).chat({ model: 'anthropic/claude-opus-5', messages: [{ role: 'user', content: 'think' }] });
+    const one = await ask(reply([{ type: 'thinking', thinking: 'hmm', signature: 'sig_1' }, { type: 'text', text: 'ok' }]));
+    expect(one).toMatchObject({ thinking: 'hmm', thinkingSignature: 'sig_1' });
+    // Two blocks kept as one text could be signed by neither signature: none is kept.
+    const two = await ask(reply([{ type: 'thinking', thinking: 'a', signature: 's1' }, { type: 'thinking', thinking: 'b', signature: 's2' }]));
+    expect(two.thinkingSignature).toBeUndefined();
+
+    const streamed = recordingFetch(() =>
+      streamResponse([
+        'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n\n',
+        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}\n\n',
+        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_"}}\n\n',
+        'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"2"}}\n\n',
+        'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+      ]),
+    );
+    const events = await drain(new AnthropicProvider({ apiKey: KEY, fetch: streamed.fetch }).stream({ model: 'anthropic/claude-opus-5', messages: [{ role: 'user', content: 'think' }] }));
+    expect(doneOf(events)).toMatchObject({ thinking: 'hmm', thinkingSignature: 'sig_2' });
+  });
+});
+
 describe('AnthropicProvider.chat', () => {
   it('sends extended thinking and widens max_tokens to fit the budget', async () => {
     const { fetch, calls } = recordingFetch(() =>

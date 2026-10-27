@@ -79,7 +79,10 @@ window.
 Three things here are not shared with the OpenAI dialect, and they are why this provider
 has its own file: tool results ride inside a `user` message rather than a `tool` role,
 extended thinking is a content block whose signature must be echoed back verbatim, and
-prompt caching is opt-in per block.
+prompt caching is opt-in per block. A reply's signature comes back as `thinkingSignature`
+when the reply had one thinking block, and a thinking part that carries it is sent back
+with it; JSON mode is an assistant prefill of `{`, which is put back at the start of the
+reply.
 
 Caching is placed on exactly two blocks — the system prompt, and the last *stable* user
 turn. Every `cache_control` marker costs a cache write, and marking the newest turn
