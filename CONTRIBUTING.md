@@ -106,7 +106,7 @@ Each checks a different layer, and none substitutes for another.
 | `npm run drift` | source copies of one fact still agree with each other |
 | `npm run preflight` | manifests, publish order and registry state, before publishing |
 | `packages/cli/src/pack.test.ts` | the *installed* binary prints what its manifest claims |
-| `scripts/secret-scan.mjs` | every ref, tree and the full history |
+| `scripts/secret-scan.mjs` | every ref, tree and the full history: merges by their first parent, and commit and tag messages |
 
 A green suite is narrower than it looks. Integration tests are opt-in behind
 `HUSK_INTEGRATION=1`, so the package tests alone do not exercise Docker; the `e2e`

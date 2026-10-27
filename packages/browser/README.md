@@ -73,7 +73,8 @@ await browser.close();
   to Chromium on the machine's own loopback. `--serve` keeps it running and
   answers newline-delimited requests by id, and pushes screencast frames acked
   no faster than the viewer's rate; without it, one request in, one answer out,
-  exit. It needs nothing but `python3`, which every flavour has.
+  exit. It needs `python3`, and starting Chromium needs `curl` to poll its debug
+  port: the `python` and `full` flavours have both, and `base` has neither.
 - **`cdp.ts`** — the transport. Holds one `driver.py --serve` per browser, falls
   back to one `Computer.exec` per request where it cannot, and turns the JSON
   into results or a `HuskError`, keeping apart the failures that need different
@@ -88,11 +89,13 @@ await browser.close();
   `setsid`; one that also scrubs its environment escapes, as a process
   started from `shell` would. Printed output, `result` and the error are each
   capped. Every `page.goto` it makes is checked by the host's network policy
-  before Chromium moves. That check is what it is and no more: clicks,
-  `fill(submit=True)`, redirects and page scripts are not checked, as with
-  `browser_click`. And a script, like `shell`, runs in the computer, where
-  it can reach Chromium's raw CDP port on 127.0.0.1 itself. The computer,
-  not the check, is the boundary.
+  before Chromium moves, and every document a click, a `fill(submit=True)`, a
+  redirect or a page script loads is paused and checked by the driver, as a
+  `browser_click`'s are: each `page.*` call runs as the driver's own action. A
+  click's `dialog: "accept"` holds for that click alone. But a script, like
+  `shell`, runs in the computer, where it can reach Chromium's raw CDP port on
+  127.0.0.1 itself and go round the driver. The computer, not the check, is
+  the boundary.
 - **`session.ts`** — one browser per computer, launched lazily and closed after
   five idle minutes, because a resident Chromium is a few hundred megabytes of
   RSS and a machine with four of them gets OOM-killed. The user-data-dir is

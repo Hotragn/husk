@@ -69,6 +69,7 @@ export async function run(argv: string[]): Promise<number> {
   const maxSteps = parseCount(values['max-steps'] as string | undefined, '--max-steps', 'run') ?? spec.limits.maxSteps;
   const maxCostUsd =
     parseAmount(values['max-cost'] as string | undefined, '--max-cost', 'run') ?? spec.limits.maxCostUsd;
+  const vars = parseVars(values.var as string[] | undefined);
   // This machine's settings: its model aliases, and the router's per-call ceiling.
   const config = loadConfig();
 
@@ -96,7 +97,7 @@ export async function run(argv: string[]): Promise<number> {
       maxCostUsd,
       timeoutSec: spec.limits.timeoutSec,
       signal: interruptSignal(),
-      vars: parseVars(values.var as string[] | undefined),
+      vars,
       onEvent: values.json ? () => {} : renderer(),
     });
     return finish(result, spec, { started, json: values.json === true, wantsComputer: tools, who: engine });
@@ -180,7 +181,7 @@ export async function run(argv: string[]): Promise<number> {
     timeoutSec: spec.limits.timeoutSec,
     approvalMode,
     signal: interruptSignal(),
-    vars: parseVars(values.var as string[] | undefined),
+    vars,
     onApproval: askOperator,
     onEvent: render,
   });
@@ -204,7 +205,13 @@ function finish(
       ui.warn(`${opts.who} finished without saying anything and without calling a tool`);
       if (opts.quiet) ui.hint(opts.quiet);
     }
-    ui.print();
+    // Piped, stdout carries the answer alone, as `--json`'s `text` has it: each
+    // step's text went to stderr as it came.
+    if (!ui.options().stdoutTty) {
+      if (result.text.trim()) ui.print(result.text.replace(/\n+$/, ''));
+    } else {
+      ui.print();
+    }
     ui.note(
       ui.dim(
         `${result.steps} step${result.steps === 1 ? '' : 's'} · ${formatDuration(Date.now() - started)} · ` +
@@ -222,6 +229,8 @@ function finish(
   }
 
   if (result.stopReason === 'error') {
+    // Under --json the result above is stdout's one document, and its `error` says why.
+    if (opts.json) return EXIT_ERROR;
     throw new HuskError('E_TOOL_ERROR', result.error?.message ?? 'the run failed', {
       hint: 'run with --debug for the trace, or --approve readonly to see what it wanted to do',
     });
@@ -262,7 +271,10 @@ function parseVars(pairs: string[] | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const p of pairs ?? []) {
     const i = p.indexOf('=');
-    if (i > 0) out[p.slice(0, i)] = p.slice(i + 1);
+    const name = i > 0 ? p.slice(0, i) : '';
+    // A placeholder is `{{word}}`: a name with any other character could never fill one.
+    if (!/^\w+$/.test(name)) throw new UsageError(`--var takes name=value, the name letters, digits and _ only: ${p}`, 'run');
+    out[name] = p.slice(i + 1);
   }
   return out;
 }
@@ -289,17 +301,19 @@ async function askOperator(req: ApprovalRequest): Promise<boolean> {
 /**
  * Turn run events into something readable.
  *
- * Model text goes to stdout because it is the answer; everything else -- steps,
- * tool calls, warnings -- goes to stderr, so `husk run ... > answer.txt`
- * captures the answer and nothing else.
+ * On a terminal the model's text streams to stdout; everything else -- steps,
+ * tool calls, warnings -- goes to stderr. Piped, the text streams to stderr too,
+ * and `finish` writes the answer alone to stdout, so `husk run ... > answer.txt`
+ * captures the answer and nothing else, not the narration before a tool call.
  */
 function renderer(): (event: AgentRunEvent) => void {
   let streaming = false;
   let toolStreaming = false;
+  const text = ui.options().stdoutTty ? process.stdout : process.stderr;
 
   const endText = () => {
     if (streaming) {
-      process.stdout.write('\n');
+      text.write('\n');
       streaming = false;
     }
   };
@@ -321,7 +335,7 @@ function renderer(): (event: AgentRunEvent) => void {
       case 'text_delta':
         endToolStream();
         streaming = true;
-        process.stdout.write(event.text);
+        text.write(event.text);
         break;
 
       case 'thinking_delta':
@@ -337,7 +351,7 @@ function renderer(): (event: AgentRunEvent) => void {
       case 'tool_delta':
         endText();
         toolStreaming = true;
-        process.stderr.write(ui.dim(event.text.replace(/\n(?!$)/g, '\n  ')));
+        ui.relay(ui.dim(event.text.replace(/\n(?!$)/g, '\n  ')));
         break;
 
       case 'tool_end': {

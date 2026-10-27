@@ -18,6 +18,8 @@ export interface UiOptions {
   json: boolean;
   quiet: boolean;
   color: boolean;
+  /** Colour was asked for, by --color or FORCE_COLOR, so a stream keeps it even when it is not a terminal. */
+  colorForced: boolean;
   debug: boolean;
   /** stdout is attached to a terminal. Drives tables and progress. */
   stdoutTty: boolean;
@@ -30,6 +32,7 @@ const state: UiOptions = {
   json: false,
   quiet: false,
   color: false,
+  colorForced: false,
   debug: false,
   stdoutTty: false,
   stderrTty: false,
@@ -58,10 +61,17 @@ export function configure(opts: { json?: boolean; quiet?: boolean; color?: boole
   state.json = opts.json ?? false;
   state.quiet = opts.quiet ?? false;
   state.debug = opts.debug ?? false;
-  // Colour follows the stream a human is most likely reading. When stdout is
-  // piped but stderr is still a terminal, status lines stay readable.
+  // Colour is made when either stream is a terminal, and each stream keeps it
+  // only if it is one: `husk doctor > report.txt` gets none, while the status
+  // lines on a terminal's stderr keep theirs.
   state.color = wantsColor(opts.color, state.stdoutTty || state.stderrTty);
+  state.colorForced = state.color && (opts.color === true || Boolean(process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0'));
   state.width = process.stdout.columns ?? process.stderr.columns ?? 80;
+}
+
+/** A line as one stream should get it: without colour where that stream is not a terminal, unless colour was asked for. */
+function painted(line: string, tty: boolean): string {
+  return state.color && !tty && !state.colorForced ? stripAnsi(line) : line;
 }
 
 export function options(): Readonly<UiOptions> {
@@ -108,13 +118,18 @@ export function truncate(s: string, max: number): string {
 /** The command's answer. Suppressed under --json so stdout stays pure. */
 export function print(line = ''): void {
   if (state.json) return;
-  process.stdout.write(line + '\n');
+  process.stdout.write(painted(line, state.stdoutTty) + '\n');
 }
 
 /** Bytes straight through, no newline. Used by `exec` to relay child output. */
 export function raw(chunk: string): void {
   if (state.json) return;
   process.stdout.write(chunk);
+}
+
+/** A tool's live output to stderr, no newline, coloured only where stderr is a terminal. */
+export function relay(chunk: string): void {
+  process.stderr.write(painted(chunk, state.stderrTty));
 }
 
 /** The one legal stdout write when --json is set. */
@@ -125,7 +140,7 @@ export function json(value: unknown): void {
 /** Human chatter. Always stderr, so it never pollutes a pipe. */
 export function note(line = ''): void {
   if (state.quiet) return;
-  process.stderr.write(line + '\n');
+  process.stderr.write(painted(line, state.stderrTty) + '\n');
 }
 
 export function step(line: string): void {
@@ -134,21 +149,21 @@ export function step(line: string): void {
 
 export function warn(line: string): void {
   if (state.quiet) return;
-  process.stderr.write(`${yellow('warning')} ${line}\n`);
+  process.stderr.write(painted(`${yellow('warning')} ${line}`, state.stderrTty) + '\n');
 }
 
 export function debug(line: string): void {
   if (!state.debug) return;
-  process.stderr.write(`${gray('debug   ' + line)}\n`);
+  process.stderr.write(painted(gray('debug   ' + line), state.stderrTty) + '\n');
 }
 
 /** Errors ignore --quiet. A silenced failure is a bug factory. */
 export function fail(line: string): void {
-  process.stderr.write(`${red('error')} ${line}\n`);
+  process.stderr.write(painted(`${red('error')} ${line}`, state.stderrTty) + '\n');
 }
 
 export function hint(line: string): void {
-  process.stderr.write(`${dim('hint:  ' + line)}\n`);
+  process.stderr.write(painted(dim('hint:  ' + line), state.stderrTty) + '\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +256,18 @@ export function fields(pairs: Array<[string, string]>, indent = '  '): string {
 
 export function heading(text: string): string {
   return bold(text);
+}
+
+/**
+ * How isolated a provider is, read from its kind rather than the boolean: an
+ * ssh box reports `isolated: true`, and it is isolated from this machine, not
+ * from itself. Calling that kernel-level was the misreading this prevents.
+ */
+export function isolation(kind: 'kernel' | 'machine' | 'guardrails' | undefined, isolated: boolean | null | undefined): string {
+  if (kind === 'kernel') return green('kernel-level');
+  if (kind === 'machine') return green('isolated') + dim(' from this machine, not from itself');
+  if (kind === 'guardrails' || isolated === false) return yellow('guardrails only');
+  return isolated ? green('isolated') : dim('unknown');
 }
 
 /**

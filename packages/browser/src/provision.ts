@@ -413,7 +413,8 @@ async function findCached(
   arch: BrowserArch,
   signal?: AbortSignal,
 ): Promise<ProvisionResult | null> {
-  const glob = arch === 'arm64' ? 'chrome-linux/headless_shell' : 'chrome-headless-shell-linux64/chrome-headless-shell';
+  // The layout the download unpacks to, from the one table that says it.
+  const glob = downloadPlanFor(arch).binaryPath;
   const r = await sh(
     computer,
     `ls -d ${CACHE_ROOT}/chromium-${arch}-*/${glob} 2>/dev/null | head -n 1`,

@@ -17,7 +17,7 @@ husk run husk.yaml "list the files" --json | jq -r .text
 | `--max-cost <usd>` | The cost ceiling for this run, in place of `limits.maxCostUsd`, higher or lower |
 | `--approve <mode>` | `auto`, `ask`, `readonly`. Default: from the spec |
 | `--no-computer` | Run without giving the agent a machine |
-| `--var k=v` | Fill a `{{k}}` placeholder in the persona. Repeatable |
+| `--var k=v` | Fill a `{{k}}` placeholder in the persona. Repeatable. `k` is letters, digits and `_`, and anything else is refused |
 | `--json` | Print the run result instead of streaming |
 
 Ctrl-C stops the run at once, the model call or command in flight included, and ends it

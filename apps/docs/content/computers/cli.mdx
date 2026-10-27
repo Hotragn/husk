@@ -119,7 +119,8 @@ starts in.
 husk cp <src> <dst>
 ```
 
-Either side may be `name:/path`. Directories are copied recursively.
+Either side may be `name:/path`. Directories are copied recursively, except on Fly,
+which copies one file at a time, of at most 32 MB.
 
 ```bash
 husk cp ./report.csv scratch:/work/report.csv
@@ -193,8 +194,8 @@ progress, warnings and the one-time orientation block all go to stderr, so this 
 husk doctor --json 2>/dev/null | jq -r .selection.isolated
 ```
 
-Colour follows `NO_COLOR`, `FORCE_COLOR`, `TERM=dumb` and `--no-color`, and turns itself
-off when stdout is not a terminal.
+Colour follows `NO_COLOR`, `FORCE_COLOR`, `TERM=dumb` and `--no-color`, and each stream
+keeps it only when it is a terminal: `husk doctor > report.txt` carries none.
 
 Ctrl-C aborts in-flight work rather than killing the process, so a run stops between
 steps and a machine is never left half-created. A second Ctrl-C leaves immediately.

@@ -278,7 +278,8 @@ husk cp <src> <dst>
 ```
 
 Either side may be `name:/path`, and exactly one of them must be. Directories are
-copied recursively.
+copied recursively, except on Fly, where `husk cp` copies one file at a time, of at most
+32 MB.
 
 ```bash
 husk cp ./report.csv docsbox:/work/report.csv
@@ -287,7 +288,8 @@ husk cp ./src docsbox:/work/src
 ```
 
 A single-letter prefix is a Windows drive, not a computer — no computer name is one
-character — so `husk cp C:\data\x.csv box:/work/` does what a Windows user expects.
+character, and `husk up x` is refused — so `husk cp C:\data\x.csv box:/work/` does what a
+Windows user expects.
 A `//` after the colon is a URL scheme, not a path, and is treated as local.
 
 Both sides naming a computer is a usage error with the two-step fix in it.
@@ -341,7 +343,7 @@ husk run <husk.yaml|name> [prompt] [flags]
 | `--max-cost` | USD | `limits.maxCostUsd` |
 | `--approve` | `auto` \| `ask` \| `readonly` | `guardrails.approvalMode` |
 | `--no-computer` | boolean | off |
-| `--var` | `KEY=VALUE`, repeatable, for `{{var}}` in the persona | — |
+| `--var` | `KEY=VALUE`, repeatable, for `{{KEY}}` in the persona. `KEY` is letters, digits and `_`; anything else is refused | — |
 | `--json` | print the `RunResult` instead of streaming | — |
 
 The prompt is the remaining positionals, or piped stdin:
@@ -359,10 +361,19 @@ error no husk named "triage", and no file at /home/me/triage
 hint:  run `husk init` to create one, or `husk distill <transcript>` to generate one from a chat
 ```
 
-Model text goes to **stdout**; steps, tool calls and warnings go to **stderr**, so
-`husk run husk.yaml "…" > answer.txt` captures the answer and nothing else.
+On a terminal the model's text streams to **stdout**; steps, tool calls and warnings go
+to **stderr**. With stdout piped, every step's text streams to stderr as well, and stdout
+gets the answer alone — the last step's text, as `--json`'s `text` has it — so
+`husk run husk.yaml "…" > answer.txt` captures the answer and nothing else. Under `--json`,
+stdout is the one `RunResult` document, a failed run's included.
 
-Ctrl-C stops the run cleanly and leaves the computer alone — nothing is destroyed — and
+| Stop reason | Exit code |
+| --- | --- |
+| `complete` | 0 |
+| `step_limit`, `budget`, `timeout`, `error` | 1 |
+| `aborted` | 130 |
+
+Ctrl-C stops the run at once and leaves the computer alone — nothing is destroyed — and
 exits 130.
 
 `--max-cost` and `--max-steps` are checked before anything runs: `--max-cost abc` and
@@ -384,8 +395,9 @@ reachable. See [the router page](/models#fallback).
 husk validate [file] [--json]
 ```
 
-Defaults to `./husk.yaml`. Prints every problem at once, not just the first. Exits 1 on
-an invalid file, and `--json` still emits `{ valid: false, path, issues }`.
+Defaults to `./husk.yaml`. Prints every problem at once, not just the first, naming the
+file as you typed it. Exits 1 on an invalid file, and `--json` still emits
+`{ valid: false, path, issues }`, for a file that is missing or not YAML too.
 
 ---
 

@@ -282,9 +282,13 @@ A key that never reaches a model is still a key if it reaches a commit.
 
 `scripts/secret-scan.mjs` reads tracked files and walks `git log -p --all`, so its
 coverage is exactly *reachable from a ref* — every branch, tag and note, including a
-second root. `.npmrc` is deliberately tracked, because it carries shared settings and
-ignoring it would change nothing for a file git already follows; `npm login` writes
-`_authToken` into that same file, so the scanner is what covers it.
+second root. A merge is read against its first parent, so a change made while resolving
+a conflict is read too, and so are commit and annotated-tag messages. In CI the checkout
+brings branches and tags, not notes or a stash, so those are covered by a local run only.
+`.npmrc` is deliberately tracked, because it carries shared settings and ignoring it would
+change nothing for a file git already follows; a token written into it, as
+`npm login --location=project` does, is what the scanner covers. Plain `npm login` writes
+to the user's own `~/.npmrc`, which git never sees.
 
 Three things follow from "reachable from a ref":
 
@@ -293,7 +297,8 @@ Three things follow from "reachable from a ref":
   those commits from your scanner and from nobody else. Scan an unmerged ref *before*
   deleting it.
 - **`--all` includes `refs/stash`**, so a stash entry can be the only thing keeping a
-  commit in scope — and `stash@{1}` and older live in a reflog the scan never reaches.
+  commit in scope, and its working-tree changes are read, since a stash commit is a merge
+  — and `stash@{1}` and older live in a reflog the scan never reaches.
 - **A clean scan means nothing without its scope.** Record the ref set and the commit
   count alongside the result, or the result is not repeatable.
 

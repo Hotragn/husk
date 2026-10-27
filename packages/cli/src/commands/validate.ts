@@ -1,4 +1,5 @@
 import { resolve as resolvePath } from 'node:path';
+import { HuskError } from '@husk-ai/core';
 import { parse } from '../args.js';
 import { checkSpec } from '../lib/yaml.js';
 import * as ui from '../ui.js';
@@ -15,16 +16,22 @@ export async function run(argv: string[]): Promise<number> {
   const { values, positionals } = parse(argv, {}, 'validate');
   ui.configure(values);
 
-  const path = resolvePath(positionals[0] ?? 'husk.yaml');
-  const result = await checkSpec(path);
+  const typed = positionals[0] ?? 'husk.yaml';
+  const path = resolvePath(typed);
 
   if (values.json) {
+    // A file that is missing or not YAML is invalid too, in the same shape.
+    const result = await checkSpec(path).catch((err: unknown) => {
+      if (err instanceof HuskError && err.code === 'E_SPEC_INVALID') return { ok: false as const, issues: [err.message] };
+      throw err;
+    });
     ui.json(result.ok ? { valid: true, path, spec: result.spec } : { valid: false, path, issues: result.issues });
     return result.ok ? EXIT_OK : EXIT_ERROR;
   }
 
+  const result = await checkSpec(path);
   if (!result.ok) {
-    ui.fail(`${path} is not a valid husk`);
+    ui.fail(`${typed} is not a valid husk`);
     for (const issue of result.issues) ui.note(`  ${ui.red('✗')} ${issue}`);
     ui.hint('`husk init --force` regenerates a valid file, or see `husk help init`');
     return EXIT_ERROR;
