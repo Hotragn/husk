@@ -356,15 +356,12 @@ Model text goes to **stdout**; steps, tool calls and warnings go to **stderr**, 
 Ctrl-C stops the run cleanly and leaves the computer alone — nothing is destroyed — and
 exits 130.
 
-<Warning>
-`--max-cost` is not validated. It goes through a bare `Number()`, so `--max-cost abc`
-becomes `NaN` and silently disables the cost ceiling for that run. `--max-steps` is
-validated and rejects `0` with a usage error; `--max-cost` is not. Pass a number.
-</Warning>
+`--max-cost` and `--max-steps` are checked before anything runs: `--max-cost abc` and
+`--max-steps 0` are usage errors. `--max-cost 0` is allowed, and means a free model.
 
 <Note>
-`husk run` pins one model and does not read `fallbackModels`. See
-[the router page](/models#fallback).
+`husk run` falls back through the husk's `fallbackModels` when its `model` is not
+reachable. See [the router page](/models#fallback).
 </Note>
 
 ### `husk validate`

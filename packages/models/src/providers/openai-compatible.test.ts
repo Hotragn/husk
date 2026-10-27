@@ -270,6 +270,18 @@ describe('the thin configurations', () => {
     expect(groqCalls[0]?.headers['http-referer']).toBeUndefined();
   });
 
+  it('counts a stream that reports no usage by its own estimate, priced, rather than as free', async () => {
+    const { fetch } = recordingFetch(() =>
+      streamResponse(['data: {"choices":[{"index":0,"delta":{"content":"forty-two characters of a streamed answer"}}]}\n\n', 'data: [DONE]\n\n']),
+    );
+    const provider = new OpenAICompatibleProvider(COMPATIBLE_CONFIGS.mistral, { apiKey: 'k', fetch });
+    const events = await drain(provider.stream({ model: 'mistral/mistral-large-latest', messages: [{ role: 'user', content: 'what is the answer?' }] }));
+    const usage = doneOf(events).usage;
+    expect(usage.inputTokens).toBeGreaterThan(0);
+    expect(usage.outputTokens).toBe(Math.ceil('forty-two characters of a streamed answer'.length / 3.6));
+    expect(events.find((e) => e.type === 'usage')).toMatchObject({ usage });
+  });
+
   it('omits stream_options for the gateways that reject unknown fields', async () => {
     for (const id of ['mistral', 'cerebras', 'lmstudio'] as const) {
       const { fetch, calls } = recordingFetch(() => streamResponse(['data: [DONE]\n\n']));

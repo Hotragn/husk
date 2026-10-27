@@ -285,12 +285,8 @@ model: sonnet
 fallbackModels: [flash, qwen]
 ```
 
-<NotYet>
-`fallbackModels` is only honoured on the control-plane path
-(`POST /v1/husks/:name/run`, which builds a real `ModelRouter`). `husk run` pins one
-model up front and never falls back. See
-[the note on the router page](/models#cost).
-</NotYet>
+`husk run` and a run over the API both fall back through `fallbackModels`, in order. See
+[the router page](/models#fallback).
 
 ## Cost
 
