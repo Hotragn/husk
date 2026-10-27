@@ -95,7 +95,7 @@ Claude Code transcripts carry a lot that is not conversation:
 
 | Dropped | Kept as |
 | --- | --- |
-| `thinking` and `redacted_thinking` blocks | A count in `meta.thinkingBlocks` |
+| `thinking` and `redacted_thinking` blocks | A count in the transcript's `meta.thinkingBlocks`, and on the message they came with, when there is one |
 | Sidechain nodes (`isSidechain: true`) | Their tool names, in `meta.sidechainTools` |
 | `isMeta` nodes — injected images, loaded skill docs, hook output | Nothing |
 | Unparseable JSONL lines | A count in `meta.parse.unparseable` |
