@@ -230,7 +230,8 @@ describe.skipIf(!built)('--json purity', { timeout: 30_000 }, () => {
   });
 
   it('keeps stdout parseable even when the command fails', () => {
-    const r = husk(['validate', 'missing.yaml', '--json']);
+    // `validate` answers a missing file in its own `{ valid: false }` shape (below); this one throws.
+    const r = husk(['run', 'no-such-husk', 'hello', '--json']);
     expect(r.status).toBe(1);
     expect(JSON.parse(r.stdout)).toHaveProperty('error.code');
   });
