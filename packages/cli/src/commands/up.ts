@@ -1,7 +1,7 @@
 import { slug } from '@husk-ai/core';
 import { ensureRunning } from '@husk-ai/runtime';
 import type { ComputerSpec } from '@husk-ai/core';
-import { parse, parseChoice, parseCount, parseMemory } from '../args.js';
+import { parse, parseChoice, parseCount, parseEnvPairs, parseMemory } from '../args.js';
 import { manager } from '../lib/computers.js';
 import { orient } from '../lib/first-run.js';
 import * as ui from '../ui.js';
@@ -34,6 +34,8 @@ export async function run(argv: string[]): Promise<number> {
     'up',
   );
   ui.configure(values);
+  // Before the header, as exec and run check theirs: `--env FOO` was dropped without a word.
+  const env = parseEnvPairs(values.env as string[] | undefined, 'up');
 
   const name = positionals[0] ? slug(positionals[0]) : `box-${Math.random().toString(36).slice(2, 7)}`;
   const mgr = manager();
@@ -77,7 +79,7 @@ export async function run(argv: string[]): Promise<number> {
     ...(values['idle-timeout']
       ? { idleTimeoutSec: parseCount(values['idle-timeout'] as string, '--idle-timeout', 'up') }
       : {}),
-    ...(parseEnv(values.env as string[] | undefined) ? { env: parseEnv(values.env as string[] | undefined) } : {}),
+    ...(env ? { env } : {}),
   };
 
   // `up` on a name that exists brings that computer up rather than making a
@@ -148,14 +150,4 @@ export async function run(argv: string[]): Promise<number> {
   ui.print(`  ${ui.gray('$')} husk rm ${info.name}`);
 
   return EXIT_OK;
-}
-
-function parseEnv(pairs: string[] | undefined): Record<string, string> | undefined {
-  if (!pairs?.length) return undefined;
-  const out: Record<string, string> = {};
-  for (const p of pairs) {
-    const i = p.indexOf('=');
-    if (i > 0) out[p.slice(0, i)] = p.slice(i + 1);
-  }
-  return out;
 }

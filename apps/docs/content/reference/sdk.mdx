@@ -64,7 +64,7 @@ stopping iteration.
 ## Health and capability
 
 ```ts
-await husk.health();   // { ok, version, uptimeSec }, and protocol, not yet typed
+await husk.health();   // { ok, version, protocol, uptimeSec }
 await husk.doctor();   // the DoctorReport that husk doctor prints
 ```
 
@@ -96,8 +96,9 @@ husk.computers.browse(id, { url });       // BrowsePage, loaded from inside the 
 ```
 
 `destroy` on a chat's computer, one made over MCP, sends its id back as `?confirm=`
-only with `{ confirm: true }`: ask the person first. It has no option for the API's
-`?erase=true`. A downloaded archive's entries start with the directory's own name
+only with `{ confirm: true }`: ask the person first. `erase: true` also takes what a
+chat's or a bot's computer keeps for its next one, its files and browser logins, and
+needs `confirm: true` on any computer. A downloaded archive's entries start with the directory's own name
 (`src/…` for `/work/src`), so upload it to the parent, here `/work`, to put it back.
 
 Streamed output carries its payload on **`data`**, not `text`:
@@ -215,8 +216,7 @@ a mistake this client used to make, turning every `404` into `E_COMPUTER_NOT_FOU
   stats, thumbnail and activity, its browser and live screen, Make this a bot, the chat
   tools, take-over and handoffs, links, setup, remote access, triggers, workspaces or
   shutdown. [Other routes](/reference/api#other-routes) lists them.
-- **Some newer fields are not typed.** The SDK returns each body as the server sent it,
-  but its types lag in places: `health()` does not type `protocol`; `sessions.import`
-  types neither `pick` nor the `{ source, choices }` answer for a file of many chats;
-  `sessions.distill` types neither `engine` in the body nor `transcriptId`, `engines`
-  and `continues` in the answer; and `HuskSummary` has no `engine`.
+- **One answer is not typed.** `sessions.import` is typed as `{ transcript }`, but a file
+  of many chats (a ChatGPT export, Cursor's `state.vscdb`) answers `{ source, choices }`
+  instead, and keeps nothing until it is asked again with one of them as `pick`. The
+  body comes back as the server sent it.

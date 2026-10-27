@@ -121,7 +121,9 @@ across the conversation, so the examples are not all from the first five minutes
 ### Tools come from observed use
 
 Every `toolName` in the transcript, plus `meta.tools` and `meta.sidechainTools`, mapped
-onto the `computer`, `files` and `web` bundles. Orchestration tools that do not port to a
+onto the `computer`, `files`, `web` and `browser` bundles. A chat that drove Husk's
+browser (`browser_goto`, `browser_click` and the rest) gets the `browser` bundle and the
+computer it runs in; one that only read pages gets `web`. Orchestration tools that do not port to a
 husk — `Task`, `TodoWrite`, `ExitPlanMode`, `Thinking` and their kin — are dropped, and
 their presence is reported as a note.
 
@@ -198,7 +200,7 @@ tools were used; the model only adds to it.
 most 64 characters and falls back to `husk-bot` if nothing survives; `displayName` is the
 name with spaces for dashes and a capital first letter; the description is clamped to
 280; tool names are mapped onto bundles, with `files` when none maps; `computer.enabled`
-follows `needsComputer`; the confidence and the notes go into `metadata`; and provenance
+follows `needsComputer`, and is on whenever the tools include `browser`; the confidence and the notes go into `metadata`; and provenance
 goes into `origin`.
 
 `husk distill` writes the file for review, not for machines: a comment header, then the

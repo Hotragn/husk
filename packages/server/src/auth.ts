@@ -61,6 +61,8 @@ export interface AuthOptions {
   token?: string | undefined;
   /** Extra prefixes served without a token, e.g. the console bundle at `/`. */
   publicPrefixes?: string[];
+  /** A request served without a token because it carries a credential its route checks instead. */
+  publicIf?: (route: string, req: FastifyRequest) => boolean;
   /**
    * What a short-lived link token opens, if it is one. Such a token reaches only
    * SCOPED_PREFIXES, and the routes there check it against the one computer or
@@ -216,6 +218,7 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
       // #fragment, which a browser does not send.
       if ((req.method === 'GET' || req.method === 'HEAD') && !route.startsWith('/v1')) return;
       if (publicPrefixes.some((p) => route.startsWith(p))) return;
+      if (opts.publicIf?.(route, req)) return;
     }
 
     const supplied = bearerToken(req) ?? queryToken(req);

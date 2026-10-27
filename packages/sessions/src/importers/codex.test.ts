@@ -60,7 +60,7 @@ describe('parseCodexRollout', () => {
     expect(tools[0]!.toolInput).toEqual({ url: 'https://status.example.com' });
     expect(tools[3]!.content).toBe('up 3 days');
     // So a bot made from it gets the computer and the browser.
-    expect(observedTools(t!)).toMatchObject({ suggested: ['computer', 'web'], needsComputer: true });
+    expect(observedTools(t!)).toMatchObject({ suggested: ['computer', 'browser'], needsComputer: true });
   });
 
   it("uses the UI's copy of the chat when a rollout has no model messages", () => {

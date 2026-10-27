@@ -380,6 +380,40 @@ pre-release of 7 October.
   was accepted too ([#266](https://github.com/Hotragn/husk/pull/266)).
 - **A cached Chromium is found where the download plan put it.** The lookup kept its own
   copy of the layout, which no test reached ([#266](https://github.com/Hotragn/husk/pull/266)).
+- **A signed webhook needs no server token.** With `HUSK_TOKEN` set, GitHub's deliveries
+  were refused with a 401 before their signature was read, since GitHub cannot send a
+  bearer token. A signed request now reaches the webhook, which checks it against its
+  `secret`; a webhook with no `secret` still takes the token, and refuses a signed
+  request ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **`husk run`'s `auto`, `free` and `local` keep to a $0 ceiling.** Under
+  `maxCostUsd: 0`, `free` picked a free tier the catalog still prices, such as Gemini
+  Flash, and the run stopped before its first call. They now pick a model priced at zero,
+  as the router does, or say that none is reachable
+  ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **A bot made from a chat that drove Husk's browser can drive it too.** The distiller
+  filed `browser_*` under `web`, so the bot could fetch pages and nothing more; it now
+  gets the `browser` bundle and the computer it runs in
+  ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **`husk import` looks where its importers do**: `CLAUDE_CONFIG_DIR` and
+  `~/.config/claude` for Claude Code, `~/Documents` as well as `~/Downloads` for ChatGPT,
+  and the chats Gemini CLI saved, which it said it looked for and never did
+  ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **A Fly command that runs out of time comes back `timedOut`.** The machine's own
+  timeout fired first, and what Fly answers then is not documented: an answer came back
+  as an ordinary exit, and an error was thrown. Husk's deadline now fires first, as on
+  the other providers, and the command is reaped
+  ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **`husk rm` says what a bot's computer keeps.** It said a bot's files and logins stayed
+  on Docker and Podman; without `persist: true`, its `/work` is a tmpfs, browser profile
+  included, and goes with it ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **`husk up --env FOO` is refused**, as `exec --env` is. A pair without `=` was dropped
+  without a word ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **Rootless Podman is kernel-level again** in doctor and `husk up`: its result had no
+  `isolationKind`, which they read since #265 ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **The SDK types what the server sends**: `protocol` from `health()`, `pick` for
+  `sessions.import`, `engine` for `sessions.distill` and `transcriptId`, `engines` and
+  `continues` in its answer, and `HuskSummary.engine`. `computers.destroy` takes `erase`
+  ([#267](https://github.com/Hotragn/husk/pull/267)).
 
 ### Security
 
@@ -484,8 +518,8 @@ pre-release of 7 October.
   model reads before its first tool call — and a model that believes its shell is
   contained takes risks it otherwise would not. The docs now say which half is
   confined. The same correction reaches the trust-boundary diagram and the README for
-  0.1.4: the path jail is a control on `local` and `ssh`, not something every provider
-  enforces. On `docker`, `podman` and `fly` the container is the boundary, so `read_file
+  0.1.4: the path jail is a `local` control, not something every provider enforces. On
+  `docker`, `podman` and `fly` the container is the boundary, so `read_file
   /etc/passwd` returns the container's own copy.
 - **A run that could not fit the model's context was truncated into nonsense instead of
   refused.** Local servers still default to tiny contexts — llama.cpp long shipped

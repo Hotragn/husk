@@ -52,11 +52,11 @@ to `husk distill`.
 
 | Source | Format | Where `husk import` looks |
 | --- | --- | --- |
-| `claude-code` | JSONL event log | `~/.claude/projects/**/*.jsonl` |
+| `claude-code` | JSONL event log | `~/.claude/projects/**/*.jsonl` and `~/.config/claude/projects`, or `$CLAUDE_CONFIG_DIR/projects` |
 | `codex` | One JSONL rollout per session | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`, or `$CODEX_HOME/sessions` |
-| `chatgpt` | `conversations.json` from a data export | `~/Downloads/conversations*.json` |
+| `chatgpt` | `conversations.json` from a data export | `conversations*.json` in `~/Downloads` and `~/Documents` |
 | `cursor` | `state.vscdb`, or an exported JSON/markdown chat | The platform's Cursor `globalStorage` directory, and JSON or JSONL under `~/.cursor` |
-| `gemini` | CLI checkpoints, or a Takeout "My Activity" export | Nowhere — pass a path |
+| `gemini` | CLI checkpoints, or a Takeout "My Activity" export | The chats Gemini CLI saved, `~/.gemini/tmp/*/checkpoint-*.json`. Pass a Takeout export's path |
 | `markdown` | A pasted conversation with role markers | `*.md` in the current directory that parse as a chat |
 | `universal` | Anything else with role markers, read by the markdown heuristics | `~/Downloads/*chat*.json`, and `*.jsonl` in the current directory |
 

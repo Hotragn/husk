@@ -273,6 +273,12 @@ in Husk's repository: a `Dockerfile` that installs Husk from npm, and a `fly.tom
 that folder, then replace `my-husk`, `my-husk-computers` and the region in `fly.toml` with
 your own. From that folder:
 
+<NotYet>
+The `Dockerfile` installs `@husk-ai/cli@latest`, and npm still has 0.1.4, which has no
+remote access: its `husk serve` does not know `--remote`, so the machine stops as it
+starts. This works once 0.2.0 is published.
+</NotYet>
+
 ```bash
 fly apps create my-husk                 # Husk itself
 fly apps create my-husk-computers       # its computers

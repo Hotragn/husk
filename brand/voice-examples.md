@@ -120,7 +120,7 @@ next
   claude mcp add husk -- npx -y @husk-ai/mcp        give Claude Code a computer
   husk doctor                                    this report, any time
 
-no telemetry. nothing left this machine.
+Husk has no product telemetry. Tasks can contact configured providers and requested websites.
 ```
 
 Notes on why it is shaped this way:
@@ -132,8 +132,9 @@ Notes on why it is shaped this way:
   important, so it is stated plainly. Making it shout would make it feel like a
   disclaimer, which is what people skip.
 - **`selected` is one line and says "free".** That is the whole Pillar 1 payoff.
-- **The last line is a fact, not a boast.** "no telemetry. nothing left this
-  machine." Lowercase, full stop, no exclamation mark, no shield emoji.
+- **The last line is a fact, not a boast.** It says what Husk does not do and what a
+  task may still reach, the way doctor prints it. Full stops, no exclamation mark, no
+  shield emoji.
 
 ---
 

@@ -169,6 +169,12 @@ HMAC-SHA256 over the **raw** bytes, and the signature is read from the first of
 `X-Husk-Signature`, `X-Hub-Signature-256`, `X-Signature-256`, with a leading `sha256=`
 stripped. A mismatch is a 403 `E_EXEC_DENIED`.
 
+A signed request needs no server token: the signature is its credential, so a sender
+that cannot add one, such as GitHub, reaches the webhook wherever `husk serve` is
+exposed ([Self-hosting](/guides/self-hosting)). Without a `secret`, the webhook takes the
+server's token like any other route, and a request that carries a signature anyway is
+refused with a 403, since there is nothing to check it against.
+
 `${GITHUB_WEBHOOK_SECRET}` is read from the server's environment when the trigger is
 mounted. If it is unset or empty, the webhook is not mounted at all, and the server logs
 why: mounted unsigned, anyone could start the husk, and the placeholder's own text is

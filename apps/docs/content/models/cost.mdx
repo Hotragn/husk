@@ -160,8 +160,8 @@ prints `free` rather than a dollar figure:
 `maxCostUsd: 0` in a `husk.yaml` therefore admits only models priced at zero: Ollama and
 LM Studio, OpenRouter's `:free` models, and any model the catalog does not price at all,
 which can still bill you. It refuses Gemini Flash, Groq and Cerebras, whose free tiers the
-catalog marks free but still prices. On `husk run`, where `model: free` can resolve to
-Gemini Flash, the run then stops before its first call. With `model: local` it is the
+catalog marks free but still prices, so `auto`, `free` and `local` pick past them to a
+model priced at zero, or stop with `E_BUDGET_EXCEEDED` when none is reachable. It is the
 strongest cost guarantee Husk offers, and it is one line.
 
 ## Which prices are real

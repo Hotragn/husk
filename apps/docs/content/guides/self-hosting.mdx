@@ -72,11 +72,11 @@ Comparison is constant-time. A few things answer without it:
   carries the token;
 - `OPTIONS` requests, and a `GET` for a path that does not exist, which gets its 404;
 - `/v1/a/*`, where a chat adapter checks the platform's own signature, as Slack's Events
-  API does.
-
-A webhook trigger, under `/v1/w`, is not on that list: with the token set it needs the
-token as well as its signature, so a sender that cannot add an `Authorization: Bearer`
-header, such as a GitHub webhook, is refused with a 401.
+  API does;
+- a signed request to a webhook trigger under `/v1/w`, which the webhook checks against
+  its `secret`. A sender that cannot add an `Authorization: Bearer` header, such as
+  GitHub, gets in that way. A webhook with no `secret` takes the token, and refuses a
+  signed request with a 403.
 
 <Note>
 Browsers cannot set headers on `EventSource` or `WebSocket`. For those two transports

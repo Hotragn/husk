@@ -112,16 +112,19 @@ resolves the three its own way, walking the providers by
   over a local Ollama when `GOOGLE_API_KEY` is set.
 - `local` tries LM Studio before Ollama.
 
+Under a ceiling of $0, each of the three considers only models priced at zero, as the
+router does.
+
 <Note>
 `local` will not leave Ollama or LM Studio: if neither is running, the pool is empty and
 the call fails. `free` is different — the router *prefers* free models but will fall back
 to a paid one when no free model is reachable, and it does that without a warning.
 
 A free tier is not a zero price: the catalog marks Gemini Flash, Groq and Cerebras free
-and still prices them, so `limits.maxCostUsd: 0` refuses them. The router then picks a
-model priced at zero. `husk run` does not, and when its `free` is Gemini Flash the run
-stops before its first call. If a run must never bill you, set `limits.maxCostUsd: 0`
-with `model: local`.
+and still prices them, so `limits.maxCostUsd: 0` refuses them. Under that ceiling the
+router, and `husk run`'s own `auto`, `free` and `local`, pick a model priced at zero,
+such as Ollama's, and stop with `E_BUDGET_EXCEEDED` when none is reachable. If a run must
+never bill you, set `limits.maxCostUsd: 0`.
 </Note>
 
 ## Detection

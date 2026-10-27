@@ -47,7 +47,9 @@ invents endpoints the other does not know about.
   console's own page and assets (`GET` outside `/v1`) load without the token; every
   API route is under `/v1`. `/health` is always unauthenticated, and so is `/v1/a/*`,
   where a chat app such as Slack posts its events: the adapter checks that app's own
-  signature. A browser's `EventSource` and `WebSocket` cannot set headers, so for those
+  signature. So is a `/v1/w/*` request carrying a webhook signature (`X-Husk-Signature`,
+  `X-Hub-Signature-256` or `X-Signature-256`): the webhook checks it against its
+  `secret`, and one with no `secret` refuses it (403). A browser's `EventSource` and `WebSocket` cannot set headers, so for those
   two transports alone the token may come as `?token=` or `?access_token=`.
 - Streaming endpoints are Server-Sent Events: `Content-Type: text/event-stream`, one
   `data:` line per event carrying a JSON object, a heartbeat comment every 15 s, and a
@@ -763,7 +765,7 @@ effect without a restart.
 ```
 GET  /v1/triggers  -> { "triggers": MountedTrigger[], "cron": CronBinding[] }
 ALL  /v1/t/*       an `http` trigger. `?input=`, `?text=` or `?q=`, else the body; SSE when the client asks.
-POST /v1/w/*       a `webhook` trigger. HMAC-verified when the husk sets a secret.
+POST /v1/w/*       a `webhook` trigger. HMAC-verified when the husk sets a secret, and then no token is needed.
 ```
 
 In the shared Husk that chats start (`husk-mcp --daemon`), the triggers run in a

@@ -123,8 +123,9 @@ await husk.computers.upload(box.id, '/work', archive);               // { path, 
 ```
 
 `destroy` deletes a chat's computer, one made over MCP, only with
-`{ confirm: true }`, which sends its id back as `?confirm=`; ask the person first. It
-has no option for the API's `?erase=true`.
+`{ confirm: true }`, which sends its id back as `?confirm=`; ask the person first.
+`{ confirm: true, erase: true }` also erases what a chat's or a bot's computer keeps for
+its next one, its files and browser logins.
 
 Husks are created from a spec **or** from YAML, always in an envelope:
 
@@ -250,10 +251,9 @@ An unanswered approval is denied after 120 s. The default is deny, on purpose.
   thumbnail and activity, its browser and live screen, Make this a bot, the chat tools,
   take-over and handoffs, links, setup, remote access, triggers, workspaces and
   shutdown. `docs/API.md` has their shapes.
-- Some newer fields are not typed, though the body comes back as the server sent it:
-  `protocol` on `health()`; `pick` and the `{ source, choices }` answer on
-  `sessions.import`; `engine`, `transcriptId`, `engines` and `continues` on
-  `sessions.distill`; `engine` on `HuskSummary`.
+- `sessions.import` is typed as `{ transcript }`, but a file of many chats answers
+  `{ source, choices }` instead, until it is asked again with one of them as `pick`. The
+  body comes back as the server sent it.
 
 ## Notes
 

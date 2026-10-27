@@ -283,13 +283,15 @@ confidence, including what it could not determine.
 *Proof:* `husk import ~/.claude/projects/.../session.jsonl` → a `husk.yaml` you can read.
 *Copy that lives here:* the second fold, the `sessions` docs, most of the launch post.
 
-### Pillar 4 — Nothing leaves
+### Pillar 4 — Nothing reports back
 
-*Claim:* Nothing leaves the machine except the calls to the model provider you configured.
+*Claim:* Husk has no product telemetry. What leaves the machine is what a task needs: the
+model providers you configured, and the sites you send it to.
 *Because:* No telemetry, no analytics, no crash reporter — absent from the codebase, not
 disabled by a flag. Tool output passes through `redact()` before it re-enters the
 conversation.
-*Proof:* grep the repo. Apache-2.0, and the network calls are the ones you can name.
+*Proof:* grep the repo. Apache-2.0, and the network calls are the ones you can name: the
+networking page lists every one.
 *Copy that lives here:* the footer, the privacy page (one screen, no legalese), the
 `redact()` docs.
 

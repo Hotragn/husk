@@ -83,13 +83,13 @@ export class PodmanProvider extends OciProvider {
         return {
           available: true,
           isolated: true,
-        isolationKind: 'kernel',
+          isolationKind: 'kernel',
           version,
           reason: 'podman is running as root -- containers get kernel isolation, but an escape lands on root',
           hint: 'run husk as an unprivileged user to get rootless containers',
         };
       }
-      return { available: true, isolated: true, version };
+      return { available: true, isolated: true, isolationKind: 'kernel', version };
     } catch (err) {
       return { ...(await this.diagnose(err)), version: `podman ${clientVersion} (client only)` };
     }

@@ -40,8 +40,8 @@ export function pricingOf(info: ModelInfo | null | undefined): Pricing | undefin
  * `check()` runs BEFORE each model call with an estimate of what that call will
  * cost, so a run stops before a call it can see it cannot afford. Checking
  * afterwards, as the first draft of the loop did, detects an overspend one whole
- * call too late. It is still an estimate: a reply longer than expected, or a first
- * call to a model with no price, can carry a run past the ceiling.
+ * call too late. It is still an estimate: a reply longer than expected can carry
+ * a run past the ceiling, and a model with no price counts as $0 on every call.
  */
 export class Budget {
   readonly limits: BudgetLimits;

@@ -23,6 +23,7 @@ import { modelRoutes } from './routes/models.js';
 import { runRoutes } from './routes/runs.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { createTriggerHost } from './triggers/index.js';
+import { claimsSignature } from './triggers/webhook.js';
 import { toolRoutes } from './routes/tools.js';
 import { setupRoutes } from './routes/setup.js';
 import { isRemotePath } from './remote/oauth.js';
@@ -93,6 +94,9 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   installAuth(app, {
     token: config.token,
     publicPrefixes: ['/assets/', '/favicon', '/v1/a/'],
+    // A signed webhook's signature is its credential, checked by its route (here or in the
+    // job host): a sender such as GitHub cannot add this server's token. Unsigned, it needs one.
+    publicIf: (route, req) => route.startsWith('/v1/w/') && claimsSignature(req.headers),
     scopeOf: (t, o) => ctx.scoped.verify(t, o),
     loopbackOnly: isLoopbackHost(config.host),
     ...(remote

@@ -272,6 +272,33 @@ describe('mounted triggers', { timeout: 30_000 }, () => {
     expect(forged.statusCode).toBe(403);
   });
 
+  it('takes a signed webhook without the server token, and an unsigned one only with it', async () => {
+    harness = await buildTestApp({ token: 'secret', triggers: true });
+    await harness.app.inject({
+      method: 'POST',
+      url: '/v1/husks',
+      headers: { authorization: 'Bearer secret' },
+      payload: { spec: { ...sampleSpec(), triggers: [{ type: 'webhook', path: '/gh', secret: 'shhh' }, { type: 'webhook', path: '/open' }] } },
+    });
+    const body = JSON.stringify({ input: 'ship it' });
+    const post = (path: string, headers: Record<string, string>) =>
+      harness.app.inject({ method: 'POST', url: `/v1/w/triage${path}`, headers: { 'content-type': 'application/json', ...headers }, payload: body });
+
+    // GitHub signs with its secret and cannot send a bearer token.
+    const signed = await post('/gh', { 'x-hub-signature-256': sign('shhh', body) });
+    expect(signed.statusCode).toBe(200);
+    expect(signed.json().text).toBe('done');
+    expect((await post('/gh', { 'x-hub-signature-256': sign('guess', body) })).statusCode).toBe(403);
+    expect((await post('/gh', {})).statusCode).toBe(401);
+
+    // An unsigned webhook still takes the token, and a signature cannot stand in for it.
+    expect((await post('/open', {})).statusCode).toBe(401);
+    const pretend = await post('/open', { 'x-husk-signature': sign('anything', body) });
+    expect(pretend.statusCode).toBe(403);
+    expect(pretend.json().error.message).toContain('no secret');
+    expect((await post('/open', { authorization: 'Bearer secret' })).statusCode).toBe(200);
+  });
+
   it('takes a webhook secret written as ${NAME} from where Husk runs, and mounts nothing when NAME is not set', async () => {
     vi.stubEnv('HUSK_TEST_HOOK_SECRET', 'shhh');
     harness = await buildTestApp({ triggers: true });

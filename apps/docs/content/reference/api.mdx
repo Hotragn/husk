@@ -25,7 +25,8 @@ curl -s localhost:7377/health
 - Base path `/v1`. JSON in, JSON out, unless noted.
 - `/health` is at the **root**, not under `/v1`, and never needs a token. Neither do the
   console's page and assets (a `GET` outside `/v1`) nor `/v1/a/*`, where a chat app such
-  as Slack posts its events, checked against that app's own signature.
+  as Slack posts its events, checked against that app's own signature. Nor does a signed
+  request to a webhook trigger under `/v1/w`, checked against its `secret`.
 - IDs are opaque strings. Never parse them.
 - Timestamps are ISO 8601 UTC.
 - Every response carries `X-Husk-Version`.
@@ -34,8 +35,8 @@ curl -s localhost:7377/health
 
 ### Auth
 
-When `HUSK_TOKEN` is set, every request to a `/v1` route but `/v1/a/*` needs
-`Authorization: Bearer <token>`. Comparison is constant-time.
+When `HUSK_TOKEN` is set, every request to a `/v1` route but `/v1/a/*` and a signed
+`/v1/w/*` needs `Authorization: Bearer <token>`. Comparison is constant-time.
 
 When it is not set, no token is asked for — but the server only ever reaches that state
 on a loopback bind, because it refuses to start otherwise:
