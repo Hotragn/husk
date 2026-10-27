@@ -75,10 +75,12 @@ an unrelated change does not drop the Discord connection. Deleting the husk stop
 `husk serve` with `adapters: false` in its config starts none of them.
 
 The Slack Events API route is the one route under `/v1/` that does not take the server
-token, because Slack cannot send it. It is only reachable through a tunnel when
-`husk serve` has a `HUSK_TOKEN`: without one, the server answers loopback addresses
-only. Socket Mode needs neither. The adapter checks Slack's signature on the raw
-body before anything runs, and answers only on the path it mounted.
+token, because Slack cannot send it. On the default loopback bind, Husk answers only
+loopback names, its defence against DNS rebinding, token or not. So a tunnel has to pass
+a loopback `Host`: `ngrok http 7377 --host-header=rewrite`, or `cloudflared` with
+`--http-host-header 127.0.0.1:7377`. The other way is to bind another address with
+`HUSK_TOKEN` set. Socket Mode needs none of this. The adapter checks Slack's signature
+on the raw body before anything runs, and answers only on the path it mounted.
 
 ## http
 

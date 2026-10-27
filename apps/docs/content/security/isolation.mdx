@@ -38,7 +38,7 @@ what the caller passed:
 --cpus=<cpus or 2>
 --memory=<memoryMb or 2048>m
 --memory-swap=<memoryMb or 2048>m
--u 1000:1000
+-u <computer.user, or 1000:1000>
 ```
 
 - `--memory-swap` matches `--memory` because without it the limit only delays the OOM:
@@ -47,10 +47,13 @@ what the caller passed:
   than the host's.
 - The root filesystem is read-only. Anything written outside `/work` and `/tmp` fails
   loudly instead of mutating an image layer that is about to vanish.
-- `-u 1000:1000` is passed regardless of the image, so even a public fallback image runs
-  unprivileged.
+- `-u 1000:1000` is passed whatever the image's own user, so even a public fallback
+  image runs unprivileged, unless `computer.user` names another. `user: root` runs the
+  agent as root: still with no capabilities and a read-only root filesystem, but root.
 
-With `persist: true`, `/work` becomes a named volume `husk-<id>` instead of a tmpfs.
+With `persist: true`, `/work` becomes a named volume instead of a tmpfs: `husk-<id>`, or
+`husk-key-<key>-<digest>` for a chat's or a bot's computer, which outlives the container
+so its next one finds the same files.
 
 An injected model in this mode can wreck the container. It cannot reach your home
 directory, your SSH keys, your Docker socket, or your other containers.
@@ -116,8 +119,9 @@ If the remote box has anything on it you care about, install Docker on the remot
 and use the `docker` provider from there, rather than pointing `ssh` at it directly.
 </Warning>
 
-Workspaces live under `$HOME/.husk-work/<id>/`, with `work` and `tmp` subdirectories,
-both `chmod 700`. The jail is enforced on the far end — see below.
+Workspaces live under `$HOME/.husk-work/<id>/`, with `work` and `tmp` subdirectories.
+`~/.husk-work` and each `<id>` are `chmod 700`. The jail is enforced on the far end — see
+below.
 
 ## local
 
@@ -154,7 +158,7 @@ the model to guess.
 | Command deny list | A short list of unrecoverable commands is refused |
 | Output caps | A runaway process cannot exhaust memory through captured output |
 | Process-tree kill | A timeout kills the whole process group, not just the shell |
-| Mount namespace (WSL2) | `/work` is bind-mounted per exec inside `unshare -mr`, so two computers cannot see each other's files |
+| Mount namespace (WSL2) | `/work` is bind-mounted per exec inside `unshare -mr`, so the `/work` an agent sees is always this computer's workspace. It does not hide the others: they sit under `~/.husk/workspaces/`, and a shell command can still read them |
 
 ### What it does not stop
 

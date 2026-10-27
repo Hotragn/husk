@@ -25,8 +25,8 @@ Guardrails handle (1) and (2). Only isolation handles (3).
 
 ### Isolated — `docker`, `podman`, `fly`
 
-A kernel boundary. On `docker` and `podman` the agent runs as uid 1000 in a container
-with:
+A kernel boundary. On `docker` and `podman` the agent runs as uid 1000 (unless
+`computer.user` names another) in a container with:
 
 - `--cap-drop ALL` and `--security-opt no-new-privileges`
 - a read-only root filesystem, with writable layers only at `/work` and `/tmp`
@@ -147,9 +147,11 @@ Two independent controls:
    pattern over a small allow-list, so a variable you have never heard of is dropped
    rather than forwarded.
 2. **Nothing credential-shaped leaves a tool.** Every tool result passes through
-   `redact()` before it re-enters the conversation, matching Anthropic, OpenAI, Google,
-   GitHub, Slack and AWS access key IDs plus PEM private keys. An agent that `cat`s a
-   `.env` sees the file; the model sees `sk-ant-…[redacted]`.
+   `redact()` before it re-enters the conversation, matching Anthropic, OpenAI, Groq,
+   Google, GitHub, Slack, npm, Fly and xAI keys, AWS access key IDs, the token in an
+   `Authorization` or `Proxy-Authorization` header, and PEM private keys (untyped, RSA,
+   EC, OpenSSH or PGP). An agent that `cat`s a `.env` sees the file; the model sees
+   `sk-ant-…[redacted]`.
 
    An AWS *secret* access key is the documented exception: it is forty characters of
    base64 with no prefix and nothing to match on, so no pattern finds it without also
@@ -175,7 +177,7 @@ guardrails:
 
 In `ask`, tools marked `dangerous` pause for a human. **If no approver is wired up, the
 call is denied, not allowed** — a headless server running an `ask`-mode husk fails closed.
-In `readonly`, dangerous tools are never offered.
+In `readonly`, dangerous tools are still listed, and every call to one is refused.
 
 ## Remote access
 

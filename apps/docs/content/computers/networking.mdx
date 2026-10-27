@@ -48,8 +48,10 @@ container providers, and `full` is an admission that there is no boundary.
 
 ## The floor
 
-`isHostAllowed` refuses loopback, link-local and RFC1918 hosts **even in `mode: full`**,
-unless the operator names them in `allow`.
+`isHostAllowed` refuses link-local and RFC1918 hosts **even in `mode: full`**, unless the
+operator names them in `allow`. Loopback is refused too, except on a computer that has
+a loopback of its own (Docker, Podman and Fly): there `127.0.0.1` is the computer, not
+your machine, so the dev server an agent starts is one it can look at.
 
 `mode: full` means the internet. It does not mean the cloud metadata service at
 `169.254.169.254` that hands IAM credentials to anything that asks — and an agent that
@@ -65,8 +67,8 @@ Refused by default, in every mode:
 | IPv4 | `0.0.0.0/8`, `10.0.0.0/8`, `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` (CGNAT) |
 
 ```text
-error refused private address 169.254.169.254
-hint:  loopback, link-local and RFC1918 hosts must be named in computer.network.allow
+error network policy refuses 169.254.169.254
+hint:  link-local and RFC1918 hosts must be named in computer.network.allow
 ```
 
 To reach one deliberately, name it:
@@ -80,21 +82,15 @@ computer:
 
 Explicit beats implicit, and now the decision is in the file where a reviewer can see it.
 
-Both `@husk-ai/runtime` and `@husk-ai/agent` implement the floor. The agent package
-re-implements it rather than importing the runtime, because dependencies run downhill and
-`agent` sits above `runtime` — which means the two copies have to be kept in step by
-hand.
+The floor is one function, `isInternalHost` in `@husk-ai/core`, which the runtime and the
+agent both use, so a host refused in one place is refused everywhere.
 
 ### What the floor does not catch
 
-It matches on the hostname string. There is no DNS resolution, so:
-
-- A public name that resolves to `169.254.169.254` passes. Classic DNS rebinding.
-- Alternative IPv4 encodings — `http://2130706433/` for `127.0.0.1` — do not match the
-  dotted-quad pattern.
-- IPv4-mapped IPv6 forms such as `::ffff:127.0.0.1` are not matched by the private-host
-  check. (They *are* matched by the control plane's separate loopback check, which is a
-  different function for a different job.)
+It reads the host as written, decoded: `http://2130706433/` (`127.0.0.1` as one number),
+octal and hex forms, and IPv4-mapped IPv6 such as `::ffff:127.0.0.1` are refused as the
+addresses they are. There is no DNS resolution, though, so a public name that resolves
+to `169.254.169.254` passes. Classic DNS rebinding.
 
 A `*` entry in `allow` satisfies the match and therefore reopens the whole private range.
 Do not write `allow: ['*']` and expect the floor to hold.
@@ -118,11 +114,13 @@ at least one more character. Both sides are lower-cased and lose a trailing dot.
 
 For `fetch_url` and `http_request`, in this order:
 
-1. The URL parses. Otherwise `E_TOOL_ERROR`, `not a valid URL`.
+1. The URL parses. Otherwise `E_EXEC_DENIED`, `not a valid URL`.
 2. The protocol is `http:` or `https:`. `file:`, `ftp:`, `data:` and `gopher:` are
-   refused with `E_EXEC_DENIED`, `refused <scheme> URL`.
-3. `isHostAllowed(host, policy)` — `deny`, then `mode`.
-4. The private-address floor.
+   refused with `E_EXEC_DENIED`, `refusing the <scheme> scheme`.
+3. The private-address floor, unless the host is named in `allow`.
+4. `isHostAllowed(host, policy)` — `deny`, then `mode`.
+
+A refusal at 3 or 4 is `E_EXEC_DENIED`, `network policy refuses <host>`.
 
 The checks run on the URL you passed, and again on each redirect's target **before it
 is requested**. A 302 to `http://169.254.169.254/` is refused without asking that

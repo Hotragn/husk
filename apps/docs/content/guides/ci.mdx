@@ -106,8 +106,8 @@ Everything Husk writes — machine records, workspaces, run events — then land
 the workspace, where `actions/cache` can see it and where nothing survives the job.
 
 <Warning>
-Do not cache `HUSK_HOME` between runs. `runs/` holds unredacted tool output and
-`transcripts/` holds raw conversations. See
+Do not cache `HUSK_HOME` between runs. `runs/` holds tool output that redaction screens
+only by pattern, and `transcripts/` holds raw conversations. See
 [Secrets](/security/secrets#redaction).
 </Warning>
 

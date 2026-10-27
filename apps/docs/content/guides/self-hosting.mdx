@@ -104,6 +104,12 @@ Keep Husk on loopback and let the proxy own TLS:
 husk serve --host 127.0.0.1 --port 7377
 ```
 
+Through the proxy, Husk is an API: the SDK, `curl` and anything else that sends no
+`Origin` header work. The console does not. Husk refuses a request from any web page
+whose origin is not a loopback address, its defence against a page driving it, so a
+console opened at `https://husk.example.com` cannot start a run or open a terminal. Open
+the console through an SSH tunnel instead, as above.
+
 ## Step 4: A reverse proxy that does not break the streams
 
 Two things go wrong with a naive proxy config: SSE gets buffered, and WebSocket
@@ -126,7 +132,9 @@ server {
     proxy_pass http://127.0.0.1:7377;
 
     proxy_http_version 1.1;
-    proxy_set_header Host              $host;
+    # On a loopback bind Husk answers only loopback names, its defence against
+    # DNS rebinding, so the proxy passes one rather than the client's.
+    proxy_set_header Host              127.0.0.1:7377;
     proxy_set_header X-Real-IP         $remote_addr;
     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
@@ -148,6 +156,7 @@ Caddy needs almost none of that:
 ```caddyfile title="Caddyfile"
 husk.example.com {
   reverse_proxy 127.0.0.1:7377 {
+    header_up Host {upstream_hostport}   # a loopback name, which Husk answers
     flush_interval -1        # never buffer; required for SSE
     transport http {
       read_timeout 1h
@@ -301,9 +310,9 @@ Everything is under `HUSK_HOME`, mode `0700`:
   data/  cache/
 ```
 
-`husks/` is the part with your work in it. `runs/` and `transcripts/` hold unredacted
-tool output and raw conversations — see [Secrets](/security/secrets#redaction) — so back
-them up accordingly or prune them.
+`husks/` is the part with your work in it. `runs/` holds tool output that redaction
+screens only by pattern, and `transcripts/` raw conversations — see
+[Secrets](/security/secrets#redaction) — so back them up accordingly or prune them.
 
 ### Limits
 

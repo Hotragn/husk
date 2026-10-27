@@ -34,7 +34,10 @@ Over HTTP, `approvalMode` in the run body does the same.
 | `move` | `computer_info` |
 | `delete` | `fetch_url` |
 | `expose_port` | `web_search` |
-| `http_request` | |
+| `http_request` | `browse` |
+| `browser_click` | `browser_goto` |
+| `browser_type` | `browser_snapshot`, `browser_screenshot` |
+| | `hand_off`: pausing does nothing to the machine |
 
 `http_request` is additionally **opt-in**: it is not registered at all unless the
 `husk.yaml` names the `http` bundle or the tool itself.
@@ -191,3 +194,8 @@ separate code path.
 `readonly` is not the same as "no computer". The agent still gets `read_file`,
 `list_dir`, `search_files`, `computer_info` and `fetch_url`, so it can investigate
 thoroughly and change nothing. Use `--no-computer` when you want no machine at all.
+
+These modes are the builtin engine's. A husk on the `claude-code` or `codex` engine runs
+Husk's tools without asking, so saving one with `ask` or `readonly` is refused, and so
+are `denyCommands`, `allowCommands`, network `allow` and `deny` lists, and `image`: its
+computer takes a network mode and nothing finer.

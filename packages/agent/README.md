@@ -133,11 +133,11 @@ always fails.
   no-ops, and it never writes on a failed match.
 - `search_files` uses ripgrep inside the machine when it is there, and a bounded JS
   walk when it is not. Both are capped.
-- `fetch_url` and `http_request` honour `spec.computer.network` through `isHostAllowed`
-  in `src/net.ts`, re-implemented locally because `agent` may not import `runtime`.
-  They also refuse loopback, link-local and RFC1918 addresses unless the operator named
-  them in `computer.network.allow`, which keeps `mode: full` from meaning "and also the
-  cloud metadata endpoint".
+- `fetch_url` and `http_request` honour `spec.computer.network` through `isHostAllowed`,
+  which `src/net.ts` re-exports from `@husk-ai/core`: one floor, the one the runtime
+  uses too. They refuse loopback, link-local and RFC1918 addresses unless the operator
+  named them in `computer.network.allow`, which keeps `mode: full` from meaning "and also
+  the cloud metadata endpoint", and they check each redirect before following it.
 
 Write your own with `defineTool`, and hand it in as `tools: [...]`:
 

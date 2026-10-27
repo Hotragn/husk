@@ -87,8 +87,8 @@ Kubernetes API on `10.x`.
 | IPv4 | `0.0.0.0/8`, `10.0.0.0/8`, `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` (CGNAT) |
 
 ```text
-error refused private address 169.254.169.254
-hint:  loopback, link-local and RFC1918 hosts must be named in computer.network.allow
+error network policy refuses 169.254.169.254
+hint:  link-local and RFC1918 hosts must be named in computer.network.allow
 ```
 
 Redirects are followed one hop at a time, and each hop's URL is checked **before it is
@@ -111,16 +111,13 @@ it and a diff can catch it.
 
 ## What the floor does not catch
 
-The floor matches on the **hostname string**. There is no DNS resolution before the
-request, so:
+The floor reads the **host as written**, decoded: `http://2130706433/` (`127.0.0.1` as one
+number), octal and hex forms, and IPv4-mapped IPv6 such as `::ffff:127.0.0.1` are all
+read as the addresses they are, and refused. There is no DNS resolution before the
+request, though, so:
 
 - **DNS rebinding.** A public name that resolves to `169.254.169.254` passes the check.
   This is the classic bypass and Husk does not stop it.
-- **Alternative IPv4 encodings.** `http://2130706433/` is `127.0.0.1` as a 32-bit
-  integer, and does not match the dotted-quad pattern. Nor do octal or hex forms.
-- **IPv4-mapped IPv6.** `::ffff:127.0.0.1` is not matched by the private-host check.
-  (It *is* matched by the control plane's separate loopback check, which is a different
-  function for a different job.)
 - **`allow: ['*']`.** A `*` entry satisfies the explicit-allow test and therefore
   reopens the entire private range. Do not write it and expect the floor to hold.
 - **Anything that is not `fetch_url` or `http_request`.** `web_search` talks to Tavily
@@ -131,24 +128,21 @@ If you are running an agent on a cloud instance with an instance profile attache
 floor is a speed bump, not a boundary. Remove the instance profile, or use IMDSv2 with
 a hop limit of 1 and run the agent in a container, or both.
 
-## Two implementations, kept in step by hand
+## One implementation
 
-The floor exists twice: `isInternalHost` in `@husk-ai/runtime`, and `isPrivateHost` in
-`@husk-ai/agent`. The duplication is deliberate — dependencies run strictly downhill,
-`agent` sits above `runtime`, and `agent` may only import `core`.
-
-Both copies are tested, and they are close but not identical. `isInternalHost` also
-rejects a bare `0.0.0.0`-family first octet and `metadata.google.internal` by name;
-`isPrivateHost` additionally rejects `::`. A host refused in one place should be refused
-in the other, and keeping that true is a manual job.
+The floor is `isInternalHost` in `@husk-ai/core`, and nothing else. `@husk-ai/runtime`
+and `@husk-ai/agent` re-export it (the agent's under its old name, `isPrivateHost`), so
+a host refused in one place is refused everywhere. There used to be a second copy in the
+agent, and the two had drifted: it let the metadata endpoint through as an IPv4-mapped
+address after core had learned to refuse it.
 
 ## Protocols
 
 `fetch_url` and `http_request` accept `http:` and `https:` only.
 
 ```text
-error refused file: URL
-hint:  only http and https are fetchable from a husk
+error refusing the file: scheme
+hint:  only http and https are fetched; file:// would read the host filesystem
 ```
 
 `file:`, `ftp:`, `data:` and `gopher:` are refused with `E_EXEC_DENIED`. `http_request`
@@ -158,9 +152,12 @@ additionally strips a set of blocked request headers before sending.
 
 For both network tools, in this order:
 
-1. The URL parses. Otherwise `E_TOOL_ERROR`, `not a valid URL`.
-2. The scheme is `http:` or `https:`. Otherwise `E_EXEC_DENIED`.
-3. `deny`, then `mode` — `isHostAllowed`.
-4. The private-address floor.
+1. The URL parses. Otherwise `E_EXEC_DENIED`, `not a valid URL`.
+2. The scheme is `http:` or `https:`. Otherwise `E_EXEC_DENIED`, `refusing the <scheme>
+   scheme`.
+3. The private-address floor, unless the host is named in `allow`.
+4. `deny`, then `mode` — `isHostAllowed`.
+
+A refusal at 3 or 4 is `E_EXEC_DENIED`, `network policy refuses <host>`.
 
 Then the whole sequence again on each redirect's target, before it is requested.
