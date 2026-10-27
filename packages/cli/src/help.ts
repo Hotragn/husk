@@ -87,7 +87,7 @@ export const COMMANDS: HelpEntry[] = [
       ['--packages <p,..>', 'install these in the machine at create time; repeatable'],
       ['--persist', 'keep the filesystem across restarts'],
       ['--env K=V', 'set a variable inside the machine; repeatable'],
-      ['--idle-timeout <sec>', 'destroy it after this long unused, while husk serve runs (default: never)'],
+      ['--idle-timeout <sec>', 'destroy it after this long unused, while the shared Husk runs (default: never)'],
       ['--json', 'print the computer record instead of the summary'],
     ],
     examples: [
@@ -111,15 +111,15 @@ export const COMMANDS: HelpEntry[] = [
   {
     name: 'rm',
     group: 'computers',
-    summary: 'Destroy a computer; a chat’s or bot’s stops for now',
+    summary: 'Destroy a computer; a chat’s stops for now',
     usage: 'husk rm <name|id> [--all] [--erase] [--yes] [--force]',
     details:
-      'Destructive and not recoverable, except that on docker and podman a chat’s or a bot’s computer keeps its ' +
-      'files and browser logins for its next computer: for those it means "stop for now". --erase, like the ' +
-      'console’s Delete, erases them too. Asks first unless --yes or --force is given.',
+      'Destructive and not recoverable, except that on docker and podman a chat’s computer, or a bot’s with ' +
+      'persist: true, keeps its files and browser logins for its next computer: for those it means "stop for now". ' +
+      '--erase, like the console’s Delete, erases them too. Asks first unless --yes or --force is given.',
     flags: [
       ['--all', 'destroy every computer'],
-      ['--erase', 'take what a chat’s or bot’s computer keeps too: its files and browser logins'],
+      ['--erase', 'take what a chat’s or a persistent bot’s computer keeps too: its files and browser logins'],
       ['--yes, -y', 'skip the confirmation'],
       ['--force, -f', 'skip the confirmation, and with --all destroy computers in use in the last minute too'],
     ],

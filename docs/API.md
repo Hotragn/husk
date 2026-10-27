@@ -380,9 +380,11 @@ POST   /v1/computers/:id/fs/upload?path=/work           body: a tar.gz -> { path
 The archive is made and unmade by the computer's own `tar` and `gzip`; only bytes
 cross the boundary, over the same path `fs/read` and `fs/write` use. That is also
 why there is no multipart parser: the body *is* the archive, not a form wrapping
-one. Entries in a downloaded archive start with the directory's own name (`work/…` for
-`path=/work`), so it can be unpacked anywhere; upload it to the parent, `/`, to put it
-back, since uploading it to `/work` gives `/work/work`. Download stops at 256 MiB
+one. Entries in a downloaded archive start with the directory's own name (`src/…` for
+`path=/work/src`), so it can be unpacked anywhere; upload it to the parent, `/work`, to
+put it back, since uploading it to `/work/src` gives `/work/src/src`. `/work`'s own
+archive goes back through `/` only on Docker, Podman and Fly: on `local` and `ssh`, `/`
+is that machine's own root. Download stops at 256 MiB
 compressed: the archive is cut off inside the computer as it passes that, so a path too
 big fails with `E_QUOTA` without filling the computer's `/tmp`. A path that is not there,
 and a file tar cannot read, are each said as such.
@@ -537,6 +539,11 @@ data: {"type":"tool_start","call":{...}}
 data: {"type":"run_end","result":{...}}
 event: done
 ```
+
+The other events are `step_start`, `thinking_delta`, `message` (after every step),
+`tool_delta` (a command's output as it runs, with `callId` and `tool`), `tool_end`,
+`tool_denied`, `approval_required`, `handoff_required`, `computer_ready`, `usage`,
+`warning` and `error`; `RunEvent` in `@husk-ai/core` has every field.
 
 ### Approvals
 

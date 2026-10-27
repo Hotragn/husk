@@ -43,11 +43,11 @@ what the caller passed:
 
 - `--memory-swap` matches `--memory` because without it the limit only delays the OOM:
   the container swaps first.
+- `--pids-limit 512` means a fork bomb inside the machine hits its own ceiling rather
+  than the host's.
 - Docker also gets `--init`, so what a stopped command leaves behind is reaped rather
   than kept as zombies against the pid limit. Podman's init needs an optional package,
   so a Podman computer goes without.
-- `--pids-limit 512` means a fork bomb inside the machine hits its own ceiling rather
-  than the host's.
 - The root filesystem is read-only. Anything written outside `/work` and `/tmp` fails
   loudly instead of mutating an image layer that is about to vanish.
 - `-u 1000:1000` is passed whatever the image's own user, so even a public fallback
@@ -318,9 +318,9 @@ The clamp runs **before** redaction, so redaction always operates over bounded i
 ## Timeouts
 
 `limits.execTimeoutSec` defaults to 120 seconds per exec, and `limits.timeoutSec` to 300
-seconds for the whole run. On a timeout on `local` the entire process **group** is
-killed — `process.kill(-pid, 'SIGKILL')` on POSIX, `taskkill /T /F` on Windows — so a
-shell that spawned a build does not leave the build running. Killing the client does
+seconds for the whole run. On `local`, a timeout kills the entire process **group** —
+`process.kill(-pid, 'SIGKILL')` on POSIX, `taskkill /T /F` on Windows — so a shell that
+spawned a build does not leave the build running. Killing the client does
 not stop a command in a container, on an ssh box, on a Fly machine or in a WSL distro,
 so there every command carries a tag in its environment, and a timeout or a cancel
 kills every process with that tag where it runs. A process that scrubs its environment

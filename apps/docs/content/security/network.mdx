@@ -69,10 +69,10 @@ machine shares your network.
 operator names them in `allow`. The check runs *before* the mode is consulted, so `full`
 cannot override it.
 
-Loopback is refused too, with one exception: `browse` and the browser, which run in the
-computer, may reach `127.0.0.1` on Docker, Podman and Fly, where that address is the
-computer's own. `fetch_url` and `http_request` run on this machine, so to them loopback
-is always this machine's, and refused.
+Loopback is refused the same way, with one exception besides `allow`: `browse` and the
+browser, which run in the computer, may reach `127.0.0.1` on Docker, Podman and Fly,
+where that address is the computer's own. `fetch_url` and `http_request` run on this
+machine, so to them loopback is always this machine's, and refused.
 
 ### Why 169.254.169.254 is the reason
 

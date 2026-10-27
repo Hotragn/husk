@@ -263,8 +263,10 @@ Download stops at 256 MiB compressed. The archive is cut off inside the machine 
 passes that, so an accidental `path=/` fails with `E_QUOTA` once its archive is that big,
 without filling the computer's `/tmp` or pulling a root filesystem into the server's
 memory to be rejected afterwards. A path that is not there, and a file tar cannot read,
-are each said as such. Entries start with the directory's own name (`work/…` for
-`path=/work`), so upload such an archive to the parent to put it back.
+are each said as such. Entries start with the directory's own name (`src/…` for
+`path=/work/src`), so upload such an archive to the parent, `/work`, to put it back.
+`/work`'s own archive goes back through `/` only on Docker, Podman and Fly: on `local`
+and `ssh`, `/` is that machine's own root.
 
 `husk cp` still does directory copies through the provider's own mechanism (`docker cp`,
 `scp`, a recursive filesystem copy), which stays the faster path when you are at a
@@ -451,18 +453,25 @@ racing a completing run should not have to distinguish the two outcomes.
 
 ```text
 GET  /v1/sessions/discover?source=&path=  -> { sessions: DiscoveredSession[] }
-POST /v1/sessions/import                  -> { transcript: Transcript }
-POST /v1/sessions/distill                 -> { distilled, spec, yaml }
+POST /v1/sessions/import                  -> { transcript } | { source, choices }
+POST /v1/sessions/distill                 -> { transcriptId, distilled, spec, yaml, engines, continues }
 POST /v1/sessions/distill/stream          -> SSE
 ```
 
-`import` takes `{ path? , content?, source? }` and needs at least one of `path` or
-`content`. It saves the transcript and returns the first one it parsed.
+`import` takes `{ path?, content?, source?, pick? }` and needs at least one of `path` or
+`content`. A file with one chat is saved and returned as `{ transcript }`. A file that
+holds many, such as a ChatGPT export or Cursor's `state.vscdb`, answers
+`{ source, choices }`, each choice `{ id, title, messages, updatedAt? }`, newest first,
+and keeps nothing; ask again with `pick` set to a choice's `id`.
 
-`distill` takes `{ transcriptId? , transcript?, useModel?, model? }`. `useModel` must be
-exactly `true` to use a model; anything else runs the free heuristic path.
+`distill` takes `{ transcriptId?, transcript?, useModel?, model?, engine? }`. `useModel`
+must be exactly `true` to use a model; anything else runs the free heuristic path.
+`engines` lists what the draft can run on, best first: the chat's own app's CLI when it
+is installed, any other installed CLI, then `builtin`. `engine` picks one of them, and
+`continues` says whether Claude Code would go on with the chat itself rather than start
+from the draft.
 
-The streaming variant emits three progress frames then the result:
+The streaming variant takes no `engine`. It emits three progress frames then the result:
 
 ```text
 data: {"type":"progress","stage":"scanning","pct":0.1}
@@ -523,25 +532,54 @@ and the trigger type. See [Triggers](/chat-to-bot/triggers#discord-slack-and-tel
 
 ## Triggers
 
-Registered once at boot as two wildcard routes plus a listing, with the dispatch tables
-rebuilt by `sync()` whenever a husk changes.
+Registered once at boot as three wildcard routes plus a listing, with the dispatch
+tables rebuilt by `sync()` whenever a husk changes.
 
 ```text
 ALL  /v1/t/<husk><path>   an `http` trigger
 POST /v1/w/<husk><path>   a `webhook` trigger
+ALL  /v1/a/<husk>/…       a chat app's own events, such as Slack's Events API
 GET  /v1/triggers         -> { triggers: MountedTrigger[], cron: […] }
 ```
 
-`GET /v1/triggers` is not in `docs/API.md`. [Triggers](/chat-to-bot/triggers) covers
-prompt extraction, HMAC verification and the cron scheduler.
+[Triggers](/chat-to-bot/triggers) covers prompt extraction, HMAC verification and the
+cron scheduler.
+
+---
+
+## Other routes
+
+These are the console's, the desktop app's and a chat's own. Their shapes are in
+[`docs/API.md`](https://github.com/Hotragn/husk/blob/main/docs/API.md).
+
+```text
+GET    /v1/overview                          every computer, active run, handoff and last call
+GET    /v1/computers/:id/disk | stats | thumbnail | activity
+POST   /v1/computers/:id/browse              a page, loaded from inside the computer
+GET    /v1/computers/:id/browser/status | tabs | screenshot
+POST   /v1/computers/:id/browser/goto | snapshot | click | type
+DELETE /v1/computers/:id/browser             closes the computer's browser
+WS     /v1/computers/:id/screen              the browser, live
+POST   /v1/computers/:id/bot                 a husk draft from the chat that owns the computer
+POST   /v1/computers/:id/tools/:name         one of the MCP server's computer tools
+POST   /v1/computers/:id/takeover | handoffs | link | in-chat
+GET    /v1/handoffs/:handoffId/state         how a chat's handoff ended
+DELETE /v1/handoffs/:handoffId               the chat went away; the computer is freed
+GET    /v1/scoped/computer                   what a link opens, with its own token; /screen, /takeover
+GET    /v1/setup                             and /v1/setup/apps/:app, /test, /follow
+GET    /v1/remote                            and /claim, /on, /off, /apps/:id, /reset
+GET    /v1/workspaces                        and one workspace's sources, files, download and export
+POST   /v1/shutdown                          refused while a run or a handoff is open
+```
 
 ---
 
 ## The console
 
-`GET /` serves the built dashboard from `apps/console/dist` when it exists, with a
-single-page-app fallback for deep links, and a static placeholder page listing the
-useful endpoints when it does not. A missing console never stops the server booting.
+`GET /` serves the built dashboard, from `@husk-ai/console-assets` or, in a checkout,
+`apps/console/dist`, with a single-page-app fallback for deep links, and a static
+placeholder page listing the useful endpoints when there is none. A missing console
+never stops the server booting.
 
 <Note>
 Earlier revisions of these docs said the control plane would not start when a built
@@ -555,6 +593,6 @@ Verified against this checkout with `apps/console/dist/index.html` in place.
 
 ## The SDK
 
-`@husk-ai/sdk` is the typed client for this API, and in this release **it does not match
-the server it ships beside**. See [SDK](/reference/sdk) for the endpoint-by-endpoint
-comparison and what still works.
+`@husk-ai/sdk` is the typed client for this API, tested against a real server. It covers
+health, doctor, events, computers, husks, runs, approvals, sessions and models; the
+[other routes](#other-routes) have no methods. See [SDK](/reference/sdk).

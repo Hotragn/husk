@@ -15,8 +15,8 @@ how the control plane runs it, and how its `discord` trigger connects it to your
 
 - [ ] Husk installed (`npm install -g @husk-ai/cli`) and `husk doctor` showing a reachable
       model.
-- [ ] A transcript worth distilling — a Claude Code session, a ChatGPT export, a Cursor
-      chat, or a markdown file.
+- [ ] A transcript worth distilling — a Claude Code or Codex session, a ChatGPT export,
+      a Cursor chat, or a markdown file.
 - [ ] A Discord server you can add a bot to.
 
 ---
@@ -27,13 +27,15 @@ how the control plane runs it, and how its `discord` trigger connects it to your
 husk import
 ```
 
-With no path, Husk searches four places and lists what it found:
+With no path, Husk searches the places chat apps keep their history and lists what it
+found. When it finds nothing, it says where it looked:
 
 ```text
 husk looked in:
   ~/.claude/projects   Claude Code sessions
+  ~/.codex/sessions    Codex sessions
   ~/Downloads          ChatGPT and Gemini exports
-  ~/.cursor            Cursor chat history
+  Cursor's state.vscdb Cursor chat history
   ./                   markdown and jsonl
 ```
 
@@ -144,7 +146,7 @@ metadata:
     - Heuristic distillation: no model was used. Review the persona before shipping.
 ```
 
-Three things to fix before this goes anywhere near a channel.
+Four things to fix before this goes anywhere near a channel.
 
 **The name.** The distiller slugs the transcript's title, and transcript titles are
 usually a file path. Rename it — this is the URL segment and the CLI handle.
@@ -153,6 +155,10 @@ usually a file path. Rename it — this is the URL segment and the CLI handle.
 fast. The defaults (24 steps, $0.50, 300 s) are sized for an agent with a computer.
 
 **The persona's last line.** Discord is not a terminal. Tell it so.
+
+**Anything the bot needs to know.** A chat trigger passes the message and nothing else,
+so a `{{name}}` placeholder in the persona is never filled in Discord. Write the product
+name into the file.
 
 ```yaml title="support-bot.yaml (edited)"
 apiVersion: husk/v1
@@ -165,7 +171,7 @@ fallbackModels: [flash]
 temperature: 0.3
 
 persona: |-
-  You answer billing questions for {{product}} in a Discord channel.
+  You answer billing questions for Acme in a Discord channel.
 
   - Check the customer's plan before quoting a limit.
   - Never promise a refund; tell them to open a ticket in #billing.
@@ -211,7 +217,7 @@ husk validate support-bot.yaml
 ## Step 4: Test it before Discord sees it
 
 ```bash
-husk run support-bot.yaml "what's the API rate limit on the starter plan?" --var product=Acme
+husk run support-bot.yaml "what's the API rate limit on the starter plan?"
 ```
 
 Iterate on the persona here, where the feedback loop is two seconds and nobody is
@@ -225,12 +231,14 @@ curl -s localhost:7377/v1/husks \
   --data-binary "$(jq -Rs '{yaml: .}' < support-bot.yaml)"
 ```
 
-Confirm it runs over HTTP — this is the exact call the adapter will make:
+Confirm it runs on the server. The adapter does not call this route: inside `husk serve`
+it runs the husk in the same process, with the message as the input and nothing else.
+This is the same run, over HTTP:
 
 ```bash
 curl -s localhost:7377/v1/husks/support-bot/run \
   -H 'content-type: application/json' \
-  -d '{"input":"what is the rate limit?","vars":{"product":"Acme"}}' | jq -r .text
+  -d '{"input":"what is the rate limit?"}' | jq -r .text
 ```
 
 <Terminal title="the real response shape">
@@ -241,9 +249,12 @@ curl -s localhost:7377/v1/husks/support-bot/run \
   "steps": 1,
   "usage": { "inputTokens": 388, "outputTokens": 2, "costUsd": 0 },
   "durationMs": 7721,
-  "stopReason": "complete"
+  "stopReason": "complete",
+  "trace": [ … ]
 }`}
 </Terminal>
+
+`trace` holds every model response the run got. A run that fails also carries `error`.
 
 ## Step 5: The Discord application
 
@@ -306,7 +317,7 @@ All of this is behaviour you would otherwise have to write:
 | Fatal closes | 4004, 4010–4014 are never retried. Reconnecting on a bad token just burns the rate limit |
 | Idempotency | A gateway that redelivers on reconnect does not run the agent twice |
 | Rate limiting | Per user, 5 messages a minute by default. Over it, the bot replies `Rate limited. Try again in 42s.` |
-| Filtering | Skips bots, skips itself, honours the channel allowlist, and with `mentionOnly` answers only mentions, replies and DMs |
+| Filtering | Skips bots, skips itself, answers only in the channels you list, and with `mentionOnly` only mentions and replies to its own messages |
 | Mention stripping | The bot's own `<@id>` is removed before the text reaches the agent |
 | Typing indicator | Kept alive for the whole run, stopped when the answer lands |
 | Chunking | Answers are split at Discord's 2,000-character limit |
@@ -350,16 +361,21 @@ listens on, or that it is idle for want of either.
 `content` is empty and `shouldHandle` returns `empty content`. Turn it on in the
 portal, then restart the bot.
 
-**It answers in DMs and not in the channel.** `mentionOnly` defaults to `true`, and a
-DM always counts as a mention. Mention the bot, reply to one of its messages, or set
-`mentionOnly: false`.
+**It ignores messages in the channel.** `mentionOnly` defaults to `true`. Mention the
+bot, reply to one of its messages, or set `mentionOnly: false`.
 
-**It answers in the wrong channels.** Set `channels` to the ids you want. An empty
-array means every channel it can see.
+**It does not answer DMs.** A DM has a channel of its own, and the bot answers only in
+the channels you list.
 
-**`Something went wrong: …`** is the adapter relaying an exception from `run()`.
-`cannot reach the husk control plane` means `husk serve` is not up; a 401 means
-`HUSK_TOKEN` is set on the server and not on the bot.
+**It never starts.** A `discord` trigger needs `channels`. With none, it would answer
+anywhere the bot can see, so `husk serve` does not start it, and `GET /v1/triggers`
+reads `not started -- set channels (channel ids)`.
+
+**`Something went wrong: …`** is the adapter relaying an error the run threw, such as
+`no husk named support-bot` after the husk was deleted. The adapter runs the husk inside
+`husk serve`, so no network or token stands between them. A run that fails without
+writing anything answers `(the agent produced no text)`; its error is in
+`GET /v1/runs?husk=support-bot`.
 
 **Answers are truncated at three sentences and you did not ask for that.** You did —
 it is in the persona. Discord bots are better short, but the file is where the decision
@@ -369,4 +385,5 @@ lives.
 
 - [Triggers](/chat-to-bot/triggers) — what the server does mount, and how.
 - [The distiller](/chat-to-bot/distiller) — what it extracts and how it decides.
-- [Self-hosting](/guides/self-hosting) — putting both processes on a box you own.
+- [Self-hosting](/guides/self-hosting) — putting `husk serve`, and the bot with it, on a
+  box you own.

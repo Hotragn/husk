@@ -24,7 +24,7 @@ choose:
 {`Found 12 transcripts
 
   #  SOURCE       WHAT                             SIZE    MODIFIED
-  1  claude-code  home/me/api  4f2a91c3             184KB   2026-09-08
+  1  claude-code  /home/me/api  4f2a91c3            184KB   2026-09-08
   2  chatgpt      conversations.json               2.1MB   2026-09-01
   3  markdown     support-chat.md                  4KB     2026-08-30
 
@@ -48,29 +48,40 @@ husk import ~/.claude/projects/-home-me-api/4f2a91c3.jsonl
 Imported transcripts are cached under `~/.husk/transcripts/` and get an id you can hand
 to `husk distill`.
 
-## The six importers
+## The seven importers
 
-| Source | Format | Where it looks |
+| Source | Format | Where `husk import` looks |
 | --- | --- | --- |
-| `claude-code` | JSONL event log | `~/.claude/projects/**/*.jsonl`, `~/.config/claude/projects/**/*.jsonl`, or `$CLAUDE_CONFIG_DIR/projects` |
+| `claude-code` | JSONL event log | `~/.claude/projects/**/*.jsonl` |
 | `codex` | One JSONL rollout per session | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`, or `$CODEX_HOME/sessions` |
-| `chatgpt` | `conversations.json` from a data export | `~/Downloads`, `~/Documents` |
-| `cursor` | `state.vscdb`, or an exported JSON/markdown chat | The platform's Cursor `globalStorage` directory |
-| `gemini` | CLI checkpoints, or a Takeout "My Activity" export | `~/.gemini/tmp/**` |
-| `markdown` | A pasted conversation with role markers | Nowhere — pass a path |
+| `chatgpt` | `conversations.json` from a data export | `~/Downloads/conversations*.json` |
+| `cursor` | `state.vscdb`, or an exported JSON/markdown chat | The platform's Cursor `globalStorage` directory, and JSON or JSONL under `~/.cursor` |
+| `gemini` | CLI checkpoints, or a Takeout "My Activity" export | Nowhere — pass a path |
+| `markdown` | A pasted conversation with role markers | `*.md` in the current directory that parse as a chat |
+| `universal` | Anything else with role markers, read by the markdown heuristics | `~/Downloads/*chat*.json`, and `*.jsonl` in the current directory |
+
+The console's **Make a bot from a chat** looks elsewhere: Claude Code's
+`~/.claude/projects` and `~/.config/claude/projects`, Codex's sessions, Cursor's
+`state.vscdb` and `~/.gemini/tmp`. It lists no ChatGPT export, so give it that one as a
+file.
 
 A Codex rollout carries Codex's own context beside the chat: the environment, AGENTS.md,
 permission notes. The importer keeps only what you and Codex said and the tools it called.
 A file that holds many chats, such as a ChatGPT export or Cursor's `state.vscdb`, asks
 which one in the console; `husk import` keeps them all.
 
-Detection is a cheap sniff over the first 32 KB, scoring each importer 0–1, and the
-highest scorer that actually parses wins. `--source` skips it entirely.
+`husk import` and `husk distill <path>` read the whole file, and each importer scores it
+0–1. The highest scorer that returns a transcript wins; one that throws or returns
+nothing hands over to the next. `universal` scores 0.05 on anything, so it wins only
+when nothing else recognised the file. `--source` skips detection, and a name with no
+importer fails with `no importer for source "jsonl"`, its hint listing the ones there
+are. The console takes the highest scorer and tries no other. `detectAndParse()` in
+`@husk-ai/sessions` sniffs only the first 32 KB, but neither command calls it.
 
 <NotYet>
 `TranscriptSource` also declares `claude-web`, `openai-api`, `anthropic-api` and
-`jsonl`. None of them has an importer. Passing one as `--source` falls through to
-ordinary detection rather than failing, which is worth knowing before you script it.
+`jsonl`. None of them has an importer, so each fails as a `--source` like any unknown
+name.
 </NotYet>
 
 ## Branches
@@ -98,6 +109,7 @@ Claude Code transcripts carry a lot that is not conversation:
 | `thinking` and `redacted_thinking` blocks | A count in the transcript's `meta.thinkingBlocks`, and on the message they came with, when there is one |
 | Sidechain nodes (`isSidechain: true`) | Their tool names, in `meta.sidechainTools` |
 | `isMeta` nodes — injected images, loaded skill docs, hook output | Nothing |
+| Harness plumbing inside a turn — `<system-reminder>`, `<task-notification>`, `<command-name>` and their kin | Cut out, and a turn of nothing else is dropped: counts in `meta.parse.scaffoldingStripped` and `meta.parse.scaffoldingDropped`. A tool result is cut but never dropped, and code spans and fences are left alone |
 | Unparseable JSONL lines | A count in `meta.parse.unparseable` |
 
 A truncated final line is recorded as `truncatedTail` rather than counted as corruption,
@@ -116,8 +128,8 @@ which tools were really in play.
 Cursor stores chats in a SQLite database, and Husk has no SQLite driver — no native
 modules is a build-contract rule, not an oversight.
 
-So the `.vscdb` path is a byte-level salvage: Husk scans for JSON objects anchored on
-`"composerId"`, `"bubbles"`, `"conversation"`, `"richText"` or `"composerData"`, does a
+So the `.vscdb` path is a byte-level salvage: Husk scans for JSON objects whose first key
+is `"composerId"`, `"tabs"`, `"conversation"`, `"bubbles"` or `"richText"`, does a
 brace-depth scan that understands strings and escapes, and parses only the objects that
 come out **balanced**. An object split across a SQLite overflow page is dropped.
 
@@ -151,17 +163,18 @@ interface TranscriptMessage {
 
 ## Discovery caveats worth knowing
 
-`husk import` with no path lists candidates from four sources. Two things about that list
-are not obvious:
+`husk import` with no path lists files, not conversations: a source, a title, a size and
+a date, newest first, with no message count, and nothing filters out a short chat. The
+scan stops at 400 files, skips anything over 64 MB, and offers a markdown file only when
+two role markers parse in its first 32 KB, so a repository's `CHANGELOG.md` is not
+mistaken for a chat.
 
-**Message counts are only real for Claude Code.** Husk reads a 96 KB head-and-tail window
-and, when the file fits, parses it exactly. When it does not, it extrapolates from the
-density of message-bearing lines and marks the result approximate. For ChatGPT, Cursor
-and Gemini, counting turns would mean parsing the whole document, so the picker shows
-`0` and marks it approximate rather than paying that cost for a list you are about to
-narrow to one.
+The console's list reads each JSONL file whole and gives its non-empty lines as the
+message count; any other format shows `0`. It takes up to 200 files from each place, three
+directories deep.
 
-**`minMessages` therefore only filters Claude Code.** The other three always pass.
+`discover()` in `@husk-ai/sessions` counts Claude Code messages from a 96 KB head-and-tail
+window and takes a `minMessages` filter. Neither the CLI nor the console calls it.
 
 ## Redaction
 
@@ -170,9 +183,13 @@ three kinds of thing:
 
 | Kind | Becomes |
 | --- | --- |
-| Credentials — Anthropic, OpenAI, Groq, Google, GitHub, Slack, AWS keys and PEM private keys | `sk-ant...[redacted]`, or `[redacted private key]` |
-| Your home directory, in all its spellings | `~` |
+| Credentials — Anthropic, OpenAI, Groq, Google, GitHub, Slack, AWS, npm, Fly and xAI keys, `Authorization` header values, and PEM private keys | `[redacted]`, a header keeping its name and scheme (`Authorization: Bearer [redacted]`), or `[redacted private key]` |
+| Home directories, yours or anyone's, in all their spellings | `~` |
 | Email addresses | `[email]` |
+
+None of a key is kept, so a bot's name or file name cannot carry part of one. Logs and
+tool output go through core's `redact()` instead, which keeps a few characters to tell two
+keys apart: `sk-ant...[redacted]`.
 
 It covers message content, tool input, the title and the origin. It does **not** touch
 `message.meta` or `transcript.meta`, which for Claude Code includes `meta.cwd` — a full

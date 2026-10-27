@@ -48,9 +48,9 @@ honest answer depends on what is running on this machine right now.
 | `gemma` | `ollama/gemma3` |
 | `llama` | `ollama/llama3.2` |
 | `qwen` | `ollama/qwen2.5-coder` |
-| `local` | *strategy:* first available Ollama or LM Studio model |
+| `local` | *strategy:* the best Ollama or LM Studio model that is running |
 | `free` | *strategy:* best free model that is actually reachable |
-| `auto` | *strategy:* best available, preferring quality then cost |
+| `auto` | *strategy:* best available model, by tool support and then quality |
 
 `resolveAlias` tries five things, in this order, and stops at the first that answers:
 
@@ -87,31 +87,50 @@ hint:  Fix the modelAliases entry for "a" in ~/.husk/config.json.
 
 ## What `auto`, `free` and `local` actually pick
 
-Every reachable model is pooled, filtered by affordability, then sorted:
+The router pools every reachable model, drops those the prompt would price over the
+ceiling, then sorts:
 
 | Strategy | Pool | Sort |
 | --- | --- | --- |
-| `auto` | every reachable model | quality descending, then input price ascending |
-| `free` | every reachable model | free models first, then input price, then quality |
-| `local` | **only** `ollama` and `lmstudio` | free first, then input price, then quality |
+| `auto` | every reachable model | tool support, then quality, then size, then context window |
+| `free` | every reachable model | free models first, then input price, then as `auto` |
+| `local` | **only** `ollama` and `lmstudio` | free first, then input price, then as `auto` |
 
-"Quality" is a maintainer's judgement number in the catalog, 0–100, used only to break
-ties. It is not a benchmark score. A model nobody has catalogued — a fresh `ollama pull`
-— scores 40 if it is free and 50 if it is not.
+"Quality" is a maintainer's judgement number in the catalog, 0–100. It is not a benchmark
+score. A model nobody has catalogued — a fresh `ollama pull` — scores 40 if it is free
+and 50 if it is not. Size settles a tie: a model whose parameter count is known comes
+first, 7B or more beats a smaller one, and within that tier the smaller one wins.
+Provider priority plays no part, and nor does price for `auto`.
+
+`husk run` picks its model before the run starts, so its header can name it, and it
+resolves the three its own way, walking the providers by
+[priority](/models/providers), highest first:
+
+- `auto` is the best model of the first reachable provider that lists one. With
+  `ANTHROPIC_API_KEY` set, that is `anthropic/claude-opus-5`, whatever else is reachable.
+- `free` is the first free model of the first provider that has one, so Gemini Flash wins
+  over a local Ollama when `GOOGLE_API_KEY` is set.
+- `local` tries LM Studio before Ollama.
 
 <Note>
 `local` will not leave Ollama or LM Studio: if neither is running, the pool is empty and
-the call fails. `free` is different — it *prefers* free models but will fall back to a
-paid one when no free model is reachable, and it does that without a warning. If a run
-must never bill you, set `limits.maxCostUsd: 0` as well as `model: free`.
+the call fails. `free` is different — the router *prefers* free models but will fall back
+to a paid one when no free model is reachable, and it does that without a warning.
+
+A free tier is not a zero price: the catalog marks Gemini Flash, Groq and Cerebras free
+and still prices them, so `limits.maxCostUsd: 0` refuses them. The router then picks a
+model priced at zero. `husk run` does not, and when its `free` is Gemini Flash the run
+stops before its first call. If a run must never bill you, set `limits.maxCostUsd: 0`
+with `model: local`.
 </Note>
 
 ## Detection
 
 `detect()` probes every registered provider in parallel and caches the answer for
 30 seconds. Each probe is capped at 3 seconds; a provider that hangs is reported as
-unavailable with the reason rather than stalling the report. Nothing here throws — the
-entire purpose of the call is to render [`husk doctor`](/start/doctor).
+unavailable with the reason rather than stalling the report, and so is one that answers
+but lists no model. Nothing here throws. [`husk doctor`](/start/doctor) does not call
+it: doctor asks each provider itself and shows that provider's own reason and fix.
 
 Providers with a key requirement answer instantly from the environment. Keyless local
 servers — Ollama, LM Studio — are probed over the network with their own 2-second
@@ -142,12 +161,25 @@ Two rules shape the behaviour:
 - **A downgrade is never silent.** The caller gets a `warning` event naming what failed
   and what replaced it. A run that quietly finished on an 8B local model when it asked
   for Opus is worse than a run that failed.
-- **A 400 is never retried, anywhere.** The request is malformed; shopping a malformed
-  request around six providers wastes six round trips.
+- **A 400 is never retried, anywhere,** and nor is a 422. The request is malformed;
+  shopping a malformed request around six providers wastes six round trips.
 
-Within one candidate, the router retries up to 3 times total with exponential backoff
-and full jitter, 400 ms base and an 8 s ceiling. It does not retry an abort, a
-malformed-request error, `E_NO_CREDENTIALS`, or `E_BUDGET_EXCEEDED`.
+Within one candidate, the router makes up to 3 attempts. The wait before a retry is
+random, up to 400 ms before the second attempt and up to 800 ms before the third. When a
+candidate has failed for good, the router moves on to the next, unless the failure was an
+abort, a 400 or a 422. A provider's status becomes an error code:
+
+| Status | Code | Retried |
+| --- | --- | --- |
+| 401, 403 | `E_NO_CREDENTIALS` | no |
+| 404 | `E_MODEL_UNAVAILABLE` | no |
+| 400, 422 | `E_MODEL_ERROR` | no, and no fallback |
+| 429 | `E_QUOTA` | yes |
+| 408, 409, 425, 5xx | `E_MODEL_ERROR` | yes |
+| any other | `E_MODEL_ERROR` | no |
+
+A network failure is `E_MODEL_ERROR` and is retried. An abort is `E_ABORTED`, and
+`E_BUDGET_EXCEEDED` is not retried either.
 
 On a stream, a candidate can only be abandoned **before it has produced content**. Once
 a token has reached the caller there is nothing honest to do with a mid-stream failure
@@ -160,16 +192,22 @@ will run, then calls a `ModelRouter` with the list on every request. A run over 
 hands the router the same list.
 
 For that first step the CLI keeps its own alias table, `resolveModel()` in
-`packages/cli/src/lib/models.ts`, with legacy candidates the canonical one does not have:
-`sonnet` there tries `anthropic/claude-sonnet-5`, then
-`anthropic/claude-3-7-sonnet-20250219`, then `anthropic/claude-3-5-sonnet-20241022`. The
-two tables agree on every alias that matters, but they are two tables.
+`packages/cli/src/lib/models.ts`, which resolves `auto`, `free` and `local` as
+[above](#what-auto-free-and-local-actually-pick). After each fixed alias's own id it
+lists older ones: `anthropic/claude-3-opus-20240229` for `opus`,
+`anthropic/claude-3-7-sonnet-20250219` and `anthropic/claude-3-5-sonnet-20241022` for
+`sonnet`, `anthropic/claude-3-5-haiku-20241022` for `haiku`, and `openai/gpt-4o` for
+`gpt`. Anthropic's provider lists only the catalog, which has no Claude 3 model, and
+`openai/gpt-4.1` is tried first and is listed whenever OpenAI is, so those never change
+what is picked. It also matches an Ollama model without its `:latest`, so `llama` finds
+`llama3.2:latest`.
 
 ## Cost
 
-Every response comes back with a `costUsd`. When the provider reports one, Husk uses it;
-when it does not, Husk computes it from the catalog price and the reported token counts.
-A local model is genuinely `$0.00`, not a rounded-down estimate.
+Every response comes back with a `costUsd`, worked out from the catalog price and the
+reported token counts; no provider's own figure is read. A model the catalog does not
+price therefore comes to `$0`. A local model is genuinely `$0.00`, not a rounded-down
+estimate.
 
 [Cost and budgets](/models/cost) covers the estimate, the `maxCostUsd` ceiling, and which
 prices in the catalog are published figures rather than conservative guesses.

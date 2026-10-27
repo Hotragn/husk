@@ -126,7 +126,7 @@ Permitted only when all four hold:
   not download the library that would have run it.
 
 One per page. The homepage's is the chat that gets a computer, between the hero
-and "Husk does two things" — it is the animated form of what those two sections
+and "Husk does three things" — it is the animated form of what those two sections
 already say in prose, which is why it has no heading of its own.
 
 ### Where motion is banned
@@ -223,8 +223,8 @@ already say in prose, which is why it has no heading of its own.
    string typing itself under a scrub claims nothing — it un-types when the
    reader scrolls back, which no latency ever does. The homepage types the
    install command into a chat composer under *Scroll as a clock* above, and
-   the same string sits in the hero, whole, static, copyable, four hundred
-   pixels higher up the page.
+   the same string sits in the setup section further down, whole, static and
+   copyable.
 
    Nothing types itself on a timer. Not a headline, not a lead, not a command.
 
@@ -514,8 +514,8 @@ produces genuinely photogenic text output; use it.
 the whole of the case, and it is still the test every 3D object on either site
 has to pass. Two do:
 
-- **The hero object** is the headline beside it. "Your AI chat gets a real
-  computer of its own" is two things and a connection, so the object is a chat
+- **The hero object** is the headline beside it. "Your AI chat gets a computer."
+  is two things and a connection, so the object is a chat
   panel with an exchange in it, a machine below and behind, and a cable
   carrying one pulse into the machine's port, which lights when it arrives. A
   reader who looks at it and then reads the headline should find the headline

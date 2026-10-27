@@ -84,9 +84,10 @@ the named sessions bound to them, their files and your bots carry over as they a
 
 **claude.ai and ChatGPT** run in someone else's data centre, so they reach Husk through a
 tunnel you run, or a Fly app of your own: `husk serve --remote --public-url https://<name>`.
-It is for you alone (a claim code once, then your passkey), and every command, file change
-and browser action waits for your passkey. Who can read what, the tunnels and the off
-switch are in the [remote access guide](apps/docs/content/guides/remote-access.mdx).
+It is for you alone (a claim code once, then your passkey), and every command, file
+change, click, typed text, upload and script waits for your passkey; reading pages and
+files does not. Who can read what, the tunnels and the off switch are in the
+[remote access guide](apps/docs/content/guides/remote-access.mdx).
 
 > [!NOTE]
 > `setup`, the shared Husk and the console's Connect page are on `main` and not yet
@@ -200,10 +201,11 @@ husk run triage.yaml "check the build"
 
 Importers read Claude Code JSONL, Codex rollouts, ChatGPT, Cursor, Gemini and markdown
 into one `Transcript`. In the console, **Husks › Make a bot from a chat** does the same
-from a chat it finds on this computer, an export, or pasted text. Branched threads are rebuilt by walking `parentUuid` back from the last
-leaf. The distiller runs with no API key at all, and the model-backed mode falls back to
-that free path rather than failing. Secrets are stripped before the file is written,
-not after.
+from a chat it finds on this computer, an export, or pasted text. A branched Claude Code
+thread is rebuilt along its longest `parentUuid` chain, the latest leaf breaking a tie, so
+the dead ends you backed out of are left out. The distiller runs with no API key at all,
+and the model-backed mode falls back to that free path rather than failing. Secrets are
+stripped before the file is written, not after.
 
 What comes out is YAML you can read and diff:
 
@@ -216,7 +218,7 @@ persona: |
 tools: [computer, files]
 computer:
   flavor: node
-  network: { mode: egress, allow: ['*.github.com'] }
+  network: { mode: egress, allow: ['github.com', '*.github.com', '*.githubusercontent.com'] }
 limits: { maxSteps: 24, maxCostUsd: 0.25 }
 ```
 
@@ -329,26 +331,34 @@ out to be unavailable is an error, never a quiet downgrade to weaker isolation.
 
 These hold in every mode, `local` included, and were re-checked against a live `local`
 and a live `docker` computer for 0.1.4: the command deny list, the environment scrub,
-output caps, process-tree kill, `redact()` on every result and `audited()` on every MCP
-call.
+output caps and process-tree kill. The computer tools also pass every result through
+`redact()` and every call through `audited()`. The workspace tools, hand-offs and
+`job_wait` are not audited.
 
 The path jail is not one of them, and this paragraph used to say it was
-([#120](https://github.com/Hotragn/husk/issues/120)). It is a `local` control, and there
-it confines the file tools rather than the shell. On `docker`, `podman` and `fly` the
-container *is* the boundary, so the file tools address the container's own filesystem:
-`read_file /etc/passwd` returns the container's copy, and `/dev/shm` takes a write.
-Neither reaches your machine, which is the point of running those providers — a jail
-inside a kernel boundary is largely redundant. Claiming one anyway is exactly what this
-section exists not to do.
+([#120](https://github.com/Hotragn/husk/issues/120)). It is a control on `local` and
+`ssh`, where no container stands behind it, and there it confines the file tools rather
+than the shell. On `docker`, `podman` and `fly` the container *is* the boundary, so the
+file tools address the container's own filesystem: `read_file /etc/passwd` returns the
+container's copy, and `/dev/shm` takes a write. Neither reaches your machine, which is
+the point of running those providers — a jail inside a kernel boundary is largely
+redundant. Claiming one anyway is exactly what this section exists not to do.
 
 What `local` does not give you is a kernel boundary. It shares your kernel, your network
 and your user account.
 
-`169.254.169.254` stays blocked even under `network.mode: full`, because `full` means
-the internet and not the cloud metadata service that hands IAM credentials to whatever
-asks. Loopback and the RFC1918 ranges are the same problem one hop out. An operator who
-wants one of them names it in `allow`, where a reviewer reading the `husk.yaml` can see
-the decision.
+Husk's own tools and the browser's page loads refuse `169.254.169.254` even under
+`network.mode: full`, because `full` means the internet and not the cloud metadata service
+that hands IAM credentials to whatever asks. The RFC1918 ranges are the same problem one
+hop out, and so is loopback, except on Docker, Podman and Fly, where the computer has a
+loopback of its own. An operator who wants one of them names it in `allow`, where a
+reviewer reading the `husk.yaml` can see the decision.
+
+That check is not a firewall. A shell command is not held to it: in a computer,
+`curl http://169.254.169.254/` reaches the address wherever the computer can route to it.
+Only `network.mode: none` on Docker or Podman, which gives the container no network at
+all, stops a process. The [security model](docs/SECURITY-MODEL.md#network-policy) has
+the matrix.
 
 Address spellings are normalised first. `127.1`, `2130706433` and `0x7f000001` are all
 `127.0.0.1` to curl, to Chromium and to Python's urllib, so a rule that only understands

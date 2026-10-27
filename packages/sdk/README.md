@@ -12,9 +12,9 @@ npm install @husk-ai/sdk
 The contract is [`docs/API.md`](https://github.com/Hotragn/husk/blob/main/docs/API.md), and where that disagrees
 with [`packages/server/src/routes/`](https://github.com/Hotragn/husk/tree/main/packages/server/src/routes) the routes win.
 `src/contract.test.ts` boots the real server — `createApp` from `@husk-ai/server`,
-a real socket, real `provider: 'local'` computers — and drives every method
-below against it, including the snippets on this page. This README describes
-what runs, not what was planned.
+a real socket, real `provider: 'local'` computers — and drives the methods below
+against it, including the snippets on this page; `computers.download`, `upload` and
+`browse` are not in it yet. This README describes what runs, not what was planned.
 
 ## One real example
 
@@ -94,7 +94,9 @@ Every method maps to exactly one route.
 | `husk.computers.readFile / readTextFile` | `GET /v1/computers/:id/fs/read?path=` |
 | `husk.computers.writeFile` | `PUT /v1/computers/:id/fs/write?path=` |
 | `husk.computers.remove` | `DELETE /v1/computers/:id/fs?path=` |
+| `husk.computers.download / upload` | `GET /v1/computers/:id/fs/download?path=` \| `POST .../fs/upload?path=` |
 | `husk.computers.exposePort` | `POST /v1/computers/:id/ports` |
+| `husk.computers.browse` | `POST /v1/computers/:id/browse` |
 | `husk.husks.list / get / create / update / delete` | `/v1/husks`, `/v1/husks/:name` |
 | `husk.husks.validate` | `POST /v1/husks/validate` |
 | `husk.husks.run / runStream` | `POST /v1/husks/:name/run` \| `/run/stream` |
@@ -110,6 +112,19 @@ await husk.computers.writeFile(box.id, '/work/a.bin', new Uint8Array([1, 2, 3]))
 const bytes = await husk.computers.readFile(box.id, '/work/a.bin');    // Uint8Array
 const text = await husk.computers.readTextFile(box.id, '/work/a.txt'); // string
 ```
+
+A directory is a tar.gz, made and unpacked by the computer's own `tar`. The archive's
+entries start with the directory's own name (`src/…` for `/work/src`), so put it back by
+uploading it to the parent:
+
+```ts
+const archive = await husk.computers.download(box.id, '/work/src');  // Uint8Array
+await husk.computers.upload(box.id, '/work', archive);               // { path, bytes, entries }
+```
+
+`destroy` deletes a chat's computer, one made over MCP, only with
+`{ confirm: true }`, which sends its id back as `?confirm=`; ask the person first. It
+has no option for the API's `?erase=true`.
 
 Husks are created from a spec **or** from YAML, always in an envelope:
 
@@ -143,10 +158,11 @@ try {
 }
 ```
 
-The code round-trips exactly, including the five the server declares beyond
+The code round-trips exactly, including the nine the server declares beyond
 `HuskErrorCode` — `E_HUSK_NOT_FOUND`, `E_RUN_NOT_FOUND`, `E_APPROVAL_NOT_FOUND`,
-`E_TRANSCRIPT_NOT_FOUND`, `E_ROUTE_NOT_FOUND`. A missing husk is not reported as
-a missing computer.
+`E_HANDOFF_NOT_FOUND`, `E_BROWSER_NOT_FOUND`, `E_TRANSCRIPT_NOT_FOUND`,
+`E_ROUTE_NOT_FOUND`, `E_COMPUTER_HELD`, `E_COMPUTER_IN_CHAT`. A missing husk is not
+reported as a missing computer.
 
 A code this SDK has never heard of is passed through verbatim with
 `err.details.unrecognizedCode === true`, rather than mapped onto a
@@ -227,12 +243,17 @@ An unanswered approval is denied after 120 s. The default is deny, on purpose.
 
 ## Not here
 
-- `POST /v1/computers/:id/fs/upload` and `GET .../fs/download` appear in
-  `docs/API.md` but are **not registered by the server** — there is no multipart
-  parser and no tar implementation behind them. There are no SDK methods for
-  them: a method that exists only to throw is a worse lie than an absent one.
 - `WS /v1/computers/:id/terminal` exists on the server and has no typed client
-  here yet. Drive it with a raw WebSocket against `client.http.wsUrl(...)`.
+  here yet. It runs one command per message, not a persistent shell. Drive it with a
+  raw WebSocket against `client.http.wsUrl(...)`.
+- The console's own routes have no methods: the overview, a computer's disk, stats,
+  thumbnail and activity, its browser and live screen, Make this a bot, the chat tools,
+  take-over and handoffs, links, setup, remote access, triggers, workspaces and
+  shutdown. `docs/API.md` has their shapes.
+- Some newer fields are not typed, though the body comes back as the server sent it:
+  `protocol` on `health()`; `pick` and the `{ source, choices }` answer on
+  `sessions.import`; `engine`, `transcriptId`, `engines` and `continues` on
+  `sessions.distill`; `engine` on `HuskSummary`.
 
 ## Notes
 

@@ -1,15 +1,17 @@
 ---
 title: "@husk-ai/sdk"
 navTitle: SDK
-description: "The typed client for the control plane: every endpoint husk serve exposes, with the types the server actually returns."
+description: "The typed client for the control plane: computers, husks, runs, approvals, sessions and models, with the types the server actually returns."
 order: 4
 ---
 
 # `@husk-ai/sdk`
 
 A dependency-free, typed client for the Husk control plane. It uses global
-`fetch`, takes its shared types from `@husk-ai/core`, and speaks exactly the routes
-in [the HTTP API](/reference/api).
+`fetch` and takes its shared types from `@husk-ai/core`. Each method is one route of
+[the HTTP API](/reference/api): health, doctor and events, and the computer, husk, run,
+approval, session and model routes. The console's own routes have no methods; see
+[Not here](#not-here).
 
 ```bash
 npm install @husk-ai/sdk
@@ -34,8 +36,9 @@ Start the server first with `husk serve`.
 An SDK and a server can drift into two different products while both look
 healthy, because each one's tests mock the other. So `src/contract.test.ts`
 boots a **real** `@husk-ai/server` on an ephemeral port, backs it with a **real**
-`ComputerManager` and `LocalProvider`, and drives every public method against
-it, asserting the status, body shape and decoded type of each.
+`ComputerManager` and `LocalProvider`, and drives the public methods against it,
+asserting the status, body shape and decoded type of each. `computers.download`,
+`computers.upload` and `computers.browse` are not in it yet.
 
 That test exists because this client once shipped speaking a specification the
 server never implemented: twelve of twenty methods returned `404`, and several
@@ -61,7 +64,7 @@ stopping iteration.
 ## Health and capability
 
 ```ts
-await husk.health();   // { ok, version, uptimeSec }
+await husk.health();   // { ok, version, uptimeSec }, and protocol, not yet typed
 await husk.doctor();   // the DoctorReport that husk doctor prints
 ```
 
@@ -76,7 +79,7 @@ husk.computers.create(spec);          // ComputerSpec -> ComputerInfo
 husk.computers.get(id);
 husk.computers.stop(id);
 husk.computers.start(id);
-husk.computers.destroy(id);
+husk.computers.destroy(id);           // a chat's computer needs { confirm: true }
 
 husk.computers.exec(id, { cmd, cwd?, env?, timeoutSec?, stdin? });
 husk.computers.execStream(id, { cmd });   // AsyncIterable<ExecEvent>
@@ -86,8 +89,16 @@ husk.computers.readFile(id, path);        // Uint8Array
 husk.computers.readTextFile(id, path);    // string
 husk.computers.writeFile(id, path, content);
 husk.computers.remove(id, path, { recursive: true });
+husk.computers.download(id, '/work/src');   // Uint8Array, a tar.gz
+husk.computers.upload(id, '/work', archive); // { path, bytes, entries }
 husk.computers.exposePort(id, 8000);
+husk.computers.browse(id, { url });       // BrowsePage, loaded from inside the computer
 ```
+
+`destroy` on a chat's computer, one made over MCP, sends its id back as `?confirm=`
+only with `{ confirm: true }`: ask the person first. It has no option for the API's
+`?erase=true`. A downloaded archive's entries start with the directory's own name
+(`src/…` for `/work/src`), so upload it to the parent, here `/work`, to put it back.
 
 Streamed output carries its payload on **`data`**, not `text`:
 
@@ -188,16 +199,24 @@ try {
 }
 ```
 
-Codes round-trip exactly, including the server-only ones (`E_HUSK_NOT_FOUND`,
-`E_RUN_NOT_FOUND`, `E_APPROVAL_NOT_FOUND`, `E_TRANSCRIPT_NOT_FOUND`,
-`E_ROUTE_NOT_FOUND`). An unrecognised code is surfaced as itself rather than
-coerced into a plausible neighbour — a mistake this client used to make, turning
-every `404` into `E_COMPUTER_NOT_FOUND`.
+Codes round-trip exactly, including the nine server-only ones (`E_HUSK_NOT_FOUND`,
+`E_RUN_NOT_FOUND`, `E_APPROVAL_NOT_FOUND`, `E_HANDOFF_NOT_FOUND`,
+`E_BROWSER_NOT_FOUND`, `E_TRANSCRIPT_NOT_FOUND`, `E_ROUTE_NOT_FOUND`,
+`E_COMPUTER_HELD`, `E_COMPUTER_IN_CHAT`). An unrecognised code is surfaced as itself,
+with `details.unrecognizedCode: true`, rather than coerced into a plausible neighbour —
+a mistake this client used to make, turning every `404` into `E_COMPUTER_NOT_FOUND`.
 
 ## Not here
 
-One thing is deliberately absent rather than stubbed:
-
-- **A terminal client.** `WS /v1/computers/:id/terminal` exists, but it is one
-  command per socket rather than a persistent shell, because there is no native
+- **A terminal client.** `WS /v1/computers/:id/terminal` exists, but it runs one
+  command per message rather than a persistent shell, because there is no native
   pty module. Use `client.http.wsUrl(...)` if you want to drive it yourself.
+- **The console's routes.** There are no methods for the overview, a computer's disk,
+  stats, thumbnail and activity, its browser and live screen, Make this a bot, the chat
+  tools, take-over and handoffs, links, setup, remote access, triggers, workspaces or
+  shutdown. [Other routes](/reference/api#other-routes) lists them.
+- **Some newer fields are not typed.** The SDK returns each body as the server sent it,
+  but its types lag in places: `health()` does not type `protocol`; `sessions.import`
+  types neither `pick` nor the `{ source, choices }` answer for a file of many chats;
+  `sessions.distill` types neither `engine` in the body nor `transcriptId`, `engines`
+  and `continues` in the answer; and `HuskSummary` has no `engine`.

@@ -151,10 +151,11 @@ fetch and into the underlying `docker exec`, tool output clamped and passed thro
 `redact()` before it re-enters the conversation, and an approval hook so `ask` mode can
 gate a dangerous call on a human.
 
-Tools are bundles: `computer` (shell, ports, snapshot), `browser` (the zero-dependency
-`browse` and a real Chromium, in one bundle so the model picks per page), `files` (read,
-write, edit, list, search), `web` (fetch, search), `http` (arbitrary request). A husk
-lists the bundles it wants; the loop assembles the schema list from that.
+Tools are bundles: `computer` (shell, ports, `computer_info`), `browser` (the
+zero-dependency `browse` and a real Chromium, in one bundle so the model picks per page),
+`files` (read, write, edit, list, search, move, delete), `web` (fetch, search), `http`
+(arbitrary request). A husk lists the bundles it wants; the loop assembles the schema
+list from that.
 
 ## chat → bot
 
@@ -163,8 +164,9 @@ transcript ──▶ importer ──▶ Transcript ──▶ distiller ──▶
 ```
 
 Importers normalise Claude Code JSONL, ChatGPT exports, Cursor, Codex, Gemini and pasted
-markdown into one `Transcript`. Branched threads are reconstructed by walking `parentUuid` from the last
-leaf, so you get the conversation as it actually ran, not every dead end.
+markdown into one `Transcript`. A branched Claude Code thread is reconstructed along its
+longest `parentUuid` chain, the latest leaf breaking a tie, so you get the conversation
+as it actually ran, not every dead end.
 
 The distiller has two modes and the heuristic one has to be good, because it is the mode
 that runs with no API key: it mines recurring instructions for the persona, picks

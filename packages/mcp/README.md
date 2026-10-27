@@ -111,6 +111,7 @@ apart depends on what the app provides:
 | --- | --- | --- |
 | Claude Code | `CLAUDE_CODE_SESSION_ID`, one server process per session | one computer per session, no id needed |
 | `--session <key>` | your key | one durable, named computer |
+| a bot that goes on with a Claude Code chat (`engine.resume`) | `HUSK_CHAT_SESSION`, which Husk sets | that chat's own computer, with its files and logins |
 | anything else (Claude Desktop, Cursor, ...) | none; one process may serve every chat | the first call passes `computer: "new"` and gets an id; later calls pass that id |
 
 A call with no id never reuses a computer, because it could be another chat's first
@@ -130,8 +131,8 @@ A chat's computer is never removed by Husk:
 - **Disconnect:** the computer is stopped, not destroyed. `--keep` leaves it running.
 - **Delete:** from the console's Computers table, after a confirmation, or with
   `husk rm --erase`. The table shows each computer's app, chat label, last-used time and
-  disk size. A plain `husk rm` removes the computer but keeps its files and browser
-  logins for its next one.
+  disk size. A plain `husk rm` removes the computer; on Docker and Podman it keeps its
+  files and browser logins for its next one.
 
 ## One Husk for every chat
 
@@ -142,11 +143,11 @@ over there. The first computer tool call starts it if nothing is running
 (`husk-mcp --daemon`, detached, logging to `~/.husk/daemon.log`) and finds it through
 `~/.husk/daemon.json`, which holds its address and token and is readable only by you.
 
-A shared Husk of another release is used if it speaks the same protocol; an older one
-is asked to step aside (`POST /v1/shutdown`, refused while a run or a handoff is in
-progress) and this release is started instead. A chat falls back to running its tools
-in its own process, as before, when `HUSK_DAEMON=off` is set, when the shared Husk
-speaks a protocol this chat cannot, or when one cannot be started. Its tools still work
+An older shared Husk is asked to step aside (`POST /v1/shutdown`, refused while a run
+or a handoff is in progress) and this release is started instead. A newer one, or an
+older one that stays, is used if it speaks the same protocol. A chat falls back to
+running its tools in its own process, as before, when `HUSK_DAEMON=off` is set, when the
+shared Husk speaks a protocol this chat cannot, or when one cannot be started. Its tools still work
 then; the console just cannot see that chat. The shared Husk listens on `HUSK_PORT`,
 7377 by default.
 
@@ -212,5 +213,5 @@ explicitly share a key must use `--keep` so that one disconnecting does not stop
 under the other. A client that shares one MCP process across chats also shares that
 computer.
 
-The optional viewer is separate: `viewer not running` in `computer_info` only means
-`husk serve` is not available. It does not describe the computer's health.
+The optional viewer is separate: `viewer     not running (optional)` in `computer_info`
+only means `husk serve` is not available. It does not describe the computer's health.

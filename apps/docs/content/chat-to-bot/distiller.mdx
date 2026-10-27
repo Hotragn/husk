@@ -63,16 +63,19 @@ Synchronous, free, offline. Four miners run over the transcript.
 
 ### Which turns count as yours
 
-Claude Code marks a real human prompt with `promptSource`. When any message carries it,
-those messages *are* the human turns and no text heuristics run at all.
-
-For every other source, Husk filters synthetic user messages out by pattern: injected
-`<command-name>` and `<system-reminder>` blocks, `Caveat: The messages below…`,
+First, whatever the source, Husk filters synthetic user messages out by pattern: injected
+`<command-name>`, `<system-reminder>` and `<task-notification>` blocks, a turn that is
+nothing but such a block, `[SYSTEM NOTIFICATION`, `Caveat: The messages below…`,
 `[Request interrupted`, `[Image: original NxN`, `Base directory for this skill:`,
 `This session is being continued…`, and `Please continue the conversation…`.
 
 Those are not things you typed. Mining a persona from them produces a bot that talks
 like a tool harness.
+
+Then attribution picks among what is left. Claude Code marks a real human prompt with
+`promptSource`: when any remaining message carries it, only those count as your turns.
+Otherwise every remaining user message does. A mis-attributed harness block is screened
+out either way.
 
 ### Rules become the persona
 
@@ -103,9 +106,10 @@ and show the command you ran when the result matters.
 
 A human turn qualifies as knowledge when it is at least 180 characters, is not a
 correction, is not a short question, and carries at least one fact signal: a code fence,
-a URL, an absolute path, a bullet list, or a `key: value` line. Content is clamped to
-1600 characters and the title is the first line, trimmed to 72 characters on a word
-boundary.
+a URL, an absolute path, a bullet list, or a `key: value` line. A turn over 3,000
+characters is refused rather than clamped, and so is one that is mostly markup, reads as
+a status report, or still holds harness plumbing. Content is clamped to 1200 characters
+and the title is the first line, trimmed to 72 characters on a word boundary.
 
 ### Examples are exchanges you did not correct
 
@@ -140,27 +144,35 @@ the number should say so.
 
 Whatever it could not determine, in plain sentences:
 
-- `No explicit "you are..." instruction found; the persona opens with the topic instead.`
+- `No role instruction found -- nothing matching "you are a...", "act as", or "think like a..." -- so the persona opens with the topic instead.`
 - `No recurring standing instructions found. The persona is topic-only.`
 - `No durable user-supplied facts found worth carrying as knowledge.`
 - `No uncorrected user/assistant exchange was clean enough to use as an example.`
-- `No tool use observed; the bot is configured without tools.`
+- `No tool use observed; the husk is configured with the default files toolkit.` A husk
+  always gets at least one tool, so `toSpec` writes `tools: [files]`.
 - `Orchestration tools (Task, TodoWrite, ...) were observed but are not portable to a husk.`
-- `Heuristic distillation: no model was used. Review the persona before shipping.` — always.
+- `Heuristic distillation: no model was used. Review the persona before shipping.` — always
+  on this path, and dropped once the model path starts, even if every call then fails.
 
 They land in the spec under `metadata.distillerNotes`, so they survive into the file and
 a reviewer sees them.
 
 ## The model-backed path
 
-A map/reduce over the transcript. Nothing is truncated.
+A map/reduce over the whole transcript: every message lands in a window, none is cut
+off the end.
 
 1. The heuristic runs first, as the baseline to fall back to.
 2. The transcript is split into windows of about 12,000 tokens with a 2-message overlap
    at each boundary.
-3. Each window is extracted concurrently — three at a time — at `temperature: 0` with a
-   JSON response format, and validated against a schema.
+3. Each window is extracted in turn, one at a time, at `temperature: 0` with a JSON
+   response format, and validated against a schema.
 4. One reduce call merges the candidates, also schema-validated.
+
+After two failed windows in a row, or a cancel, the rest are skipped, with the note
+`Stopped extraction after repeated failures or cancellation; skipped 5 of 7 slices.`
+Every run also notes what it tried, as in
+`Model distillation attempted 2 of 7 slices with anthropic/claude-sonnet-5.`
 
 Model mode can report a confidence up to 1.0.
 
@@ -168,7 +180,7 @@ Model mode can report a confidence up to 1.0.
 
 | Where it fails | What happens |
 | --- | --- |
-| One window | A note like `Slice 3/7: model JSON did not validate.` That window contributes nothing |
+| One window | A note: `Slice 3/7: model JSON did not validate.` for a reply that does not fit the schema, or `Slice 3/7: extraction failed.` for a call that fails or a reply that is not JSON. That window contributes nothing |
 | Every window | The heuristic result, plus `Model distillation produced nothing usable; fell back to heuristics.` |
 | The reduce call | A deterministic local merge: rules unioned and ranked by occurrence, capped at 12, confidence capped at `min(0.7, heuristic + 0.1)`, plus `Model reduce pass failed; candidates were merged deterministically.` |
 
@@ -183,32 +195,45 @@ tools were used; the model only adds to it.
 ## The output
 
 `toSpec` turns a `DistilledAgent` into a validated `HuskSpec`. The name is slugged to at
-most 64 characters and falls back to `husk-bot` if nothing survives; the description is
-clamped to 280; `computer.enabled` follows `needsComputer`; the confidence and the notes
-go into `metadata`; and provenance goes into `origin`.
+most 64 characters and falls back to `husk-bot` if nothing survives; `displayName` is the
+name with spaces for dashes and a capital first letter; the description is clamped to
+280; tool names are mapped onto bundles, with `files` when none maps; `computer.enabled`
+follows `needsComputer`; the confidence and the notes go into `metadata`; and provenance
+goes into `origin`.
 
-The file is optimised for review, not for machines:
+`husk distill` writes the file for review, not for machines: a comment header, then the
+spec, leaving out `version` and every block still at its defaults, in a fixed order —
+identity, model, persona, tools, knowledge, examples, then `computer`, `limits`,
+`guardrails`, `memory`, `triggers`, `origin` and `metadata`.
 
 ```yaml
-# Support Triage -- a husk.
-# Generated by @husk-ai/sessions. Edit freely; this file is the whole bot.
-# Distilled from: /home/me/chat.jsonl
-# Messages read: 941
-# Imported: 2026-09-09T00:00:00.000Z
+# Distilled by husk from /home/me/chat.jsonl (claude-code).
+# 941 messages · confidence 0.62 · heuristic
+# No durable user-supplied facts found worth carrying as knowledge.
+# Heuristic distillation: no model was used. Review the persona before shipping.
+# Review the persona before you serve this. Distillation is a draft, not an oracle.
+
 apiVersion: husk/v1
 name: support-triage
-displayName: Support Triage
-version: 0.1.0
+displayName: Support triage
 description: Classifies inbound support messages.
+
 model: auto
-persona: |
+
+persona: |-
   You triage inbound support messages.
   ...
 ```
 
-Deliberate key order — identity, then behaviour, then capability, then policy. Literal
-block scalars for anything with a newline, so a persona is diffable line by line. No YAML
-anchors or aliases. Lines are never folded.
+The header names the transcript, its message count, the confidence and the path taken
+(`model attempted: <id>` on the model path), then every note. A value with a newline, or
+of 72 characters or more, is a `|-` literal block, so a persona is diffable line by line.
+No YAML anchors or aliases, and lines are never folded.
+
+A bot the console makes is saved as a plain YAML dump instead, unless you edit its text
+there: every field, defaults included, no header, and long lines folded at 100
+characters. `stringifySpec` in `@husk-ai/sessions` writes a header of its own
+(`# Support Triage -- a husk.`), but neither the CLI nor the console calls it.
 
 ```bash
 husk validate support-bot.yaml

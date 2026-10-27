@@ -143,9 +143,10 @@ public name that points at an internal address is not caught.
 
 Two independent controls:
 
-1. **Nothing credential-shaped enters the machine.** The environment scrub is deny-by-
-   pattern over a small allow-list, so a variable you have never heard of is dropped
-   rather than forwarded.
+1. **Nothing credential-shaped enters the machine.** On `local`, the environment scrub
+   rebuilds a command's environment from a small allow-list, so a variable you have
+   never heard of is dropped rather than forwarded. The other providers never pass this
+   machine's environment in.
 2. **Nothing credential-shaped leaves a tool.** While `guardrails.redactSecrets` is on,
    the default, every tool result passes through `redact()` before it re-enters the
    conversation, matching Anthropic, OpenAI, Groq, Google, GitHub, Slack, npm, Fly and
@@ -256,8 +257,9 @@ turned up these. Each is fixed and has a test:
   arm64), from inside that computer. With remote access on, it also asks the npm
   registry for advisories, sending its packages' names and versions and nothing else.
 - **No credential storage.** Husk reads keys from the environment, or from a
-  `~/.husk/.env` you write, and never writes them to `~/.husk`. One thing does land there verbatim: `husk import` caches the transcript you
-  gave it, so a chat log containing a key keeps that key in `~/.husk/transcripts`. What
+  `~/.husk/.env` you write, and never writes them to `~/.husk`. One thing does land
+  there verbatim: `husk import` caches the transcript you gave it, so a chat log
+  containing a key keeps that key in `~/.husk/transcripts`. What
   Husk *derives* from it is redacted first — the distilled `husk.yaml`, its name, its
   slug and its filename — but the cached copy of your own file is not rewritten.
 - **No remote execution by default.** `husk serve` binds loopback, and it refuses to start

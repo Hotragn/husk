@@ -50,7 +50,8 @@ The rest of the list is the computer's: the file tools, `expose_port`, `browse`,
 
 Stdio, for the chat apps on this machine. Chat apps on the web (claude.ai, ChatGPT)
 reach Husk over streamable HTTP instead, through `husk serve --remote`: see
-[Chat apps on the web](/guides/remote-access).
+[Chat apps on the web](/guides/remote-access). A remote chat gets the computer tools
+alone, since the workspace tools work on this machine's files.
 
 ## Nothing is created until it is used
 
@@ -63,8 +64,9 @@ Adding the server has to cost nothing, or people uninstall it. So:
 The machine is named `mcp-<session key>` and kept: it has no idle or lifetime limit of
 its own. After ten minutes with no Husk call it is stopped, and the chat's next call
 starts it again. When the client disconnects (SIGINT, SIGTERM, or stdin closing) it is
-stopped, not destroyed; `--keep` leaves it running. Only you delete it, from the
-console's Delete or with `husk rm --erase`.
+stopped, not destroyed; `--keep` leaves it running. Only you delete it: `husk rm`
+removes it, keeping its files and browser logins for its next computer on Docker and
+Podman, and the console's Delete or `husk rm --erase` takes those too.
 
 ## What the model is told
 

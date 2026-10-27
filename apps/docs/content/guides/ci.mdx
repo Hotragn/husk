@@ -28,7 +28,7 @@ API key at all.
 | Exit codes | `0` ok, `1` error, `2` usage, `130` interrupted. `husk exec` passes the child's code through |
 | stdout vs stderr | `husk run` puts the answer on **stdout** and everything else on stderr |
 | Docker | Preinstalled on `ubuntu-latest`, so you get kernel isolation for free |
-| Telemetry | None. Nothing leaves the runner except calls to the model provider you configure |
+| Telemetry | None. What leaves the runner: calls to the model provider you configure, the image a computer pulls, and whatever your commands and the agent's tools fetch |
 
 ## A computer for a job
 
@@ -315,8 +315,8 @@ floor. Read `husk doctor` in the log rather than assuming.
 
 ## Troubleshooting
 
-**`refusing to destroy N computers without confirmation on a non-interactive stdin`** —
-add `--yes` to `husk rm`.
+**`refusing to destroy "ci" without --yes on a non-interactive stdin`** — add `--yes` to
+`husk rm`. With `--all`, the message counts the computers instead.
 
 **`--approve ask needs a terminal to ask on`** — use `auto` or `readonly`.
 

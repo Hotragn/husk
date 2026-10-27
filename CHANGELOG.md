@@ -128,8 +128,8 @@ pre-release of 7 October.
   every e2e run's summary, with the latest numbers in [docs/BENCHMARK.md](docs/BENCHMARK.md)
   ([#223](https://github.com/Hotragn/husk/pull/223)).
 - **Strict network enforcement.** `strict: true` under `computer.network`, or
-  `husk-mcp --network-strict`, refuses a provider that cannot enforce the policy for every
-  process. Without it, Husk says what is not enforced ([#219](https://github.com/Hotragn/husk/pull/219)).
+  `husk-mcp --network-strict` with `--network`, refuses a provider that cannot enforce the
+  policy for every process. Without it, Husk says what is not enforced ([#219](https://github.com/Hotragn/husk/pull/219)).
 - **Zed.** `husk setup` and the Connect page connect it, keeping the comments its settings
   start with ([#243](https://github.com/Hotragn/husk/pull/243)).
 - **Long calls in every chat app.** Most apps give up on a tool call after a while, such as
@@ -144,8 +144,9 @@ pre-release of 7 October.
   ([#245](https://github.com/Hotragn/husk/pull/245), [#247](https://github.com/Hotragn/husk/pull/247), [#248](https://github.com/Hotragn/husk/pull/248)).
   - It is for one owner, who claims it once with a code printed on the machine and signs
     in with a passkey after that.
-  - Commands, file changes and browser actions wait for the owner's passkey, on a page
-    that shows exactly what they send.
+  - Commands, file changes, and the browser's clicks, typing, uploads and scripts wait
+    for the owner's passkey, on a page that shows exactly what they send. Reading pages
+    and files does not wait.
   - The console's Connect page and header, and Husk Bar, show whether it is on. The
     Connect page and `husk remote` switch it off and sign apps out.
   - It will not start while a high or critical security advisory stands against the
@@ -447,8 +448,8 @@ pre-release of 7 October.
   model reads before its first tool call — and a model that believes its shell is
   contained takes risks it otherwise would not. The docs now say which half is
   confined. The same correction reaches the trust-boundary diagram and the README for
-  0.1.4: the path jail is a `local` control, not something every provider enforces. On
-  `docker`, `podman` and `fly` the container is the boundary, so `read_file
+  0.1.4: the path jail is a control on `local` and `ssh`, not something every provider
+  enforces. On `docker`, `podman` and `fly` the container is the boundary, so `read_file
   /etc/passwd` returns the container's own copy.
 - **A run that could not fit the model's context was truncated into nonsense instead of
   refused.** Local servers still default to tiny contexts — llama.cpp long shipped

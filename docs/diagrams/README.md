@@ -3,8 +3,11 @@
 Sixteen diagrams of husk, generated from typed specifications with
 [archify](https://github.com/tt-a1i/archify).
 
-Every box maps to a real file or package. Where a diagram and a doc disagree,
-the diagram follows the code.
+Every box maps to a real file or package of the tree they were drawn from, on
+18 September 2026. They predate `@husk-ai/workspaces`, `@husk-ai/console-assets`,
+`apps/desktop` and `apps/mac`, the shared Husk every chat now forwards its tools to,
+and remote access over streamable HTTP, and need redrawing for those. The captions
+below say where today's code differs from what is drawn.
 
 ## Which format to use where
 
@@ -25,7 +28,7 @@ Inside this repo (e.g. the root `README.md`):
 ```markdown
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/png/01-hero.dark.png">
-  <img alt="husk — give your agent a computer" src="docs/diagrams/png/01-hero.light.png">
+  <img alt="husk — your AI chat gets a computer" src="docs/diagrams/png/01-hero.light.png">
 </picture>
 ```
 
@@ -53,14 +56,16 @@ Chat → husk → a computer with files, a terminal and a browser. No Docker req
 
 ## 2 · System architecture
 
-All 11 packages, 3 apps, the four entry points, and `@husk-ai/core` underneath.
+The 11 packages and 3 apps of 18 September, the four entry points, and
+`@husk-ai/core` underneath. There are now 13 packages and 5 apps; the
+[build contract](../BUILD-CONTRACT.md#dependency-direction) has today's layers.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="png/02-system-architecture.dark.png">
   <img alt="The husk monorepo: four entry points over an orchestration layer over runtime, models, browser and sessions, all on @husk-ai/core" src="png/02-system-architecture.light.png">
 </picture>
 
-- Dependencies run downhill. All 10 packages import `@husk-ai/core`; core imports nothing from the workspace; nothing imports `@husk-ai/cli`.
+- Dependencies run downhill. Every package but `console-assets`, which holds the built console and no code, imports `@husk-ai/core`; core imports nothing from the workspace; nothing imports `@husk-ai/cli`.
 - The dashed edges are dynamic imports, not package dependencies — `cli → server`, `cli → mcp`, `server → agent`. The server starts without the agent built.
 - `apps/docs` and `apps/web` have no `@husk-ai/*` dependency at all.
 
@@ -90,7 +95,7 @@ A transcript becomes a `husk.yaml` you can read, diff and run.
   <img alt="Sequence: transcript to importer to distiller, optionally via the model router, then redaction, husk.yaml and husk run" src="png/04-chat-to-bot.light.png">
 </picture>
 
-- Importers normalise Claude Code JSONL, ChatGPT, Cursor, Gemini and markdown into one `Transcript`. Branched threads are rebuilt by walking `parentUuid` back from the last leaf.
+- Importers normalise Claude Code JSONL, Codex, ChatGPT, Cursor, Gemini and markdown into one `Transcript`. A branched Claude Code thread is rebuilt along its longest `parentUuid` chain, the latest leaf breaking a tie.
 - The heuristic distiller is the one that runs with no API key, so it has to be good. The model-backed mode falls back to it rather than failing.
 - Secrets are stripped before the file is written, not after.
 
@@ -184,7 +189,10 @@ position, so `grep -r "sudo" .` still works.
 </picture>
 
 `husk serve` binds loopback and refuses a non-loopback address without
-`HUSK_TOKEN`. The MCP process is passive — it never starts a server.
+`HUSK_TOKEN`. The diagram's MCP process is passive and starts no server. Today
+it forwards each chat's computer tools to the shared Husk, `husk-mcp --daemon`,
+starting it when none is running, and serves the workspace viewer on loopback
+when a chat opens it.
 
 [SVG](svg/11-hld-runtime.light.svg) · [interactive](11-hld-runtime.html) · [spec](11-hld-runtime.architecture.json)
 
@@ -237,8 +245,9 @@ but husk never commands it, and `error` is terminal.
   <img alt="78 test files across 11 packages on bare vitest defaults, plus apps/console on its own jsdom config" src="png/16-test-topology.light.png">
 </picture>
 
-`mcp` has 1 test file against 7 source modules and `adapters` has 1 against 8 —
-and MCP is the main way husk gets used. That is the gap to watch.
+When it was drawn, `mcp` had 1 test file against 7 source modules and `adapters`
+1 against 8, and MCP is the main way husk gets used. That gap has since closed for
+`mcp`, which has 19 test files against 14 modules; `adapters` has 2 against 8.
 
 [SVG](svg/16-test-topology.light.svg) · [interactive](16-test-topology.html) · [spec](16-test-topology.architecture.json)
 
@@ -270,7 +279,8 @@ both themes.
 
 ## Transports
 
-`packages/mcp/src/server.ts:139` constructs a `StdioServerTransport`, and that is
-the only transport in the package. `docs/SPEC-remote-mcp.md` records the remote
-streamable-HTTP transport as *proposed, not started*. Diagrams 01, 02, 11 and 12
-draw stdio only, which is what ships.
+Diagrams 01, 02, 11 and 12 draw stdio only, the one transport there was when they
+were drawn. Chat apps on the machine still use stdio (`serveStdio` in
+`packages/mcp/src/server.ts`), and `husk serve --remote` also serves streamable
+HTTP at `/mcp` for chat apps on the web (`packages/mcp/src/remote.ts`), as
+[SPEC-remote-mcp.md](../SPEC-remote-mcp.md) records.

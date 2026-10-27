@@ -72,7 +72,9 @@ This is not a theoretical objection. See §6.5 — from inside one husk computer
 
 *Since filed: a chat's link opens the console's live view of its computer, under the
 public URL for a remote chat and after the owner's passkey (#247, #248), and chat apps
-that render MCP Apps show the computer's card (#166).*
+that render MCP Apps show the computer's card (#166). The server now declares `tools`,
+`prompts` (three starters) and `resources`, so §5a no longer holds; its one resource
+is the card, and `/work` files are still not resources.*
 
 **This section corrects an error in the first draft of this spec.** The draft
 put "a web UI" out of scope and stopped there. That conflated two different

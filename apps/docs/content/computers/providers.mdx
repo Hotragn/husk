@@ -64,8 +64,8 @@ container swaps first. `--pids-limit 512` means a fork bomb inside the machine h
 own ceiling rather than the host's. The root filesystem is read-only, so anything written
 outside `/work` and `/tmp` fails loudly instead of mutating an image layer that is about
 to vanish. `--init` reaps what a stopped command leaves behind, so it does not count
-against the pid limit as zombies. `user: root` in `computer.user` runs the agent as root,
-still with no capabilities and a read-only root filesystem.
+against the pid limit as zombies. `computer.user: root` runs the agent as root, still
+with no capabilities and a read-only root filesystem.
 
 With `persist: true`, `/work` becomes a named volume instead of a tmpfs: `husk-<id>`, or
 `husk-key-<key>-<digest>` for a chat's or a bot's computer, which outlives the container

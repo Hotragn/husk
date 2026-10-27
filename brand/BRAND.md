@@ -35,7 +35,7 @@ loudly and with a hint, and it does not hard-fail.
 
 > **Your AI chat gets a computer.**
 
-Five words a person can repeat without explaining. It names the thing they already have
+Six words a person can repeat without explaining. It names the thing they already have
 (an AI chat) and the one thing that changes (it gets a computer), with no category word or
 adjective doing the persuading.
 

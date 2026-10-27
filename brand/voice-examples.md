@@ -1,7 +1,12 @@
 # Husk — voice examples
 
-Real copy, ready to ship. Every line here obeys the seven rules in `BRAND.md`
-section 4. Where a rule is doing visible work, it is named in the margin notes.
+Copy written to the seven rules in `BRAND.md` section 4. Where a rule is doing
+visible work, it is named in the margin notes.
+
+The picks in section 1 are the homepage's hero, and section 4 is the README's
+opening, as they ship. The rest show the voice and are not transcripts: the CLI
+output and errors in sections 2 and 3 are not what the current CLI prints, and some
+of the commands and flags in them do not exist.
 
 ---
 
@@ -9,66 +14,71 @@ section 4. Where a rule is doing visible work, it is named in the margin notes.
 
 ### Headline — three options
 
-**A. Give your agent a computer.**
-Five words, imperative, mechanism-first. States the product literally, with no
-adjective doing the persuading. Survives being read in a tweet with no context.
+**A. Your AI chat gets a computer.**
+Six words a person can repeat without explaining. It names the thing the reader
+already has open, an AI chat, and the one thing that changes. No category word and
+no adjective doing the persuading.
 
-**B. Your agent needs a machine. You already own one.**
-Two beats: the problem, then the reframe. Carries the free-and-local pitch in
-the headline itself, which is Pillar 1. Longer, and the second sentence only
-lands if the reader already knows agents need machines.
+**B. Give your agent a computer.**
+The previous pick. Imperative, mechanism-first, and it survives being read in a
+tweet with no context. But it asks the reader to know what an agent is, and to
+see their chat as one, before the sentence lands.
 
 **C. Empty by design.**
-The tagline promoted to headline. Memorable, ownable, and completely opaque to
-someone who arrived from a link. It earns its place under the mark, not above
-the fold.
+The old tagline promoted to headline. Memorable, ownable, and completely opaque
+to someone who arrived from a link. Its meaning lives on in plain words under the
+footer mark, not above the fold.
 
-**Pick: A — "Give your agent a computer."**
+**Pick: A — "Your AI chat gets a computer."**
 
-Because our audience bounces on abstraction and this is the least abstract
-sentence available. It is a verb, an object, and nothing else. B is a better
-*paragraph* opening and C is a better *footer*; both ask the reader to do a
-small amount of interpretive work before they know what the page is for, and at
-the top of a landing page that work does not get done. A also sets up the
-subhead to carry the honesty — the headline makes the promise, the subhead
-immediately qualifies it, which is the shape of every trustworthy Husk sentence.
+It is the tagline in `BRAND.md`, and the least abstract sentence available to
+someone who arrived with a chat app open: it starts from what they already have.
+B is the same promise addressed to someone who builds agents. C is a better
+*footer*. A also leaves the honesty to the lines under it, which is the shape of
+every trustworthy Husk sentence: the headline makes the promise, and the next
+lines say what you get and where it stops.
 
 ### Subhead — three options
 
-**A.** A disposable Linux machine your agent can drive: shell, filesystem,
+**A.** Add Husk to Claude Code, Codex or Cursor and your AI gets a machine of its
+own: a terminal, files and a browser. It can run the code it writes, check the
+pages it talks about, and keep what it finds in a workspace you can reopen
+tomorrow.
+
+**B.** A terminal, files and a browser it can actually use, and a workspace that
+keeps what it finds for next time.
+
+**C.** A disposable Linux machine your agent can drive: shell, filesystem,
 ports. Docker when it is there, a guarded local workspace when it is not, and
 `husk doctor` tells you which one you got. No account, no card, no telemetry.
 
-**B.** One command gives Claude Code a Linux box mid-conversation. It runs on
-your hardware, for free, and nothing leaves the machine except the calls to the
-model provider you configured.
-
-**C.** Point it at a chat transcript and it becomes a bot. Point it at your
-agent and it becomes a computer. Free, local, Apache-2.0.
-
 **Pick: A.**
 
-It does three jobs in three sentences: says what you get, names the honest
-caveat before anyone has to ask, and closes the trust loop. B is tighter but
-buries the isolation story, which is the thing that earns us the platform
-engineer. C is the cleverest and the least useful — it is a summary of the
-README written by someone who has already read the README.
+It names the apps the reader already uses, the three things they get, and what
+each one is for. B is the same promise at README length, and the README uses it.
+C was the pick when the page led with the computer alone; its caveat now sits in
+the line under the lead, and in full in the providers section, where the reader
+is asking how contained the computer is.
 
 ### The hero, assembled
 
-> # Give your agent a computer.
+> # Your AI chat gets a computer.
 >
-> A disposable Linux machine your agent can drive: shell, filesystem, ports.
-> Docker when it is there, a guarded local workspace when it is not, and
-> `husk doctor` tells you which one you got. No account, no card, no telemetry.
+> Add Husk to Claude Code, Codex or Cursor and your AI gets a machine of its own:
+> a terminal, files and a browser. It can run the code it writes, check the pages
+> it talks about, and keep what it finds in a workspace you can reopen tomorrow.
 >
-> ```bash
-> claude mcp add husk -- npx -y @husk-ai/mcp
-> ```
+> The 0.2.0 desktop preview starts with workspace tools. Computer access is
+> opt-in after provider review.
 >
-> Apache-2.0 · works with Claude Code, Cursor, Zed, or anything speaking MCP
+> **Start in Claude Desktop** · **Set up computer tools**
+>
+> No Husk account, and no extra API key for workspace tasks. Open source under
+> Apache-2.0. Your AI app’s own usage limits still apply.
 
-No third CTA. No "trusted by". No logo wall. The command is the proof.
+Two buttons, no third. No "trusted by". No logo wall. The proof sits directly
+under it: a replay of a real run on a laptop with no Docker and no API key,
+which ends on a command Husk refused.
 
 ---
 
@@ -78,10 +88,13 @@ No third CTA. No "trusted by". No logo wall. The command is the proof.
 important 20 lines of copy in the product: it is where the free path either
 proves itself or does not.
 
-```
-$ npx -y @husk-ai/cli
+Illustrative: this is the first run the copy is written for. Today `husk` with no
+arguments prints its help, and `husk onboard` is the guided first run.
 
-husk 0.1.0 · first run · ~/.husk created
+```
+$ husk
+
+husk 0.2.0 · first run · ~/.husk created
 
 computer providers
   docker      unavailable   installed, but the daemon is not reachable
@@ -187,21 +200,19 @@ E_PATH_DENIED  the agent tried to write outside its workspace
 
 ## 4. README opening paragraph
 
-> **Husk gives any AI agent a computer, and turns any AI chat into a bot.**
+> **Your AI chat gets a computer.**
 >
-> A computer is a disposable Linux machine an agent can drive — shell,
-> filesystem, ports, snapshots. It runs on Docker if you have it, Podman if you
-> prefer, a guarded directory if you have neither, and an SSH box or a Fly
-> microVM if you would rather it ran somewhere else. A husk is a `husk.yaml`: an
-> agent definition Husk can distill out of a Claude Code, ChatGPT or Cursor
-> transcript and then serve over HTTP, Discord, Slack, cron, or the CLI. There
-> is no account, no hosted control plane you have to talk to, and no telemetry —
-> absent from the codebase, not disabled by a flag. The free path works, and it
-> is the same path everything else is built on.
+> A terminal, files and a browser it can actually use, and a workspace that keeps
+> what it finds for next time.
 >
-> ```bash
-> claude mcp add husk -- npx -y @husk-ai/mcp
-> ```
+> Husk gives your AI chat named local workspaces. Save public web sources, ask your
+> AI for a cited brief, comparison, or action list, then review and download the
+> result. Reopen the same workspace in your next chat. No Husk account, Docker,
+> terminal, or additional model API key is needed for this starter flow.
+
+> The headline, then the line that says what the chat gets, then the first task
+> a beginner can finish. The developer's route, the computer tools, comes second,
+> under its own heading.
 
 ---
 
