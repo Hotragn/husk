@@ -347,6 +347,11 @@ not here.
 - **A Claude Code transcript counts its thinking blocks** in the transcript's
   `meta.thinkingBlocks`. The count went on the text that came with them, and Claude Code
   writes a thinking block on a line of its own ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **A browser script's `dialog: "accept"` holds for its click alone**, as the docs say. It
+  held for the rest of the script, so a confirm a later `page.fill` or `page.goto` met
+  was accepted too ([#266](https://github.com/Hotragn/husk/pull/266)).
+- **A cached Chromium is found where the download plan put it.** The lookup kept its own
+  copy of the layout, which no test reached ([#266](https://github.com/Hotragn/husk/pull/266)).
 
 ### Security
 
@@ -395,6 +400,16 @@ not here.
 - **An SSH target that is this machine is not isolated from it.** `localhost`, `127.0.0.1`
   and `::1` report `isolated: false`, whatever the account, so remote access refuses
   them; a remote chat could have had a shell here ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **Redaction catches PGP, DSA and encrypted private keys.** The PGP arm never matched a
+  real key, whose armour reads `PGP PRIVATE KEY BLOCK`, and `ENCRYPTED` and `DSA` keys
+  had no arm; all three passed whole. The secret scan's rule had the same gaps
+  ([#266](https://github.com/Hotragn/husk/pull/266)).
+- **The secret scan reads merges and messages.** A merge printed no diff, so a change
+  made while resolving a conflict, and a stash's working-tree changes, were never read,
+  nor were commit and tag messages ([#266](https://github.com/Hotragn/husk/pull/266)).
+- **A browser ref no snapshot recorded is refused**, where the page's document can be
+  read, rather than resolved to whatever has that id now: after a restart, say, which
+  holds survive ([#266](https://github.com/Hotragn/husk/pull/266)).
 
 ## [0.1.4] - 2026-09-22
 

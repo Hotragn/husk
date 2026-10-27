@@ -11,7 +11,7 @@ import {
   inspectBrowserCapability,
 } from './provision.js';
 
-function machine(preflight: { system: string; missing: string[] } | 'no-python', systemBrowser = false) {
+function machine(preflight: { system: string; missing: string[] } | 'no-python', systemBrowser = false, uname = 'x86_64') {
   const commands: string[] = [];
   const computer = {
     info: { provider: 'docker' },
@@ -19,7 +19,7 @@ function machine(preflight: { system: string; missing: string[] } | 'no-python',
       commands.push(cmd);
       let stdout = '';
       let exitCode = 0;
-      if (cmd === 'uname -m') stdout = 'x86_64';
+      if (cmd === 'uname -m') stdout = uname;
       else if (cmd.includes('command -v chromium') && systemBrowser) stdout = '/usr/bin/chromium';
       else if (cmd.includes('--version') && systemBrowser) stdout = 'Chromium 145';
       else if (cmd.includes('HUSK_BROWSER_PREFLIGHT')) {
@@ -58,6 +58,14 @@ describe('browser prerequisite checks', () => {
     const { computer, commands } = machine({ system: 'Linux', missing: [] });
     expect(await inspectBrowserCapability(computer)).toEqual({ installed: false, readyToInstall: true, arch: 'x64' });
     expect(commands.some((cmd) => cmd.includes('urlopen(') || cmd.includes('urlretrieve('))).toBe(false);
+  });
+
+  it('looks for a cached download where the download plan unpacks it, on either architecture', async () => {
+    for (const [uname, arch] of [['x86_64', 'x64'], ['aarch64', 'arm64']] as const) {
+      const { computer, commands } = machine({ system: 'Linux', missing: ['libnss3.so'] }, false, uname);
+      await provisionChromium(computer).catch(() => undefined);
+      expect(commands.find((c) => c.startsWith('ls -d '))).toContain(`/chromium-${arch}-*/${downloadPlanFor(arch).binaryPath} `);
+    }
   });
 
   it('reuses a working system browser without requiring download prerequisites', async () => {

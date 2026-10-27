@@ -197,7 +197,9 @@ const SECRET_PATTERNS: RegExp[] = [
   // for leaks in full the moment a request is logged or an error echoes its
   // headers back.
   /((?:Authorization|Proxy-Authorization)\s*:\s*(?:Bearer|Basic|Token)\s+)[A-Za-z0-9._~+/=-]{16,}/gi,
-  /(-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----)[\s\S]*?(-----END [^-]*-----)/g,
+  // PGP's armour ends `PRIVATE KEY BLOCK`, and an encrypted PKCS#8 or a DSA key
+  // names itself: the arm for each was missing, and those keys passed whole.
+  /(-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY(?: BLOCK)?-----)[\s\S]*?(-----END [^-]*-----)/g,
 ];
 
 export function redact(input: string): string {

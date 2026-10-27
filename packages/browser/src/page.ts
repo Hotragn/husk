@@ -551,7 +551,7 @@ export class Page {
 
   /** The refs a snapshot showed, as belonging to its document, or to their frame's. */
   private remember(nodes: SnapshotNode[], document: string, frames: Record<string, SnapshotFrame>): void {
-    // ponytail: forgotten wholesale past a bound; a forgotten ref is checked by the driver, or not at all.
+    // ponytail: forgotten wholesale past a bound; a forgotten ref is checked by the driver, or refused there.
     if (this.refDocuments.size > 50_000) this.refDocuments.clear();
     if (this.frameKeys.size > 10_000) this.frameKeys.clear();
     for (const [key, f] of Object.entries(frames)) this.frameKeys.set(f.id, Number(key.slice(1)));

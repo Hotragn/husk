@@ -261,6 +261,9 @@ function serveDriver(port: number) {
 let fake: FakeChromium | undefined;
 let driver: ReturnType<typeof serveDriver> | undefined;
 
+/** A snapshot, as a session takes before it acts on refs: it records the document each ref came from. */
+const snapped = () => driver!.request({ targetId: 'T1', steps: [{ op: 'action', do: 'snapshot' }] });
+
 afterEach(async () => {
   driver?.child.kill();
   driver = undefined;
@@ -282,6 +285,7 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
   it('runs page actions in one round, and stops at the first that fails', async () => {
     fake = await fakeChromium();
     driver = serveDriver(fake.port);
+    await snapped();
     const out = await driver.request({
       targetId: 'T1',
       steps: [
@@ -296,7 +300,8 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
     expect(results[0]).toMatchObject({ url: 'https://fake.test/', loaded: true });
     expect(results[1]).toMatchObject({ ref: 'e7', navigated: false });
     expect((results[2]?.['nodes'] as unknown[]).length).toBe(2);
-    expect(String(results[3]?.['error'])).toMatch(/e404 is no longer on the page/);
+    // No snapshot showed e404: it is refused before anything resolves its id.
+    expect(String(results[3]?.['error'])).toMatch(/e404 is from a snapshot this browser has no record of/);
     expect(results[4]).toEqual({ skipped: true });
     // The click pressed and released at the centre of the box.
     const press = fake.received.find((m) => m.method === 'Input.dispatchMouseEvent' && m.params?.['type'] === 'mousePressed');
@@ -310,6 +315,7 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
   it('refuses a click that would do nothing or land elsewhere, saying why, and force still clicks', async () => {
     fake = await fakeChromium();
     driver = serveDriver(fake.port);
+    await snapped();
     fake.element = { disabled: true };
     expect(String((await clicking({ ref: 'e7' }))['error'])).toMatch(/e7 is disabled/);
     fake.element = { hidden: true };
@@ -347,6 +353,7 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
   it('waits for a moving element to settle, and refuses one that never does', async () => {
     fake = await fakeChromium();
     driver = serveDriver(fake.port);
+    await snapped();
     fake.shifts = [0, 6];
     expect(await clicking({ ref: 'e7' })).toMatchObject({ ref: 'e7', checked: true });
     fake.shifts = Array.from({ length: 20 }, (_, i) => i * 6);
@@ -376,6 +383,7 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
   it('types into the field itself, not into whatever the page calls active', async () => {
     fake = await fakeChromium();
     driver = serveDriver(fake.port);
+    await snapped();
     const out = await driver.request({ targetId: 'T1', steps: [{ op: 'action', do: 'fill', ref: 'e7', text: 'hello' }] });
     expect((out['results'] as Array<Record<string, unknown>>)[0]).toMatchObject({ ref: 'e7' });
     const onField = fake.received.filter((m) => m.method === 'Runtime.callFunctionOn' && m.params?.['objectId'] === 'O7').map((m) => String(m.params?.['functionDeclaration']));
@@ -388,6 +396,7 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
   it('answers a dialog a click opens, says how, and accepts a confirm only when asked', async () => {
     fake = await fakeChromium();
     driver = serveDriver(fake.port);
+    await snapped();
     fake.onRelease = [{ method: 'Page.javascriptDialogOpening', sessionId: 'S1', params: { type: 'confirm', message: 'Delete?' } }];
     expect(await clicking({ ref: 'e7' })).toMatchObject({ dialogs: [{ type: 'confirm', message: 'Delete?', answer: 'dismissed' }] });
     expect(await clicking({ ref: 'e7', dialog: 'accept' })).toMatchObject({ dialogs: [{ type: 'confirm', answer: 'accepted' }] });
@@ -407,8 +416,9 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
     ];
     const folder = join(tmpdir(), `husk-downloads-${process.pid}`);
     try {
-      const res = await driver.request({ targetId: 'T1', downloads: folder, steps: [{ op: 'action', do: 'click', ref: 'e7' }] });
-      expect((res['results'] as unknown[])[0]).toMatchObject({ downloads: [{ name: 'report.pdf', state: 'completed', bytes: 1234 }] });
+      const steps = [{ op: 'action', do: 'snapshot' }, { op: 'action', do: 'click', ref: 'e7' }];
+      const res = await driver.request({ targetId: 'T1', downloads: folder, steps });
+      expect((res['results'] as unknown[])[1]).toMatchObject({ downloads: [{ name: 'report.pdf', state: 'completed', bytes: 1234 }] });
       // The driver runs from a tmpfs in a computer, so only the host can say where downloads belong.
       expect(fake.received.find((m) => m.method === 'Browser.setDownloadBehavior')?.params).toEqual({ behavior: 'allow', downloadPath: folder, eventsEnabled: true });
     } finally {
@@ -426,6 +436,7 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
   it('says which tab a click opened', async () => {
     fake = await fakeChromium();
     driver = serveDriver(fake.port);
+    await snapped();
     // A new tab starts out blank and gets its address when its page commits.
     fake.onRelease = [
       { method: 'Target.targetCreated', params: { targetInfo: { targetId: 'T2', type: 'page', url: 'about:blank', openerId: 'T1' } } },
@@ -483,8 +494,8 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
     const paused = (requestId: string, url: string) => ({ method: 'Fetch.requestPaused', sessionId: 'S1', params: { requestId, resourceType: 'Document', request: { url } } });
     fake.onRelease = [paused('R1', 'http://169.254.169.254/latest/meta-data/'), paused('R2', 'https://example.com/next')];
     const policy = { network: null, loopbackIsOwn: true };
-    const res = await driver.request({ targetId: 'T1', policy, steps: [{ op: 'action', do: 'click', ref: 'e7' }] });
-    expect((res['results'] as unknown[])[0]).toMatchObject({ blocked: [{ url: 'http://169.254.169.254/latest/meta-data/', reason: 'an internal address' }] });
+    const res = await driver.request({ targetId: 'T1', policy, steps: [{ op: 'action', do: 'snapshot' }, { op: 'action', do: 'click', ref: 'e7' }] });
+    expect((res['results'] as unknown[])[1]).toMatchObject({ blocked: [{ url: 'http://169.254.169.254/latest/meta-data/', reason: 'an internal address' }] });
     const answered = fake.received.filter((m) => m.method?.startsWith('Fetch.') && m.method !== 'Fetch.enable').map((m) => [m.method, m.params?.['requestId']]);
     expect(answered).toEqual([
       ['Fetch.failRequest', 'R1'],
@@ -497,6 +508,7 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
   it('guards a new tab before it runs: its loads go by the policy and its dialogs are answered', async () => {
     fake = await fakeChromium();
     driver = serveDriver(fake.port);
+    await snapped();
     // A pop-up, held by auto-attach until the driver lets it go.
     fake.onRelease = [{ method: 'Target.attachedToTarget', params: { sessionId: 'S9', waitingForDebugger: true, targetInfo: { targetId: 'T9', type: 'page', url: '' } } }];
     await driver.request({ targetId: 'T1', policy: { network: { mode: 'full' }, loopbackIsOwn: false }, steps: [{ op: 'action', do: 'click', ref: 'e7' }] });
@@ -509,6 +521,7 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
   it('arms a click\'s wait just before it presses, and says what the wait found', async () => {
     fake = await fakeChromium();
     driver = serveDriver(fake.port);
+    await snapped();
     const res = await driver.request({
       targetId: 'T1',
       steps: [{ op: 'action', do: 'click', ref: 'e7', arm: 'window.__armed = 1', wait: { expression: 'window.__waited', what: 'text "Saved"' } }],
@@ -573,6 +586,7 @@ describe.skipIf(!python)('driver.py --serve, running a script', { timeout: 30_00
   it('branches on the page and returns what it printed and its result', async () => {
     fake = await fakeChromium();
     driver = serveDriver(fake.port);
+    await snapped();
     const out = outcome(
       await driver.request(
         script(
