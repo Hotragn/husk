@@ -380,6 +380,13 @@ describe('SshProvider.isAvailable', () => {
     expect(a.reason).toMatch(/invalid port/);
     expect(a.hint).toBeTruthy();
   });
+
+  it('does not call this machine isolated from itself, whichever account ssh logs in to', async () => {
+    // Nothing listens on port 1, so the probe fails at once: the target is this machine all the same.
+    for (const target of ['someone@127.0.0.1:1', 'someone@localhost:1', 'someone@[::1]:1']) {
+      expect(await new SshProvider({ env: { HUSK_SSH_TARGET: target } }).isAvailable()).toMatchObject({ isolated: false, isolationKind: 'guardrails' });
+    }
+  }, 60_000);
 });
 
 describe('diagnoseSsh', () => {

@@ -3,7 +3,7 @@ import { unlink } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
-import { HuskError, READ_FILE_MAX_BYTES, fileTooLarge, headText, id as newId } from '@husk-ai/core';
+import { HuskError, READ_FILE_MAX_BYTES, fileTooLarge, headText, isLoopbackHost, id as newId } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -1072,6 +1072,11 @@ export class SshProvider implements ComputerProvider {
       };
     }
 
+    // A target that is this machine is no boundary from it, whichever account
+    // ssh logs in to: it shares this machine's files, network and loopback services.
+    const self = isLoopbackHost(settings.target.host);
+    const isolation = self ? ({ isolated: false, isolationKind: 'guardrails' } as const) : ({ isolated: true, isolationKind: 'machine' } as const);
+
     const args = buildSshArgs({
       target: settings.target,
       ...(settings.keyPath ? { keyPath: settings.keyPath } : {}),
@@ -1085,22 +1090,22 @@ export class SshProvider implements ComputerProvider {
       if (r.stdout.includes('husk-no-readlink')) {
         return {
           available: false,
-          isolated: true,
-          isolationKind: 'machine',
+          ...isolation,
           reason: `${sshDestination(settings.target)} has no GNU readlink, which husk's path checks need`,
           hint: 'install coreutils on that box (on Alpine: apk add coreutils)',
         };
       }
       return {
         available: true,
-        isolated: true,
-        isolationKind: 'machine',
+        ...isolation,
         version: `${sshDestination(settings.target)}${uname ? ` (${uname})` : ''}`,
-        reason: 'commands run as your user on that box -- isolated from this machine, not from itself',
+        reason: self
+          ? `${sshDestination(settings.target)} is this machine: commands run here, with no boundary from it`
+          : 'commands run as your user on that box -- isolated from this machine, not from itself',
       };
     }
 
-    return { available: false, isolated: true, ...diagnoseSsh(r, settings) };
+    return { available: false, ...isolation, ...diagnoseSsh(r, settings) };
   }
 
   async create(spec: ComputerSpec): Promise<Computer> {

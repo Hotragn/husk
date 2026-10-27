@@ -138,9 +138,15 @@ export function installErrorHandling(app: FastifyInstance): void {
             : 'E_INTERNAL';
     if (status >= 500) req.log.error({ err }, 'unhandled error');
     const body: ErrorBody = { error: { code, message: err.message } };
-    if (status === 413) body.error.hint = 'request bodies cap at 32 MB';
+    // The route's own cap: a sign-in step's is 64 KB, not the API's 32 MB.
+    if (status === 413) body.error.hint = `request bodies cap at ${sizeOf(req.routeOptions.bodyLimit)} here`;
     void reply.code(status).send(body);
   });
+}
+
+/** 65536 as "64 KB", 33554432 as "32 MB": binary units, as the docs give them. */
+function sizeOf(bytes: number): string {
+  return bytes >= 1024 * 1024 ? `${Math.round(bytes / 1024 / 1024)} MB` : `${Math.round(bytes / 1024)} KB`;
 }
 
 type Missing = 'computer' | 'husk' | 'run' | 'approval' | 'handoff' | 'transcript';

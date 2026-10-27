@@ -299,6 +299,9 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer> {
       ctx.scheduler.stop();
       ctx.deps.manager.stopReaper?.();
       stopSweeping?.();
+      // Written as they are first: cancelling settles every hold, and each settle
+      // rewrote holds.json, so a clean stop left nothing held for the next start.
+      ctx.runner.handoffs.freeze();
       const cancelled = ctx.runner.cancelAll('server shutting down');
       if (cancelled) log.info(`cancelled ${cancelled} in-flight run(s)`);
       await app.close();

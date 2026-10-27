@@ -214,7 +214,8 @@ export class Runner {
       return await this.handoffs.request(
         { runId, husk: spec.name, reason: request.reason, ...(computerId ? { computerId } : {}), signal: runSignal },
         (pending: PendingHandoff) => {
-          onEvent({ type: 'handoff_required', request });
+          // The run's id, not the agent's own, as on run_start: one id is true in the stream, the store and a cancel.
+          onEvent({ type: 'handoff_required', handoffId: pending.handoffId, request: { ...request, runId } });
           this.bus.emit('runs', 'handoff_required', pending);
         },
       );
@@ -245,7 +246,7 @@ export class Runner {
           args: request.args ?? {},
         };
         return this.approvals.request({ runId, husk: spec.name, call, signal }, (pending: PendingApproval) => {
-          onEvent({ type: 'approval_required', approvalId: pending.approvalId, request });
+          onEvent({ type: 'approval_required', approvalId: pending.approvalId, request: { ...request, runId } });
           this.bus.emit('runs', 'approval_required', pending);
         });
       };

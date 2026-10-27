@@ -484,7 +484,7 @@ export class Remote {
       const q = (req.query ?? {}) as Record<string, string | undefined>;
       const client = this.clientOf(q.client_id);
       // An app the owner already let in has a budget of its own; everyone else shares one.
-      if (!this.allow(reply, client?.signedIn ? [`authorize:${q.client_id}`, LIMITS.signIn] : ['sign-in', LIMITS.signIn])) return reply;
+      if (!this.allow(reply, client?.signedIn ? [`authorize:${q.client_id}`, LIMITS.signIn] : ['authorize', LIMITS.signIn])) return reply;
       // Nothing is sent back before the owner has signed in: anyone can register
       // an app, so a redirect from here would make this URL an open redirect.
       const fail = (why: string) => reply.code(400).type('text/html').send(errorPage(why));
@@ -600,13 +600,13 @@ export class Remote {
     // shown to, so it opens only once the owner's passkey has been used in
     // this browser. The page then goes on to the console with an owner session.
     app.get('/oauth/link', async (_req, reply) => {
-      if (!this.allow(reply, ['sign-in', LIMITS.signIn])) return reply;
+      if (!this.allow(reply, ['link', LIMITS.signIn])) return reply;
       const { html, csp } = linkPage();
       return reply.header('content-security-policy', csp).header('cache-control', 'no-store').header('x-frame-options', 'DENY').type('text/html').send(html);
     });
 
     app.post('/oauth/link/start', { bodyLimit: STEP_BODY }, async (_req, reply) => {
-      if (!this.allow(reply, ['sign-in', LIMITS.signIn])) return reply;
+      if (!this.allow(reply, ['link', LIMITS.signIn])) return reply;
       const owner = this.store.current.owner;
       if (!owner) return reply.code(400).send({ error: 'invalid_request', error_description: 'this Husk has no owner yet' });
       if (!room(this.presence, this.now())) return reply.code(400).send({ error: 'temporarily_unavailable', error_description: 'too many sign-ins are in progress: try again in a few minutes' });

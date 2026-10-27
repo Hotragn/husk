@@ -143,7 +143,8 @@ export type RunEvent =
    * denied when it times out.
    */
   | { type: 'approval_required'; approvalId: string; request: ApprovalRequest }
-  | { type: 'handoff_required'; request: HandoffRequest }
+  /** The run is waiting on a person. A host that tracks handoffs answers at /v1/handoffs/:handoffId/done. */
+  | { type: 'handoff_required'; handoffId: string; request: HandoffRequest }
   | { type: 'computer_ready'; computerId: string; provider: string }
   | { type: 'usage'; usage: Usage; cumulative: Usage }
   | { type: 'warning'; message: string }

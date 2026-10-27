@@ -360,7 +360,8 @@ describe('Agent: approval', () => {
     const onApproval = vi.fn(async (_req: ApprovalRequest) => true);
     const result = await agent.run({ input: 'go', approvalMode: 'ask', onApproval });
     expect(onApproval).toHaveBeenCalledOnce();
-    expect(onApproval.mock.calls[0]?.[0]).toMatchObject({ tool: 'danger', dangerous: true });
+    // The call's own id, so a client can tie the approval to the tool_start before it.
+    expect(onApproval.mock.calls[0]?.[0]).toMatchObject({ tool: 'danger', callId: 'c1', dangerous: true });
     expect(toolResults(result.messages)[0]).toMatchObject({ content: 'danger:x', isError: false });
   });
 

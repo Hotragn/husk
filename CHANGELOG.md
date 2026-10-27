@@ -305,6 +305,26 @@ not here.
   `browse`, setup scripts and the API's archive download and upload failed there. A
   command's `/work` and `/tmp` paths are now mapped as on `local`, and the real
   directories the shell prints are accepted back ([#262](https://github.com/Hotragn/husk/pull/262)).
+- **A take-over survives a clean stop of the shared Husk**, as it already survived a
+  crash. Ctrl-C, or SIGTERM from systemd or a shutdown, ended every hold on the way out
+  and wrote an empty `holds.json`, so nothing was held after the restart
+  ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **`approval_required` and `handoff_required` carry the run's own id**, the one
+  `run_start` and `/v1/runs` give, not the agent's. An approval names its tool call in
+  `callId`, so two in one run no longer share an id, and `handoff_required` names the
+  handoff to answer in `handoffId` ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **`fs/download` holds its 256 MiB cap inside the computer.** The archive is cut off as
+  it passes the cap, so a big path fails with `E_QUOTA` rather than filling a 512 MB
+  `/tmp` and being reported as a path that does not exist. A file tar cannot read is
+  said as such ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **A body too big names the cap of its route**, 64 KB on the sign-in pages, not the
+  API's 32 MB ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **`GET /v1/triggers` says when Slack is idle**, with only `SLACK_BOT_TOKEN` set, and
+  which way it listens otherwise ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **Fly takes the token `fly tokens create deploy` prints**, `FlyV1 …` scheme and all, and
+  its hints suggest that token for the computers' app alone, as `HUSK_FLY_TOKEN`, rather
+  than `fly auth token`, which reaches every app you can
+  ([#263](https://github.com/Hotragn/husk/pull/263)).
 - **A run stopped part-way through a reply ends as what happened.** Cancelled, timed out,
   or cut off by its provider while text was streaming, it ended `complete` with half an
   answer; it now ends `aborted`, `timeout` or `error` ([#264](https://github.com/Hotragn/husk/pull/264)).
@@ -364,6 +384,17 @@ not here.
   directory not made yet, refusing what it cannot resolve, and `husk cp` is checked as
   the file tools are. An SSH box needs GNU `readlink` for this, which `husk doctor` now
   checks ([#262](https://github.com/Hotragn/husk/pull/262)).
+- **A signed webhook takes its prompt from the signed body alone.** `?input=` was read
+  first, and the signature covers only the body, so one captured delivery could be sent
+  again with any prompt ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **A flood of sign-ins no longer keeps the owner from a link.** The page a handoff or
+  computer link opens on shared one budget with every anonymous sign-in; each route now
+  has its own ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **A remote approval shows the computer the call runs on**, above its arguments
+  ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **An SSH target that is this machine is not isolated from it.** `localhost`, `127.0.0.1`
+  and `::1` report `isolated: false`, whatever the account, so remote access refuses
+  them; a remote chat could have had a shell here ([#263](https://github.com/Hotragn/husk/pull/263)).
 
 ## [0.1.4] - 2026-09-22
 

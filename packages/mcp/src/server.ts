@@ -377,7 +377,8 @@ export class HuskMcpServer {
     // Remotely, a call that changes things waits for the owner's word, every
     // time, on a page that shows all of it; one too big to show never runs.
     if (this.remote?.approve && DANGEROUS_TOOLS.has(name)) {
-      const detail = exactly(toolArgs);
+      // The computer first: an app may have several, and the approval is for this one.
+      const detail = `computer: ${computer.id}\n${exactly(toolArgs)}`;
       if (detail.length > MAX_SHOWN) return { isError: true, content: [{ type: 'text', text: tooBigText(name, detail.length) }] };
       const verdict = this.remote.approve({ tool: name, summary: summarize(name, toolArgs), detail, digest: digestOf(name, computer.id, toolArgs) });
       if (!verdict.ok) return { content: [{ type: 'text', text: approvalText(name, verdict, computer.id) }], ...(verdict.state === 'denied' ? { isError: true } : {}) };

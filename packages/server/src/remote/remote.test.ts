@@ -521,9 +521,18 @@ describe('remote access, from a chat app to a call', () => {
     for (let i = 0; i < LIMITS.signIn; i++) await pub('GET', '/oauth/authorize?client_id=nobody');
     expect((await pub('GET', '/oauth/authorize?client_id=nobody')).statusCode).toBe(429);
     expect((await pub('GET', `/oauth/approve?id=${id}`)).statusCode).toBe(200);
+    // The page a handoff or a computer link opens on has its own budget too: a 2FA code may be waiting.
+    expect((await pub('GET', '/oauth/link')).statusCode).toBe(200);
+    expect((await pub('POST', '/oauth/link/start', { json: {} })).statusCode).toBe(200);
     for (let i = 0; i < LIMITS.tokens; i++) await pub('POST', '/oauth/token', { form: { grant_type: 'refresh_token', refresh_token: 'x', client_id: 'nobody' } });
     expect((await pub('POST', '/oauth/token', { form: { grant_type: 'refresh_token', refresh_token: 'x', client_id: 'nobody' } })).statusCode).toBe(429);
     expect((await pub('POST', '/oauth/token', { form: { grant_type: 'refresh_token', refresh_token, client_id: client } })).statusCode).toBe(200);
+  });
+
+  it('names the cap of the route a body was too big for', async () => {
+    const res = await pub('POST', '/oauth/link/start', { json: { pad: 'a'.repeat(70_000) } });
+    expect(res.statusCode).toBe(413);
+    expect(res.json().error).toMatchObject({ code: 'E_QUOTA', hint: 'request bodies cap at 64 KB here' });
   });
 
   it('goes by the port a request came in on, never its Host', async () => {

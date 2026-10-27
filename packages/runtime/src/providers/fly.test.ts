@@ -80,7 +80,7 @@ describe('FlyProvider.isAvailable', () => {
     const a = await new FlyProvider({ fetch: fn, env: {} }).isAvailable();
     expect(a.available).toBe(false);
     expect(a.reason).toMatch(/FLY_API_TOKEN/);
-    expect(a.hint).toMatch(/fly auth token/);
+    expect(a.hint).toMatch(/fly tokens create deploy --app/);
     // No token means no request: probing must not leak an unauthenticated call.
     expect(calls).toHaveLength(0);
   });
@@ -111,12 +111,18 @@ describe('FlyProvider.isAvailable', () => {
     expect(calls[0]?.headers.Authorization).toBe('Bearer fo1_computers');
   });
 
+  it('sends a token from `fly tokens create` with the scheme it was printed with', async () => {
+    const { fn, calls } = fakeFetch([{ body: { name: 'husk-test', organization: { slug: 'acme' } } }]);
+    await new FlyProvider({ fetch: fn, env: { ...ENV, HUSK_FLY_TOKEN: 'FlyV1 fm2_deploy' } }).isAvailable();
+    expect(calls[0]?.headers.Authorization).toBe('FlyV1 fm2_deploy');
+  });
+
   it('turns a 401 into "the token is wrong", not "fly is down"', async () => {
     const { fn } = fakeFetch([{ status: 401, body: { error: 'unauthorized' } }]);
     const a = await new FlyProvider({ fetch: fn, env: ENV }).isAvailable();
     expect(a.available).toBe(false);
     expect(a.reason).toMatch(/rejected the token/);
-    expect(a.hint).toMatch(/fly auth token/);
+    expect(a.hint).toMatch(/fly tokens create deploy --app/);
   });
 
   it('turns a 404 into "that app does not exist"', async () => {
