@@ -116,8 +116,9 @@ corner, which names its chat app when you hover it. Click one and a compact Comp
 window opens, its tabs your computers (each with its chat app's logo), the browser
 live on a white screen, Take over a click away. Minimize it and it goes to a notch at
 the top of the screen (around the real notch on a Mac). It sits in the tray to tell you
-when a chat is waiting for you. Its installers build and pass a smoke test in CI but are
-not released or signed yet; see [apps/desktop](apps/desktop/README.md).
+when a chat is waiting for you. Each release attaches its installers for Windows, macOS
+and Linux, signed and notarized once the release has the signing keys and unsigned until
+then; see [apps/desktop](apps/desktop/README.md).
 
 To add Husk to one app by hand instead:
 
@@ -288,8 +289,8 @@ apps/
   web          marketing site (Next.js + Three.js)
 ```
 
-`server` reaches `@husk-ai/agent` through a dynamic import and never declares it as a
-dependency, so the control plane starts on a tree where the agent was never built.
+`server` declares `@husk-ai/agent` but reaches it through a dynamic import, so the
+control plane still starts on a tree where the agent was never built.
 
 Four flavours choose the image: `base`, `python`, `node`, `full`. Husk publishes none of
 its own. `base` is `debian:bookworm-slim`, `python` is `python:3.12-slim`, `node` is
@@ -374,8 +375,10 @@ releases. What is known not to work today:
   the fifteen `browser_*` tools on Docker with `full` (Playwright's image, which carries
   Chromium's libraries). The slim flavors cannot run Chromium: their root filesystem is
   read-only, so the libraries cannot be added later. `base` (`debian:bookworm-slim`) has
-  neither curl nor python3, so even `browse` fails there. Pass `--flavor full`, or choose
-  "Include a browser" in `husk setup` or on the Connect page.
+  neither curl nor python3, so even `browse` fails there. Chats get `full` unless told
+  otherwise (`npx @husk-ai/mcp`, `husk mcp`, remote access, and `husk setup` unless you
+  answer no to the browser). `husk up` and a `husk.yaml` default to `base`: pass
+  `--flavor full`, or set `computer.flavor: full`.
 - **`fly` is the least exercised provider.** It has tests. It has far fewer real hours
   than `docker` and `local`.
 
