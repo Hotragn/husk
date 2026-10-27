@@ -29,29 +29,48 @@ as "everything" is the interpretation that leaks data, so it is not the one Husk
 This is the part most sandbox documentation is vague about, and vagueness here is how
 people end up believing they have containment they do not have.
 
-| Mode | Docker / Podman | Tool layer (`fetch_url`, `http_request`) |
+| Mode | Docker / Podman | Husk's tools and the browser's page loads |
 | --- | --- | --- |
 | `none` | `--network=none`, enforced by the kernel | Refused |
 | `egress` | **Not enforced.** The container has normal networking | Enforced by hostname |
 | `full` | Not enforced, by design | Enforced only by the floor and by `deny` |
 
 Neither Docker nor Podman can allow-list hostnames, so `egress` is enforced where the
-hostname is actually known: in the tools. A process inside the machine that opens a raw
-socket, or runs `curl` in a shell, is not stopped by an `egress` policy.
+hostname is actually known: in Husk's tools (`fetch_url`, `http_request`, `browse` and
+the browser's own navigation), and in the browser driver, which checks every document a
+page loads by itself before anything is sent. A process inside the machine that opens a
+raw socket, or runs `curl` in a shell, is not stopped by an `egress` policy, and nor are
+a page's images, scripts and `fetch` calls. [Network policy](/security/network#where-each-mode-is-enforced)
+says what each check covers.
 
 <Warning>
-`mode: egress` constrains the agent's `fetch_url` and `http_request` tools. It does not
+`mode: egress` constrains Husk's tools and the browser's page loads. It does not
 constrain `curl` run through `shell`. If the distinction matters for your threat model,
 `none` and `full` are the honest choices: `none` is a kernel-enforced boundary on the
 container providers, and `full` is an admission that there is no boundary.
 </Warning>
+
+Where a provider cannot hold every process in the computer to the policy, Husk warns
+when it makes the computer. Ask for `strict` and it refuses to make one instead:
+
+```yaml
+computer:
+  network:
+    mode: none
+    strict: true    # or: husk-mcp --network none --network-strict
+```
+
+Only `none` on Docker or Podman, and `full` with no `deny` list, pass: no provider
+firewalls `egress` or a deny list for a process yet.
 
 ## The floor
 
 `isHostAllowed` refuses link-local and RFC1918 hosts **even in `mode: full`**, unless the
 operator names them in `allow`. Loopback is refused too, except on a computer that has
 a loopback of its own (Docker, Podman and Fly): there `127.0.0.1` is the computer, not
-your machine, so the dev server an agent starts is one it can look at.
+your machine, so the dev server an agent starts is one it can look at with `browse` or
+the browser. `fetch_url` and `http_request` run on your machine, not in the computer, so
+they never get that exception.
 
 `mode: full` means the internet. It does not mean the cloud metadata service at
 `169.254.169.254` that hands IAM credentials to anything that asks — and an agent that
@@ -135,8 +154,11 @@ Requests depend on the task and provider:
 
 - The model provider you configured.
 - A container registry, when a flavor's image is not already pulled.
+- Chrome for Testing (Playwright's CDN on arm64), from inside the computer, the first
+  time it needs the browser and has no Chromium of its own.
 - Public sources and search services you ask the agent to access.
 - The remote computer provider you configured, if any.
+- With remote access on, the npm registry, for advisories against Husk's own packages.
 
 The installed runtime has no product telemetry or crash reporter. The hosted website
 and docs use Vercel Web Analytics.

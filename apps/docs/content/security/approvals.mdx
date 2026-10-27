@@ -113,8 +113,12 @@ The stream emits:
   "request": {
     "runId": "run_01hxyz", "huskId": "triage", "tool": "shell",
     "callId": "call_1", "args": { "command": "rm -rf /work/build" },
-    "prompt": "Allow shell?", "dangerous": true } }
+    "prompt": "Allow shell?", "details": { "command": "rm -rf /work/build" },
+    "dangerous": true } }
 ```
+
+`runId` is the run's own, the one `run_start` gave. `callId` is the id of the tool call,
+which its `tool_start` already carried, so a client can match the approval to the call.
 
 Answer it:
 
@@ -137,17 +141,11 @@ curl -s localhost:7377/v1/approvals | jq
 ```json
 { "approvals": [
   { "approvalId": "apr_01hxyz", "runId": "run_01hxyz", "husk": "triage",
-    "call": { "type": "tool_call", "id": "call_1", "name": "shell", "args": {} },
+    "call": { "type": "tool_call", "id": "call_1", "name": "shell",
+              "args": { "command": "rm -rf /work/build" } },
     "createdAt": "2026-09-10T09:00:00.000Z",
     "expiresAt": "2026-09-10T09:02:00.000Z" } ] }
 ```
-
-<Note>
-`docs/API.md` shows the streamed event as `{"type":"approval_required","approvalId":"apr_x","call":{...}}`.
-The event the server actually emits carries `request`, an `ApprovalRequest`, not `call`.
-The code is the contract here; `call` is what the `PendingApproval` in
-`GET /v1/approvals` carries.
-</Note>
 
 ### Timeouts
 
@@ -180,8 +178,10 @@ const ok = await ctx.confirm('Overwrite 412 files in /work/src?', { count: 412 }
 
 It follows the mode: `auto` resolves `true` immediately, `readonly` resolves `false`
 immediately, and `ask` raises a real approval. Over HTTP the approval queue is keyed on
-a tool call, so a free-form confirm gets a synthetic one named `confirm` rather than a
-separate code path.
+a tool call, so a free-form confirm gets a synthetic one, with the id and the name of the
+tool that asked, rather than a separate code path. That name is what `remember` records:
+remembering a tool's confirm also lets that tool's own dangerous calls through without
+asking.
 
 ## Choosing a mode
 

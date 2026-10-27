@@ -211,3 +211,6 @@ not stop or reuse each other’s computer. Use `--session <key> --keep` (or
 explicitly share a key must use `--keep` so that one disconnecting does not stop it
 under the other. A client that shares one MCP process across chats also shares that
 computer.
+
+The optional viewer is separate: `viewer not running` in `computer_info` only means
+`husk serve` is not available. It does not describe the computer's health.

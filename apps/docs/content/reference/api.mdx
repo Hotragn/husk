@@ -1,13 +1,15 @@
 ---
 title: HTTP API
 navTitle: HTTP API
-description: Every route husk serve actually registers, its real request and response shape, and the four places docs/API.md describes something the server does not do.
+description: The routes husk serve registers, their real request and response shapes, and how auth, errors and streaming behave.
 order: 3
 ---
 
 `husk serve` exposes a JSON control plane on `127.0.0.1:7377`. Everything below was
-read out of `packages/server/src/routes/` and checked against a running server. Where
-this page and `docs/API.md` disagree, the code wins and the difference is called out.
+read out of `packages/server/src/routes/`, where the code wins. The routes clients use
+most have their shapes here; [Other routes](#other-routes) lists the rest, and
+[`docs/API.md`](https://github.com/Hotragn/husk/blob/main/docs/API.md), the contract the
+server is tested against, has every shape.
 
 ```bash
 husk serve
@@ -15,13 +17,15 @@ curl -s localhost:7377/health
 ```
 
 ```json
-{ "ok": true, "version": "0.1.0", "uptimeSec": 8 }
+{ "ok": true, "version": "0.2.0", "protocol": 1, "uptimeSec": 8 }
 ```
 
 ## Conventions
 
 - Base path `/v1`. JSON in, JSON out, unless noted.
-- `/health` is at the **root**, not under `/v1`, and is the only unauthenticated path.
+- `/health` is at the **root**, not under `/v1`, and never needs a token. Neither do the
+  console's page and assets (a `GET` outside `/v1`) nor `/v1/a/*`, where a chat app such
+  as Slack posts its events, checked against that app's own signature.
 - IDs are opaque strings. Never parse them.
 - Timestamps are ISO 8601 UTC.
 - Every response carries `X-Husk-Version`.
@@ -30,16 +34,23 @@ curl -s localhost:7377/health
 
 ### Auth
 
-When `HUSK_TOKEN` is set, every request outside `/health` needs
+When `HUSK_TOKEN` is set, every request to a `/v1` route but `/v1/a/*` needs
 `Authorization: Bearer <token>`. Comparison is constant-time.
 
-When it is not set, every request passes — but the server only ever reaches that state
+When it is not set, no token is asked for — but the server only ever reaches that state
 on a loopback bind, because it refuses to start otherwise:
 
 ```text
 error refusing to bind 0.0.0.0 without an auth token: this API can execute shell commands
 hint:  set HUSK_TOKEN=$(openssl rand -hex 32) before `husk serve --host 0.0.0.0`, or bind 127.0.0.1
 ```
+
+Token or not, a web page cannot drive the server:
+
+- A request whose `Origin` is not `localhost`, `127.x` or `[::1]` is refused with 403,
+  WebSockets included.
+- On a loopback bind, a request whose `Host` is not one of those names is refused, with
+  401 without a token and 403 with one, so DNS rebinding reaches nothing.
 
 Browsers cannot set headers on `EventSource` or `WebSocket`, so for those two
 transports only — detected by `Accept: text/event-stream` or an `Upgrade: websocket`
@@ -63,20 +74,27 @@ Status is derived from the code: an explicit table first, then two suffix rules.
 | `E_NOT_IMPLEMENTED` | 501 |
 | `E_PROVIDER_UNAVAILABLE`, `E_MODEL_UNAVAILABLE` | 503 |
 | `E_EXEC_TIMEOUT` | 504 |
+| `E_COMPUTER_HELD`, `E_COMPUTER_IN_CHAT` | 409 |
 | anything ending `_NOT_FOUND` | 404 |
 | anything ending `_DENIED` | 403 |
 | everything else | 500 |
 
-The server declares five codes that `@husk-ai/core` does not: `E_HUSK_NOT_FOUND`,
-`E_RUN_NOT_FOUND`, `E_APPROVAL_NOT_FOUND`, `E_TRANSCRIPT_NOT_FOUND`,
-`E_ROUTE_NOT_FOUND`. They land on 404 through the suffix rule.
-[Error codes](/reference/errors) is the full list.
+A body the server cannot read keeps the status the parser gave it: JSON that does not
+parse is a 400 with `E_SPEC_INVALID`, and a body over its route's cap a 413 with
+`E_QUOTA`, whose hint names the cap.
+
+The server declares nine codes that `@husk-ai/core` does not: `E_HUSK_NOT_FOUND`,
+`E_RUN_NOT_FOUND`, `E_APPROVAL_NOT_FOUND`, `E_HANDOFF_NOT_FOUND`, `E_BROWSER_NOT_FOUND`,
+`E_TRANSCRIPT_NOT_FOUND` and `E_ROUTE_NOT_FOUND` land on 404 through the suffix rule;
+`E_COMPUTER_HELD` and `E_COMPUTER_IN_CHAT` are 409. [Error codes](/reference/errors) is
+the full list.
 
 ### Streaming
 
 Streaming endpoints are Server-Sent Events: `Content-Type: text/event-stream`, one
 `data:` line per event carrying a JSON object, a `: ping` comment every 15 seconds, and
-a terminating `event: done`.
+a terminating `event: done`. A failure mid-stream is an `event: error` frame carrying the
+usual error body, then `event: done`.
 
 A client that stops draining the socket for 60 seconds is treated as gone: the stream
 closes and the run it was driving is aborted. A closed browser tab stops spending
@@ -96,9 +114,12 @@ responses — a retried streaming request runs the agent again.
 ## Health and capability
 
 ```text
-GET /health     -> 200 { ok, version, uptimeSec }
+GET /health     -> 200 { ok, version, protocol, uptimeSec }
 GET /v1/doctor  -> 200 DoctorReport
 ```
+
+`protocol` is what a chat's MCP process and the shared Husk must agree on. Under remote
+access's public URL, `/health` answers `{ ok: true }` and nothing more.
 
 `DoctorReport` is one shape with three consumers: this endpoint, `@husk-ai/sdk`, and
 `husk doctor --json`. Real output from a machine with no keys and no Docker daemon,
@@ -149,17 +170,12 @@ abridged:
 not actionable on its own. A provider's model list is capped at 12 ids, and is only
 requested from providers that answered the availability probe.
 
-<Note>
-The example in `docs/API.md` shows `docker` at priority 100 and `ollama` at 50. The
-real numbers are docker 20, podman 18, ssh 16, fly 14, local 10 for computers, and
+The priorities are docker 20, podman 18, ssh 16, fly 14 and local 10 for computers, and
 anthropic 95, openai 85, google 80, groq 60, deepseek 58, cerebras 56, openrouter 55,
-mistral 52, together 50, lmstudio 42, ollama 40 for models. It also omits
-`isolationKind`, which the server does return.
-</Note>
+mistral 52, together 50, lmstudio 42 and ollama 40 for models.
 
-`GET /v1/doctor?force=true` is accepted by the SDK's `doctor({ force: true })`, but the
-route ignores the query parameter — provider status is always fetched with
-`manager.status(false)`.
+`GET /v1/doctor` takes no query parameters. It reads provider status with
+`manager.status(false)`, which may answer from the probe cache.
 
 ---
 
@@ -173,6 +189,11 @@ DELETE /v1/computers/:id        -> 204
 POST   /v1/computers/:id/stop   -> ComputerInfo
 POST   /v1/computers/:id/start  -> ComputerInfo
 ```
+
+Husk never deletes a chat's computer on its own, and `DELETE` refuses one (422) unless
+`?confirm=` repeats its id. On docker and podman a chat's or a bot's computer keeps its
+files and browser logins for its next computer; `?erase=true`, with `?confirm=`, takes
+those too, as the console's Delete does.
 
 The create body is validated with a **strict** schema — an unknown key is a 422, not a
 silently ignored typo. A `memoryMB` that quietly became "no memory limit" is exactly
@@ -256,7 +277,9 @@ POST /v1/computers/:id/ports  body: { port: 8000 }  -> PortBinding
 WS   /v1/computers/:id/terminal
 ```
 
-`port` must be 1–65535. The response is `{ hostPort, url, publicUrl? }`.
+`port` must be 1–65535. The response is `{ hostPort, url, publicUrl?, reachable? }`;
+`reachable` says whether anything answered on `url` when the binding was made, and is
+absent when the provider did not check.
 
 The terminal socket is **not** a pty. Husk ships no native modules, so there is no
 `node-pty`; `exec` with `tty: true` is as close as the providers get, and the socket
@@ -287,8 +310,9 @@ DELETE /v1/husks/:name     -> 204
 POST   /v1/husks/validate  body: { spec } | { yaml } -> { ok, issues? }
 ```
 
-`HuskSummary` is `{ name, displayName, description, model, version, tools, triggers,
-computer: { enabled, flavor }, updatedAt, runCount }`.
+`HuskSummary` is `{ name, displayName, description, model, engine, version, tools,
+triggers, computer: { enabled, flavor }, updatedAt, runCount }`, where `engine` is
+`builtin`, `claude-code` or `codex`.
 
 `PUT` requires `spec.name` to match the path. Renaming is a `DELETE` then a `POST`, so
 that a rename is visibly two operations rather than an invisible one.
@@ -414,8 +438,8 @@ the previous page, base-36.
 
 `GET /v1/runs/:runId` returns the `RunResult` once the run has finished. **While a run
 is still in flight it returns the `RunSummary` in the `result` slot** instead, so a
-poller can see status without special-casing a 404. `docs/API.md` types that field as
-`RunResult` unconditionally.
+poller can see status without special-casing a 404. Tell them apart by `stopReason`,
+which only a `RunResult` has.
 
 `POST /v1/runs/:runId/cancel` is idempotent. An already-finished run answers 202 with
 `{ runId, cancelled: false, status: "complete" }` rather than an error, because a client

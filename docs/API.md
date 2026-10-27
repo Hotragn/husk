@@ -15,13 +15,22 @@ invents endpoints the other does not know about.
   ```json
   { "error": { "code": "E_COMPUTER_NOT_FOUND", "message": "no computer with id cmp_x", "hint": "run `husk ps` to list computers" } }
   ```
-  `code` is a `HuskErrorCode` from `@husk-ai/core`. Status mapping: `E_*_NOT_FOUND` → 404,
+  `code` is a `HuskErrorCode` from `@husk-ai/core`, or one of the nine the server adds
+  (`packages/server/src/errors.ts`): `E_HUSK_NOT_FOUND`, `E_RUN_NOT_FOUND`,
+  `E_APPROVAL_NOT_FOUND`, `E_HANDOFF_NOT_FOUND`, `E_BROWSER_NOT_FOUND`,
+  `E_TRANSCRIPT_NOT_FOUND`, `E_ROUTE_NOT_FOUND`, `E_COMPUTER_HELD` and
+  `E_COMPUTER_IN_CHAT`. The workspace routes have codes of their own
+  ([Workspaces](#workspaces)). Status mapping: `E_*_NOT_FOUND` → 404,
   `E_*_DENIED` → 403, `E_SPEC_INVALID` → 422, `E_QUOTA` / `E_BUDGET_EXCEEDED` → 429,
   `E_NO_CREDENTIALS` → 401, `E_PROVIDER_UNAVAILABLE` / `E_MODEL_UNAVAILABLE` → 503,
   `E_NOT_IMPLEMENTED` → 501, `E_EXEC_TIMEOUT` → 504, `E_COMPUTER_HELD` / `E_COMPUTER_IN_CHAT` → 409, everything else → 500.
 
   The two suffix rules are applied as rules, not as a table, so a new
   `E_<thing>_NOT_FOUND` lands on 404 without anyone editing the server.
+
+  A body the server cannot read keeps the HTTP status the parser gave it: JSON that does
+  not parse is a 400 with `E_SPEC_INVALID`, and a body over its route's cap is a 413
+  with `E_QUOTA`, whose hint names that cap.
 
   `E_EXEC_TIMEOUT` and `E_STEP_LIMIT` are declared in `HuskErrorCode` but husk never
   throws them: an exec that runs out of time is an `ExecResult` with
@@ -36,10 +45,14 @@ invents endpoints the other does not know about.
   reach it through DNS rebinding. A request carrying an `Origin` that is not one of
   those names is refused (403), WebSockets included: a web page cannot drive it. The
   console's own page and assets (`GET` outside `/v1`) load without the token; every
-  API route is under `/v1`. `/health` is always unauthenticated.
+  API route is under `/v1`. `/health` is always unauthenticated, and so is `/v1/a/*`,
+  where a chat app such as Slack posts its events: the adapter checks that app's own
+  signature. A browser's `EventSource` and `WebSocket` cannot set headers, so for those
+  two transports alone the token may come as `?token=` or `?access_token=`.
 - Streaming endpoints are Server-Sent Events: `Content-Type: text/event-stream`, one
   `data:` line per event carrying a JSON object, a heartbeat comment every 15 s, and a
-  terminating `event: done`.
+  terminating `event: done`. A failure mid-stream is an `event: error` frame carrying the
+  usual `{ "error": … }` body, then `event: done`.
 - Every mutating endpoint accepts an optional `Idempotency-Key` header.
 
 ## Health and capability
@@ -214,8 +227,11 @@ The setup, tunnels included, is in the guide (`apps/docs/content/guides/remote-a
   carries: a tunnel passes `Host` on as the caller wrote it, so the port decides, not the
   name. The API's port serves none of these routes.
 - **Computers.** Remote chats get them only from an isolated provider (`--provider`,
-  Docker by default); the server refuses to start if it is not one. They are bound
-  apart from this machine's own chats, so neither side can reach the other's by id.
+  Docker by default); the server refuses to start if it is not one. An `ssh` target that
+  is this machine, by a loopback name such as `localhost` or `127.0.0.1`, is not one.
+  They are bound apart from this machine's own chats, so neither side can reach the
+  other's by id. A remote
+  chat gets the computer tools alone: the workspace tools work on this machine's files.
 - **Security advisories.** Before serving, and daily after, the server sends its Husk
   packages and every runtime dependency they resolve, by name and version only, to the
   npm registry's bulk advisory endpoint (`HUSK_ADVISORY_ENDPOINT` points elsewhere).
@@ -240,15 +256,17 @@ POST /oauth/link/start | /oauth/link                 its passkey, then an owner 
 GET  /health                                         { ok: true } and nothing more
 ```
 
-- **Approvals.** A remote chat's call that changes things (`shell`, `write_file`,
-  `edit_file`, `expose_port`, and clicking, typing, selecting, uploading or scripting in
-  the browser) runs only with the owner's word.
+- **Approvals.** A remote chat's call that changes things runs only with the owner's
+  word: `shell`, `write_file`, `edit_file`, `expose_port`, and in the browser
+  `browser_click`, `browser_type`, `browser_select`, `browser_upload`, `browser_run`
+  (several steps in one call) and `browser_script`.
   - The call answers at once, with a link to `/oauth/approve?id=…` for the model to
     relay. The owner approves there with their passkey, from anywhere, and the model
     calls again with the same arguments.
-  - The page shows a line saying what the call does, then every argument it sends,
-    exactly, with characters that could hide or reorder text shown as escapes. A call
-    bigger than 20,000 characters shown is never put to the owner, and never runs.
+  - The page shows a line saying what the call does, then the computer it runs on and
+    every argument it sends, exactly, with characters that could hide or reorder text
+    shown as escapes. A call bigger than 20,000 characters shown is never put to the
+    owner, and never runs.
   - An approval covers that one call, once: the same tool, computer and arguments, in any
     key order. Ten minutes unanswered is a no.
   - Saying no needs no passkey. Letting that app make any call of that tool, on any of its
@@ -267,9 +285,10 @@ GET  /health                                         { ok: true } and nothing mo
   register an app. The page names where it sends the owner back, and says plainly when
   that is not claude.ai, ChatGPT, Perplexity or an app on the owner's own device. Every answer sent
   back carries `iss` (RFC 9207, advertised in the metadata).
-- **Links a remote chat gives its person** (a handoff, a look at a computer) are under
-  the public URL, at `/oauth/link#handoff=…&token=…`. The chat holds the link too, and so
-  may whoever it was shown to, so it opens only after the owner's passkey:
+- **Links a remote chat gives its person** are under the public URL: a handoff at
+  `/oauth/link#handoff=…&token=…`, a look at a computer at
+  `/oauth/link#computer=…&token=…`. The chat holds the link too, and so may whoever it
+  was shown to, so it opens only after the owner's passkey:
   - `/oauth/link` asks for the passkey, then goes on to the console with an owner session
     in the fragment, which no server sees.
   - Under the public URL, only the console's page and files answer without both. They
@@ -303,6 +322,8 @@ GET  /health                                         { ok: true } and nothing mo
   sign-in that typed the old one. Every later sign-in needs that passkey. A passkey whose
   counter does not go up is refused; one that keeps no count (zero every time) is fine.
 - **Redirects.** Only ones the app registered, https or loopback http.
+- **Registered apps.** At most 50. At the cap, apps that registered over an hour ago and
+  never signed in make way; with none of those, registration is refused.
 - **A new public URL.** The passkey and every token belong to the name they were made
   under, so starting with another `--public-url` forgets the owner, the apps and the
   tokens, says so, and prints a claim code.
@@ -323,7 +344,8 @@ createdAt }], advisories: [{ name, version, title, severity, url, vulnerable? }]
 checkedAt?, checkError? }`. `apps` lists only apps the owner let in and that have not been
 signed out since; `createdAt` is when they were let in. Off keeps the owner, so signing
 back in is their passkey away. `GET /v1/overview` carries `remote: { on, publicUrl, apps,
-offReason?, warning? }` while the server serves remote access, for Husk Bar.
+offReason?, warning? }` while the server serves remote access, for Husk Bar; there `apps`
+is how many apps are signed in, not the list.
 
 ### Exec
 
@@ -380,50 +402,66 @@ machines. It is also the one place a declared `network` policy becomes real on
 the `local` provider, which cannot filter egress at the OS level.
 
 ```json
-{ "url": "https://example.com/", "requestedUrl": "https://example.com",
+{ "url": "https://example.com/", "requestedUrl": "https://example.com/",
   "status": 200, "contentType": "text/html; charset=utf-8",
-  "title": "Example Domain", "text": "Example Domain
-
-This domain is for use…",
+  "title": "Example Domain", "text": "Example Domain\n\nThis domain is for use…",
   "links": [{ "text": "More information", "href": "https://iana.org/domains/example" }],
   "bytes": 559, "totalBytes": 1256, "truncated": false,
   "elapsedMs": 142, "via": "python3" }
 ```
 
-`bytes` is what was read, after truncation; `totalBytes` is the server's
-`Content-Length` when it sent one, and null otherwise. A refused host returns
-**403** and, unusually, carries `details` -- because a UI needs to tell "not in
-your allow-list" from "blocked by the built-in loopback rule":
+`requestedUrl` is the URL as Husk parsed it, so `https://example.com` comes back with
+its slash; `url` is where the redirects ended. `bytes` is what was read, after
+truncation; `totalBytes` is the server's `Content-Length` when it sent one, and null
+otherwise. A computer without python3 fetches with curl (`via: "curl"`): the text is the
+body with its tags stripped, `title` is `""`, `links` is `[]` and `totalBytes` is null.
+
+A refused host returns **403** and, unusually, carries `details` -- because a UI needs
+to tell "not in your allow-list" from "blocked by the built-in internal-address rule":
 
 ```json
 { "error": { "code": "E_EXEC_DENIED",
   "message": "network policy refuses 169.254.169.254",
-  "hint": "loopback, link-local and RFC1918 hosts must be named in computer.network.allow",
-  "details": { "host": "169.254.169.254", "mode": "egress", "internal": true } } }
+  "hint": "link-local and RFC1918 hosts must be named in computer.network.allow",
+  "details": { "host": "169.254.169.254", "mode": "egress", "internal": true, "loopback": false } } }
 ```
 
-`internal: false` means the host is ordinary and simply not allowed; the hint
-points at `mode: full` instead. `file://` and every other scheme are refused
-before the fetch, so this endpoint cannot be turned into a host file reader.
+`mode` is `"unset"` when the computer has no network policy. The hint has three cases:
+an internal address, as above; loopback where the computer shares its machine's network
+(`local`, `ssh`), whose hint says to use an isolated provider or name the host in
+`computer.network.allow`; and an ordinary host that is simply not allowed
+(`internal: false`), whose hint points at `mode: full`. `file://` and every other scheme
+are refused before the fetch, so this endpoint cannot be turned into a host file reader.
 
 ### Ports and terminal
 
 ```
 POST /v1/computers/:id/ports  body: { "port": 8000 } -> PortBinding
-WS   /v1/computers/:id/terminal?cols=120&rows=32
+WS   /v1/computers/:id/terminal
 ```
 
-The terminal socket carries raw bytes as stdin/stdout, with one JSON control frame for
-resize: `{"type":"resize","cols":n,"rows":n}`.
+`PortBinding` is `{ hostPort, url, publicUrl?, reachable? }`: `reachable` says whether
+anything answered on `url` when the binding was made, and is absent when the provider
+did not check.
+
+The terminal socket is not a pty: Husk ships no native modules, so there is none. Each
+message is one command, run with `tty: true`: a raw string, or
+`{"type":"exec","cmd":"ls -la"}`. Replies are JSON frames: `{"type":"ready","computerId":…,"workdir":…}`
+on connect, then `{"type":"stdout","data":…}` and `{"type":"stderr","data":…}`, then
+`{"type":"exit","exitCode":n,"durationMs":n}`, or `{"type":"error","error":…}`. A resize
+frame, `{"type":"resize","cols":n,"rows":n}`, is accepted and ignored.
 
 ```
 WS   /v1/computers/:id/screen?fps=1..4
 ```
 
 The computer's browser, live, while the socket is open: `{"type":"frame","data":<base64 jpeg>,"width":n,"height":n}`
-up to four times a second (or `fps`, for a small screen among many), or `{"type":"idle"}` once while no browser is open. It never
-launches one. The driver answers one request at a time from inside the computer, so this
-asks for each frame rather than subscribing to Chrome's own screencast.
+up to four times a second (or `fps`, for a small screen among many), or
+`{"type":"idle","message":…}` once while no browser is open. It never launches one.
+Frames are pushed: Chrome's own screencast, through the long-lived driver in the
+computer, one cast for every viewer. Where the provider cannot keep a driver running,
+it asks for one frame at a time instead. An unknown computer gets
+`{"type":"error","code":"E_COMPUTER_NOT_FOUND",…}` and the socket closes.
 
 ## Setup
 
@@ -438,16 +476,22 @@ POST   /v1/setup/follow        body: { launch } -> { moved: ConnectResult[] }
 ```
 
 `:app` is one of `claude-desktop`, `claude-code`, `cursor`, `vscode`, `windsurf`, `zed`,
-`codex`, `gemini`. A `ChatApp` is `{ id, name, found, connected, where, after }`:
-whether it is on this machine, whether Husk is already in it, the file Husk edits or
-the command it runs, and what to do next (usually restart the app). Connecting writes
-the launch line `npx -y @husk-ai/mcp [--provider p] [--flavor f]`. For an app with a
+`codex`, `gemini`. A `ChatApp` is `{ id, name, found, connected, outdated, where, after }`:
+whether it is on this machine, whether Husk is already in it, whether its `husk` entry
+starts another Husk than this one (an older release, or another install), the file Husk
+edits or the command it runs, and what to do next (usually restart the app). Connecting
+writes this install's launch line, `npx -y @husk-ai/mcp@~0.2 [--provider p] [--flavor f]`
+(the range is the release's own major and minor), or from the desktop app's Husk the
+app's own copy, and moves an outdated entry to it, keeping its flags and env. For an app with a
 JSON config, the file is backed up first (`ConnectResult.backup`), and only the `husk`
 entry changes, in place: the rest of the file keeps its layout and comments. A file
 that is not JSON as that app reads it is refused and left untouched: Zed's settings may
 have comments, the other apps' files may not.
 Claude Code and Codex are changed through their own `mcp add` / `mcp remove`
-commands. `test` makes a throwaway computer, runs `uname -sr`, and removes it.
+commands. `test` makes a throwaway computer, runs `uname -sr || ver`, and removes it.
+Every `POST` here must be `Content-Type: application/json`, which a browser cannot send
+to another site without asking first, so another website cannot connect Husk to your
+apps.
 
 `follow` is the desktop app's, after it updates or moves. Every chat app whose `husk`
 entry starts a Husk desktop app's own copy by another line moves to this Husk's line,
@@ -466,8 +510,9 @@ DELETE /v1/husks/:name     -> 204
 POST   /v1/husks/validate  body: { spec } | { yaml } -> { ok, issues?: string[] }
 ```
 
-`HuskSummary`: `{ name, displayName, description, model, version, tools, triggers,
-computer: { enabled, flavor }, updatedAt, runCount }`.
+`HuskSummary`: `{ name, displayName, description, model, engine, version, tools, triggers,
+computer: { enabled, flavor }, updatedAt, runCount }`. `engine` is what runs it:
+`builtin`, or the person's own `claude-code` or `codex`.
 
 ## Running a husk
 
@@ -733,6 +778,31 @@ is 403 `E_EXEC_DENIED`. Its prompt comes from the signed body alone: the query s
 is not signed, so `?input=` on a captured delivery would have run any prompt. There
 is no replay window, so the same signed delivery sent again runs again.
 
+## Workspaces
+
+Saved local workspaces: the public sources a chat adds and the results it writes. The
+same routes serve a chat's own workspace viewer (`workspace_open_ui`).
+
+```
+GET    /v1/workspaces                     -> { "workspaces": WorkspaceSummary[] }
+POST   /v1/workspaces                     body: { "name" } -> 201 WorkspaceManifest
+GET    /v1/workspaces/:id                 -> WorkspaceManifest
+POST   /v1/workspaces/:id/sources         body: { "url" } -> { source: SourceRecord, content }
+GET    /v1/workspaces/:id/files?path=     -> { path, content, sourceIds }
+PUT    /v1/workspaces/:id/files           body: { "path", "content", "sourceIds"? } -> WorkspaceFile
+GET    /v1/workspaces/:id/download?path=  -> the file, as an attachment
+GET    /v1/workspaces/:id/export          -> application/zip
+DELETE /v1/workspaces/:id                 body: { "confirmName": "<its name>" } -> { "ok": true }
+```
+
+A source is fetched from this machine, not from a computer. What the store accepts and
+keeps is in `packages/workspaces/README.md`. These routes answer errors in the usual
+shape, with no hint, and with codes of their own: `E_INPUT` (400) for a body or query
+that does not fit; the store's `INVALID_INPUT` and `SOURCE_BLOCKED` (400), `NOT_FOUND`
+(404), `CONFLICT` and `STORE_BUSY` (409), `LIMIT_EXCEEDED` (413), `SOURCE_FAILED` (502),
+`SOURCE_TIMEOUT` (504) and `STORE_CORRUPT` (500); and `E_WORKSPACE` (500) for anything
+else.
+
 ## Models
 
 ```
@@ -747,10 +817,16 @@ POST /v1/models/chat/stream  body: ChatRequest -> SSE of StreamEvent
 WS /v1/events
 ```
 
-A firehose of `{ type, at, payload }` for the console: computer state changes, each AI
-call as it starts and once it ends (`tool_started`, `tool_called`), run lifecycle,
-reaper actions, provider availability flips. Send
-`{"type":"subscribe","topics":["computers","runs"]}` to filter.
+A firehose of `{ type, at, topic, payload }` for the console: computer state changes,
+each AI call as it starts and once it ends (`tool_started`, `tool_called`), run
+lifecycle, reaper actions, provider availability flips. The topics are `computers`,
+`runs`, `providers`, `triggers`, `adapters` and `reaper`.
+
+On connect the server sends `hello`, whose payload lists the topics and the active runs.
+Send `{"type":"subscribe","topics":["computers","runs"]}` to filter: the answer is
+`{ type: "subscribed", at, topics }`, then the buffered history for those topics, then
+live traffic. `{"type":"ping"}` gets `{ type: "pong", at }`. A frame for a viewer that has
+fallen far behind is dropped.
 
 ## Limits
 

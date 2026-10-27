@@ -30,17 +30,27 @@ what Husk itself talks to. This page is the security framing.
 
 ## Where each mode is enforced
 
-| Mode | Docker / Podman | Tool layer (`fetch_url`, `http_request`) |
+| Mode | Docker / Podman | Husk's tools and the browser's page loads |
 | --- | --- | --- |
 | `none` | `--network=none`, enforced by the kernel | Refused |
 | `egress` | **Not enforced.** The container has normal networking | Enforced by hostname |
 | `full` | Not enforced, by design | Enforced only by the floor and by `deny` |
 
 Neither Docker nor Podman can allow-list hostnames, so `egress` is enforced where the
-hostname is actually known: in the tools.
+hostname is actually known: in Husk's tools, and in the browser below them.
+
+- **The tools.** `fetch_url` and `http_request` check the URL, and each redirect hop
+  before it is asked. So do `browse`, `browser_goto`, a new tab from `browser_tabs`, the
+  `goto` steps of `browser_run` and the `page.goto` calls of `browser_script`.
+- **The browser's page loads.** The browser driver pauses every document a page loads by
+  itself and checks it against the same policy before anything is sent: each hop of a
+  redirect, a link, a script that sends the page somewhere, a frame and a pop-up's first
+  load. Subresources are not checked: images, scripts and a page's own `fetch` calls are
+  not documents. On `ssh` and `fly`, which start the driver once per call, a page's own
+  loads are checked only while a call runs.
 
 <Warning>
-`mode: egress` constrains the agent's `fetch_url` and `http_request` tools. It does not
+`mode: egress` constrains Husk's tools and the browser's page loads. It does not
 constrain `curl` run through `shell`, or a Python script the agent writes, or any
 process inside the machine that opens a socket.
 
@@ -49,15 +59,20 @@ choices. `none` is a kernel-enforced boundary on the container providers. `full`
 admission that there is no boundary.
 </Warning>
 
-On `local` and `ssh` there is no kernel enforcement at all, in any mode. The machine
-shares your network. `mode: none` on the `local` provider stops the tools and nothing
-else.
+On `local`, `ssh` and `fly` there is no kernel enforcement at all, in any mode:
+`mode: none` there stops Husk's tools and the browser, and nothing else. A `local`
+machine shares your network.
 
 ## The floor
 
-`isHostAllowed` refuses loopback, link-local and RFC1918 hosts **even in `mode: full`**,
-unless the operator names them in `allow`. The check runs *before* the mode is
-consulted, so `full` cannot override it.
+`isHostAllowed` refuses link-local and RFC1918 hosts **even in `mode: full`**, unless the
+operator names them in `allow`. The check runs *before* the mode is consulted, so `full`
+cannot override it.
+
+Loopback is refused too, with one exception: `browse` and the browser, which run in the
+computer, may reach `127.0.0.1` on Docker, Podman and Fly, where that address is the
+computer's own. `fetch_url` and `http_request` run on this machine, so to them loopback
+is always this machine's, and refused.
 
 ### Why 169.254.169.254 is the reason
 
@@ -120,9 +135,9 @@ request, though, so:
   This is the classic bypass and Husk does not stop it.
 - **`allow: ['*']`.** A `*` entry satisfies the explicit-allow test and therefore
   reopens the entire private range. Do not write it and expect the floor to hold.
-- **Anything that is not `fetch_url` or `http_request`.** `web_search` talks to Tavily
-  or Brave directly and is not filtered by the husk's policy. Neither is `curl` in a
-  shell.
+- **Anything that is not one of Husk's tools or a page's document.** `web_search` talks
+  to Tavily or Brave directly and is not filtered by the husk's policy. Neither is `curl`
+  in a shell, nor a page's images, scripts and `fetch` calls.
 
 If you are running an agent on a cloud instance with an instance profile attached, the
 floor is a speed bump, not a boundary. Remove the instance profile, or use IMDSv2 with

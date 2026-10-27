@@ -19,8 +19,8 @@ on your laptop.
 
 | Provider | `/work` | `/tmp` |
 | --- | --- | --- |
-| `docker`, `podman` | tmpfs, `<diskMb or 2048>m`, `rw,exec,nosuid`. A named volume `husk-<id>` when `persist: true` | tmpfs, 512m |
-| `local` | `~/.husk/workspaces/<id>/root`, bind-mounted onto `/work` inside `unshare -mr` on WSL | `~/.husk/workspaces/<id>/tmp` |
+| `docker`, `podman` | tmpfs, `<diskMb or 2048>m`, `rw,exec,nosuid`, mode `1777`. A named volume when `persist: true`: `husk-<id>`, or `husk-key-<key>-<digest>` for a chat's or a bot's computer | tmpfs, 512m |
+| `local` | `~/.husk/workspaces/<id>/root`. On WSL it is in the distro's home, which Windows reaches at `\\wsl.localhost\<distro>\…`, and is bind-mounted onto `/work` inside `unshare -mr` | `~/.husk/workspaces/<id>/tmp` |
 | `ssh` | `$HOME/.husk-work/<id>/work` on the remote box | `$HOME/.husk-work/<id>/tmp` |
 | `fly` | The microVM's own filesystem | The microVM's own filesystem |
 
@@ -29,9 +29,11 @@ outside `/work`, `/tmp` and `/run` fails loudly rather than mutating an image la
 is about to disappear.
 
 On `local` with WSL, the bind mount is created per exec inside a user and mount
-namespace, so two computers can both have a `/work` without seeing each other's files.
-The one prerequisite is an empty `/work` directory to mount onto, which cannot be created
-from inside the namespace — Husk creates it once, as root, and says so.
+namespace, so two computers can both have a `/work`, each its own. It does not hide one
+from the other: a shell command can still read another computer's files under
+`~/.husk/workspaces/`. The one prerequisite is an empty `/work` directory to mount onto,
+which cannot be created from inside the namespace — Husk creates it once, as root, and
+says so.
 
 If WSL is unavailable, the `local` provider cannot present a `/work` at all, so it
 reports the real host path as the workdir instead. A fictional workdir is worse than an
@@ -54,7 +56,13 @@ computer:
 ```
 
 On the container providers that swaps the `/work` tmpfs for a named Docker volume, so
-the filesystem survives `husk stop` and `husk start`. It does not survive `husk rm`.
+the filesystem survives `husk stop` and `husk start`. A chat's computer is made with
+`persist: true`.
+
+The volume of an anonymous computer goes with `husk rm`. One a chat or a bot made, under
+its key, does not: `husk rm` on it means "stop for now", and the next computer with that
+key finds the same files, the browser's logins in `/work` included. `husk rm --erase`,
+like the console's Delete, takes the volume too.
 
 ## Getting files in and out
 
@@ -127,9 +135,12 @@ it and the error that ended it are.
 
 ## Timeouts
 
-`exec` defaults to 120 seconds. On a timeout Husk kills the whole process group rather
-than just the shell — a `detached` child on POSIX gets its own process group, and on
-Windows `taskkill /T /F` walks the tree. The result reports `exitCode: 124` and
+`exec` defaults to 120 seconds. On `local`, a timeout kills the whole process group
+rather than just the shell — a `detached` child on POSIX gets its own process group, and
+on Windows `taskkill /T /F` walks the tree. In a container, on an ssh box, on a Fly
+machine and in a WSL distro, killing the client leaves the command running, so every
+command carries a tag in its environment, and a timeout or a cancel kills each process
+with that tag, inside the computer. The result reports `exitCode: 124` and
 `timedOut: true`.
 
 ## Snapshots

@@ -63,10 +63,13 @@ export const COMMANDS: HelpEntry[] = [
     name: 'doctor',
     group: 'system',
     summary: 'Show exactly what this machine can and cannot do',
-    usage: 'husk doctor [--json]',
+    usage: 'husk doctor [--json] [--force]',
     details:
       'Every computer provider with its availability, isolation, and what to do about it;\nevery model provider; what husk would pick right now; and any warnings.\nThis is the first thing to run when something is confusing.',
-    flags: [['--json', 'machine-readable report']],
+    flags: [
+      ['--json', 'machine-readable report'],
+      ['--force', 'probe every provider again, ignoring the 30-second cache'],
+    ],
     examples: ['husk doctor', 'husk doctor --json | jq .selection'],
   },
   {
@@ -83,6 +86,8 @@ export const COMMANDS: HelpEntry[] = [
       ['--network <mode>', 'none | egress | full (default: full, minus internal addresses)'],
       ['--packages <p,..>', 'install these in the machine at create time; repeatable'],
       ['--persist', 'keep the filesystem across restarts'],
+      ['--env K=V', 'set a variable inside the machine; repeatable'],
+      ['--idle-timeout <sec>', 'destroy it after this long unused, while husk serve runs (default: never)'],
       ['--json', 'print the computer record instead of the summary'],
     ],
     examples: [
@@ -145,6 +150,7 @@ export const COMMANDS: HelpEntry[] = [
       ['--cwd <path>', 'working directory inside the machine (default: /work)'],
       ['--timeout <sec>', 'kill the process tree after this long (default: 120)'],
       ['--env K=V', 'set an environment variable; repeatable'],
+      ['--stdin <text>', 'text to pipe to the command on stdin'],
       ['--json', 'buffer and print the full result as JSON instead of streaming'],
     ],
     examples: [
@@ -158,9 +164,10 @@ export const COMMANDS: HelpEntry[] = [
     name: 'shell',
     group: 'computers',
     summary: 'An interactive prompt against a computer',
-    usage: 'husk shell <name|id>',
+    usage: 'husk shell <name|id> [--cwd <path>]',
     details:
       'A readline loop, NOT a pty. Each line is a separate exec, so husk tracks `cd` for you,\nbut full-screen programs (vim, top, less) and anything that checks isatty will not work.\nUse `exit`, `quit`, or Ctrl-D to leave.',
+    flags: [['--cwd <path>', 'directory to start in (default: /work)']],
     examples: ['husk shell scratch'],
   },
   {
@@ -195,9 +202,9 @@ export const COMMANDS: HelpEntry[] = [
     summary: 'Find and import a chat transcript',
     usage: 'husk import [path] [--source <s>] [--pick <n>]',
     details:
-      'With no path, husk searches the usual places (Claude Code, ChatGPT exports, Cursor,\nmarkdown in the current directory), lists what it found, and asks you to choose.',
+      'With no path, husk searches the usual places (Claude Code, Codex, ChatGPT exports, Cursor,\nmarkdown in the current directory), lists what it found, and asks you to choose.',
     flags: [
-      ['--source <s>', 'claude-code | chatgpt | cursor | gemini | markdown | universal'],
+      ['--source <s>', 'claude-code | chatgpt | codex | cursor | gemini | markdown | universal'],
       ['--pick <n>', 'choose by number without being asked'],
       ['--limit <n>', 'how many candidates to list (default: 20)'],
       ['--json', 'print the discovered list, or the imported transcript'],
@@ -231,8 +238,10 @@ export const COMMANDS: HelpEntry[] = [
     flags: [
       ['--model <m>', 'override the spec\'s model'],
       ['--max-steps <n>', 'ceiling on tool-calling rounds'],
+      ['--max-cost <usd>', 'ceiling on what the run may spend (default: from the spec)'],
       ['--approve <mode>', 'auto | ask | readonly (default: from the spec)'],
       ['--no-computer', 'run without giving the agent a machine'],
+      ['--var K=V', 'fill {{K}} in the persona; repeatable'],
       ['--json', 'print the run result instead of streaming'],
     ],
     examples: [
@@ -268,12 +277,13 @@ export const COMMANDS: HelpEntry[] = [
     name: 'remote',
     group: 'system',
     summary: 'Remote access: who may sign in, a new claim code, and the switch',
-    usage: 'husk remote [claim|off|on|reset]',
+    usage: 'husk remote [claim|off|on|reset] [--json]',
     details:
       'Talks to the Husk started with `husk serve --remote`, on this machine. `claim` prints a new\n'
       + 'claim code while it has no owner. `off` signs every app out and makes the public URL a 404\n'
       + 'until `on`, which is refused while a high or critical advisory stands. `reset` removes the\n'
       + 'owner, every app that signed in and every token, and prints a claim code for a new owner.',
+    flags: [['--json', 'the status, or the new claim code, as JSON']],
     examples: ['husk remote', 'husk remote claim', 'husk remote off', 'husk remote reset'],
   },
   {
@@ -375,7 +385,9 @@ export function topLevelHelp(version: string, firstRun = false): string {
     ['--json', 'machine-readable output; the only thing on stdout'],
     ['-q, --quiet', 'errors only'],
     ['--no-color', 'plain text (also automatic when piped, and with NO_COLOR)'],
+    ['--color', 'colour even when piped'],
     ['--debug', 'full stack traces'],
+    ['-y, --yes', 'answer every confirmation with yes'],
     ['-h, --help', 'help for any command'],
   ];
   const flagWidth = Math.max(width, ...globals.map(([f]) => f.length));
@@ -417,7 +429,7 @@ export function commandHelp(entry: HelpEntry): string {
   out.push(bold('EXAMPLES'));
   for (const ex of entry.examples) out.push(`  ${gray('$')} ${ex}`);
   out.push('');
-  out.push(dim('  Global flags: --json --quiet --no-color --debug --help'));
+  out.push(dim('  Global flags: --json --quiet --no-color --color --debug --yes --help'));
   return out.join('\n');
 }
 

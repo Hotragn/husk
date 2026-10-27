@@ -112,7 +112,7 @@ What enforces the policy depends on what is reaching out:
 | What reaches out | `docker`, `podman` | `local` | `ssh` | `fly` |
 | --- | --- | --- | --- | --- |
 | Husk's own tools (`browse`, `browser_goto`, `browser_tabs`, `browser_run`, `browser_script`) | every mode | every mode | every mode | every mode |
-| The browser's page loads (redirects, links, frames, pop-ups) | every mode | every mode | every mode | no browser on fly yet |
+| The browser's page loads (redirects, links, frames, pop-ups) | every mode | every mode | every mode, while a call runs | every mode, while a call runs |
 | Processes (shell, scripts, servers): `none` | enforced by the kernel (`--network none`) | not enforced | not enforced | not enforced |
 | Processes: `egress`, a deny list, internal addresses | not enforced | not enforced | not enforced | not enforced |
 
@@ -146,11 +146,12 @@ Two independent controls:
 1. **Nothing credential-shaped enters the machine.** The environment scrub is deny-by-
    pattern over a small allow-list, so a variable you have never heard of is dropped
    rather than forwarded.
-2. **Nothing credential-shaped leaves a tool.** Every tool result passes through
-   `redact()` before it re-enters the conversation, matching Anthropic, OpenAI, Groq,
-   Google, GitHub, Slack, npm, Fly and xAI keys, AWS access key IDs, the token in an
-   `Authorization` or `Proxy-Authorization` header, and PEM private keys (untyped, RSA,
-   EC, OpenSSH or PGP). An agent that `cat`s a `.env` sees the file; the model sees
+2. **Nothing credential-shaped leaves a tool.** While `guardrails.redactSecrets` is on,
+   the default, every tool result passes through `redact()` before it re-enters the
+   conversation, matching Anthropic, OpenAI, Groq, Google, GitHub, Slack, npm, Fly and
+   xAI keys, AWS access key IDs, the token in an `Authorization` or
+   `Proxy-Authorization` header, and PEM private keys (untyped, RSA, EC, DSA, OpenSSH,
+   encrypted or PGP). An agent that `cat`s a `.env` sees the file; the model sees
    `sk-ant-…[redacted]`.
 
    An AWS *secret* access key is the documented exception: it is forty characters of
@@ -254,8 +255,8 @@ turned up these. Each is fixed and has a test:
   browser and has no Chromium of its own — to Chrome for Testing (Playwright's build on
   arm64), from inside that computer. With remote access on, it also asks the npm
   registry for advisories, sending its packages' names and versions and nothing else.
-- **No credential storage.** Husk reads keys from the environment and never writes them to
-  `~/.husk`. One thing does land there verbatim: `husk import` caches the transcript you
+- **No credential storage.** Husk reads keys from the environment, or from a
+  `~/.husk/.env` you write, and never writes them to `~/.husk`. One thing does land there verbatim: `husk import` caches the transcript you
   gave it, so a chat log containing a key keeps that key in `~/.husk/transcripts`. What
   Husk *derives* from it is redacted first — the distilled `husk.yaml`, its name, its
   slug and its filename — but the cached copy of your own file is not rewritten.
