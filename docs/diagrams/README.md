@@ -105,7 +105,7 @@ What crosses which line — and what `local` does **not** give you.
   <img alt="A tool call passes the path jail, command policy and env scrub into the computer; results pass redact() and the audit log" src="png/05-trust-boundaries.light.png">
 </picture>
 
-- Holds in **every** mode including `local`: path jail, command deny list, env scrub, output caps, process-tree kill, `redact()` on every result, `audited()` on every MCP call.
+- Holds on **every** provider, `local` included: command deny list, output caps, process-tree kill, `redact()` on every result, `audited()` on every MCP call. The path jail holds on `local` and `ssh`, where no container stands behind it, and the env scrub on `local`; the other providers never pass this machine's environment in.
 - `local` gives **no kernel boundary**. It shares your kernel, your network and your user account. The deny list stops accidents, not an adversary.
 - `169.254.169.254` is blocked even in `mode: full` — `full` means the internet, not the cloud metadata service.
 - Honest limits: `mode: egress` is enforced at the tool layer, not by a firewall; a raw socket is not stopped. An empty allow-list permits nothing. Approval with no approver wired denies.

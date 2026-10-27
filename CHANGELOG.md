@@ -300,6 +300,11 @@ not here.
   ([#260](https://github.com/Hotragn/husk/pull/260)).
 - **`fs/write` with a JSON body writes that JSON**, exactly as sent, not
   `[object Object]` ([#260](https://github.com/Hotragn/husk/pull/260)).
+- **`/work` in a command on an SSH computer is the computer's own.** The box has no
+  `/work`, and only the file tools mapped it, so `move`, `search_files` with ripgrep,
+  `browse`, setup scripts and the API's archive download and upload failed there. A
+  command's `/work` and `/tmp` paths are now mapped as on `local`, and the real
+  directories the shell prints are accepted back ([#262](https://github.com/Hotragn/husk/pull/262)).
 
 ### Security
 
@@ -330,6 +335,13 @@ not here.
   ([#257](https://github.com/Hotragn/husk/pull/257)).
 - **`systemctl stop <unit>` is refused**, as the docs said. The rule caught only the
   `service <name> stop` order ([#257](https://github.com/Hotragn/husk/pull/257)).
+- **The path jail holds where it had holes.** `move` checks its destination, and
+  `search_files` its root, before a shell runs `mv` or `rg`. On `local`, a link whose
+  target does not exist yet is judged by that target, so `write_file` no longer creates
+  a file outside through it. On SSH, the check resolves a path under a link and a
+  directory not made yet, refusing what it cannot resolve, and `husk cp` is checked as
+  the file tools are. An SSH box needs GNU `readlink` for this, which `husk doctor` now
+  checks ([#262](https://github.com/Hotragn/husk/pull/262)).
 
 ## [0.1.4] - 2026-09-22
 

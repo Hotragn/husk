@@ -183,12 +183,14 @@ this is reachable only through `POST /v1/computers`:
   one handshake instead of forty. The socket outlives suspends and network changes; if
   it dies, every exec falls back to `ControlMaster=auto` and simply opens a new
   connection.
-- Workspaces live at `$HOME/.husk-work/<id>/`, with `work` and `tmp` subdirectories,
-  both `chmod 700`. `$HOME` is resolved on the remote rather than assumed.
+- Workspaces live at `$HOME/.husk-work/<id>/`, with `work` and `tmp` subdirectories.
+  `~/.husk-work` and each `<id>` are `chmod 700`. `$HOME` is resolved on the remote
+  rather than assumed, and a command's `/work` and `/tmp` are mapped onto these.
 - File transfers use `scp`.
-- The path jail is compiled into the remote command itself: `readlink -f` resolves the
-  target and the guard exits **77** if it lands outside the workspace. A local
-  `realpath` would cost a round trip per operation.
+- The path jail is compiled into the remote command itself: `readlink -m` resolves the
+  target and the guard exits **77** if it lands outside the workspace or cannot be
+  resolved. A local `realpath` would cost a round trip per operation. Oracle Linux and
+  Ubuntu both ship GNU `readlink`.
 
 ## Step 5: If you want to reach a port
 
