@@ -6,7 +6,7 @@ import { ctxOf } from '../context.js';
 import type { ServerContext } from '../context.js';
 import { SseStream, pipeSse } from '../sse.js';
 import { CronBindings } from './cron.js';
-import { extractInput, headerString, mountKey, wantsStream } from './http.js';
+import { extractInput, headerString, inputFromBody, mountKey, wantsStream } from './http.js';
 import type { HttpMount } from './http.js';
 import { verifyHmacSignature } from './webhook.js';
 
@@ -182,7 +182,15 @@ export class TriggerHost {
 
       const env = process.env;
       const tokenEnv = TOKEN_ENV[trigger.type];
-      const detail = env[tokenEnv] ? `${tokenEnv} is set` : `idle -- ${tokenEnv} is not set`;
+      let detail = env[tokenEnv] ? `${tokenEnv} is set` : `idle -- ${tokenEnv} is not set`;
+      // Slack hears nothing without a second secret, and its events API wins when both are set (slack.ts).
+      if (trigger.type === 'slack' && env[tokenEnv]) {
+        detail = env.SLACK_SIGNING_SECRET
+          ? `${tokenEnv} is set; events api at /v1/a/${husk}/slack/events`
+          : env.SLACK_APP_TOKEN
+            ? `${tokenEnv} is set; socket mode`
+            : 'idle -- set SLACK_APP_TOKEN for socket mode, or SLACK_SIGNING_SECRET for the events api';
+      }
       mounted.push({ husk, type: trigger.type, at: trigger.type, detail });
       if (this.adapters.has(key)) continue;
 
@@ -311,7 +319,7 @@ export class TriggerHost {
         }
       }
 
-      const input = extractInput(req);
+      const input = mount.secret ? inputFromBody(req.body) : extractInput(req);
       if (!input) return this.noInput(reply);
       return this.runFor(mount.husk, input, reply);
     });

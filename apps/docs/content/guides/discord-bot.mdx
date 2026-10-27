@@ -326,7 +326,11 @@ unit from [Self-hosting](/guides/self-hosting#step-5-the-systemd-unit) and put
 
 ## Slack and Telegram
 
-The same shape: a trigger in the husk and a token in the server's environment.
+The same shape: a trigger in the husk and a token in the server's environment. A
+`slack` trigger needs `channels`, as `discord` does, and a `telegram` trigger an
+`allowlist` of usernames, user ids or chat ids (any case, `@` optional). Without one the
+trigger is not started, since it would answer anyone, and `GET /v1/triggers` says what to
+set.
 
 | Trigger | Token variable | Transport |
 | --- | --- | --- |
@@ -336,7 +340,9 @@ The same shape: a trigger in the husk and a token in the server's environment.
 | `telegram` | `TELEGRAM_BOT_TOKEN` | Long polling |
 
 Socket Mode and long polling are outbound only, so they work from a laptop. The Events
-API needs Slack to reach `husk serve` over HTTPS.
+API needs Slack to reach `husk serve` over HTTPS. With both Slack secrets set, the Events
+API is used and Socket Mode never connects. `GET /v1/triggers` says which one Slack
+listens on, or that it is idle for want of either.
 
 ## Troubleshooting
 
