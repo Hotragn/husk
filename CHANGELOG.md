@@ -11,6 +11,12 @@ not here.
 
 ## [Unreleased]
 
+Nothing below is on npm yet: the packages are still at 0.1.4 there. A public preview of
+the Claude Desktop extension, `husk-0.2.0.mcpb` with the starter workspace flow,
+unsigned, is on the
+[`preview-0.2.0`](https://github.com/Hotragn/husk/releases/tag/preview-0.2.0)
+pre-release of 7 October.
+
 ### Added
 
 - **Workspaces.** Named local workspaces keep the public sources you add and the
@@ -79,9 +85,9 @@ not here.
   rollouts import, and a draft runs on the chat's own app when it is installed
   ([#239](https://github.com/Hotragn/husk/pull/239)).
 - **A job host for bots' triggers.** Schedules, webhooks and chat-app triggers run in a
-  process of their own, which the shared Husk starts when a bot has a trigger and which
-  leaves once none has; a trigger keeps the shared Husk's address and token
-  ([#235](https://github.com/Hotragn/husk/pull/235)).
+  process of their own, `husk-mcp --jobs`, which the shared Husk starts when a bot has a
+  trigger and which leaves once none has; a trigger keeps the shared Husk's address and
+  token ([#235](https://github.com/Hotragn/husk/pull/235)).
 - **Take over at any moment**, from the console, the desktop app or a chat's link
   ([#180](https://github.com/Hotragn/husk/pull/180),
   [#182](https://github.com/Hotragn/husk/pull/182)).

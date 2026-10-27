@@ -23,10 +23,13 @@ because that step had been sitting on `main`, unused, since `0.1.2`.
 
 ## The sequence
 
-1. **One commit bumps everything.** Fifteen manifests, twenty-eight cross-workspace
-   pins, the version constants the drift check enforces, `docs/API.md`, and **all three
-   lockfiles** — `apps/docs` and `apps/web` are outside the workspace, so each needs its
-   own `cd` and `npm install --package-lock-only`. A root install does not reach them.
+1. **One commit bumps everything.** Every manifest with a version (eighteen), every
+   `@husk-ai/*` pin between them (thirty-seven), the version constants, `docs/API.md`,
+   both versions in `server.json` (the server and its npm package), the Claude Code
+   plugin's `plugins/husk/.claude-plugin/plugin.json`, and **all four lockfiles**. The
+   root one is the workspace's; `apps/docs`, `apps/web` and `apps/desktop` are outside
+   it, so each needs its own `cd` and `npm install --package-lock-only`, which a root
+   install does not reach. `npm run drift` names anything left on the old version.
 
 2. **`npm run preflight`.** Read-only: manifests, publish order, and what the registry
    already has.
@@ -47,6 +50,10 @@ because that step had been sitting on `main`, unused, since `0.1.2`.
 4. **Tag at an explicit SHA**, never at `HEAD`. `HEAD` moves; a release is a point.
 
 5. **`release.yml` publishes in dependency order**, then creates the GitHub Release.
+   Before anything, it runs the `starter` workflow (the Claude Desktop extension's
+   bundle and its smoke test), and the publish job checks the `NPM_TOKEN` secret with
+   `npm whoami` before building. The Release it cuts carries the extension,
+   `build/*.mcpb`, and its `.sha256`.
 
 6. **Verify from outside the repo**, against the registry rather than the workflow:
 
@@ -57,6 +64,15 @@ because that step had been sitting on `main`, unused, since `0.1.2`.
    Run it from a directory that is not this one. Node resolves a bare specifier by
    walking up from the script's location, so a check run inside the checkout can bind
    the workspace copy and report on your working tree instead of on what shipped.
+
+## Previews
+
+A preview is a GitHub pre-release under a `preview-X.Y.Z` tag. It carries the Claude
+Desktop extension (`husk-X.Y.Z.mcpb` and its `.sha256`) and notes that say what has and
+has not been observed with real users, as `preview-0.2.0` did on 7 October 2026. It
+publishes nothing to npm, so the CHANGELOG keeps its entries under `[Unreleased]` and
+says the preview exists, and nothing may describe an npm release of that version until
+the sequence above has run.
 
 ## The desktop installers
 

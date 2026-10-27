@@ -186,6 +186,16 @@ if (!SITES_ONLY) {
   // docs/API.md is the control-plane contract, not a website: the example
   // payload has to show the version the server actually returns.
   contains("docs/API.md", `"version": "${VERSION}"`, bump);
+  // The MCP registry's manifest names the release twice, the server and its npm
+  // package, and sat at 0.1.4 a release after the packages moved on.
+  {
+    const manifest = JSON.parse(read('server.json'));
+    const label = `server.json is on ${VERSION}, and so is its npm package`;
+    const stale = [manifest.version, ...(manifest.packages ?? []).map((p) => p.version)].filter((v) => v !== VERSION);
+    if (stale.length) failures.push({ label, hint: `found ${stale.join(', ')}; ${bump}` });
+    else passes.push(label);
+  }
+  contains('plugins/husk/.claude-plugin/plugin.json', `"version": "${VERSION}"`, bump);
 
   /* ---------------------------------------------------------------------------
      Every internal pin, in every dependency group.

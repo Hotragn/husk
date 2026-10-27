@@ -151,9 +151,10 @@ fetch and into the underlying `docker exec`, tool output clamped and passed thro
 `redact()` before it re-enters the conversation, and an approval hook so `ask` mode can
 gate a dangerous call on a human.
 
-Tools are bundles: `computer` (shell, ports, snapshot), `files` (read, write, edit, list,
-search), `web` (fetch, search), `http` (arbitrary request). A husk lists the bundles it
-wants; the loop assembles the schema list from that.
+Tools are bundles: `computer` (shell, ports, snapshot), `browser` (the zero-dependency
+`browse` and a real Chromium, in one bundle so the model picks per page), `files` (read,
+write, edit, list, search), `web` (fetch, search), `http` (arbitrary request). A husk
+lists the bundles it wants; the loop assembles the schema list from that.
 
 ## chat → bot
 
@@ -161,8 +162,8 @@ wants; the loop assembles the schema list from that.
 transcript ──▶ importer ──▶ Transcript ──▶ distiller ──▶ DistilledAgent ──▶ husk.yaml
 ```
 
-Importers normalise Claude Code JSONL, ChatGPT exports, Cursor, and pasted markdown into
-one `Transcript`. Branched threads are reconstructed by walking `parentUuid` from the last
+Importers normalise Claude Code JSONL, ChatGPT exports, Cursor, Codex, Gemini and pasted
+markdown into one `Transcript`. Branched threads are reconstructed by walking `parentUuid` from the last
 leaf, so you get the conversation as it actually ran, not every dead end.
 
 The distiller has two modes and the heuristic one has to be good, because it is the mode
@@ -181,7 +182,10 @@ scalars, a provenance header naming the transcript it came from.
 A husk becomes a bot through triggers declared in its spec: `http`, `cron`, `discord`,
 `slack`, `telegram`, `webhook`, `cli`. `@husk-ai/server` hosts them on one Fastify process
 with a JSON-file store (no native modules — a Windows `npm install` must be clean), and
-`@husk-ai/adapters` holds the per-platform front ends.
+`@husk-ai/adapters` holds the per-platform front ends. In the shared Husk that chats
+start, the triggers run in a job host of their own (`husk-mcp --jobs`), which the shared
+Husk starts whenever a bot has a trigger and forwards the trigger routes to; under
+`husk serve` they run in its own process.
 
 ## MCP: the wedge
 
@@ -193,12 +197,13 @@ That is the whole onboarding for the largest audience. `@husk-ai/mcp` exposes th
 as MCP tools over stdio, so Claude Code — or Cursor, or Zed, or anything speaking MCP —
 gets a Linux machine mid-conversation with no account, no config file, and no signup.
 
-Stdio is the only transport a chat app uses today. Behind it, each chat's MCP process
-forwards its computer tools over loopback HTTP to one shared Husk (`husk-mcp --daemon`,
-found through `~/.husk/daemon.json`), which owns every computer's browser, take-overs and
-activity, so the console and the desktop app see every chat. A streamable-HTTP transport
-for remote clients is specified in [SPEC-remote-mcp.md](SPEC-remote-mcp.md) and not
-implemented.
+Chat apps on the machine use stdio. Behind it, each chat's MCP process forwards its
+computer tools over loopback HTTP to one shared Husk (`husk-mcp --daemon`, found through
+`~/.husk/daemon.json`), which owns every computer's browser, take-overs and activity, so
+the console and the desktop app see every chat. Chat apps on the web (claude.ai, ChatGPT)
+reach Husk over streamable HTTP instead: `husk serve --remote` serves `/mcp` on a port of
+its own, behind a tunnel, for its owner alone, with OAuth sign-in, passkeys and approvals
+([SPEC-remote-mcp.md](SPEC-remote-mcp.md), and the remote-access guide in the docs).
 
 ## Deliberate non-goals
 
