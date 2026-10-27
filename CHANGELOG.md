@@ -305,6 +305,28 @@ not here.
   `browse`, setup scripts and the API's archive download and upload failed there. A
   command's `/work` and `/tmp` paths are now mapped as on `local`, and the real
   directories the shell prints are accepted back ([#262](https://github.com/Hotragn/husk/pull/262)).
+- **A run stopped part-way through a reply ends as what happened.** Cancelled, timed out,
+  or cut off by its provider while text was streaming, it ended `complete` with half an
+  answer; it now ends `aborted`, `timeout` or `error` ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **`memory` trims a long run.** A turn is a user message with its answer, or one step the
+  model takes after its tools answer, so a single `husk run`, cron or chat-triggered run
+  with many tool steps is trimmed too; it counted user messages only and never was. A
+  second trim summarises the first one's summary instead of dropping it, and a husk's
+  `examples` stay in place, so the anchor is the person's own message
+  ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **Model distillation works on Claude.** Anthropic's JSON mode prefills `{`, and the reply
+  came back without it, so every window failed to parse and the result fell back to the
+  heuristics. The brace is put back, in a whole reply and a stream
+  ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **Anthropic's thinking signatures are kept**, as `thinkingSignature` on a reply with one
+  thinking block, and sent back with the thinking, as a tool-use turn with thinking needs
+  ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **Gemini keeps a tool parameter named `default`, `const` or `examples`.** Pruning the
+  schema keywords it rejects removed properties by those names too
+  ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **A Claude Code transcript counts its thinking blocks** in the transcript's
+  `meta.thinkingBlocks`. The count went on the text that came with them, and Claude Code
+  writes a thinking block on a line of its own ([#264](https://github.com/Hotragn/husk/pull/264)).
 
 ### Security
 

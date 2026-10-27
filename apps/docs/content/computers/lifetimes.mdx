@@ -81,7 +81,7 @@ Two keys, two machines, two filesystems, one client.
 | `husk rm` | The machine and its filesystem are destroyed; the binding is cleared |
 | MCP client disconnects (stdin closes) | The machine is destroyed unless `--keep` |
 | SIGINT / SIGTERM to `husk mcp` | Same |
-| Ctrl-C during `husk run` | The run aborts between steps. **The machine is left alone** |
+| Ctrl-C during `husk run` | The run aborts at once, mid-step if need be. **The machine is left alone** |
 | Reaper | Only on `local`, `ssh` and `fly` |
 
 Ctrl-C during a run is deliberately non-destructive. You interrupted the agent, not the

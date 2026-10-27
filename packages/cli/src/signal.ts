@@ -2,7 +2,7 @@
  * One interrupt controller for the process.
  *
  * Ctrl-C aborts this signal rather than killing the process, so work unwinds:
- * a run stops between steps, an exec kills its child's process tree, and a
+ * a run stops at once, its model call cut short, an exec kills its child's process tree, and a
  * half-created computer is never left behind. It lives in its own module so a
  * command can subscribe without importing the entrypoint.
  */

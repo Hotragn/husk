@@ -1,7 +1,7 @@
 import { createLogger } from '@husk-ai/core';
 import type { ModelMessage, ToolCallPart, ToolResultPart } from '@husk-ai/core';
 import { describe, expect, it, vi } from 'vitest';
-import { Agent } from './loop.js';
+import { Agent, buildAssistantMessage } from './loop.js';
 import {
   FakeComputerSource,
   FakeRouter,
@@ -141,6 +141,36 @@ describe('Agent: streaming', () => {
     const result = await agent.run({ input: 'x' });
     expect(result.text).toBe('partial answer');
     expect(result.stopReason).toBe('complete');
+  });
+
+  it('keeps a reply’s thinking signature in the history, so the next turn can send it back', () => {
+    const message = buildAssistantMessage({
+      model: 'anthropic/claude-opus-5', text: 'ok', thinking: 'hmm', thinkingSignature: 'sig_1', toolCalls: [],
+      finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1,
+    });
+    expect(message.content).toEqual([{ type: 'thinking', text: 'hmm', signature: 'sig_1' }, { type: 'text', text: 'ok' }]);
+  });
+
+  it('ends `error`, not `complete`, when the provider fails part-way through a reply', async () => {
+    const { agent } = agentWith([{ text: 'half an ans', error: { message: 'connection reset' }, omitDone: true }], []);
+    const result = await agent.run({ input: 'x' });
+    expect(result.stopReason).toBe('error');
+    expect(result.error?.message).toContain('cut short: connection reset');
+  });
+
+  it('ends `aborted`, not `complete`, when it is stopped part-way through a reply', async () => {
+    const stop = new AbortController();
+    // As the router reports a stop: the text so far, then an error event, and no `done`.
+    const router = new FakeRouter([]);
+    router.stream = async function* (req) {
+      yield { type: 'start', model: req.model };
+      yield { type: 'text_delta', text: 'half an ans' };
+      stop.abort();
+      yield { type: 'error', error: { message: 'the request was aborted', code: 'E_ABORTED' } };
+    };
+    const agent = new Agent({ spec: specFor(), router, tools: [], logger: silent });
+    const result = await agent.run({ input: 'x', signal: stop.signal });
+    expect(result.stopReason).toBe('aborted');
   });
 });
 
