@@ -376,10 +376,12 @@ class FlyComputer implements Computer {
         this.cfg,
         'POST',
         this.path('/exec'),
-        { command: ['/bin/sh', '-c', wrapped], timeout: timeoutSec > 0 ? timeoutSec : 0 },
-        // A little slack over the remote timeout, so the remote one wins and we
-        // learn the exit code instead of guessing at a dead socket.
-        timerMs(timeoutSec > 0 ? timeoutSec + 15 : 3600) as number,
+        { command: ['/bin/sh', '-c', wrapped], timeout: timeoutSec > 0 ? timeoutSec + 15 : 0 },
+        // Husk's own deadline decides, as on the other providers: past it the request is
+        // dropped and the command reaped below, so a timeout is always `timedOut`. What
+        // the machine answers when its own timeout fires is not documented, so that one
+        // comes later, only to end a command whose reap was lost.
+        timerMs(timeoutSec > 0 ? timeoutSec : 3600) as number,
         req.signal,
       );
     } catch (err) {

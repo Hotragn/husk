@@ -9,10 +9,10 @@ import { EXIT_OK } from '../exit.js';
 const BUSY_WINDOW_MS = 60_000;
 
 /**
- * Destroy a computer and its filesystem, except what a chat's or a bot's
- * computer keeps for its next one on docker and podman: for those `rm` means
- * "stop for now", and `--erase`, like the console's Delete, takes that too
- * (Computer.destroy).
+ * Destroy a computer and its filesystem, except what a chat's computer, or a
+ * bot's with `persist: true`, keeps for its next one on docker and podman: for
+ * those `rm` means "stop for now", and `--erase`, like the console's Delete,
+ * takes that too (Computer.destroy).
  *
  * The safe path is easy and the dangerous path is deliberate: a single machine
  * is confirmed, `--all` is confirmed with the count spelled out, and a
@@ -84,8 +84,14 @@ export async function run(argv: string[]): Promise<number> {
 
   const computer = await resolve(ref);
   const { name, id, workdir } = computer.info;
-  // A chat's or a bot's computer on docker or podman keeps its files for its next one, unless erased.
-  const keeps = !erase && (computer.info.provider === 'docker' || computer.info.provider === 'podman') && Boolean(computer.info.spec.labels?.['husk.key']);
+  // A keyed computer whose /work is a volume on docker or podman keeps its files for its
+  // next one, unless erased: every chat's, and a bot's with `persist: true`. A bot's
+  // without it has a tmpfs /work, browser profile included, which goes with it.
+  const keeps =
+    !erase &&
+    (computer.info.provider === 'docker' || computer.info.provider === 'podman') &&
+    Boolean(computer.info.spec.labels?.['husk.key']) &&
+    computer.info.spec.persist === true;
 
   if (!assumeYes) {
     if (!interactive()) {

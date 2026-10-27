@@ -287,10 +287,9 @@ async function fetchWithCurl(computer: Computer, url: URL, opts: FetchOptions): 
     throw new HuskError('E_EXEC_FAILED', `could not load ${url.hostname}`, {
       hint:
         'this machine has neither python3 nor curl, so there is nothing here to fetch with. ' +
-        'Use a flavor whose image ships one -- `--flavor full`, which also runs the browser -- ' +
-        'or point computer.image at your own. On the container providers `computer.packages` ' +
-        'cannot help here: the root filesystem is mounted read-only on purpose, so no package ' +
-        'manager can run.',
+        'Use a flavor whose image ships one -- `--flavor full`, which also runs the browser --, ' +
+        'list `curl` in `computer.packages` (Docker, Podman and local install them), or point ' +
+        'computer.image at your own.',
       details: { stderr: res.stderr.slice(0, 500) },
     });
   }
