@@ -92,7 +92,7 @@ while the machine runs.
 `husk doctor` says so in the hint rather than after the fact:
 
 ```text
-fix: run `fly auth token` and export it as FLY_API_TOKEN (fly machines are metered, not free)
+fix: make a token for the computers' app alone with `fly tokens create deploy --app <app>`, and export it as HUSK_FLY_TOKEN (fly machines are metered, not free)
 ```
 
 ## ssh

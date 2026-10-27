@@ -144,7 +144,10 @@ Without a `secret`, `GET /v1/triggers` reports the mount as
 `UNSIGNED -- set 'secret' on the trigger`. Anyone who can reach the port can spend your
 model budget.
 
-Prompt extraction is the same as for `http`.
+Without a `secret`, the prompt is found as for `http`. With one, it comes from the signed
+body alone, and `?input=`, `?text=` and `?q=` are ignored: the signature does not cover
+the address, so a prompt there could be swapped on a captured delivery. There is no
+replay window, so the same signed delivery sent again runs again.
 
 ## cron
 

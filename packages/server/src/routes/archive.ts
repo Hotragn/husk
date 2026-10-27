@@ -28,6 +28,10 @@ import { notFound } from '../errors.js';
 
 /** Room for a source tree, not for a dataset. Both directions. */
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024;
+const MAX_MIB = MAX_ARCHIVE_BYTES / 1024 / 1024;
+
+/** "No such path", as sysexits' EX_NOINPUT: tar's own failures are 1 and 2. */
+const NO_SUCH_PATH = 66;
 
 /** Where the archive is staged inside the machine, never in the jailed workspace. */
 function scratchPath(): string {
@@ -62,6 +66,30 @@ function quote(path: string): string {
   return `'${path.replace(/'/g, `'\\''`)}'`;
 }
 
+/**
+ * What the computer runs for a download: the path's archive at `scratch`, then
+ * its size, then tar's status when tar failed part-way.
+ *
+ * `-C parent base` rather than tarring an absolute path: GNU tar strips the
+ * leading slash with a warning, and the archive's shape then depends on which
+ * tar unpacked it. The path is single-quoted everywhere it appears, the message
+ * included: a double-quoted string still expands `$(...)` and backticks, so
+ * `path=/work/$(id)` would have run `id`.
+ *
+ * The archive is cut off inside the machine one byte past the cap. A path too
+ * big to send stops as soon as its archive passes the limit, and never fills
+ * the computer's /tmp, which is 512 MB on docker and podman. tar's own status
+ * is kept aside, since a pipe reports head's.
+ */
+export function downloadScript(path: string, scratch: string, status: string, cap = MAX_ARCHIVE_BYTES): string {
+  return (
+    `set -e; test -e ${quote(path)} || { echo no such path: ${quote(path)} >&2; exit ${NO_SUCH_PATH}; }; ` +
+    `{ tar -czf - -C "$(dirname ${quote(path)})" "$(basename ${quote(path)})" || echo $? > ${quote(status)}; } ` +
+    `| head -c ${cap + 1} > ${quote(scratch)}; ` +
+    `wc -c < ${quote(scratch)}; cat ${quote(status)} 2>/dev/null || true`
+  );
+}
+
 /** Fail with the machine's own words rather than a bare exit code. */
 function execFailed(what: string, stderr: string, hint: string): HuskError {
   return new HuskError('E_EXEC_FAILED', what, { hint, details: { stderr: stderr.slice(0, 500) } });
@@ -79,41 +107,33 @@ export async function archiveRoutes(app: FastifyInstance): Promise<void> {
     const path = requirePath(req.query);
     const computer = await mustGet(app, id);
     const scratch = scratchPath();
+    const status = `${scratch}.rc`;
+    const removeScratch = () => computer.exec({ cmd: `rm -f ${quote(scratch)} ${quote(status)}`, timeoutSec: 30 }).catch(() => undefined);
 
-    // `-C parent base` rather than tarring an absolute path: GNU tar strips the
-    // leading slash with a warning, and the resulting archive's shape then
-    // depends on which tar unpacked it.
-    const made = await computer.exec({
-      cmd:
-        // The path is single-quoted everywhere it appears, including inside
-        // the message: a double-quoted shell string still expands `$(...)`
-        // and backticks, so `path=/work/$(id)` would have run `id`.
-        `set -e; test -e ${quote(path)} || { echo no such path: ${quote(path)} >&2; exit 2; }; ` +
-        `tar -czf ${quote(scratch)} -C "$(dirname ${quote(path)})" "$(basename ${quote(path)})"`,
-      timeoutSec: 600,
-    });
-
-    if (made.exitCode !== 0) {
-      await computer.exec({ cmd: `rm -f ${quote(scratch)}`, timeoutSec: 30 }).catch(() => undefined);
-      throw execFailed(
-        `could not archive ${path}`,
-        made.stderr,
-        made.exitCode === 2
-          ? 'the path does not exist in the computer; check with `husk exec <name> -- ls -la <path>`'
-          : 'the computer needs tar and gzip for this; every husk image has both',
-      );
-    }
+    const made = await computer.exec({ cmd: downloadScript(path, scratch, status), timeoutSec: 600 });
+    const [size, tarExit] = made.stdout.trim().split(/\s+/);
+    const bytes = Number(size);
 
     try {
-      const size = await computer.exec({ cmd: `wc -c < ${quote(scratch)}`, timeoutSec: 30 });
-      const bytes = Number(size.stdout.trim());
-      if (Number.isFinite(bytes) && bytes > MAX_ARCHIVE_BYTES) {
+      if (made.exitCode !== 0 || !Number.isFinite(bytes)) {
+        throw execFailed(
+          `could not archive ${path}`,
+          made.stderr,
+          made.exitCode === NO_SUCH_PATH
+            ? 'the path does not exist in the computer; check with `husk exec <name> -- ls -la <path>`'
+            : 'the computer needs tar, gzip and head for this; every husk image has them',
+        );
+      }
+      if (bytes > MAX_ARCHIVE_BYTES) {
         // Refused before it is read, so an accidental `path=/` does not pull a
         // whole root filesystem into this process's memory to be rejected after.
-        throw new HuskError('E_QUOTA', `${path} compresses to ${bytes} bytes, over the ${MAX_ARCHIVE_BYTES} limit`, {
+        throw new HuskError('E_QUOTA', `${path} compresses to more than ${MAX_MIB} MiB, the limit`, {
           hint: 'archive a subdirectory, or make the tarball yourself with `exec` and read it with fs/read',
-          details: { bytes, limit: MAX_ARCHIVE_BYTES },
+          details: { limit: MAX_ARCHIVE_BYTES },
         });
+      }
+      if (tarExit) {
+        throw execFailed(`could not archive ${path}: tar stopped with status ${tarExit}`, made.stderr, 'its message says which file it could not read');
       }
 
       const data = await computer.readFile(scratch, { maxBytes: MAX_ARCHIVE_BYTES });
@@ -122,7 +142,7 @@ export async function archiveRoutes(app: FastifyInstance): Promise<void> {
         .header('content-disposition', `attachment; filename="${id}.tgz"`)
         .send(Buffer.from(data));
     } finally {
-      await computer.exec({ cmd: `rm -f ${quote(scratch)}`, timeoutSec: 30 }).catch(() => undefined);
+      await removeScratch();
     }
   });
 

@@ -198,13 +198,14 @@ in the guide (`apps/docs/content/guides/remote-access.mdx`); the routes are in
   used in that browser: the chat holds the link too, and a chat can be shared. Off, reset
   and signing the app out end it.
 - **What a remote chat runs on.** Computers from an isolated provider only, bound apart
-  from this machine's own chats. The workspace tools, which work on this machine's files,
-  are not offered.
+  from this machine's own chats. An `ssh` target that is this machine (`localhost`,
+  `127.0.0.1`, `::1`) is not isolated from it, and is refused. The workspace tools, which
+  work on this machine's files, are not offered.
 - **What runs without you.** Reading: opening and moving around a page, snapshots and
   screenshots, `browse`, `read_file` and `list_dir`. Commands, file changes, an exposed
   port, and the browser's clicks, typing, choices, uploads, steps and scripts wait for
   the owner's passkey (`DANGEROUS_TOOLS` in `packages/mcp/src/approvals.ts`), on a page
-  that shows every argument exactly; a call too big to show is never put to them. Opening
+  that shows the computer and every argument exactly; a call too big to show is never put to them. Opening
   a page can still act on a site the computer's browser is signed in to, as any link
   can. After a passkey, the owner may let one app use one tool unasked for an hour; that
   grant is for the tool, whatever its arguments.
@@ -213,8 +214,9 @@ in the guide (`apps/docs/content/guides/remote-access.mdx`); the routes are in
   stands against the packages it runs (checked at start and daily), and switches itself
   off when one appears.
 - **What a flood can do.** Budgets are per minute and never per address, which a tunnel
-  hides. What the owner already let in has its own, so a flood can delay only a new app's
-  first sign-in. If that happens, switch remote access off.
+  hides. What the owner already let in has its own, and every route its own for everyone
+  else, so a flood holds up only the route it is aimed at: a new app's first sign-in, or
+  the page a link opens on. If that happens, switch remote access off.
 - **Who can read it.** The chat app sees every tool result. Depending on the tunnel, so
   can its provider: Tailscale Funnel and ngrok with TLS ended at the agent cannot,
   Cloudflare and Fly can. The guide has the table.
