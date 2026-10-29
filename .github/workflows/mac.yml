@@ -47,7 +47,7 @@ jobs:
           test -x "build/Husk Bar.app/Contents/MacOS/HuskBar"
           plutil -lint "build/Husk Bar.app/Contents/Info.plist"
       - name: upload unsigned app
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: husk-bar-unsigned
           path: apps/mac/build/Husk Bar.app
