@@ -417,6 +417,10 @@ pre-release of 7 October.
 
 ### Security
 
+- **The desktop app is on Electron 44.9.3**, which no longer trusts the compromised
+  eMudhra intermediate certificates
+  ([GHSA-jr5w-w6x2-84p9](https://github.com/advisories/GHSA-jr5w-w6x2-84p9),
+  [#161](https://github.com/Hotragn/husk/pull/161)).
 - **Chromium keeps its own sandbox outside containers**, falling back with a warning only
   where it cannot start. Every new tab and every redirect hop is checked against the
   address filter, which reads IPv6 addresses whole ([#202](https://github.com/Hotragn/husk/pull/202)).
