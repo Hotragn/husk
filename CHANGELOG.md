@@ -160,7 +160,7 @@ pre-release of 7 October.
   the next, as plain files in `~/.husk/bots/<name>/memory/` that you can open, edit or
   delete. It reads and changes them with one `memory` tool on every engine: Husk's own,
   Claude Code and Codex. `memory.backend` now defaults to `file`; `sqlite` is not built
-  yet, and a run on it says so.
+  yet, and a run on it says so ([#269](https://github.com/Hotragn/husk/pull/269)).
 
 ### Changed
 
