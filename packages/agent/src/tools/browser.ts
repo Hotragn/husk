@@ -1,8 +1,8 @@
 import { Buffer } from 'node:buffer';
 import { HuskError } from '@husk-ai/core';
-import { browserFor } from '@husk-ai/browser';
+import { browserFor, describeHappened } from '@husk-ai/browser';
 import type { SnapshotNode } from '@husk-ai/browser';
-import { defineTool, type AgentTool } from '../types.js';
+import { defineTool, type AgentTool, type AgentToolContext } from '../types.js';
 
 /**
  * A real browser, in the agent's own computer.
@@ -19,26 +19,25 @@ import { defineTool, type AgentTool } from '../types.js';
  * "Delete".
  */
 
-function sessionOf(ctx: { computer?: unknown }): ReturnType<typeof browserFor> {
-  const computer = (ctx as { computer?: Parameters<typeof browserFor>[0] }).computer;
-  if (!computer) {
-    throw new HuskError('E_TOOL_ERROR', 'the browser needs a computer, and this husk has none', {
-      hint: 'set computer.enabled: true in husk.yaml',
-    });
-  }
-  return browserFor(computer);
+/**
+ * The machine comes up on first use, so a run whose first tool is the browser
+ * has no `ctx.computer` yet. Acquiring it here is what the shell and file tools
+ * already do; reading `ctx.computer` instead failed with "this husk has none".
+ */
+async function sessionOf(ctx: AgentToolContext): Promise<ReturnType<typeof browserFor>> {
+  return browserFor(ctx.computer ?? (await ctx.acquireComputer()));
 }
 
 function renderSnapshot(nodes: SnapshotNode[]): string {
   if (nodes.length === 0) return 'the page exposes no accessible elements';
   return nodes
-    .map((n) => `${n.ref}  ${n.role}${n.name ? ` "${n.name}"` : ''}${n.value ? ` = "${n.value}"` : ''}`)
+    .map((n) => `${'  '.repeat(n.depth ?? 0)}${n.ref}  ${n.role}${n.name ? ` "${n.name}"` : ''}${n.value ? ` = "${n.value}"` : ''}`)
     .join('\n');
 }
 
 export const browserGoto = defineTool<
   { url: string; timeoutSec?: number },
-  { url: string; title: string; loaded: boolean; text: string }
+  { url: string; title: string; loaded: boolean; text: string; also: string[] }
 >({
   name: 'browser_goto',
   description:
@@ -57,19 +56,21 @@ export const browserGoto = defineTool<
   needsComputer: true,
 
   async handler(input, ctx) {
-    const session = sessionOf(ctx);
+    const session = await sessionOf(ctx);
     const result = await session.goto(input.url, { timeoutMs: (input.timeoutSec ?? 30) * 1000 });
     const page = await session.activePage();
     return {
       url: result.url,
       title: await page.title(),
-      loaded: result.loaded,
+      loaded: result.loaded || Boolean(result.downloads?.length),
       text: await page.text(Math.min(ctx.maxOutputBytes, 120_000)),
+      also: describeHappened(result),
     };
   },
 
   render(out) {
-    return `${out.url}\n${out.title}${out.loaded ? '' : '\n[load event never fired; showing what rendered so far]'}\n\n${out.text}`;
+    const also = out.also.map((l) => `\n${l}`).join('');
+    return `${out.url}\n${out.title}${out.loaded ? '' : '\n[load event never fired; showing what rendered so far]'}${also}\n\n${out.text}`;
   },
 });
 
@@ -89,7 +90,7 @@ export const browserSnapshot = defineTool<{ limit?: number }, { url: string; nod
   needsComputer: true,
 
   async handler(input, ctx) {
-    const page = await sessionOf(ctx).activePage();
+    const page = await (await sessionOf(ctx)).activePage();
     return { url: await page.url(), nodes: await page.snapshot({ limit: input.limit ?? 400 }) };
   },
 
@@ -98,14 +99,22 @@ export const browserSnapshot = defineTool<{ limit?: number }, { url: string; nod
   },
 });
 
-export const browserClick = defineTool<{ ref: string }, { url: string; nodes: SnapshotNode[] }>({
+export const browserClick = defineTool<
+  { ref: string; force?: boolean; dialog?: 'accept' | 'dismiss' },
+  { url: string; nodes: SnapshotNode[]; also: string[] }
+>({
   name: 'browser_click',
   description:
     'Click the element with this ref, then return a fresh snapshot of whatever the page became. ' +
-    'Refs come from browser_snapshot; there is deliberately no way to click a coordinate.',
+    'Refs come from browser_snapshot; there is deliberately no way to click a coordinate. A click ' +
+    'on something disabled, hidden, still moving or covered is refused, saying why; force clicks anyway.',
   parameters: {
     type: 'object',
-    properties: { ref: { type: 'string', description: 'A `ref` from browser_snapshot, e.g. e42.' } },
+    properties: {
+      ref: { type: 'string', description: 'A `ref` from browser_snapshot, e.g. e42, or f2e7 inside a frame.' },
+      force: { type: 'boolean', description: 'Press at its centre without the checks. Defaults to false.' },
+      dialog: { type: 'string', enum: ['accept', 'dismiss'], description: 'How to answer a confirm or a prompt this opens: dismiss (the default) or accept.' },
+    },
     required: ['ref'],
     additionalProperties: false,
   },
@@ -113,22 +122,22 @@ export const browserClick = defineTool<{ ref: string }, { url: string; nodes: Sn
   dangerous: true,
 
   async handler(input, ctx) {
-    const page = await sessionOf(ctx).activePage();
+    const page = await (await sessionOf(ctx)).activePage();
     // Waits for the load only when the click actually started one. Waiting
     // unconditionally cost a flat 5s on every click that opened a menu, which
     // is most of them.
-    await page.clickAndSettle(input.ref);
-    return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }) };
+    const happened = await page.clickAndSettle(input.ref, 5000, { force: input.force === true, ...(input.dialog ? { dialog: input.dialog } : {}) });
+    return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }), also: describeHappened(happened) };
   },
 
   render(out) {
-    return `now at ${out.url}\n\n${renderSnapshot(out.nodes)}`;
+    return `${out.also.map((l) => `${l}\n`).join('')}now at ${out.url}\n\n${renderSnapshot(out.nodes)}`;
   },
 });
 
 export const browserType = defineTool<
   { ref: string; text: string; submit?: boolean },
-  { url: string; nodes: SnapshotNode[] }
+  { url: string; nodes: SnapshotNode[]; also: string[] }
 >({
   name: 'browser_type',
   description:
@@ -148,17 +157,13 @@ export const browserType = defineTool<
   dangerous: true,
 
   async handler(input, ctx) {
-    const page = await sessionOf(ctx).activePage();
-    await page.type(input.ref, input.text);
-    if (input.submit) {
-      await page.press('Enter');
-      await page.waitForLoad(10_000);
-    }
-    return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }) };
+    const page = await (await sessionOf(ctx)).activePage();
+    const happened = await page.type(input.ref, input.text, { submit: input.submit === true });
+    return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }), also: describeHappened(happened) };
   },
 
   render(out) {
-    return `now at ${out.url}\n\n${renderSnapshot(out.nodes)}`;
+    return `${out.also.map((l) => `${l}\n`).join('')}now at ${out.url}\n\n${renderSnapshot(out.nodes)}`;
   },
 });
 
@@ -182,7 +187,7 @@ export const browserScreenshot = defineTool<
   needsComputer: true,
 
   async handler(input, ctx) {
-    const session = sessionOf(ctx);
+    const session = await sessionOf(ctx);
     const page = await session.activePage();
     const data = await page.screenshot({ fullPage: input.fullPage === true });
     const bytes = Buffer.from(data, 'base64');

@@ -1,13 +1,29 @@
 ---
 title: Install
-description: Global install, the npx path, what lands on disk, and how to remove all of it.
+description: The desktop extension or the npm packages, what lands on disk, and how to remove all of it.
 order: 3
 ---
 
-Husk is published as npm packages. There is no installer, no daemon to enable, and no
+Husk comes two ways. Pick the one that fits; neither needs the other, and neither has an
 account step.
 
-## Requirements
+| | The desktop extension | The npm packages |
+| --- | --- | --- |
+| For | Claude Desktop | the `husk` CLI, MCP clients such as Claude Code, Cursor and Zed, and bots |
+| Needs | Claude Desktop, which brings its own Node | Node 20.10 or newer |
+| Gives you | workspaces, and computer tools when you turn them on | every tool, and the CLI |
+| Start with | [Your first workspace](/start/workspaces) | [Quickstart](/start/quickstart) |
+
+## The desktop extension
+
+Download `husk-0.2.0.mcpb` from the
+[Husk 0.2.0 public preview](https://github.com/Hotragn/husk/releases/tag/preview-0.2.0),
+and install it in Claude Desktop through **Settings → Extensions → Advanced settings →
+Install Extension**. It needs no terminal, no Docker and no Node of your own.
+[Your first workspace](/start/workspaces) walks through the first task, and through what
+the preview does not do yet.
+
+## The npm packages
 
 | | |
 | --- | --- |
@@ -19,7 +35,11 @@ There are no native modules anywhere in the tree, which is a build-contract rule
 than an accident: `better-sqlite3` and `node-pty` are both banned. A Windows machine
 with no C++ toolchain gets a clean `npm install`.
 
-## The three ways in
+<NotYet>
+These pages describe 0.2.0, and npm still has 0.1.4. Until 0.2.0 is published, run the
+CLI from a checkout of the repository: `npm ci && npm run build`, then
+`node packages/cli/dist/bin.js <command>`.
+</NotYet>
 
 ### Run it without installing
 
@@ -40,6 +60,18 @@ husk doctor
 The binary is `husk`. `husk --help` costs about 16 ms on top of Node's own startup,
 because every command sits behind a dynamic `import()` and the help text loads none of
 them.
+
+### Connect your chat apps
+
+```bash
+husk setup
+```
+
+It asks where your chats' computers should run, adds Husk to the chat apps you pick from
+the ones it finds, backing up each file it changes, and starts the shared Husk every chat
+goes through. `husk setup --remove` takes it out again, and
+[the CLI reference](/reference/cli#husk-setup) has its flags. `husk onboard` is the
+guided tour instead: five steps, from what this machine can do to the command to run next.
 
 ### Install the MCP server only
 
@@ -69,6 +101,10 @@ absent.
 | `@husk-ai/sdk` | Typed client for the control plane. Optional. |
 | `@husk-ai/cli` | The `husk` binary. |
 
+Four more come in through those: `@husk-ai/browser`, the Chromium driver;
+`@husk-ai/workspaces`, the saved workspaces; `@husk-ai/adapters`, the Discord, Slack and
+Telegram front ends; and `@husk-ai/console-assets`, the console.
+
 ## Optional pieces, and what each one buys
 
 Nothing below is required. Each one changes what `husk doctor` reports.
@@ -80,13 +116,13 @@ Desktop, or install Podman and run `podman machine init`.
 **Ollama** gives you a model with no API key and no network egress:
 
 ```bash
-ollama pull gemma3
+ollama pull qwen2.5:7b
 ```
 
-That is roughly 3 GB, after which `husk run` works offline.
+That is about 4.7 GB, after which `husk run` works offline.
 
-**An API key** gives you a frontier model. Husk reads these from the environment and
-never writes them to `~/.husk`:
+**An API key** gives you a frontier model. Husk reads these from the environment, and
+from `~/.husk/.env` for any the environment does not set. It never writes them:
 
 ```bash
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GOOGLE_API_KEY, GROQ_API_KEY, …
@@ -102,28 +138,47 @@ one move. `$HUSK_HOME` overrides the location; otherwise it is `~/.husk`.
 ```
 ~/.husk/
   config.json       global settings
-  .env              local overrides, never committed
+  .env              API keys, if you keep them here: Husk reads this file, never writes it
   husks/            registered husks, one directory each
   computers/        computer metadata (not filesystems) + bindings.json
-  workspaces/       the actual working directories for the `local` provider
+  workspaces/       saved workspaces (ws_*), and the local provider's working directories (cmp_*)
   runs/             run results and event traces
   transcripts/      imported transcripts, cached
-  data/             reserved
+  data/             the audit log: one file per computer, a line per tool call
   cache/            downloaded assets, snapshot tarballs
+  daemon.json       the shared Husk's address and token
+  daemon.log        the shared Husk's log
+  jobs.json         the job host's address and token, while a bot has a trigger
+  remote/           remote access: its signing key, the owner's passkey, the apps signed in
   .oriented         the marker that stops the welcome block reprinting
 ```
 
-Every directory is created with mode `0700`. Credentials are never written here — Husk
-reads keys from the environment and keeps them there.
+On WSL, the `local` provider keeps a computer's working directory inside the distro, in
+its own `~/.husk/workspaces`.
+
+Every directory is created with mode `0700`, and `daemon.json` and `jobs.json` are
+readable only by you. Husk never writes your API keys here. The credentials it does keep
+are its own: the shared Husk's and the job host's tokens, and remote access's keys.
 
 ## Uninstall
 
 ```bash
-husk rm --all --yes        # destroy every computer first
+husk rm --all --erase --force   # every computer, and the files any of them keeps
 npm uninstall -g @husk-ai/cli
 rm -rf ~/.husk
 ```
 
+`--erase` takes the files and browser logins that a chat's computer, or a bot's with
+`computer.persist: true`, keeps on Docker and Podman. `--force` goes ahead when a computer was used in the last minute,
+where `--yes` refuses.
+
+<Danger>
+Removing `~/.husk` deletes every saved workspace, with its sources and results. Export
+the ones you want to keep first.
+</Danger>
+
 Removing `~/.husk` resets Husk completely, including the one-time orientation block. It
 does not remove Docker containers created by a previous version of the CLI; `husk ps
---all` lists them while the CLI is still installed.
+--all` lists them while the CLI is still installed. To remove the desktop extension,
+uninstall it from Claude Desktop's extension settings; its workspaces are in the same
+`~/.husk`.

@@ -1,5 +1,5 @@
-import { HuskError } from '@husk-ai/core';
-import type { HuskErrorCode } from '@husk-ai/core';
+import { HuskError } from '@husk-ai/core/contracts';
+import type { HuskErrorCode } from '@husk-ai/core/contracts';
 
 /**
  * The wire shape of a control-plane failure.
@@ -29,8 +29,12 @@ export const SERVER_ERROR_CODES = [
   'E_HUSK_NOT_FOUND',
   'E_RUN_NOT_FOUND',
   'E_APPROVAL_NOT_FOUND',
+  'E_HANDOFF_NOT_FOUND',
+  'E_BROWSER_NOT_FOUND',
   'E_TRANSCRIPT_NOT_FOUND',
   'E_ROUTE_NOT_FOUND',
+  'E_COMPUTER_HELD',
+  'E_COMPUTER_IN_CHAT',
 ] as const;
 
 export type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number];

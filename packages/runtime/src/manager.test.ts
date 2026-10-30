@@ -1,6 +1,9 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createLogger } from '@husk-ai/core';
-import type { Availability, Computer, ComputerInfo, ComputerProvider, ComputerSpec } from '@husk-ai/core';
+import type { Availability, Computer, ComputerInfo, ComputerProvider, ComputerSpec, Logger } from '@husk-ai/core';
 import { ComputerManager, defaultProviders } from './manager.js';
 
 /**
@@ -101,7 +104,8 @@ describe('resolveProvider', () => {
     const local = new FakeProvider('local', 10, { available: true, isolated: false });
 
     expect((await manager([local, fly, ssh, podman, docker]).resolveProvider('auto')).name).toBe('local');
-    expect([docker.probes, podman.probes, ssh.probes, fly.probes]).toEqual([1, 1, 1, 1]);
+    // Fly is paid, so auto never asks it at all (J1-i).
+    expect([docker.probes, podman.probes, ssh.probes, fly.probes]).toEqual([1, 1, 1, 0]);
   });
 
   it('prefers real isolation over the guardrail floor whenever it can', async () => {
@@ -110,6 +114,18 @@ describe('resolveProvider', () => {
       new FakeProvider('podman', 18, up(true)),
     ]);
     expect((await m.resolveProvider('auto')).name).toBe('podman');
+  });
+
+  it('reads auto as the provider config.json names, and says so when it is down', async () => {
+    const docker = new FakeProvider('docker', 20, up(true));
+    const podman = new FakeProvider('podman', 18, down('machine is not started', 'podman machine start'));
+    const m = (provider: string) => new ComputerManager({ providers: [docker, podman], logger: silent, provider });
+    expect((await m('auto').resolveProvider('auto')).name).toBe('docker');
+    expect((await m('podman').resolveProvider('docker')).name).toBe('docker');
+    await expect(m('podman').resolveProvider('auto')).rejects.toMatchObject({
+      code: 'E_PROVIDER_UNAVAILABLE',
+      hint: expect.stringContaining('~/.husk/config.json sets for auto'),
+    });
   });
 
   it('honours an explicit provider and never silently substitutes a weaker one', async () => {
@@ -138,7 +154,7 @@ describe('resolveProvider', () => {
     ]);
     await expect(m.resolveProvider('auto')).rejects.toMatchObject({
       code: 'E_PROVIDER_UNAVAILABLE',
-      details: { rejected: ['docker: daemon is not running', 'fly: no token'] },
+      details: { rejected: ['docker: daemon is not running', expect.stringMatching(/^fly: paid per machine/)] },
     });
   });
 });
@@ -198,5 +214,143 @@ describe('status', () => {
     expect(rows.map((r) => r.name)).toEqual(['docker', 'local']);
     expect(rows[0]).toMatchObject({ available: false, hint: 'start Docker Desktop', priority: 20 });
     expect(rows[1]).toMatchObject({ available: true, isolated: false, reason: 'guardrails, not a sandbox' });
+  });
+});
+
+describe('list() carries chat identity', () => {
+  it('lifts platform, chat label and identity source out of the labels', async () => {
+    const info = {
+      id: 'cmp_1',
+      name: 'x',
+      provider: 'docker',
+      state: 'running',
+      image: 'x',
+      workdir: '/work',
+      createdAt: '2026-10-18T10:42:00Z',
+      lastUsedAt: '2026-10-18T10:42:00Z',
+      spec: { labels: { 'husk.platform': 'Cursor', 'husk.chat': 'Cursor · chat started 10:42', 'husk.identity': 'first-call' } },
+    } as ComputerInfo;
+    const p = new FakeProvider('docker', 1, up(true));
+    p.list = async () => [info];
+    const [listed] = await manager([p]).list();
+    expect(listed).toMatchObject({ platform: 'Cursor', chatLabel: 'Cursor · chat started 10:42', identitySource: 'first-call' });
+  });
+});
+
+describe('one computer per name (#112)', () => {
+  const info = (over: Partial<ComputerInfo>): ComputerInfo =>
+    ({
+      id: 'cmp_1',
+      name: 'dev',
+      provider: 'docker',
+      state: 'running',
+      image: 'x',
+      workdir: '/work',
+      createdAt: '2026-10-18T10:42:00Z',
+      lastUsedAt: '2026-10-18T10:42:00Z',
+      spec: {},
+      ...over,
+    }) as ComputerInfo;
+
+  it('refuses to create a second computer under a name in use, and says which one has it', async () => {
+    const p = new FakeProvider('docker', 1, up(true));
+    p.list = async () => [info({ state: 'stopped' })];
+    await expect(manager([p]).create({ name: 'dev' })).rejects.toMatchObject({
+      code: 'E_SPEC_INVALID',
+      message: expect.stringContaining('cmp_1'),
+    });
+  });
+
+  it('refuses a one-letter name, which `husk cp` would read as a Windows drive', async () => {
+    const p = new FakeProvider('docker', 1, up(true));
+    await expect(manager([p]).create({ name: 'x' })).rejects.toMatchObject({ code: 'E_SPEC_INVALID', message: expect.stringContaining('two characters') });
+    // Refused before any provider is asked.
+    expect(p.probes).toBe(0);
+  });
+
+  it('gives a keyed computer its own name when a husk run and the server both want "triage"', async () => {
+    const home = process.env.HUSK_HOME;
+    process.env.HUSK_HOME = mkdtempSync(join(tmpdir(), 'husk-ensure-'));
+    try {
+      const p = new FakeProvider('docker', 1, up(true));
+      p.list = async () => [info({ name: 'triage', spec: { labels: { 'husk.key': 'husk:triage' } } } as Partial<ComputerInfo>)];
+      let made: ComputerSpec | undefined;
+      p.create = async (spec) => {
+        made = spec;
+        return { id: 'cmp_2', info: info({ id: 'cmp_2', name: spec.name }) } as Computer;
+      };
+      await manager([p]).ensure('triage', { name: 'triage' });
+      expect(made?.name).toMatch(/^triage-[0-9a-f]{6}$/);
+    } finally {
+      if (home === undefined) delete process.env.HUSK_HOME;
+      else process.env.HUSK_HOME = home;
+    }
+  });
+
+  it('keeps a chat computer made on another provider than asked, and says so', async () => {
+    const home = process.env.HUSK_HOME;
+    process.env.HUSK_HOME = mkdtempSync(join(tmpdir(), 'husk-ensure-'));
+    try {
+      const warns: string[] = [];
+      const log = { warn: (m: string) => void warns.push(m), info() {}, debug() {}, error() {}, child: () => log } as unknown as Logger;
+      const p = new FakeProvider('local', 1, up(false));
+      const kept = { id: 'cmp_1', info: info({ state: 'running', provider: 'local', spec: { labels: { 'husk.key': 'chat:a' } } } as Partial<ComputerInfo>) } as Computer;
+      (kept as { refresh: () => Promise<ComputerInfo> }).refresh = async () => kept.info;
+      p.list = async () => [kept.info];
+      p.get = async () => kept;
+      expect(await new ComputerManager({ providers: [p], logger: log }).ensure('chat:a', { provider: 'docker' })).toBe(kept);
+      expect(warns.join('\n')).toContain('not the docker asked for');
+    } finally {
+      if (home === undefined) delete process.env.HUSK_HOME;
+      else process.env.HUSK_HOME = home;
+    }
+  });
+
+  it('says what a provider cannot enforce of the network policy, and refuses it only when asked to be strict', async () => {
+    const warns: string[] = [];
+    const log = { warn: (m: string) => void warns.push(m), info() {}, debug() {}, error() {}, child: () => log } as unknown as Logger;
+    const local = new FakeProvider('local', 1, up(false));
+    const made = { info: info({ id: 'cmp_2' }) } as Computer;
+    local.create = async () => made;
+    const m = new ComputerManager({ providers: [local], logger: log });
+    await expect(m.create({ network: { mode: 'none' } })).resolves.toBe(made);
+    expect(warns.join('\n')).toMatch(/"none" is not enforced on local/);
+    await expect(m.create({ network: { mode: 'none', strict: true } })).rejects.toMatchObject({
+      code: 'E_SPEC_INVALID',
+      message: expect.stringContaining('strict enforcement'),
+    });
+    // Docker gives a "none" computer no network at all: strict is satisfied.
+    const docker = new FakeProvider('docker', 1, up(true));
+    docker.create = async () => made;
+    await expect(manager([docker]).create({ network: { mode: 'none', strict: true } })).resolves.toBe(made);
+  });
+
+  it('lets a destroyed computer give its name back', async () => {
+    const p = new FakeProvider('docker', 1, up(true));
+    p.list = async () => [info({ state: 'destroyed' })];
+    const made = { info: info({ id: 'cmp_2' }) } as Computer;
+    p.create = async () => made;
+    await expect(manager([p]).create({ name: 'dev' })).resolves.toBe(made);
+  });
+});
+
+describe('auto and paid providers', () => {
+  it('never picks Fly by itself, and never even asks it', async () => {
+    const fly = new FakeProvider('fly', 14, up(true));
+    const local = new FakeProvider('local', 10, { available: true, isolated: false });
+    expect((await manager([local, fly]).resolveProvider('auto')).name).toBe('local');
+    expect(fly.probes).toBe(0);
+  });
+
+  it('picks it when asked by name, or when HUSK_AUTO_FLY=1 opts in', async () => {
+    const fly = new FakeProvider('fly', 14, up(true));
+    const local = new FakeProvider('local', 10, { available: true, isolated: false });
+    expect((await manager([local, fly]).resolveProvider('fly')).name).toBe('fly');
+    process.env.HUSK_AUTO_FLY = '1';
+    try {
+      expect((await manager([local, fly]).resolveProvider('auto')).name).toBe('fly');
+    } finally {
+      delete process.env.HUSK_AUTO_FLY;
+    }
   });
 });

@@ -34,23 +34,29 @@ what the caller passed:
 --read-only
 --tmpfs /tmp:rw,exec,nosuid,size=512m
 --tmpfs /run:rw,nosuid,size=16m
---tmpfs /work:rw,exec,nosuid,size=<diskMb or 2048>m
+--tmpfs /work:rw,exec,nosuid,mode=1777,size=<diskMb or 2048>m
 --cpus=<cpus or 2>
 --memory=<memoryMb or 2048>m
 --memory-swap=<memoryMb or 2048>m
--u 1000:1000
+-u <computer.user, or 1000:1000>
 ```
 
 - `--memory-swap` matches `--memory` because without it the limit only delays the OOM:
   the container swaps first.
 - `--pids-limit 512` means a fork bomb inside the machine hits its own ceiling rather
   than the host's.
+- Docker also gets `--init`, so what a stopped command leaves behind is reaped rather
+  than kept as zombies against the pid limit. Podman's init needs an optional package,
+  so a Podman computer goes without.
 - The root filesystem is read-only. Anything written outside `/work` and `/tmp` fails
   loudly instead of mutating an image layer that is about to vanish.
-- `-u 1000:1000` is passed regardless of the image, so even a public fallback image runs
-  unprivileged.
+- `-u 1000:1000` is passed whatever the image's own user, so even a public fallback
+  image runs unprivileged, unless `computer.user` names another. `user: root` runs the
+  agent as root: still with no capabilities and a read-only root filesystem, but root.
 
-With `persist: true`, `/work` becomes a named volume `husk-<id>` instead of a tmpfs.
+With `persist: true`, `/work` becomes a named volume instead of a tmpfs: `husk-<id>`, or
+`husk-key-<key>-<digest>` for a chat's or a bot's computer, which outlives the container
+so its next one finds the same files.
 
 An injected model in this mode can wreck the container. It cannot reach your home
 directory, your SSH keys, your Docker socket, or your other containers.
@@ -92,7 +98,7 @@ while the machine runs.
 `husk doctor` says so in the hint rather than after the fact:
 
 ```text
-fix: run `fly auth token` and export it as FLY_API_TOKEN (fly machines are metered, not free)
+fix: make a token for the computers' app alone with `fly tokens create deploy --app <app>`, and export it as HUSK_FLY_TOKEN (fly machines are metered, not free)
 ```
 
 ## ssh
@@ -116,8 +122,9 @@ If the remote box has anything on it you care about, install Docker on the remot
 and use the `docker` provider from there, rather than pointing `ssh` at it directly.
 </Warning>
 
-Workspaces live under `$HOME/.husk-work/<id>/`, with `work` and `tmp` subdirectories,
-both `chmod 700`. The jail is enforced on the far end — see below.
+Workspaces live under `$HOME/.husk-work/<id>/`, with `work` and `tmp` subdirectories.
+`~/.husk-work` and each `<id>` are `chmod 700`. The jail is enforced on the far end — see
+below.
 
 ## local
 
@@ -154,7 +161,7 @@ the model to guess.
 | Command deny list | A short list of unrecoverable commands is refused |
 | Output caps | A runaway process cannot exhaust memory through captured output |
 | Process-tree kill | A timeout kills the whole process group, not just the shell |
-| Mount namespace (WSL2) | `/work` is bind-mounted per exec inside `unshare -mr`, so two computers cannot see each other's files |
+| Mount namespace (WSL2) | `/work` is bind-mounted per exec inside `unshare -mr`, so the `/work` an agent sees is always this computer's workspace. It does not hide the others: they sit under `~/.husk/workspaces/`, and a shell command can still read them |
 
 ### What it does not stop
 
@@ -184,13 +191,18 @@ rootless containers use, and it is not a container.
 ## The path jail
 
 The jail presents `/work` and `/tmp` to the guest and maps them onto real directories.
+It runs on `local` and `ssh`. On Docker, Podman and Fly the filesystem API reaches the
+whole container, which is the boundary there: `read_file /etc/passwd` returns the
+container's own copy.
+
 It runs in two passes:
 
 1. **Lexical.** `toHostPath` normalises the guest path, rejects anything outside `/work`
    or `/tmp`, and re-checks containment after `resolve()` collapses `..`.
 2. **Resolved.** `assertInJail` calls `realpath` on the nearest existing ancestor and
    confirms the real target is still inside the workspace. This is the pass that catches
-   a symlink created inside the workspace and pointing out of it.
+   a symlink created inside the workspace and pointing out of it. A link whose target
+   does not exist yet is judged by that target, since writing through it would create it.
 
 ```text
 error path is outside the machine's writable area: /etc/passwd
@@ -203,8 +215,12 @@ hint:  husk refuses to follow links that leave the machine
 ```
 
 On `ssh` the resolved pass cannot be a local `realpath` — that would be a round trip per
-operation — so it is compiled into the same remote shell command that does the work,
-using `readlink -f`, and exits with code 77 on a violation.
+operation — so it is compiled into the same remote shell command that does the work.
+`readlink -m` resolves the path through every link, under directories not made yet
+included, and the command exits with code 77 when the result is outside the workspace or
+cannot be resolved at all. The box needs GNU `readlink`, from coreutils, and `husk doctor`
+says so when it is missing. `husk cp` is checked the same way before `scp` runs; `scp -r`
+then follows the links inside the directory it copies, as it always does.
 
 ### What the path jail does not cover
 
@@ -217,9 +233,6 @@ It does **not** constrain what a shell command can reach. A command run through 
 `shell` tool or `husk exec` sees the whole filesystem of the machine — or of the WSL
 distro — it runs in. On a container provider that filesystem is the container, so this
 is harmless. On `local` and `ssh` it is your machine.
-
-`docs/SECURITY-MODEL.md` describes the path jail as covering "every filesystem call",
-which is true of the API and not of the shell.
 </Warning>
 
 ## The command deny list
@@ -237,7 +250,7 @@ accident is unrecoverable*.
 | `mkfs`, `mkswap`, `fdisk`, `parted`, `sgdisk` | disk formatting |
 | `dd … of=/dev/sd*` (also `nvme`, `hd`, `disk`) | raw write to a block device |
 | `shutdown`, `reboot`, `halt`, `poweroff`, `init 0` | host power control |
-| `systemctl <x> stop`, `disable`, `mask`; the same via `service` | stopping host services |
+| `systemctl stop`, `disable` or `mask` a unit; `service <name> stop` | stopping host services |
 | `>` or `>>` into `/etc/passwd`, `shadow`, `sudoers`, `hosts` | overwriting a system file |
 | `chmod 777 /` | world-writable `/` |
 | anything piped into `sh`, `bash`, `zsh`, `ksh` | piping a remote script into a shell |
@@ -266,10 +279,22 @@ guardrails:
     - '^sudo apt-get install'
 ```
 
-`allowCommands` is checked **first** and wins over both your deny list and the built-in
-one. An explicit allow entry is you saying you know better about your own machine, and
-you do. An entry that is not valid regex falls back to a substring match rather than
-throwing.
+`allowCommands` wins over both your deny list and the built-in one. An explicit allow
+entry is you saying you know better about your own machine, and you do. An entry that is
+not valid regex falls back to a substring match rather than throwing.
+
+An entry wins **where it matches**, not over the whole line. `^sudo apt-get install`
+lets `sudo apt-get install -y jq` run, but `sudo apt-get install -y jq; rm -rf /` is
+still refused, and so is `sudo apt-get install jq > /etc/passwd`: the entry does not
+match the part that is refused. Anchored with `^`, it covers the start of a line only,
+so `apt-get update && sudo apt-get install jq` needs the entry without the `^`.
+
+Both lists are checked twice: by the agent before a command leaves it, and by the
+computer's provider, which is where the built-in list lives. The provider gets them when
+the computer is made, so a husk's computer that already exists keeps the lists it was
+made with. A new deny entry holds at once, since the agent checks it; for a new allow
+entry to lift a built-in refusal, remove the computer (`husk rm`) so the next run makes
+a fresh one. The lists apply to the builtin engine only.
 
 ## Output caps
 
@@ -293,9 +318,13 @@ The clamp runs **before** redaction, so redaction always operates over bounded i
 ## Timeouts
 
 `limits.execTimeoutSec` defaults to 120 seconds per exec, and `limits.timeoutSec` to 300
-seconds for the whole run. On a timeout the entire process **group** is killed —
+seconds for the whole run. On `local`, a timeout kills the entire process **group** —
 `process.kill(-pid, 'SIGKILL')` on POSIX, `taskkill /T /F` on Windows — so a shell that
-spawned a build does not leave the build running.
+spawned a build does not leave the build running. Killing the client does
+not stop a command in a container, on an ssh box, on a Fly machine or in a WSL distro,
+so there every command carries a tag in its environment, and a timeout or a cancel
+kills every process with that tag where it runs. A process that scrubs its environment
+and calls `setsid` escapes it.
 
 ## Which one to use
 

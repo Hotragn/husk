@@ -13,9 +13,10 @@
 
 import { describe, expect, it } from 'vitest';
 import { TOOLS, callTool } from './tools.js';
-import { BROWSER_TOOLS } from './browser-tools.js';
+import { BROWSER_TOOLS, MAX_WAIT_SEC, secondsArg } from './browser-tools.js';
 import type { Computer } from '@husk-ai/core';
-import { PROBE_COMPUTER_INFO } from '@husk-ai/core';
+import { PROBE_COMPUTER_INFO, fileTooLarge } from '@husk-ai/core';
+import { STOP_UNCONFIRMED } from '@husk-ai/runtime';
 
 /** Never reached: every assertion here stops at the dispatcher. */
 const noComputer = {} as Computer;
@@ -26,6 +27,22 @@ describe('the MCP tool list', () => {
     for (const tool of ['browser_goto', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_screenshot', 'browser_status']) {
       expect(names).toContain(tool);
     }
+  });
+
+  it('turns a bad browser_run into a message before any browser is touched', async () => {
+    const say = async (args: Record<string, unknown>) =>
+      (await callTool(noComputer, 'browser_run', args)).content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
+    expect(await say({})).toMatch(/non-empty list/);
+    expect(await say({ actions: [{ do: 'eval', code: 'alert(1)' }] })).toMatch(/action 1: do must be one of/);
+    expect(await say({ actions: [{ do: 'snapshot' }, { do: 'click' }] })).toMatch(/action 2: say which element/);
+    expect(await say({ actions: [{ do: 'wait' }] })).toMatch(/wait needs text, url or selector/);
+  });
+
+  it('turns an empty or oversized browser_script into a message before any browser is touched', async () => {
+    const say = async (args: Record<string, unknown>) =>
+      (await callTool(noComputer, 'browser_script', args)).content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
+    expect(await say({})).toMatch(/script is empty/);
+    expect(await say({ script: 'x'.repeat(100_001) })).toMatch(/over 100 KB/);
   });
 
   it('advertises the whole browser module, not a subset someone remembered', () => {
@@ -140,5 +157,105 @@ describe('computer_info', () => {
     const result = await callTool(computer, 'computer_info', {});
     expect(result.isError).toBe(true);
     expect(result.content[0]).toMatchObject({ text: expect.stringContaining('probe timed out') });
+  });
+});
+
+describe('shell', () => {
+  function stub(result: Partial<Awaited<ReturnType<Computer['exec']>>> = {}): { computer: Computer; seen: number[] } {
+    const seen: number[] = [];
+    const computer = {
+      info: { id: 'cmp_test', provider: 'docker', image: 'debian:bookworm-slim', spec: {} },
+      exec: async (req: { timeoutSec?: number }) => {
+        seen.push(req.timeoutSec as number);
+        return { exitCode: 0, stdout: 'ok', stderr: '', durationMs: 1, timedOut: false, truncated: false, ...result };
+      },
+    } as unknown as Computer;
+    return { computer, seen };
+  }
+
+  it('never runs without a limit, nor with one past an hour', async () => {
+    const { computer, seen } = stub();
+    for (const timeoutSec of [0, -1, 99_999_999, 30, undefined]) await callTool(computer, 'shell', { command: 'true', timeoutSec });
+    expect(seen).toEqual([120, 120, 3600, 30, 120]);
+  });
+
+  it('says a timed-out command was stopped only when the provider confirmed it', async () => {
+    const stopped = await callTool(stub({ timedOut: true, exitCode: 124, durationMs: 2000 }).computer, 'shell', { command: 'sleep 9' });
+    expect(stopped.content[0]).toMatchObject({ text: expect.stringContaining('[timed out after 2s and was stopped]') });
+
+    const unsure = await callTool(stub({ timedOut: true, exitCode: 124, durationMs: 2000, stderr: STOP_UNCONFIRMED }).computer, 'shell', { command: 'sleep 9' });
+    const text = (unsure.content[0] as { text: string }).text;
+    expect(text).toContain('[timed out after 2s]');
+    expect(text).not.toContain('was stopped');
+    expect(text).toContain(STOP_UNCONFIRMED);
+  });
+
+  it('says a command its caller stopped was stopped, not that it timed out', async () => {
+    const result = await callTool(stub({ timedOut: true, exitCode: 124, durationMs: 3000 }).computer, 'shell', { command: 'sleep 9' }, AbortSignal.abort());
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain('[stopped after 3s]');
+    expect(text).not.toContain('timed out');
+  });
+
+  it('hands the chat’s cancel to the command, and to the computer_info probe', async () => {
+    const signals: Array<AbortSignal | undefined> = [];
+    const computer = {
+      info: { id: 'cmp_test', provider: 'docker', image: 'debian:bookworm-slim', spec: {} },
+      exec: async (req: { signal?: AbortSignal }) => {
+        signals.push(req.signal);
+        return { exitCode: 1, stdout: '', stderr: '', durationMs: 1, timedOut: false, truncated: false };
+      },
+    } as unknown as Computer;
+    const cancel = new AbortController();
+    await callTool(computer, 'shell', { command: 'sleep 9' }, cancel.signal);
+    await callTool(computer, 'computer_info', {}, cancel.signal);
+    expect(signals).toEqual([cancel.signal, cancel.signal]);
+  });
+});
+
+describe('model timeouts', () => {
+  it('are finite, positive and at most ten minutes, whatever the model sends', () => {
+    expect(secondsArg(3_000_000, 15)).toBe(MAX_WAIT_SEC);
+    expect(secondsArg(Infinity, 15)).toBe(15);
+    expect(secondsArg(Number.NaN, 15)).toBe(15);
+    expect(secondsArg(-5, 15)).toBe(15);
+    expect(secondsArg('30', 15)).toBe(15);
+    expect(secondsArg(20, 15)).toBe(20);
+  });
+});
+
+describe('edit_file on a file too large to read whole', () => {
+  it('refuses, and writes nothing, rather than edit part of it and lose the rest', async () => {
+    const writes: string[] = [];
+    const computer = {
+      info: { id: 'cmp_test', provider: 'docker', image: 'x', spec: {} },
+      async readFile(path: string) {
+        throw fileTooLarge(path, 32 * 1024 * 1024);
+      },
+      async readTextFile() {
+        return 'the start of it\n... [the file goes on] ...\n';
+      },
+      async writeFile(path: string) {
+        writes.push(path);
+      },
+    } as unknown as Computer;
+    const result = await callTool(computer, 'edit_file', { path: '/work/big.log', old_string: 'the start', new_string: 'changed' });
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as { text: string }).text).toContain('larger than');
+    expect(writes).toEqual([]);
+  });
+});
+
+describe('read_file with offset and limit', () => {
+  it('reaches lines far past the first 96 KB, and says where they sit in the file', async () => {
+    const big = Array.from({ length: 200_000 }, (_, i) => `line ${i + 1}`).join('\n');
+    const computer = {
+      info: { id: 'cmp_test', provider: 'docker', image: 'x', spec: {} },
+      async readFile() {
+        return new TextEncoder().encode(big);
+      },
+    } as unknown as Computer;
+    const result = await callTool(computer, 'read_file', { path: '/work/big.log', offset: 150_000, limit: 2 });
+    expect((result.content[0] as { text: string }).text).toBe('[lines 150000-150001 of 200000]\nline 150000\nline 150001');
   });
 });

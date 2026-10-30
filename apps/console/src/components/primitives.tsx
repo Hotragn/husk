@@ -13,7 +13,7 @@ import type { DisplayError } from '../api/client';
 // Button
 // -----------------------------------------------------------------------------
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
+type Variant = 'primary' | 'accent' | 'secondary' | 'ghost' | 'danger';
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
@@ -54,9 +54,9 @@ export function Button({
 export type Tone = 'success' | 'warn' | 'danger' | 'info' | 'muted';
 
 /** Dot plus word. The dot alone would make colour the only channel. */
-export function StatusDot({ tone, label }: { tone: Tone; label: string }) {
+export function StatusDot({ tone, label, pill = false }: { tone: Tone; label: string; pill?: boolean }) {
   return (
-    <span className="status">
+    <span className={pill ? 'status status-pill' : 'status'}>
       <span className={`dot${tone === 'muted' ? '' : ` dot-${tone}`}`} aria-hidden="true" />
       <span>{label}</span>
     </span>
@@ -65,6 +65,28 @@ export function StatusDot({ tone, label }: { tone: Tone; label: string }) {
 
 export function Badge({ tone = 'muted', children }: { tone?: Tone; children: ReactNode }) {
   return <span className={`badge${tone === 'muted' ? '' : ` badge-${tone}`}`}>{children}</span>;
+}
+
+// -----------------------------------------------------------------------------
+// Icons: a handful of 16px strokes, always beside a label or an aria-label
+// -----------------------------------------------------------------------------
+
+const ICONS = {
+  terminal: 'M3 4.5 7 8l-4 3.5M8.5 12H13',
+  files: 'M2.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z',
+  browser: 'M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM2.5 8h11M8 2.5c1.6 1.6 2.2 3.4 2.2 5.5S9.6 11.9 8 13.5C6.4 11.9 5.8 10.1 5.8 8S6.4 4.1 8 2.5',
+  stop: 'M4.5 4.5h7v7h-7z',
+  sun: 'M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1',
+  moon: 'M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z',
+  hand: 'M5.5 8V3.8a1 1 0 0 1 2 0V7.5M7.5 7V3a1 1 0 0 1 2 0v4M9.5 7.2V4a1 1 0 0 1 2 0v5.5a4 4 0 0 1-4 4h-.6a4 4 0 0 1-3.2-1.6L2.4 9.9a1 1 0 0 1 1.5-1.3l1.6 1.4',
+} as const;
+
+export function Icon({ name }: { name: keyof typeof ICONS }) {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={ICONS[name]} />
+    </svg>
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -265,7 +287,8 @@ export function bytesToText(bytes: Uint8Array): { text: string; binary: boolean 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
+  if (n < 1024 ** 3) return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
+  return `${(n / 1024 ** 3).toFixed(1)} GiB`;
 }
 
 export function formatWhen(iso: string | undefined): string {

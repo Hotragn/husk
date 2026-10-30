@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { discover, prettyTitle } from './discover.js';
 
 /**
@@ -127,5 +127,55 @@ describe('prettyTitle', () => {
     await expect(prettyTitle('chat-with-dashes.json', 'chatgpt')).resolves.toBe(
       'chat-with-dashes.json',
     );
+  });
+
+  it('finds Codex sessions where Codex keeps them, titled by what the person asked', async () => {
+    const codexHome = await cwd();
+    const day = join(codexHome, 'sessions', '2026', '10', '25');
+    await mkdir(day, { recursive: true });
+    const rollout = [
+      { timestamp: '2026-10-25T10:00:00.000Z', type: 'session_meta', payload: { id: 'codex-1' } },
+      { timestamp: '2026-10-25T10:00:01.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Tidy the release notes every Friday' }] } },
+    ];
+    await writeFile(join(day, 'rollout-2026-10-25T10-00-00-c0de.jsonl'), rollout.map((l) => JSON.stringify(l)).join('\n'));
+    vi.stubEnv('CODEX_HOME', codexHome);
+    try {
+      const found = await discover({ cwd: codexHome, source: 'codex' });
+      expect(found).toEqual([expect.objectContaining({ source: 'codex', title: 'Tidy the release notes every Friday' })]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('finds Claude Code sessions under CLAUDE_CONFIG_DIR, where its importer reads them', async () => {
+    const home = await cwd();
+    const project = join(home, 'claude-config', 'projects', '-home-me-api');
+    await mkdir(project, { recursive: true });
+    await writeFile(join(project, 's1.jsonl'), JSON.stringify({ type: 'user', sessionId: 's1', message: { role: 'user', content: 'Ship it' } }));
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    vi.stubEnv('CLAUDE_CONFIG_DIR', join(home, 'claude-config'));
+    try {
+      const found = await discover({ cwd: home, source: 'claude-code' });
+      expect(found.map((c) => c.path)).toEqual([join(project, 's1.jsonl')]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('finds the chats Gemini CLI saved, and not its other files', async () => {
+    const home = await cwd();
+    const project = join(home, '.gemini', 'tmp', '9f2c');
+    await mkdir(project, { recursive: true });
+    await writeFile(join(project, 'checkpoint-launch.json'), JSON.stringify([{ role: 'user', parts: [{ text: 'Plan the launch' }] }]));
+    await writeFile(join(project, 'logs.json'), JSON.stringify([{ sessionId: 'x', type: 'user', message: 'Plan the launch' }]));
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    try {
+      const found = await discover({ cwd: home, source: 'gemini' });
+      expect(found.map((c) => c.path)).toEqual([join(project, 'checkpoint-launch.json')]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

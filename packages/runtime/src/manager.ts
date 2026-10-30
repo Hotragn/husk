@@ -1,6 +1,7 @@
 import { readFile, mkdir, rename, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { HuskError, createLogger, ensurePaths, notifyComputerDestroyed } from '@husk-ai/core';
+import { createHash } from 'node:crypto';
+import { HuskError, chatIdentityOf, createLogger, networkEnforcement, notifyComputerDestroyed, paths } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -26,6 +27,8 @@ export interface ProviderStatus extends Availability {
 export interface ComputerManagerOptions {
   /** Hard ceiling on live machines. Defaults to 8. */
   maxComputers?: number;
+  /** What `auto` means here, `HuskConfig.provider`, when it names a provider. */
+  provider?: string;
   /** How long a provider availability probe stays fresh. Defaults to 30s. */
   probeTtlMs?: number;
   logger?: Logger;
@@ -44,6 +47,19 @@ export interface ComputerManagerOptions {
  * always there -- so an empty machine still gets a computer, and a machine with
  * options never silently settles for the weakest one.
  */
+/**
+ * Why `auto` leaves this provider out, or undefined when it may pick it.
+ *
+ * Fly bills per machine. With FLY_API_TOKEN and FLY_APP_NAME set, which is
+ * ordinary for anyone who uses Fly, `auto` used to create paid machines
+ * whenever Docker happened to be down. Fly stays one flag away
+ * (`--provider fly`), and HUSK_AUTO_FLY=1 lets `auto` pick it.
+ */
+export function leftOutOfAuto(provider: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (provider !== 'fly' || env.HUSK_AUTO_FLY === '1') return undefined;
+  return 'paid per machine, so auto leaves it out: pick it with --provider fly, or set HUSK_AUTO_FLY=1';
+}
+
 export function defaultProviders(): ComputerProvider[] {
   return [new DockerProvider(), new PodmanProvider(), new SshProvider(), new FlyProvider(), new LocalProvider()];
 }
@@ -59,6 +75,7 @@ export class ComputerManager {
   private readonly probes = new Map<ProviderName, { at: number; result: Availability }>();
   private readonly log: Logger;
   private readonly maxComputers: number;
+  private readonly preferred: ProviderName | undefined;
   private readonly probeTtlMs: number;
   private reaper: ReturnType<typeof setInterval> | undefined;
   /** In-flight creates, so two concurrent `ensure` calls cannot race into two machines. */
@@ -66,6 +83,7 @@ export class ComputerManager {
 
   constructor(opts: ComputerManagerOptions = {}) {
     this.maxComputers = opts.maxComputers ?? 8;
+    this.preferred = opts.provider && opts.provider !== 'auto' ? (opts.provider as ProviderName) : undefined;
     this.probeTtlMs = opts.probeTtlMs ?? 30_000;
     this.log = opts.logger ?? createLogger({ scope: 'runtime' });
     for (const p of opts.providers ?? defaultProviders()) this.register(p);
@@ -126,7 +144,8 @@ export class ComputerManager {
    * caller asked for. That substitution is exactly the kind of surprise that turns
    * into a security incident.
    */
-  async resolveProvider(name: ProviderName | 'auto' = 'auto'): Promise<ComputerProvider> {
+  async resolveProvider(asked: ProviderName | 'auto' = 'auto'): Promise<ComputerProvider> {
+    const name = asked === 'auto' ? (this.preferred ?? 'auto') : asked;
     if (name !== 'auto') {
       const p = this.providers.get(name);
       if (!p) {
@@ -137,7 +156,10 @@ export class ComputerManager {
       const a = await this.probe(name);
       if (!a.available) {
         throw new HuskError('E_PROVIDER_UNAVAILABLE', `provider "${name}" is not usable: ${a.reason ?? 'unknown'}`, {
-          hint: a.hint ?? 'run `husk doctor` to see what is available',
+          hint:
+            asked === 'auto'
+              ? `it is the provider ~/.husk/config.json sets for auto: ${a.hint ?? 'start it, or change that setting'}`
+              : (a.hint ?? 'run `husk doctor` to see what is available'),
         });
       }
       return p;
@@ -145,6 +167,11 @@ export class ComputerManager {
 
     const rejected: string[] = [];
     for (const p of this.getProviders()) {
+      const skipped = leftOutOfAuto(p.name);
+      if (skipped) {
+        rejected.push(`${p.name}: ${skipped}`);
+        continue;
+      }
       const a = await this.probe(p.name);
       if (a.available) {
         if (a.isolated === false) {
@@ -161,8 +188,21 @@ export class ComputerManager {
     });
   }
 
-  private async assertQuota(): Promise<void> {
-    const live = (await this.list()).filter((c) => c.state === 'running' || c.state === 'creating');
+  /**
+   * A kept computer is kept even when it is not on the provider asked for --
+   * made on `local` while Docker was down, say: a chat never loses its
+   * computer. That is said, not silent.
+   */
+  private asAsked(computer: Computer, spec: ComputerSpec): Computer {
+    const asked = spec.provider;
+    if (asked && computer.info.provider !== asked) {
+      this.log.warn(`computer ${computer.id} is on ${computer.info.provider}, not the ${asked} asked for; it was kept so its work is not lost`);
+    }
+    return computer;
+  }
+
+  private async assertQuota(all: ComputerInfo[]): Promise<void> {
+    const live = all.filter((c) => c.state === 'running' || c.state === 'creating');
     if (live.length >= this.maxComputers) {
       throw new HuskError('E_QUOTA', `already running ${live.length} computers (limit ${this.maxComputers})`, {
         hint: 'destroy one with `husk rm <name>`, or raise maxComputers in ~/.husk/config.json',
@@ -171,8 +211,36 @@ export class ComputerManager {
   }
 
   async create(spec: ComputerSpec = {}): Promise<Computer> {
-    await this.assertQuota();
+    // `husk cp x:/work/a .` reads a one-letter name as a Windows drive, so such a computer could never be copied to.
+    if (spec.name !== undefined && spec.name.length < 2) {
+      throw new HuskError('E_SPEC_INVALID', `a computer name needs two characters or more: ${spec.name || '(empty)'}`, {
+        hint: '`husk cp` reads a one-letter name as a Windows drive',
+      });
+    }
+    const all = await this.list();
+    // One computer per name. A second one would be unreachable by name from the
+    // moment it existed, and `husk rm <name>` would destroy one of two (#112).
+    const clash = spec.name ? all.find((c) => c.name === spec.name && c.state !== 'destroyed') : undefined;
+    if (clash) {
+      throw new HuskError('E_SPEC_INVALID', `a computer named ${clash.name} already exists (${clash.id})`, {
+        hint: `use it as it is (\`husk exec ${clash.name} -- ...\`), or remove it first with \`husk rm ${clash.name}\``,
+        details: { id: clash.id },
+      });
+    }
+    await this.assertQuota(all);
     const provider = await this.resolveProvider(spec.provider ?? 'auto');
+    // What the provider cannot enforce of the network policy is said; asked to be strict, refused.
+    const unenforced = networkEnforcement(provider.name, spec.network);
+    if (unenforced && spec.network?.strict) {
+      throw new HuskError('E_SPEC_INVALID', `the network policy asks for strict enforcement, but ${unenforced}`, {
+        hint:
+          spec.network.mode === 'none'
+            ? 'use the docker or podman provider, which give a "none" computer no network at all'
+            : 'no provider enforces this for processes yet: drop strict to run with a warning, or use mode "none" on docker or podman',
+        details: { provider: provider.name, mode: spec.network.mode },
+      });
+    }
+    if (unenforced) this.log.warn(unenforced);
     const computer = await provider.create({ ...spec, provider: provider.name });
     this.log.debug(`created ${computer.id} on ${provider.name}`);
     return computer;
@@ -193,10 +261,26 @@ export class ComputerManager {
       const existingId = await readBinding(key);
       if (existingId) {
         const found = await this.get(existingId);
-        if (found && found.info.state !== 'destroyed') return ensureRunning(found);
+        if (found && found.info.state !== 'destroyed') return ensureRunning(this.asAsked(found, spec));
         await clearBinding(key);
       }
 
+      // A lost bindings file must not cost a chat its computer: the machine still
+      // carries its key, so adopt it rather than make a second one by that name.
+      const keyed = (await this.list()).find((c) => c.spec?.labels?.['husk.key'] === key && c.state !== 'destroyed');
+      const adopted = keyed ? await this.get(keyed.id) : null;
+      if (adopted && adopted.info.state !== 'destroyed') {
+        await writeBinding(key, adopted.id);
+        return ensureRunning(this.asAsked(adopted, spec));
+      }
+
+      // A husk's computer is named after the husk, and two paths reach it under
+      // different keys (`husk run` uses husk:<name>, the server the bare name).
+      // The name a person typed stays unique; a keyed computer whose preferred
+      // name is taken gets one derived from its key instead of failing.
+      const all = await this.list();
+      const taken = spec.name ? all.some((c) => c.name === spec.name && c.state !== 'destroyed') : false;
+      const name = taken ? `${spec.name}-${createHash('sha256').update(key).digest('hex').slice(0, 6)}` : spec.name;
       const computer = await this.create({
         // A computer reached by a stable key is somebody's bot -- one chat, one
         // session, one machine -- and it is expected to still be there
@@ -209,6 +293,7 @@ export class ComputerManager {
         // container. Persisting by key makes the sentence true.
         persist: true,
         ...spec,
+        ...(name ? { name } : {}),
         labels: { ...(spec.labels ?? {}), 'husk.key': key },
       });
       await writeBinding(key, computer.id);
@@ -223,11 +308,20 @@ export class ComputerManager {
     }
   }
 
+  /** The key a computer is bound under by `ensure`, or undefined if it has none. */
+  async keyFor(id: string): Promise<string | undefined> {
+    for (const [key, bound] of Object.entries(await readBindings())) if (bound === id) return key;
+    return undefined;
+  }
+
   async get(id: string): Promise<Computer | null> {
     for (const p of this.providers.values()) {
       try {
         const c = await p.get(id);
-        if (c) return c;
+        if (c) {
+          Object.assign(c.info, chatIdentityOf(c.info.spec?.labels));
+          return c;
+        }
       } catch {
         // One broken provider must not hide a machine owned by another.
       }
@@ -239,7 +333,7 @@ export class ComputerManager {
     const all: ComputerInfo[] = [];
     for (const p of this.providers.values()) {
       try {
-        all.push(...(await p.list()));
+        all.push(...(await p.list()).map((info) => ({ ...info, ...chatIdentityOf(info.spec?.labels) })));
       } catch (err) {
         this.log.debug(`provider ${p.name} could not list computers`, err);
       }
@@ -249,23 +343,24 @@ export class ComputerManager {
     );
   }
 
-  async destroy(id: string): Promise<boolean> {
+  /** Remove a computer. `erase` takes what it keeps for its chat or bot with it (Computer.destroy). */
+  async destroy(id: string, opts: { erase?: boolean } = {}): Promise<boolean> {
     const c = await this.get(id);
     if (!c) return false;
     const key = c.info.spec.labels?.['husk.key'];
     // Before the machine goes, not after: a browser's `close()` runs a `pkill`
     // *inside* the computer, which only works while the computer still exists.
     await notifyComputerDestroyed(id);
-    await c.destroy();
+    await c.destroy(opts);
     if (key) await clearBinding(key);
     return true;
   }
 
-  async destroyAll(): Promise<number> {
+  async destroyAll(opts: { erase?: boolean } = {}): Promise<number> {
     const all = await this.list();
     let n = 0;
     for (const info of all) {
-      if (await this.destroy(info.id)) n++;
+      if (await this.destroy(info.id, opts)) n++;
     }
     return n;
   }
@@ -304,7 +399,8 @@ export class ComputerManager {
 // ---------------------------------------------------------------------------
 
 function bindingsFile(): string {
-  return join(ensurePaths().computers, 'bindings.json');
+  // Reading must not create ~/.husk; writeBindings makes the directory itself.
+  return join(paths().computers, 'bindings.json');
 }
 
 async function readBindings(): Promise<Record<string, string>> {

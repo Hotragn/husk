@@ -30,6 +30,20 @@
 export const HUSK_VERSION = '0.2.0';
 
 /**
+ * What a chat's process and the shared Husk must agree on: the tool route and
+ * its results. Bumped only when that changes incompatibly, so a patch, or a
+ * release that only adds a tool, still shares one Husk.
+ */
+export const HUSK_PROTOCOL = 1;
+
+/**
+ * The releases a chat app's launch line accepts: this minor's, which all speak
+ * HUSK_PROTOCOL, so npx still picks up fixes. A tilde, not a caret: cmd.exe
+ * eats a caret.
+ */
+export const HUSK_RANGE = `~${HUSK_VERSION.split('.').slice(0, 2).join('.')}`;
+
+/**
  * Must equal the root manifest's `repository.url`, without the `git+` prefix
  * or the `.git` suffix. Asserted by the drift check.
  */

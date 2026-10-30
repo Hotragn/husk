@@ -2,9 +2,25 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { defaultSpec } from '@husk-ai/core';
 import type { RunResult } from '@husk-ai/core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Store } from './store.js';
 import { paths, tempStore } from './testing.js';
+
+// How many renames to refuse the way Windows does while something has the file open.
+const refuse = vi.hoisted(() => ({ renames: 0 }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...real,
+    rename: async (from: string, to: string) => {
+      if (refuse.renames > 0) {
+        refuse.renames--;
+        throw Object.assign(new Error(`EPERM: operation not permitted, rename '${from}' -> '${to}'`), { code: 'EPERM' });
+      }
+      return real.rename(from, to);
+    },
+  };
+});
 
 let cleanup: (() => Promise<void>) | undefined;
 
@@ -140,6 +156,22 @@ describe('the write queue', () => {
     const { readdir } = await import('node:fs/promises');
     const files = await readdir(join(root, 'husks', 'temped'));
     expect(files.filter((f) => f.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('waits out Windows refusing to replace a file something has open', async () => {
+    const { store, root } = await fresh();
+    await store.writeHusk(defaultSpec('open'));
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform') as PropertyDescriptor;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      refuse.renames = 3;
+      await store.bumpRunCount('open');
+      expect(refuse.renames).toBe(0);
+      expect(JSON.parse(await readFile(join(root, 'husks', 'open', 'meta.json'), 'utf8')).runCount).toBe(1);
+    } finally {
+      refuse.renames = 0;
+      Object.defineProperty(process, 'platform', platform);
+    }
   });
 
   it('drains on close', async () => {

@@ -88,7 +88,7 @@ req = urllib.request.Request(url, headers={
 })
 
 started = time.time()
-status, final, ctype, raw, declared = 0, url, "", b"", None
+status, final, ctype, raw, declared, location = 0, url, "", b"", None, None
 try:
     with opener.open(req, timeout=timeout) as res:
         status = res.status
@@ -98,6 +98,7 @@ try:
         raw = res.read(max_bytes + 1)
 except urllib.error.HTTPError as e:
     status, final, ctype = e.code, e.geturl(), e.headers.get("Content-Type", "")
+    location = e.headers.get("Location")
     raw = e.read(max_bytes + 1)
 except Exception as e:
     print(json.dumps({"error": str(e)}))
@@ -143,6 +144,7 @@ print(json.dumps({
     "text": text, "links": links, "bytes": len(raw), "truncated": truncated,
     "totalBytes": int(declared) if declared and declared.isdigit() else None,
     "elapsedMs": int((time.time() - started) * 1000),
+    "location": location,
 }))
 `;
 
@@ -157,33 +159,65 @@ const SCRIPT_PATH = '/tmp/.husk-browse.py';
  * makes on the agent's behalf.
  */
 
+/** The most redirects one browse follows; each is checked against the policy before it is fetched. */
+const MAX_REDIRECTS = 10;
+
 export async function browseInComputer(
   computer: Computer,
   req: BrowseRequest,
   policy?: NetworkPolicy,
 ): Promise<BrowsePage> {
   const effective = policy ?? computer.info.spec.network;
-  const parsed = assertUrlAllowed(req.url, effective, {
-    loopbackIsOwn: ownsLoopback(computer.info.provider),
-  });
+  const ctx = { loopbackIsOwn: ownsLoopback(computer.info.provider) };
+  const first = assertUrlAllowed(req.url, effective, ctx);
 
   const timeoutSec = req.timeoutSec ?? 30;
   const maxBytes = req.maxBytes ?? 200 * 1024;
   const follow = req.follow !== false;
+  const opts = { timeoutSec, maxBytes, ...(req.signal ? { signal: req.signal } : {}) };
 
   const hasPython = await probe(computer, 'python3', req.signal);
-  if (!hasPython) return await browseWithCurl(computer, parsed, { follow, timeoutSec, maxBytes, signal: req.signal });
+  if (hasPython) await computer.writeFile(SCRIPT_PATH, FETCH_SCRIPT);
 
-  await computer.writeFile(SCRIPT_PATH, FETCH_SCRIPT);
+  // Redirects are followed here, never inside the computer, so every hop is
+  // checked like the first: a page that redirects to the metadata endpoint, or
+  // to the host's own loopback, is refused before anything is sent there.
+  let url = first;
+  for (let hop = 0; ; hop++) {
+    const { page, location } = hasPython ? await fetchWithPython(computer, url, opts) : await fetchWithCurl(computer, url, opts);
+    if (!follow || !location || page.status < 300 || page.status >= 400) return { ...page, requestedUrl: first.toString() };
+    if (hop === MAX_REDIRECTS) {
+      throw new HuskError('E_EXEC_FAILED', `${first.hostname} redirected more than ${MAX_REDIRECTS} times`, {
+        hint: 'it is probably a redirect loop; open it with browser_goto to see where it goes',
+      });
+    }
+    let next = location;
+    try {
+      next = new URL(location, url).toString();
+    } catch {
+      // assertUrlAllowed says what is wrong with it.
+    }
+    url = assertUrlAllowed(next, effective, ctx);
+  }
+}
+
+interface FetchOptions {
+  timeoutSec: number;
+  maxBytes: number;
+  signal?: AbortSignal;
+}
+
+/** One request, never following a redirect: its Location comes back for the caller to check. */
+async function fetchWithPython(computer: Computer, url: URL, opts: FetchOptions): Promise<{ page: BrowsePage; location?: string }> {
   const result = await computer.exec({
-    cmd: ['python3', SCRIPT_PATH, parsed.toString(), follow ? '1' : '0', String(timeoutSec), String(maxBytes)],
-    timeoutSec: timeoutSec + 10,
-    maxOutputBytes: maxBytes + 64 * 1024,
-    ...(req.signal ? { signal: req.signal } : {}),
+    cmd: ['python3', SCRIPT_PATH, url.toString(), '0', String(opts.timeoutSec), String(opts.maxBytes)],
+    timeoutSec: opts.timeoutSec + 10,
+    maxOutputBytes: opts.maxBytes + 64 * 1024,
+    ...(opts.signal ? { signal: opts.signal } : {}),
   });
 
   if (result.exitCode !== 0 && !result.stdout.trim()) {
-    throw new HuskError('E_EXEC_FAILED', `could not load ${parsed.hostname}`, {
+    throw new HuskError('E_EXEC_FAILED', `could not load ${url.hostname}`, {
       hint: 'check the computer has egress with `husk exec <name> -- curl -sS -o /dev/null -w "%{http_code}" https://example.com`',
       details: { stderr: result.stderr.slice(0, 500) },
     });
@@ -200,45 +234,47 @@ export async function browseInComputer(
   }
 
   if (typeof parsedOut.error === 'string') {
-    throw new HuskError('E_EXEC_FAILED', `could not load ${parsed.hostname}: ${parsedOut.error}`, {
+    throw new HuskError('E_EXEC_FAILED', `could not load ${url.hostname}: ${parsedOut.error}`, {
       hint: 'the machine reached the network but the request failed -- check the URL and the host',
     });
   }
 
   return {
-    requestedUrl: parsed.toString(),
-    url: String(parsedOut.url ?? parsed.toString()),
-    status: Number(parsedOut.status ?? 0),
-    contentType: String(parsedOut.contentType ?? ''),
-    title: String(parsedOut.title ?? ''),
-    text: String(parsedOut.text ?? ''),
-    links: Array.isArray(parsedOut.links) ? (parsedOut.links as BrowseLink[]) : [],
-    bytes: Number(parsedOut.bytes ?? 0),
-    totalBytes: typeof parsedOut.totalBytes === 'number' ? parsedOut.totalBytes : null,
-    truncated: Boolean(parsedOut.truncated),
-    elapsedMs: Number(parsedOut.elapsedMs ?? 0),
-    via: 'python3',
+    page: {
+      requestedUrl: url.toString(),
+      url: String(parsedOut.url ?? url.toString()),
+      status: Number(parsedOut.status ?? 0),
+      contentType: String(parsedOut.contentType ?? ''),
+      title: String(parsedOut.title ?? ''),
+      text: String(parsedOut.text ?? ''),
+      links: Array.isArray(parsedOut.links) ? (parsedOut.links as BrowseLink[]) : [],
+      bytes: Number(parsedOut.bytes ?? 0),
+      totalBytes: typeof parsedOut.totalBytes === 'number' ? parsedOut.totalBytes : null,
+      truncated: Boolean(parsedOut.truncated),
+      elapsedMs: Number(parsedOut.elapsedMs ?? 0),
+      via: 'python3',
+    },
+    ...(typeof parsedOut.location === 'string' && parsedOut.location ? { location: parsedOut.location } : {}),
   };
 }
 
-/** No python3: fall back to curl and return the body with no extraction. */
-async function browseWithCurl(
-  computer: Computer,
-  parsed: URL,
-  opts: { follow: boolean; timeoutSec: number; maxBytes: number; signal?: AbortSignal },
-): Promise<BrowsePage> {
+/**
+ * No python3: curl, returning the body with no extraction. Never `-L`: the
+ * redirect target comes back in the metadata for the caller to check. The
+ * metadata is tab-separated, since a content type has spaces in it.
+ */
+async function fetchWithCurl(computer: Computer, url: URL, opts: FetchOptions): Promise<{ page: BrowsePage; location?: string }> {
   const started = Date.now();
   const args = [
     'curl',
     '-sS',
-    ...(opts.follow ? ['-L'] : []),
     '-m',
     String(opts.timeoutSec),
     '-A',
     HUSK_BROWSER_USER_AGENT,
     '-w',
-    '\\nHUSK_META %{http_code} %{content_type} %{url_effective}',
-    parsed.toString(),
+    '\\nHUSK_META\\t%{http_code}\\t%{content_type}\\t%{url_effective}\\t%{redirect_url}',
+    url.toString(),
   ];
   const res = await computer.exec({
     cmd: args,
@@ -248,32 +284,35 @@ async function browseWithCurl(
   });
 
   if (res.exitCode !== 0) {
-    throw new HuskError('E_EXEC_FAILED', `could not load ${parsed.hostname}`, {
+    throw new HuskError('E_EXEC_FAILED', `could not load ${url.hostname}`, {
       hint:
         'this machine has neither python3 nor curl, so there is nothing here to fetch with. ' +
-        'Use a flavor whose image ships one -- `husk up <name> --flavor python` works today -- ' +
-        'or point computer.image at your own. On the container providers `computer.packages` ' +
-        'cannot help here: the root filesystem is mounted read-only on purpose, so no package ' +
-        'manager can run.',
+        'Use a flavor whose image ships one -- `--flavor full`, which also runs the browser --, ' +
+        'list `curl` in `computer.packages` (Docker, Podman and local install them), or point ' +
+        'computer.image at your own.',
       details: { stderr: res.stderr.slice(0, 500) },
     });
   }
 
-  const meta = /\nHUSK_META (\d+) (\S*) (\S+)\s*$/.exec(res.stdout);
-  const body = meta ? res.stdout.slice(0, meta.index) : res.stdout;
+  const at = res.stdout.lastIndexOf('\nHUSK_META\t');
+  const body = at >= 0 ? res.stdout.slice(0, at) : res.stdout;
+  const [, code, contentType, effective, redirect] = at >= 0 ? res.stdout.slice(at + 1).replace(/\s+$/, '').split('\t') : [];
   return {
-    requestedUrl: parsed.toString(),
-    url: meta?.[3] ?? parsed.toString(),
-    status: meta ? Number(meta[1]) : 0,
-    contentType: meta?.[2] ?? '',
-    title: '',
-    text: stripTags(body),
-    links: [],
-    bytes: Buffer.byteLength(body, 'utf8'),
-    totalBytes: null,
-    truncated: res.truncated,
-    elapsedMs: Date.now() - started,
-    via: 'curl',
+    page: {
+      requestedUrl: url.toString(),
+      url: effective || url.toString(),
+      status: code ? Number(code) : 0,
+      contentType: contentType ?? '',
+      title: '',
+      text: stripTags(body),
+      links: [],
+      bytes: Buffer.byteLength(body, 'utf8'),
+      totalBytes: null,
+      truncated: res.truncated,
+      elapsedMs: Date.now() - started,
+      via: 'curl',
+    },
+    ...(redirect ? { location: redirect } : {}),
   };
 }
 

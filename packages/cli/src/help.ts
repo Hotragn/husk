@@ -37,13 +37,39 @@ export const COMMANDS: HelpEntry[] = [
     examples: ['husk onboard', 'husk onboard --json | jq .next'],
   },
   {
+    name: 'setup',
+    group: 'system',
+    summary: 'Pick the computer, connect your chat apps, start Husk',
+    usage: 'husk setup [--computer <name>] [--flavor <f>] [--apps all|<id,id>] [--yes] [--remove]',
+    details:
+      "Chooses where your chats' computers run (docker, podman, local, ssh, fly), adds Husk to the\n"
+      + 'chat apps you pick, and starts the one Husk every chat goes through, printing its console link.\n\n'
+      + 'Apps it knows: claude-desktop, claude-code, cursor, vscode, windsurf, zed, codex, gemini. For an\n'
+      + 'app with a JSON config it backs the file up, then changes only its own "husk" entry in place,\n'
+      + 'and refuses a file it cannot parse. Claude Code and Codex are changed through their own commands.\n'
+      + 'Re-run it to change the computer; --remove takes Husk out of every app it is in.',
+    flags: [
+      ['--computer <name>', 'docker, podman, local, ssh, fly, or auto'],
+      ['--flavor <f>', 'base, python, node or full (full has a browser); containers only'],
+      ['--apps <list>', '"all" for every app found, or ids such as claude-desktop,cursor'],
+      ['--yes', 'do not ask; needed to change anything without a terminal'],
+      ['--remove', 'take Husk out of every connected app'],
+      ['--no-start', 'do not start Husk now'],
+      ['--json', 'what was chosen and changed'],
+    ],
+    examples: ['husk setup', 'husk setup --computer docker --flavor full --apps all --yes', 'husk setup --remove'],
+  },
+  {
     name: 'doctor',
     group: 'system',
     summary: 'Show exactly what this machine can and cannot do',
-    usage: 'husk doctor [--json]',
+    usage: 'husk doctor [--json] [--force]',
     details:
       'Every computer provider with its availability, isolation, and what to do about it;\nevery model provider; what husk would pick right now; and any warnings.\nThis is the first thing to run when something is confusing.',
-    flags: [['--json', 'machine-readable report']],
+    flags: [
+      ['--json', 'machine-readable report'],
+      ['--force', 'probe every provider again, ignoring the 30-second cache'],
+    ],
     examples: ['husk doctor', 'husk doctor --json | jq .selection'],
   },
   {
@@ -57,9 +83,11 @@ export const COMMANDS: HelpEntry[] = [
       ['--flavor <f>', 'base | python | node | full (default: base)'],
       ['--memory <size>', 'e.g. 2g, 512m'],
       ['--cpus <n>', 'cpu allocation'],
-      ['--network <mode>', 'none | egress | full (default: egress)'],
+      ['--network <mode>', 'none | egress | full (default: full, minus internal addresses)'],
       ['--packages <p,..>', 'install these in the machine at create time; repeatable'],
       ['--persist', 'keep the filesystem across restarts'],
+      ['--env K=V', 'set a variable inside the machine; repeatable'],
+      ['--idle-timeout <sec>', 'destroy it after this long unused, while the shared Husk runs (default: never)'],
       ['--json', 'print the computer record instead of the summary'],
     ],
     examples: [
@@ -83,14 +111,19 @@ export const COMMANDS: HelpEntry[] = [
   {
     name: 'rm',
     group: 'computers',
-    summary: 'Destroy a computer and its filesystem',
-    usage: 'husk rm <name|id> [--all] [--yes]',
-    details: 'Destructive and not recoverable. Asks first unless --yes is given or --json is set.',
+    summary: 'Destroy a computer; a chat’s stops for now',
+    usage: 'husk rm <name|id> [--all] [--erase] [--yes] [--force]',
+    details:
+      'Destructive and not recoverable, except that on docker and podman a chat’s computer, or a bot’s with ' +
+      'persist: true, keeps its files and browser logins for its next computer: for those it means "stop for now". ' +
+      '--erase, like the console’s Delete, erases them too. Asks first unless --yes or --force is given.',
     flags: [
       ['--all', 'destroy every computer'],
+      ['--erase', 'take what a chat’s or a persistent bot’s computer keeps too: its files and browser logins'],
       ['--yes, -y', 'skip the confirmation'],
+      ['--force, -f', 'skip the confirmation, and with --all destroy computers in use in the last minute too'],
     ],
-    examples: ['husk rm scratch', 'husk rm --all --yes'],
+    examples: ['husk rm scratch', 'husk rm my-bot --erase', 'husk rm --all --yes'],
   },
   {
     name: 'stop',
@@ -117,6 +150,7 @@ export const COMMANDS: HelpEntry[] = [
       ['--cwd <path>', 'working directory inside the machine (default: /work)'],
       ['--timeout <sec>', 'kill the process tree after this long (default: 120)'],
       ['--env K=V', 'set an environment variable; repeatable'],
+      ['--stdin <text>', 'text to pipe to the command on stdin'],
       ['--json', 'buffer and print the full result as JSON instead of streaming'],
     ],
     examples: [
@@ -130,9 +164,10 @@ export const COMMANDS: HelpEntry[] = [
     name: 'shell',
     group: 'computers',
     summary: 'An interactive prompt against a computer',
-    usage: 'husk shell <name|id>',
+    usage: 'husk shell <name|id> [--cwd <path>]',
     details:
       'A readline loop, NOT a pty. Each line is a separate exec, so husk tracks `cd` for you,\nbut full-screen programs (vim, top, less) and anything that checks isatty will not work.\nUse `exit`, `quit`, or Ctrl-D to leave.',
+    flags: [['--cwd <path>', 'directory to start in (default: /work)']],
     examples: ['husk shell scratch'],
   },
   {
@@ -167,9 +202,9 @@ export const COMMANDS: HelpEntry[] = [
     summary: 'Find and import a chat transcript',
     usage: 'husk import [path] [--source <s>] [--pick <n>]',
     details:
-      'With no path, husk searches the usual places (Claude Code, ChatGPT exports, Cursor,\nmarkdown in the current directory), lists what it found, and asks you to choose.',
+      'With no path, husk searches the usual places (Claude Code, Codex, ChatGPT exports, Cursor,\nmarkdown in the current directory), lists what it found, and asks you to choose.',
     flags: [
-      ['--source <s>', 'claude-code | chatgpt | cursor | gemini | markdown | universal'],
+      ['--source <s>', 'claude-code | chatgpt | codex | cursor | gemini | markdown | universal'],
       ['--pick <n>', 'choose by number without being asked'],
       ['--limit <n>', 'how many candidates to list (default: 20)'],
       ['--json', 'print the discovered list, or the imported transcript'],
@@ -203,8 +238,10 @@ export const COMMANDS: HelpEntry[] = [
     flags: [
       ['--model <m>', 'override the spec\'s model'],
       ['--max-steps <n>', 'ceiling on tool-calling rounds'],
+      ['--max-cost <usd>', 'ceiling on what the run may spend (default: from the spec)'],
       ['--approve <mode>', 'auto | ask | readonly (default: from the spec)'],
       ['--no-computer', 'run without giving the agent a machine'],
+      ['--var K=V', 'fill {{K}} in the persona; repeatable'],
       ['--json', 'print the run result instead of streaming'],
     ],
     examples: [
@@ -217,21 +254,52 @@ export const COMMANDS: HelpEntry[] = [
     name: 'serve',
     group: 'system',
     summary: 'Start the control plane and any bots the husk declares',
-    usage: 'husk serve [--port 7377] [--host 127.0.0.1]',
+    usage: 'husk serve [--port 7377] [--host 127.0.0.1] [--remote --public-url https://<host> [--provider docker] [--remote-port <n>]]',
+    details:
+      'With --remote, chat apps on the web reach this Husk at <public URL>/mcp, through a tunnel you\n'
+      + 'run to remote access\'s own port (Tailscale Funnel keeps TLS on this machine); the console and\n'
+      + 'the API stay on their port, on loopback. Only its owner can sign in: whoever first types the\n'
+      + 'claim code it prints, with a passkey after that. Remote chats get computers from an isolated\n'
+      + 'provider only, never this machine itself. It will not start while a high or critical security\n'
+      + 'advisory stands against this install. Off unless you pass --remote.',
     flags: [
-      ['--port <n>', 'default: 7377'],
-      ['--host <h>', 'default: 127.0.0.1 -- loopback only unless you change it'],
+      ['--port <n>', 'default: HUSK_PORT, else 7377'],
+      ['--host <h>', 'default: HUSK_HOST, else 127.0.0.1 -- loopback only unless you change it'],
+      ['--remote', 'serve /mcp to chat apps on the web, for the owner only'],
+      ['--public-url <url>', 'the fixed https name your tunnel gives remote access; needed with --remote'],
+      ['--provider <name>', 'where remote chats get computers: docker (default), podman, fly or ssh'],
+      ['--remote-port <n>', 'remote access\'s own port, the one the tunnel publishes; default: --port plus one'],
+      ['--remote-host <h>', 'where that port listens; default: 127.0.0.1. 0.0.0.0 in a container behind its own proxy'],
     ],
-    examples: ['husk serve', 'husk serve --port 8080'],
+    examples: ['husk serve', 'husk serve --port 8080', 'husk serve --remote --public-url https://box.tail1234.ts.net'],
+  },
+  {
+    name: 'remote',
+    group: 'system',
+    summary: 'Remote access: who may sign in, a new claim code, and the switch',
+    usage: 'husk remote [claim|off|on|reset] [--json]',
+    details:
+      'Talks to the Husk started with `husk serve --remote`, on this machine. `claim` prints a new\n'
+      + 'claim code while it has no owner. `off` signs every app out and makes the public URL a 404\n'
+      + 'until `on`, which is refused while a high or critical advisory stands. `reset` removes the\n'
+      + 'owner, every app that signed in and every token, and prints a claim code for a new owner.',
+    flags: [['--json', 'the status, or the new claim code, as JSON']],
+    examples: ['husk remote', 'husk remote claim', 'husk remote off', 'husk remote reset'],
   },
   {
     name: 'mcp',
     group: 'system',
     summary: 'Run the MCP server on stdio',
-    usage: 'husk mcp',
+    usage: 'husk mcp [--provider <name>] [--flavor <name>] [--session-key <key>] [--keep]',
     details:
       'This is what an MCP client launches. stdout is the protocol channel and carries\nnothing else; logs go to stderr.',
-    examples: ['claude mcp add husk -- npx -y @husk-ai/mcp', 'husk mcp'],
+    flags: [
+      ['--provider <name>', 'docker | podman | local | ssh | fly; default: the best available'],
+      ['--flavor <name>', 'base | python | node | full; default: full, the image that runs the browser'],
+      ['--session-key <key>', 'reuse a named machine; default: one for this server process'],
+      ['--keep', 'leave the machine running after the client disconnects'],
+    ],
+    examples: ['claude mcp add husk -- npx -y @husk-ai/mcp', 'husk mcp', 'husk mcp --provider podman --keep'],
   },
   {
     name: 'models',
@@ -317,7 +385,9 @@ export function topLevelHelp(version: string, firstRun = false): string {
     ['--json', 'machine-readable output; the only thing on stdout'],
     ['-q, --quiet', 'errors only'],
     ['--no-color', 'plain text (also automatic when piped, and with NO_COLOR)'],
+    ['--color', 'colour even when piped'],
     ['--debug', 'full stack traces'],
+    ['-y, --yes', 'answer every confirmation with yes'],
     ['-h, --help', 'help for any command'],
   ];
   const flagWidth = Math.max(width, ...globals.map(([f]) => f.length));
@@ -332,7 +402,7 @@ export function topLevelHelp(version: string, firstRun = false): string {
   out.push(`  ${gray('$')} husk rm scratch                  ${dim('# throw it away')}`);
   out.push('');
   out.push(dim('  Exit codes: 0 ok · 1 error · 2 usage · 130 interrupted.'));
-  out.push(dim('  husk sends nothing anywhere except the model provider you configure.'));
+  out.push(dim('  Husk has no product telemetry. Tasks can contact configured providers and requested websites.'));
   return out.join('\n');
 }
 
@@ -359,7 +429,7 @@ export function commandHelp(entry: HelpEntry): string {
   out.push(bold('EXAMPLES'));
   for (const ex of entry.examples) out.push(`  ${gray('$')} ${ex}`);
   out.push('');
-  out.push(dim('  Global flags: --json --quiet --no-color --debug --help'));
+  out.push(dim('  Global flags: --json --quiet --no-color --color --debug --yes --help'));
   return out.join('\n');
 }
 

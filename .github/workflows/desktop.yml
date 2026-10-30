@@ -1,0 +1,86 @@
+name: desktop
+
+# Builds the Husk desktop app (apps/desktop) on each platform, starts the
+# packaged app in smoke mode, and uploads the unsigned installer. Nothing is
+# signed or published here: release.yml's desktop job signs and attaches the
+# installers to a Release, with the owner's certificates (docs/RELEASING.md).
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps/desktop/**', 'packages/**', 'apps/console/**', 'package-lock.json', '.github/workflows/desktop.yml']
+  pull_request:
+    paths: ['apps/desktop/**', 'packages/**', 'apps/console/**', 'package-lock.json', '.github/workflows/desktop.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Build Husk
+        run: |
+          npm ci
+          npm run build
+      - name: Install the desktop app's tools
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Test the app's decisions
+        working-directory: apps/desktop
+        run: npm test
+      - name: Stage the bundled Husk and package the app
+        working-directory: apps/desktop
+        run: |
+          npm run stage
+          npx electron-builder --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Start the packaged app, load the console, and put two computers on the screen
+        working-directory: apps/desktop
+        shell: bash
+        env:
+          HUSK_DESKTOP_SHOTS: ${{ runner.temp }}/desktop-shots
+          # Windows and macOS runners have real desktops, taskbar and menu bar
+          # included: film the corner and the notch on them (Linux runs headless).
+          HUSK_DESKTOP_FILM: ${{ runner.os != 'Linux' && format('{0}/desktop-shots/film', runner.temp) || '' }}
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
+            ELECTRON_DISABLE_SANDBOX=1 xvfb-run -a npm run smoke
+          else
+            # The person's own work fills the screen behind Husk, as on a real
+            # desktop: an editor in the runner's Chrome, over the runner's log
+            # window on Windows and the black desktop on macOS.
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              chrome="/c/Program Files/Google/Chrome/Application/chrome.exe"; at=0,0; size=1024,720
+            else
+              chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; at=0,25; size=1024,680
+            fi
+            "$chrome" --no-first-run --no-default-browser-check --use-mock-keychain --user-data-dir="$RUNNER_TEMP/screen" \
+              --window-position=$at --window-size=$size --app=https://vscode.dev > /dev/null 2>&1 &
+            sleep 10
+            npm run smoke
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-screens-${{ matrix.os }}
+          path: ${{ runner.temp }}/desktop-shots
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: husk-desktop-${{ matrix.os }}
+          path: |
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.AppImage
+          if-no-files-found: error

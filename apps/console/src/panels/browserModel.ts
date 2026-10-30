@@ -10,19 +10,20 @@
 
 import type { DisplayError } from '../api/client';
 import type { SnapshotNode } from '../api/wire';
-import { sharesHostNetwork } from '@husk-ai/core';
+import { sharesHostNetwork } from '@husk-ai/core/contracts';
 
 /**
  * Refs `click` and `type` can actually resolve.
  *
  * `flattenAxTree` in `@husk-ai/browser` mints two kinds: `e<backendDOMNodeId>` for
- * a node it can point CDP at, and `a<n>` for one it cannot. `backendNodeIdOf`
+ * a node it can point CDP at (`f<k>e<n>` for one inside frame k), and `a<n>` for
+ * one it cannot. `backendNodeIdOf`
  * returns null for the second kind and `Page.click` then throws
  * `E_TOOL_ERROR: <ref> is not a clickable element`. Filtering here means the
  * panel never offers a row whose click is already known to fail.
  */
 export function isActionableRef(ref: string): boolean {
-  return /^e\d+$/.test(ref);
+  return /^(f\d+)?e\d+$/.test(ref);
 }
 
 /**

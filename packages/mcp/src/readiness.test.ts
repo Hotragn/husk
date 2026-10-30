@@ -1,5 +1,4 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { createLogger } from '@husk-ai/core';
 import type { Computer, ComputerInfo } from '@husk-ai/core';
 import type { ComputerManager } from '@husk-ai/runtime';
@@ -8,7 +7,11 @@ import { HuskMcpServer } from './server.js';
 import type { HuskMcpOptions } from './server.js';
 
 const close: Array<() => Promise<void>> = [];
-beforeEach(() => vi.stubEnv('HUSK_SESSION', undefined));
+beforeEach(() => {
+  vi.stubEnv('HUSK_SESSION', undefined);
+  // One chat per process, as Claude Code runs it; per-chat ids are identity.test.ts's.
+  vi.stubEnv('CLAUDE_CODE_SESSION_ID', 'test-session');
+});
 afterEach(async () => {
   for (const fn of close.splice(0)) await fn();
   vi.unstubAllEnvs();
@@ -48,7 +51,7 @@ describe('MCP reconnects', () => {
     if (!Array.isArray(first.content)) throw new Error('Expected MCP content array');
     expect(first.content[0]).toMatchObject({ type: 'text', text: expect.stringMatching(/\n$/) });
     expect(first.content[1]).toMatchObject({ type: 'text', text: expect.stringContaining('ok') });
-    expect(first.content.map((item) => item.text ?? '').join('')).toMatch(/\nok$/);
+    expect(first.content.map((item) => ('text' in item ? item.text : '')).join('')).toMatch(/\nok$/);
 
     const second = await s.shell();
     expect(second.content).toEqual([{ type: 'text', text: 'ok' }]);
@@ -60,7 +63,7 @@ describe('MCP reconnects', () => {
     s.info.state = 'stopped';
     expect((await s.shell()).isError).not.toBe(true);
     expect(s.activity.starts).toBe(1);
-    expect(s.activity.creations).toHaveLength(1);
+    expect(s.activity.bindings).toHaveLength(1);
     expect(s.activity.executions).toBe(2);
   });
 
@@ -85,15 +88,15 @@ describe('MCP reconnects', () => {
     expect(s.activity.executions).toBe(2);
   });
 
-  it('keeps independent MCP processes on separate default sessions', async () => {
-    vi.stubEnv('HUSK_SESSION', undefined);
+  it('keeps independent sessions on separate bound computers', async () => {
+    vi.stubEnv('CLAUDE_CODE_SESSION_ID', 'sess-a');
     const a = await session();
+    vi.stubEnv('CLAUDE_CODE_SESSION_ID', 'sess-b');
     const b = await session();
     await a.shell();
     await b.shell();
-    expect(a.activity.creations[0]).not.toEqual(b.activity.creations[0]);
-    expect(a.activity.bindings).toEqual([]);
-    expect(b.activity.bindings).toEqual([]);
+    expect(a.activity.bindings).toEqual(['claude-code:sess-a']);
+    expect(b.activity.bindings).toEqual(['claude-code:sess-b']);
   });
 
   it('honours an explicitly configured shared session', async () => {
@@ -114,13 +117,13 @@ describe('MCP reconnects', () => {
     expect(s.info.state).toBe('stopped');
   });
 
-  it('destroys an anonymous ephemeral session when it disconnects', async () => {
+  it('stops a chat computer when the client disconnects, and never destroys it', async () => {
     const s = await session({ ephemeral: true });
     await s.shell();
-    expect(s.activity.creations).toHaveLength(1);
     await s.disconnect();
-    expect(s.destroy).toHaveBeenCalledOnce();
-    expect(s.stop).not.toHaveBeenCalled();
+    expect(s.stop).toHaveBeenCalledOnce();
+    expect(s.destroy).not.toHaveBeenCalled();
+    expect(s.info.state).toBe('stopped');
   });
 
   it('leaves a non-ephemeral computer running', async () => {

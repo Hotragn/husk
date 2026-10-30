@@ -1,0 +1,54 @@
+name: mac
+
+# Builds and tests Husk Bar (apps/mac) on a real Mac runner. It proves the
+# package compiles, the logic tests pass, xcodebuild builds the app target, and
+# the .app bundles. It cannot show how the notch pill looks or feels on real
+# hardware; that stays on the README checklist. No signing: nothing here holds
+# a certificate or a secret.
+
+on:
+  pull_request:
+    paths: ['apps/mac/**', '.github/workflows/mac.yml']
+  push:
+    branches: [main]
+    paths: ['apps/mac/**', '.github/workflows/mac.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: mac-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  husk-bar:
+    name: husk bar (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/mac
+    steps:
+      - uses: actions/checkout@v7
+      - name: toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: swift build
+        run: swift build
+      - name: swift test
+        run: swift test
+      - name: xcodebuild
+        run: xcodebuild -scheme HuskBar -destination 'platform=macOS' -configuration Release -derivedDataPath .build/xcode build
+      - name: bundle
+        run: |
+          sh scripts/bundle.sh
+          test -x "build/Husk Bar.app/Contents/MacOS/HuskBar"
+          plutil -lint "build/Husk Bar.app/Contents/Info.plist"
+      - name: upload unsigned app
+        uses: actions/upload-artifact@v4
+        with:
+          name: husk-bar-unsigned
+          path: apps/mac/build/Husk Bar.app
+          if-no-files-found: error

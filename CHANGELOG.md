@@ -11,8 +11,229 @@ not here.
 
 ## [Unreleased]
 
+Nothing below is on npm yet: the packages are still at 0.1.4 there. A public preview of
+the Claude Desktop extension, `husk-0.2.0.mcpb` with the starter workspace flow,
+unsigned, is on the
+[`preview-0.2.0`](https://github.com/Hotragn/husk/releases/tag/preview-0.2.0)
+pre-release of 7 October.
+
+### Added
+
+- **Workspaces.** Named local workspaces keep the public sources you add and the
+  results your chat writes, with a viewer, downloads and ZIP export. They need no
+  Docker and no extra API key. `--profile starter` serves the workspace tools only; it is
+  what the Claude Desktop extension uses
+  ([#151](https://github.com/Hotragn/husk/pull/151)).
+- **Hand-offs.** `hand_off` and `hand_off_done` give you the computer for a login, a 2FA
+  code or a CAPTCHA, and give it back only when you say so
+  ([#164](https://github.com/Hotragn/husk/pull/164)). Every chat gets its own computer,
+  which is kept until you delete it
+  ([#165](https://github.com/Hotragn/husk/pull/165)).
+- **The computer card.** In apps that render MCP Apps, the chat shows its computer's state
+  and a link ([#166](https://github.com/Hotragn/husk/pull/166)).
+- **The console's Home** is an overview of every computer
+  ([#167](https://github.com/Hotragn/husk/pull/167)).
+- **Husk Bar**, a macOS menu-bar and notch companion
+  ([#168](https://github.com/Hotragn/husk/pull/168)).
+- **One shared Husk for every chat on the machine.** Each chat's tools go through it, so
+  the console shows every chat's computer, its live browser and what it did last
+  ([#175](https://github.com/Hotragn/husk/pull/175)). Each chat's computer has its own
+  page, with the live browser, its activity, Take over and Make this a bot
+  ([#176](https://github.com/Hotragn/husk/pull/176)).
+- **`husk setup`** picks where computers run, connects your chat apps and starts the
+  shared Husk. The console's Connect page does the same
+  ([#177](https://github.com/Hotragn/husk/pull/177)).
+- **The desktop app** carries its own Node and keeps each chat's computer one click away:
+  - a corner of small computers;
+  - a Computers window whose tabs are your computers;
+  - a notch when it is minimized;
+  - a tray that tells you when a chat is waiting.
+
+  Each release attaches its installers for Windows, macOS and Linux, signed and
+  notarized when the release has the signing keys
+  ([#178](https://github.com/Hotragn/husk/pull/178),
+  [#185](https://github.com/Hotragn/husk/pull/185),
+  [#231](https://github.com/Hotragn/husk/pull/231)).
+- **The desktop app updates itself.** A signed build looks on GitHub Releases at start and
+  every six hours, downloads in the background, and **Restart to update** in the tray
+  installs it. Husk keeps running, so chats keep their computers. An unsigned build, or
+  Linux, only says a new version is out. Chat apps that start the app's Husk follow it
+  when it updates or moves, keeping their flags and computer choice; an entry you pointed
+  elsewhere is left alone ([#232](https://github.com/Hotragn/husk/pull/232)).
+- **The desktop app says when Husk stops answering.** The Computers window shows a banner
+  and clears its screen, the tray, the corner and the notch say so too, and Take over
+  waits until Husk is back. The app starts Husk again, waiting longer after each failed
+  start, up to a minute ([#225](https://github.com/Hotragn/husk/pull/225)).
+- **The corner and the notch work by keyboard.** Ctrl+Alt+Shift+H (Cmd+Option+Shift+H on
+  a Mac) hands them the keyboard, and the tray lists every computer. With reduced motion
+  on, nothing pulses or flies in ([#226](https://github.com/Hotragn/husk/pull/226)).
+- **The desktop app on every platform and screen.** On Linux, clicks pass through around
+  the corner and the notch. They follow the main screen as screens come and go, and a
+  Computers window left on no screen comes back. On a Mac, minimizing to the notch keeps
+  the Dock icon; on Windows, a chat reopening the window no longer takes focus from what
+  you are typing. Closing the console window keeps its Terminal running
+  ([#227](https://github.com/Hotragn/husk/pull/227)).
+- **Bots on your own Claude Code or Codex.** A husk's `engine` is `builtin`, `claude-code`
+  or `codex`. A CLI engine runs your installed CLI headless, under your own login, with
+  Husk's tools and nothing else: no built-in shell or file tools, no other MCP server, no
+  project's settings, and for Codex a read-only sandbox. A Claude Code bot can go on with a
+  chat (`engine.resume`): each run is a fork of it, on the chat's own computer, and the chat
+  itself is never written to ([#238](https://github.com/Hotragn/husk/pull/238)).
+- **Every chat app can become a bot.** Make this a bot reads Claude Code and Codex chats
+  back by themselves. **Husks › Make a bot from a chat** takes a chat found on this
+  computer, an export or pasted text, and asks which chat when a file holds many. Codex
+  rollouts import, and a draft runs on the chat's own app when it is installed
+  ([#239](https://github.com/Hotragn/husk/pull/239)).
+- **A job host for bots' triggers.** Schedules, webhooks and chat-app triggers run in a
+  process of their own, `husk-mcp --jobs`, which the shared Husk starts when a bot has a
+  trigger and which leaves once none has; a trigger keeps the shared Husk's address and
+  token ([#235](https://github.com/Hotragn/husk/pull/235)).
+- **Take over at any moment**, from the console, the desktop app or a chat's link
+  ([#180](https://github.com/Hotragn/husk/pull/180),
+  [#182](https://github.com/Hotragn/husk/pull/182)).
+- **A faster browser.** One long-lived driver per computer, and a pushed live screen.
+  `browser_run` does several steps in one call
+  ([#181](https://github.com/Hotragn/husk/pull/181)), and `browser_script` runs a short
+  Python script with control flow inside the computer
+  ([#184](https://github.com/Hotragn/husk/pull/184)).
+- **Take-over stops the AI where it is.** Taking a computer stops the AI's calls running
+  on it, browser scripts included, and every route that changes the computer refuses a
+  program while you hold it; a husk run obeys it too. After Give back, a browser action
+  on a page you changed is refused until the AI looks again
+  ([#192](https://github.com/Hotragn/husk/pull/192), [#194](https://github.com/Hotragn/husk/pull/194), [#195](https://github.com/Hotragn/husk/pull/195)).
+- **Holds only you end.** A take-over survives a restart of the shared Husk, and only your
+  Give back ends it: from the console, the desktop app, the tray or the link you took it
+  with. A sign-in handoff a chat asked for still ends with its "done". While you hold a
+  computer its browser stays open, the tray says so, and quitting asks first
+  ([#207](https://github.com/Hotragn/husk/pull/207), [#208](https://github.com/Hotragn/husk/pull/208), [#209](https://github.com/Hotragn/husk/pull/209)).
+- **The window opens as a chat starts working**, without taking focus, if you said yes
+  when the desktop app first asked; a take-over says which call it is waiting for
+  ([#204](https://github.com/Hotragn/husk/pull/204)).
+- **Honest clicks.** A click on something covered, disabled, hidden or still moving, or a
+  role and name that match two elements, is refused, saying why; `force` clicks anyway
+  ([#211](https://github.com/Hotragn/husk/pull/211)).
+- **Refs that expire, and frames.** A ref acts only on the document whose snapshot showed
+  it, so a ref from an earlier page is refused rather than landing on whatever has its id
+  now ([#213](https://github.com/Hotragn/husk/pull/213)). A snapshot reads every frame, cross-site ones included, with refs like
+  `f2e7`, and typing, clicks, hover, scroll and upload reach into them ([#216](https://github.com/Hotragn/husk/pull/216)).
+- **Dialogs, downloads and new tabs.** A dialog is answered the moment it opens and the
+  result says so; a confirm is dismissed unless the call passes `dialog: "accept"`. A
+  download lands in `/work/downloads`, and a tab a page opens is named with its id, so
+  switching to it is one call ([#215](https://github.com/Hotragn/husk/pull/215), [#223](https://github.com/Hotragn/husk/pull/223)).
+- **Fewer turns.** Every browser result ends with where the page is. A snapshot can be of
+  one part of the page, and `browser_click` and `browser_type` take `waitFor`, watched
+  from just before they act. A call on a computer you hold opens with `E_COMPUTER_HELD`
+  ([#220](https://github.com/Hotragn/husk/pull/220)).
+- **A benchmark against Playwright MCP** on the same computer and Chromium, published in
+  every e2e run's summary, with the latest numbers in [docs/BENCHMARK.md](docs/BENCHMARK.md)
+  ([#223](https://github.com/Hotragn/husk/pull/223)).
+- **Strict network enforcement.** `strict: true` under `computer.network`, or
+  `husk-mcp --network-strict` with `--network`, refuses a provider that cannot enforce the
+  policy for every process. Without it, Husk says what is not enforced ([#219](https://github.com/Hotragn/husk/pull/219)).
+- **Zed.** `husk setup` and the Connect page connect it, keeping the comments its settings
+  start with ([#243](https://github.com/Hotragn/husk/pull/243)).
+- **Long calls in every chat app.** Most apps give up on a tool call after a while, such as
+  Claude Desktop after 240 s and Zed after 60 s. Husk now answers first: the call says it
+  is still running and goes on in the computer, and `job_wait` collects its result
+  ([#243](https://github.com/Hotragn/husk/pull/243)).
+- **The chat apps' support matrix**, in [docs/clients.md](docs/clients.md). For each app,
+  it gives how the app gets Husk, what it supports and its limits, with sources. The e2e
+  run checks every app ([#243](https://github.com/Hotragn/husk/pull/243)).
+- **Chat apps on the web.** `husk serve --remote --public-url https://<name>` lets claude.ai
+  and ChatGPT use Husk through a tunnel you run, or from a Fly app of your own
+  ([#245](https://github.com/Hotragn/husk/pull/245), [#247](https://github.com/Hotragn/husk/pull/247), [#248](https://github.com/Hotragn/husk/pull/248)).
+  - It is for one owner, who claims it once with a code printed on the machine and signs
+    in with a passkey after that.
+  - Commands, file changes, and the browser's clicks, typing, uploads and scripts wait
+    for the owner's passkey, on a page that shows exactly what they send. Reading pages
+    and files does not wait.
+  - The console's Connect page and header, and Husk Bar, show whether it is on. The
+    Connect page and `husk remote` switch it off and sign apps out.
+  - It will not start while a high or critical security advisory stands against the
+    install.
+  - The guide is *Chat apps on the web* in the docs. The Fly provider now also takes its
+    token from `HUSK_FLY_TOKEN`.
+- **`husk rm --erase`** erases what a chat's or a bot's computer keeps on Docker and
+  Podman, its files and browser logins, as the console's Delete does
+  ([#259](https://github.com/Hotragn/husk/pull/259)).
+
+### Changed
+
+- **Chats get the image with the browser by default**, and setup pulls it with its
+  progress, so a chat's first page does not wait on a 2 GB download mid-call
+  ([#201](https://github.com/Hotragn/husk/pull/201)).
+- **`auto` leaves paid Fly out** unless `HUSK_AUTO_FLY=1`; `--provider fly` always works.
+  A chat's computer on another provider than the one asked for is kept, and the chat is
+  told ([#203](https://github.com/Hotragn/husk/pull/203)).
+- **Setup pins a version range** (`@husk-ai/mcp@~0.2`), and the shared Husk speaks a
+  protocol version, so a later release that speaks another cannot start under it
+  ([#196](https://github.com/Hotragn/husk/pull/196)).
+- **Coming from 0.1.4**, setup and the Connect page move each chat app's `husk` entry to
+  this release, keeping the flags and env you gave it, Claude Code's per-project entries
+  included. Computers, named sessions, their files and your bots carry over as they are
+  ([#205](https://github.com/Hotragn/husk/pull/205)).
+- **Only the shared Husk stops a chat's computer**, after ten idle minutes, and never one
+  you hold ([#197](https://github.com/Hotragn/husk/pull/197)).
+- **An ssh or Fly computer's screen shows when you ask.** Each picture there is a command
+  on the computer, which kept it awake: **Look** shows it for a minute, and a computer you
+  hold shows all the time. Docker, Podman and local push their screen as before
+  ([#228](https://github.com/Hotragn/husk/pull/228)).
+- **Bots wait out a take-over.** A chat is told to stop when you take its computer; a bot,
+  with nobody to tell, waits until you give it back, says so once in its run, and goes on.
+  A cancel or its timeout still ends it ([#240](https://github.com/Hotragn/husk/pull/240)).
+- **The built-in engine ships with every install**, the desktop app included, so a bot
+  runs on any model, a local Ollama among them, with no CLI install
+  ([#234](https://github.com/Hotragn/husk/pull/234)).
+- **The desktop app gives its Husk your login shell's PATH**, so a Mac app opened from the
+  Finder finds `docker`, `claude` and `codex` ([#238](https://github.com/Hotragn/husk/pull/238)).
+- **Setup changes a chat app's file in place.** Only Husk's own entry changes, and the rest
+  of the file keeps its layout. Windsurf is listed as Windsurf (Devin Desktop), whose two
+  agents read the same file. Codex, Gemini CLI and Claude Desktop's Code tab are named on
+  the computers they make ([#243](https://github.com/Hotragn/husk/pull/243)).
+- **Husk speaks MCP 2026-07-28**, and the 2025 revisions before it, on the same stdio
+  connection. An app on 2026-07-28, such as Claude Code's v2 runtime, gets "Done?" in the
+  chat in that revision's own way. Every older app works as before. `@husk-ai/mcp` now
+  runs on the MCP SDK v2 ([#244](https://github.com/Hotragn/husk/pull/244)).
+
 ### Fixed
 
+- **A Chromium that died stayed dead** until the shared Husk restarted. The next call now
+  starts it again, keeping its logins. A failed launch, and a computer reaped for
+  idleness, no longer leave a Chromium behind ([#217](https://github.com/Hotragn/husk/pull/217)).
+- **Fly computers could not browse**, because the driver needed stdin, which Fly's exec
+  refuses ([#222](https://github.com/Hotragn/husk/pull/222)).
+- **Stopping a wedged browser on `local` killed other computers' scripts** ([#222](https://github.com/Hotragn/husk/pull/222)).
+- **Stopping a command stopped only the client.** On Docker, Podman and SSH the command
+  ran on inside the computer while the chat was told it "was killed". It is now ended
+  where it runs, on every provider, and a chat's cancel reaches it
+  ([#190](https://github.com/Hotragn/husk/pull/190), [#191](https://github.com/Hotragn/husk/pull/191)).
+- **A chat could quietly switch to running its computer in its own process** when the
+  shared Husk was briefly gone. It now starts the shared Husk again and retries, and says
+  so when it cannot ([#196](https://github.com/Hotragn/husk/pull/196)).
+- **One `read_file` of a huge or endless file could knock over the shared Husk**, and a
+  slow viewer could grow it without bound. Reads are bounded, and a viewer that falls
+  behind drops frames ([#199](https://github.com/Hotragn/husk/pull/199), [#200](https://github.com/Hotragn/husk/pull/200)).
+- **Connecting Claude Code or Codex was refused** once the launch line pinned a version
+  range ([#205](https://github.com/Hotragn/husk/pull/205)).
+- **Husk Bar could not reach the shared Husk**: it read only `HUSK_TOKEN`, and the shared
+  Husk makes its own. It now reads `~/.husk/daemon.json` on every poll, as the desktop app
+  does, and its pill makes way while the desktop app's notch shows the computers
+  ([#230](https://github.com/Hotragn/husk/pull/230)).
+- **A run's first computer call could ignore a hold**: a run scheduled on a computer you
+  had already taken ran its first command anyway ([#240](https://github.com/Hotragn/husk/pull/240)).
+- **On Windows, saving a bot could fail with `EPERM`** while something read the file, the
+  console's list of husks among them ([#234](https://github.com/Hotragn/husk/pull/234)).
+- **A file of many chats imported only the first** over the API, so a ChatGPT export of
+  hundreds of chats became its first one ([#239](https://github.com/Hotragn/husk/pull/239)).
+- **A bot made from a chat that used Husk lost the computer**: Husk's own tool names did
+  not count as the computer's, and Cursor's chats were looked for where Cursor does not
+  keep them ([#239](https://github.com/Hotragn/husk/pull/239)).
+- **A take-over from a computer's link could flick back** to Take over for a few seconds,
+  when a reading sent before it answered after it
+  ([#233](https://github.com/Hotragn/husk/pull/233)).
+- **Open bugs from the first users:** chat triggers, symlinks, duplicate names, `~/.husk`,
+  a cold WSL and the model choice
+  ([#174](https://github.com/Hotragn/husk/pull/174)).
 - **`computer_info` reported the host's CPU count and no memory limit at all**, when
   both are limits husk set. A computer created with `--cpus=0.5 --memory=512m` described
   itself as having the host's 10 cores and 7724MB, because `nproc` and `free` read
@@ -44,6 +265,213 @@ not here.
   decoded into a guess
   ([#129](https://github.com/Hotragn/husk/pull/129), thanks
   [@Audgui-Byte](https://github.com/Audgui-Byte))
+- **A chat's tool call failed after five minutes** on the shared Husk: a long `shell`
+  command, or a bot on Claude Code or Codex waiting for a person to give its computer
+  back, got `fetch failed` while the work went on. A long call now keeps its answer alive
+  ([#242](https://github.com/Hotragn/husk/pull/242)).
+- **`husk exec` on Docker and Podman stops a command after 120 s**, as the docs say and the
+  other providers already did. Without `--timeout`, a command that never ended held the
+  call open forever ([#258](https://github.com/Hotragn/husk/pull/258)).
+- **`husk serve` reads `HUSK_HOST` and `HUSK_PORT`**, as documented, for a service whose
+  unit file sets them. The flags still win ([#258](https://github.com/Hotragn/husk/pull/258)).
+- **`husk setup --computer auto` gets the image before the first chat**, for the computer
+  auto will use, as the README's setup line expects. Answering no to the browser question
+  now gives chats the smaller image; it changed nothing before
+  ([#258](https://github.com/Hotragn/husk/pull/258)).
+- **`husk mcp` gives chats the image that runs the browser**, as `npx @husk-ai/mcp` does,
+  and takes `--flavor`. It offered the browser tools on the base image
+  ([#258](https://github.com/Hotragn/husk/pull/258)).
+- **`husk-mcp --network-strict` without `--network` is refused**, saying why, instead of
+  being dropped without a word ([#258](https://github.com/Hotragn/husk/pull/258)).
+- **`husk doctor` warns below Node 20.10**, the supported floor, not only below 20
+  ([#258](https://github.com/Hotragn/husk/pull/258)).
+- **`~/.husk/config.json` and `~/.husk/.env` are read**, as the docs said. Nothing
+  opened either file. `config.json` takes `modelAliases`, `maxCostUsd`, `maxComputers`,
+  `provider` and `model`, the last two being what `auto` means on this machine. A file
+  that is not JSON, a value of the wrong type or a key it does not know stops Husk with
+  its name. `.env` fills in the keys the environment does not set
+  ([#259](https://github.com/Hotragn/husk/pull/259)).
+- **`packages` install on Docker and Podman.** A container computer's read-only root
+  refused every install; the packages are now built into an image of the computer's
+  own, `FROM` its image, and reused for the same list. A package name with a space, a
+  quote, `$`, a backtick or a backslash is refused. SSH and Fly computers refuse
+  `packages` rather than ignore them ([#259](https://github.com/Hotragn/husk/pull/259)).
+- **Runs on Mistral, Cerebras and LM Studio are counted.** Their streams report no usage,
+  so a run cost $0 and its budget never grew. Husk now counts them by its own estimate,
+  priced, as the docs said ([#260](https://github.com/Hotragn/husk/pull/260)).
+- **`--model llama`, `qwen` and `gemma` find the model you pulled.** Ollama lists it as
+  `llama3.2:latest`, and `husk run` never matched that
+  ([#260](https://github.com/Hotragn/husk/pull/260)).
+- **A run over the API falls back through `fallbackModels`**, as `husk run` does, and its
+  `maxSteps` can lower the husk's own limit but no longer raise it
+  ([#260](https://github.com/Hotragn/husk/pull/260)).
+- **`fs/write` with a JSON body writes that JSON**, exactly as sent, not
+  `[object Object]` ([#260](https://github.com/Hotragn/husk/pull/260)).
+- **`/work` in a command on an SSH computer is the computer's own.** The box has no
+  `/work`, and only the file tools mapped it, so `move`, `search_files` with ripgrep,
+  `browse`, setup scripts and the API's archive download and upload failed there. A
+  command's `/work` and `/tmp` paths are now mapped as on `local`, and the real
+  directories the shell prints are accepted back ([#262](https://github.com/Hotragn/husk/pull/262)).
+- **A take-over survives a clean stop of the shared Husk**, as it already survived a
+  crash. Ctrl-C, or SIGTERM from systemd or a shutdown, ended every hold on the way out
+  and wrote an empty `holds.json`, so nothing was held after the restart
+  ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **`approval_required` and `handoff_required` carry the run's own id**, the one
+  `run_start` and `/v1/runs` give, not the agent's. An approval names its tool call in
+  `callId`, so two in one run no longer share an id, and `handoff_required` names the
+  handoff to answer in `handoffId` ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **`fs/download` holds its 256 MiB cap inside the computer.** The archive is cut off as
+  it passes the cap, so a big path fails with `E_QUOTA` rather than filling a 512 MB
+  `/tmp` and being reported as a path that does not exist. A file tar cannot read is
+  said as such ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **A body too big names the cap of its route**, 64 KB on the sign-in pages, not the
+  API's 32 MB ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **`GET /v1/triggers` says when Slack is idle**, with only `SLACK_BOT_TOKEN` set, and
+  which way it listens otherwise ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **Fly takes the token `fly tokens create deploy` prints**, `FlyV1 …` scheme and all, and
+  its hints suggest that token for the computers' app alone, as `HUSK_FLY_TOKEN`, rather
+  than `fly auth token`, which reaches every app you can
+  ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **A run stopped part-way through a reply ends as what happened.** Cancelled, timed out,
+  or cut off by its provider while text was streaming, it ended `complete` with half an
+  answer; it now ends `aborted`, `timeout` or `error` ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **`memory` trims a long run.** A turn is a user message with its answer, or one step the
+  model takes after its tools answer, so a single `husk run`, cron or chat-triggered run
+  with many tool steps is trimmed too; it counted user messages only and never was. A
+  second trim summarises the first one's summary instead of dropping it, and a husk's
+  `examples` stay in place, so the anchor is the person's own message
+  ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **Model distillation works on Claude.** Anthropic's JSON mode prefills `{`, and the reply
+  came back without it, so every window failed to parse and the result fell back to the
+  heuristics. The brace is put back, in a whole reply and a stream
+  ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **Anthropic's thinking signatures are kept**, as `thinkingSignature` on a reply with one
+  thinking block, and sent back with the thinking, as a tool-use turn with thinking needs
+  ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **Gemini keeps a tool parameter named `default`, `const` or `examples`.** Pruning the
+  schema keywords it rejects removed properties by those names too
+  ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **A Claude Code transcript counts its thinking blocks** in the transcript's
+  `meta.thinkingBlocks`. The count went on the text that came with them, and Claude Code
+  writes a thinking block on a line of its own ([#264](https://github.com/Hotragn/husk/pull/264)).
+- **`husk run` with stdout piped writes the answer alone there.** Every step's text went
+  to stdout, so `> answer.txt` caught the narration before each tool call too, and
+  disagreed with `--json`'s `text`. Piped, the steps' text now streams to stderr
+  ([#265](https://github.com/Hotragn/husk/pull/265)).
+- **`husk run --json` writes one document when a run fails**, the result with its `error`;
+  an error object followed it on stdout ([#265](https://github.com/Hotragn/husk/pull/265)).
+- **A malformed `--var` is refused** before anything runs, as `--env` is. One with no `=`,
+  or a name a `{{word}}` placeholder could never match, was dropped without a word
+  ([#265](https://github.com/Hotragn/husk/pull/265)).
+- **Colour follows the stream it is written to.** With only stdout piped,
+  `husk doctor > report.txt` and `husk validate | grep` carried escape codes
+  ([#265](https://github.com/Hotragn/husk/pull/265)).
+- **`husk doctor`'s SELECTION is what `auto` picks.** It now follows the `provider` and
+  `model` that `~/.husk/config.json` sets, and says when the provider it names is not
+  usable; `husk up`'s first-run welcome asks the manager too, so it no longer names Fly,
+  and neither does the starter viewer. An `ssh` box is called isolated from this machine,
+  not kernel-level, in doctor, `husk up` and the welcome
+  ([#265](https://github.com/Hotragn/husk/pull/265)).
+- **A one-letter computer name is refused**, which `husk cp` reads as a Windows drive, and
+  `husk validate` names the file as typed, with `--json` in its documented shape for a
+  missing or unreadable file too ([#265](https://github.com/Hotragn/husk/pull/265)).
+- **A browser script's `dialog: "accept"` holds for its click alone**, as the docs say. It
+  held for the rest of the script, so a confirm a later `page.fill` or `page.goto` met
+  was accepted too ([#266](https://github.com/Hotragn/husk/pull/266)).
+- **A cached Chromium is found where the download plan put it.** The lookup kept its own
+  copy of the layout, which no test reached ([#266](https://github.com/Hotragn/husk/pull/266)).
+- **A signed webhook needs no server token.** With `HUSK_TOKEN` set, GitHub's deliveries
+  were refused with a 401 before their signature was read, since GitHub cannot send a
+  bearer token. A signed request now reaches the webhook, which checks it against its
+  `secret`; a webhook with no `secret` still takes the token, and refuses a signed
+  request ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **`husk run`'s `auto`, `free` and `local` keep to a $0 ceiling.** Under
+  `maxCostUsd: 0`, `free` picked a free tier the catalog still prices, such as Gemini
+  Flash, and the run stopped before its first call. They now pick a model priced at zero,
+  as the router does, or say that none is reachable
+  ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **A bot made from a chat that drove Husk's browser can drive it too.** The distiller
+  filed `browser_*` under `web`, so the bot could fetch pages and nothing more; it now
+  gets the `browser` bundle and the computer it runs in
+  ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **`husk import` looks where its importers do**: `CLAUDE_CONFIG_DIR` and
+  `~/.config/claude` for Claude Code, `~/Documents` as well as `~/Downloads` for ChatGPT,
+  and the chats Gemini CLI saved, which it said it looked for and never did
+  ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **A Fly command that runs out of time comes back `timedOut`.** The machine's own
+  timeout fired first, and what Fly answers then is not documented: an answer came back
+  as an ordinary exit, and an error was thrown. Husk's deadline now fires first, as on
+  the other providers, and the command is reaped
+  ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **`husk rm` says what a bot's computer keeps.** It said a bot's files and logins stayed
+  on Docker and Podman; without `persist: true`, its `/work` is a tmpfs, browser profile
+  included, and goes with it ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **`husk up --env FOO` is refused**, as `exec --env` is. A pair without `=` was dropped
+  without a word ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **Rootless Podman is kernel-level again** in doctor and `husk up`: its result had no
+  `isolationKind`, which they read since #265 ([#267](https://github.com/Hotragn/husk/pull/267)).
+- **The SDK types what the server sends**: `protocol` from `health()`, `pick` for
+  `sessions.import`, `engine` for `sessions.distill` and `transcriptId`, `engines` and
+  `continues` in its answer, and `HuskSummary.engine`. `computers.destroy` takes `erase`
+  ([#267](https://github.com/Hotragn/husk/pull/267)).
+
+### Security
+
+- **Chromium keeps its own sandbox outside containers**, falling back with a warning only
+  where it cannot start. Every new tab and every redirect hop is checked against the
+  address filter, which reads IPv6 addresses whole ([#202](https://github.com/Hotragn/husk/pull/202)).
+- **The network policy holds for every page load**, not only the URLs Husk opens. The
+  browser driver checks each redirect, link, frame and pop-up, and stops a refused load
+  before anything is sent ([#218](https://github.com/Hotragn/husk/pull/218)).
+- **A browser script is held to `shell`'s rules** for what it hands a shell ([#222](https://github.com/Hotragn/husk/pull/222)).
+- **Deleting a chat's computer kept its logins.** On Docker and Podman, a chat's or a
+  bot's files and browser profile, cookies included, outlived it. The console's Delete,
+  once you type the id back, now removes them too. `husk rm` still means "stop for now",
+  and says what it keeps ([#229](https://github.com/Hotragn/husk/pull/229)).
+- **`fetch_url` and `http_request` check each redirect before following it.** They
+  followed the whole chain and checked only where it ended, so a 302 to an internal
+  address had been asked before it was refused. A hop to another origin no longer carries
+  `Authorization` or cookies ([#257](https://github.com/Hotragn/husk/pull/257)).
+- **`${NAME}` in a husk.yaml is read from Husk's environment**, in `computer.env` and in
+  a webhook's `secret`, as the docs showed. Nothing expanded it: a webhook secret copied
+  from the docs was the published text `${GITHUB_WEBHOOK_SECRET}`, and a computer got
+  the placeholder instead of the token. An unset or empty `NAME` is refused: no computer
+  is made, and the webhook is not mounted ([#257](https://github.com/Hotragn/husk/pull/257)).
+- **`guardrails.allowCommands` lifts a built-in refusal**, as documented. The lists never
+  reached the computer, so `sudo apt-get install` stayed refused whatever the husk.yaml
+  allowed. An entry now lifts what it matches, not the whole line: a command chained
+  after an allowed one, such as `; rm -rf /`, is checked on its own
+  ([#257](https://github.com/Hotragn/husk/pull/257)).
+- **`systemctl stop <unit>` is refused**, as the docs said. The rule caught only the
+  `service <name> stop` order ([#257](https://github.com/Hotragn/husk/pull/257)).
+- **The path jail holds where it had holes.** `move` checks its destination, and
+  `search_files` its root, before a shell runs `mv` or `rg`. On `local`, a link whose
+  target does not exist yet is judged by that target, so `write_file` no longer creates
+  a file outside through it. On SSH, the check resolves a path under a link and a
+  directory not made yet, refusing what it cannot resolve, and `husk cp` is checked as
+  the file tools are. An SSH box needs GNU `readlink` for this, which `husk doctor` now
+  checks ([#262](https://github.com/Hotragn/husk/pull/262)).
+- **A signed webhook takes its prompt from the signed body alone.** `?input=` was read
+  first, and the signature covers only the body, so one captured delivery could be sent
+  again with any prompt ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **A flood of sign-ins no longer keeps the owner from a link.** The page a handoff or
+  computer link opens on shared one budget with every anonymous sign-in; each route now
+  has its own ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **A remote approval shows the computer the call runs on**, above its arguments
+  ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **An SSH target that is this machine is not isolated from it.** `localhost`, `127.0.0.1`
+  and `::1` report `isolated: false`, whatever the account, so remote access refuses
+  them; a remote chat could have had a shell here ([#263](https://github.com/Hotragn/husk/pull/263)).
+- **Redaction catches PGP, DSA and encrypted private keys.** The PGP arm never matched a
+  real key, whose armour reads `PGP PRIVATE KEY BLOCK`, and `ENCRYPTED` and `DSA` keys
+  had no arm; all three passed whole. The secret scan's rule had the same gaps
+  ([#266](https://github.com/Hotragn/husk/pull/266)).
+- **The secret scan reads merges and messages.** A merge printed no diff, so a change
+  made while resolving a conflict, and a stash's working-tree changes, were never read,
+  nor were commit and tag messages ([#266](https://github.com/Hotragn/husk/pull/266)).
+- **A browser ref no snapshot recorded is refused**, where the page's document can be
+  read, rather than resolved to whatever has that id now: after a restart, say, which
+  holds survive ([#266](https://github.com/Hotragn/husk/pull/266)).
 
 ## [0.1.4] - 2026-09-22
 

@@ -4,6 +4,7 @@ export type TranscriptSource =
   | 'claude-code'
   | 'claude-web'
   | 'chatgpt'
+  | 'codex'
   | 'cursor'
   | 'openai-api'
   | 'anthropic-api'

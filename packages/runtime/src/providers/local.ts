@@ -1,14 +1,16 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { connect } from 'node:net';
 import { createReadStream, createWriteStream, existsSync } from 'node:fs';
-import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { cp, lstat, mkdir, open, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { HuskError, clampText, ensurePaths, id as newId, paths } from '@husk-ai/core';
+import { HuskError, READ_FILE_MAX_BYTES, ensurePaths, fileTooLarge, headText, id as newId, paths } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
   ComputerInfo,
+  ComputerProcess,
   ComputerProvider,
   ComputerSpec,
   DirEntry,
@@ -16,15 +18,19 @@ import type {
   ExecResult,
   PortBinding,
   ProviderName,
+  SpawnRequest,
   WriteFileOptions,
 } from '@husk-ai/core';
-import { loadInfos, persistInfo as persist } from '../registry.js';
+import { loadInfos, persistInfo as persist, reapExpired } from '../registry.js';
+import { EXEC_TAG, STOP_UNCONFIRMED, newExecTag, reapArgv, timerMs } from '../reap.js';
+import { wireSpawned } from './spawned.js';
 import {
   GUEST_ROOT,
   GUEST_TMP,
   type JailMap,
   OutputBuffer,
   assertInJail,
+  commandRulesOf,
   evaluateCommand,
   normaliseGuestPath,
   rewriteGuestPaths,
@@ -123,7 +129,7 @@ export function detectShell(force = false): ShellPlan {
       // still fail with "Catastrophic failure / Wsl/Service/E_UNEXPECTED", and
       // wsl.exe exits 0 while printing it -- so trust the marker, not the code.
       for (const distro of distros) {
-        if (wslWorks(distro)) {
+        if (wslWorks(distro, spawnSync, !force && !stale)) {
           downgradedAt = undefined;
           cachedShell = { kind: 'wsl', distro, label: `WSL2 (${distro})` };
           return cachedShell;
@@ -147,18 +153,40 @@ export function detectShell(force = false): ShellPlan {
   return cachedShell;
 }
 
+/**
+ * Use this plan instead of probing, or `undefined` to probe again.
+ *
+ * Probing runs `wsl.exe` synchronously with 8s and 15s timeouts (15s and 30s on the first run), so on a
+ * Windows host with a slow or broken WSL anything that creates a local computer
+ * takes as long as WSL takes to fail. Tests about something other than shell
+ * detection pin a plan here rather than inheriting that.
+ */
+export function setShellPlan(plan: ShellPlan | undefined): void {
+  cachedShell = plan;
+  downgradedAt = undefined;
+}
+
 const WSL_MARKER = 'husk-wsl-ok';
 
-function wslWorks(distro: string): boolean {
-  try {
-    const probe = spawnSync('wsl.exe', ['-d', distro, '-e', 'echo', WSL_MARKER], {
-      timeout: 15_000,
-      windowsHide: true,
-    });
-    return (probe.stdout?.toString('utf8') ?? '').replace(/\0/g, '').includes(WSL_MARKER);
-  } catch {
-    return false;
+/**
+ * Whether a distro answers. A probe that times out is tried once more: the
+ * first WSL use after boot starts the service and the VM as well, and that can
+ * outlast 15s while the probe itself is what started it (#110). A distro that
+ * answers with an error is broken now, and is not retried.
+ */
+export function wslWorks(distro: string, run: typeof spawnSync = spawnSync, retry = true): boolean {
+  // Only the first detection retries. A re-check inside a running server is
+  // synchronous, and a hung distro must not freeze it for 45 seconds.
+  for (const timeout of retry ? [15_000, 30_000] : [15_000]) {
+    try {
+      const probe = run('wsl.exe', ['-d', distro, '-e', 'echo', WSL_MARKER], { timeout, windowsHide: true });
+      if ((probe.stdout?.toString('utf8') ?? '').replace(/\0/g, '').includes(WSL_MARKER)) return true;
+      if ((probe.error as NodeJS.ErrnoException | undefined)?.code !== 'ETIMEDOUT') return false;
+    } catch {
+      return false;
+    }
   }
+  return false;
 }
 
 /**
@@ -413,15 +441,50 @@ class LocalComputer implements Computer {
     }
   }
 
-  private async execOnce(req: ExecRequest): Promise<ExecResult> {
-    this.assertLive();
-    const started = Date.now();
+  markUsed(): void {
+    this.touch();
+  }
 
-    const labels = this.info.spec.labels ?? {};
-    const decision = evaluateCommand(req.cmd, {
-      deny: splitList(labels['husk.denyCommands']),
-      allow: splitList(labels['husk.allowCommands']),
+  /**
+   * A process with stdin held open, started the way `exec` starts one.
+   *
+   * The workspace root always exists by now, so unlike `exec` this needs no
+   * `mkdir` and can stay synchronous. Not use by itself; see `SpawnRequest`.
+   */
+  spawn(req: SpawnRequest): ComputerProcess {
+    const { file, args, spawnEnv, hostCwd } = this.invocationFor(req);
+    const child = spawn(file, args, { cwd: hostCwd, env: spawnEnv, windowsHide: true, detached: process.platform !== 'win32' });
+    return wireSpawned(child, req, () => killProcessTree(child));
+  }
+
+  /** Kill, inside the WSL distro, every process one exec started. Resolves true once that is done. */
+  private reapInWsl(tag: string): Promise<boolean> {
+    return new Promise((settle) => {
+      const p = spawn('wsl.exe', ['-d', this.shell.distro as string, '-e', ...reapArgv(tag)], { windowsHide: true, stdio: 'ignore' });
+      const timer = setTimeout(() => {
+        killProcessTree(p);
+        settle(false);
+      }, 15_000);
+      p.on('error', () => {
+        clearTimeout(timer);
+        settle(false);
+      });
+      p.on('close', (code) => {
+        clearTimeout(timer);
+        settle(code === 0);
+      });
     });
+  }
+
+  /** Policy, paths and environment for one command, shared by `exec` and `spawn`. */
+  private invocationFor(req: { cmd: string | string[]; cwd?: string; env?: Record<string, string> }): {
+    file: string;
+    args: string[];
+    spawnEnv: Record<string, string>;
+    hostCwd: string;
+  } {
+    this.assertLive();
+    const decision = evaluateCommand(req.cmd, commandRulesOf(this.info.spec.labels));
     if (!decision.allowed) {
       throw new HuskError('E_EXEC_DENIED', `refused: ${decision.reason}`, {
         hint: 'add a pattern to guardrails.allowCommands in husk.yaml if this is intentional',
@@ -431,14 +494,25 @@ class LocalComputer implements Computer {
 
     const guestCwd = req.cwd ? normaliseGuestPath(req.cwd) : GUEST_ROOT;
     const hostCwd = this.mapPath(req.cwd ?? GUEST_ROOT);
-    await mkdir(hostCwd, { recursive: true });
 
     const { env } = scrubEnv(process.env, { ...this.info.spec.env, ...req.env });
     // scrubEnv passes the caller's own PWD through; the command starts in the
     // workspace, so $PWD should say the same thing `pwd` does.
     env.PWD = hostCwd;
     const script = typeof req.cmd === 'string' ? req.cmd : shellQuote(req.cmd);
-    const { file, args, spawnEnv } = this.buildInvocation(script, hostCwd, guestCwd, env);
+    return { ...this.buildInvocation(script, hostCwd, guestCwd, env), hostCwd };
+  }
+
+  private async execOnce(req: ExecRequest): Promise<ExecResult> {
+    const started = Date.now();
+    // A stop that arrived before the start runs nothing at all.
+    if (req.signal?.aborted) {
+      return { exitCode: 124, stdout: '', stderr: '', durationMs: 0, truncated: false, timedOut: true };
+    }
+    // Inherited by everything the command starts, so a stop inside WSL can find all of it (reap.ts).
+    const tag = newExecTag();
+    const { file, args, spawnEnv, hostCwd } = this.invocationFor({ ...req, env: { ...(req.env ?? {}), [EXEC_TAG]: tag } });
+    await mkdir(hostCwd, { recursive: true });
 
     const maxBytes = req.maxOutputBytes ?? 256 * 1024;
     const out = new OutputBuffer(maxBytes);
@@ -455,30 +529,22 @@ class LocalComputer implements Computer {
         detached: process.platform !== 'win32',
       });
 
+      // On posix the process group dies with the shell. Under WSL, taskkill ends
+      // wsl.exe on the Windows side and not the Linux processes it started, so
+      // the reap kills those inside the distro.
+      let reaping: Promise<boolean> | undefined;
       const killTree = () => {
-        if (child.pid === undefined) return;
-        if (process.platform === 'win32') {
-          spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
-        } else {
-          try {
-            process.kill(-child.pid, 'SIGKILL');
-          } catch {
-            try {
-              child.kill('SIGKILL');
-            } catch {
-              /* already gone */
-            }
-          }
-        }
+        killProcessTree(child);
+        if (this.shell.kind === 'wsl') reaping ??= this.reapInWsl(tag);
       };
 
-      const timeoutSec = req.timeoutSec ?? 120;
+      const ms = timerMs(req.timeoutSec ?? 120);
       const timer =
-        timeoutSec > 0
+        ms !== undefined
           ? setTimeout(() => {
               timedOut = true;
               killTree();
-            }, timeoutSec * 1000)
+            }, ms)
           : undefined;
 
       const onAbort = () => killTree();
@@ -513,15 +579,18 @@ class LocalComputer implements Computer {
         if (timer) clearTimeout(timer);
         req.signal?.removeEventListener('abort', onAbort);
         this.touch();
-        resolvePromise({
-          // A killed process reports whatever the wrapper felt like; 124 is what
-          // `timeout(1)` uses, and callers key off `timedOut` anyway.
-          exitCode: timedOut ? 124 : (code ?? (signal ? 137 : 1)),
-          stdout: out.toString(),
-          stderr: err.toString(),
-          durationMs: Date.now() - started,
-          truncated: out.truncated || err.truncated,
-          timedOut,
+        void (reaping ?? Promise.resolve(true)).then((stopped) => {
+          const stderr = err.toString();
+          resolvePromise({
+            // A killed process reports whatever the wrapper felt like; 124 is what
+            // `timeout(1)` uses, and callers key off `timedOut` anyway.
+            exitCode: timedOut ? 124 : (code ?? (signal ? 137 : 1)),
+            stdout: out.toString(),
+            stderr: stopped ? stderr : `${stderr}${stderr ? '\n' : ''}${STOP_UNCONFIRMED}`,
+            durationMs: Date.now() - started,
+            truncated: out.truncated || err.truncated,
+            timedOut,
+          });
         });
       });
 
@@ -635,6 +704,33 @@ class LocalComputer implements Computer {
     return h;
   }
 
+  /**
+   * Run a host file operation, and when it fails, retry it once through any
+   * symlink the path crosses, resolved the way the computer sees it.
+   *
+   * A link made in the shell holds a guest target (`/work/real.txt`) that
+   * only exists inside the computer's own mount namespace, so the host cannot
+   * follow it -- and on Windows, a WSL link over `\wsl.localhost` cannot be
+   * followed at all (#113). Asking the computer for `realpath` gives the guest
+   * target, and mapping that back through `mapPath` and the jail refuses an
+   * escape with the same message as a plain path outside the workspace.
+   * Only the failure path pays for the extra exec.
+   */
+  private async viaGuestLinks<T>(path: string, op: (hostPath: string) => Promise<T>): Promise<T> {
+    const h = await this.host(path);
+    try {
+      return await op(h);
+    } catch (first) {
+      // A refusal is an answer, not a link the host could not follow: never retried elsewhere.
+      if (first instanceof HuskError) throw first;
+      const guest = normaliseGuestPath(path, this.info.workdir);
+      const r = await this.execOnce({ cmd: ['realpath', '-e', '--', guest], timeoutSec: 10 }).catch(() => undefined);
+      const target = r?.exitCode === 0 ? r.stdout.trim() : '';
+      if (!target || target === guest) throw first;
+      return op(await this.host(target));
+    }
+  }
+
   async writeFile(path: string, content: string | Uint8Array, opts: WriteFileOptions = {}): Promise<void> {
     this.assertLive();
     const h = await this.host(path);
@@ -647,12 +743,24 @@ class LocalComputer implements Computer {
     this.touch();
   }
 
-  async readFile(path: string): Promise<Uint8Array> {
+  async readFile(path: string, opts: { maxBytes?: number } = {}): Promise<Uint8Array> {
+    const max = opts.maxBytes ?? READ_FILE_MAX_BYTES;
+    const bytes = await this.readHead(path, max);
+    if (bytes.byteLength > max) throw fileTooLarge(normaliseGuestPath(path, this.info.workdir), max);
+    return bytes;
+  }
+
+  async readTextFile(path: string, maxBytes = 1024 * 1024): Promise<string> {
+    return headText(await this.readHead(path, maxBytes), maxBytes);
+  }
+
+  /** At most `maxBytes + 1` bytes from the start: one past the limit tells the caller there was more. */
+  private async readHead(path: string, maxBytes: number): Promise<Uint8Array> {
     this.assertLive();
-    const h = await this.host(path);
     try {
-      return await readFile(h);
+      return await this.viaGuestLinks(path, (h) => headOf(h, maxBytes + 1));
     } catch (e) {
+      if (e instanceof HuskError) throw e;
       throw new HuskError('E_FS_DENIED', `cannot read ${normaliseGuestPath(path, this.info.workdir)}`, {
         hint: 'check the path exists',
         cause: e,
@@ -660,18 +768,14 @@ class LocalComputer implements Computer {
     }
   }
 
-  async readTextFile(path: string, maxBytes = 1024 * 1024): Promise<string> {
-    const buf = await this.readFile(path);
-    return clampText(Buffer.from(buf).toString('utf8'), maxBytes).text;
-  }
-
   async listDir(path: string): Promise<DirEntry[]> {
     this.assertLive();
-    const h = await this.host(path);
+    let h = await this.host(path);
     let entries;
     try {
-      entries = await readdir(h, { withFileTypes: true });
+      [h, entries] = await this.viaGuestLinks(path, async (dir) => [dir, await readdir(dir, { withFileTypes: true })] as const);
     } catch (e) {
+      if (e instanceof HuskError) throw e;
       throw new HuskError('E_FS_DENIED', `cannot list ${normaliseGuestPath(path, this.info.workdir)}`, {
         hint: 'check the directory exists',
         cause: e,
@@ -704,18 +808,22 @@ class LocalComputer implements Computer {
 
   async stat(path: string): Promise<DirEntry | null> {
     this.assertLive();
-    const h = await this.host(path);
     try {
-      const st = await stat(h);
+      const st = await this.viaGuestLinks(path, (p) => stat(p));
+      // The path that was asked for, even when it is a link: a caller asking
+      // about /work/link.txt is told about /work/link.txt.
+      const guest = normaliseGuestPath(path, this.info.workdir);
       return {
-        name: h.split(/[\\/]/).pop() ?? '',
-        path: toGuestPath(h, this.jail),
+        name: guest.split('/').pop() ?? '',
+        path: guest,
         type: st.isDirectory() ? 'dir' : st.isFile() ? 'file' : 'other',
         size: st.size,
         modifiedAt: st.mtime.toISOString(),
         mode: (st.mode & 0o777).toString(8).padStart(3, '0'),
       };
-    } catch {
+    } catch (e) {
+      // A path outside the jail is an answer the caller needs; a missing file is not.
+      if (e instanceof HuskError) throw e;
       return null;
     }
   }
@@ -861,8 +969,37 @@ class LocalComputer implements Computer {
  * These are the ones a failed destroy left behind before it learned to report
  * itself. Returned rather than deleted: reclaiming disk is the caller's call.
  */
+/**
+ * Bytes in a local computer's workspace, measured from the host, so it works
+ * on a stopped computer and does not count as use. Undefined when the
+ * workspace lives inside WSL, where the host cannot walk it cheaply.
+ */
+export async function localWorkspaceBytes(info: ComputerInfo): Promise<number | undefined> {
+  if (info.spec.labels?.['husk.wslWorkspace']) return undefined;
+  const root = info.spec.labels?.['husk.workspace'] ?? join(paths().workspaces, info.id);
+  let entries;
+  try {
+    entries = await readdir(root, { recursive: true, withFileTypes: true });
+  } catch (err) {
+    // No workspace folder means nothing on disk.
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 0 : undefined;
+  }
+  // Links are not followed, so nothing outside the workspace is counted.
+  // `parentPath` is Node 20.12+; `path` is the older name for the same thing.
+  const files = entries
+    .filter((e) => e.isFile())
+    .map((e) => join((e as { parentPath?: string; path?: string }).parentPath ?? (e as { path?: string }).path ?? root, e.name));
+  let total = 0;
+  // In batches: one at a time is slow on a big tree, all at once exhausts file handles.
+  for (let i = 0; i < files.length; i += 128) {
+    const sizes = await Promise.all(files.slice(i, i + 128).map((f) => lstat(f).then((s) => s.size, () => 0)));
+    for (const size of sizes) total += size;
+  }
+  return total;
+}
+
 export async function findOrphanedWorkspaces(): Promise<string[]> {
-  const p = ensurePaths();
+  const p = paths(); // read-only: never creates ~/.husk
   const infos = await loadInfos();
   const known = new Set(
     infos.map((i: ComputerInfo) => i.spec.labels?.['husk.workspace'] ?? join(p.workspaces, i.id)),
@@ -927,11 +1064,6 @@ function distrosInUse(infos: ComputerInfo[]): string[] {
     if (shell?.startsWith('wsl:')) names.add(shell.slice(4));
   }
   return [...names];
-}
-
-function splitList(v: string | undefined): string[] | undefined {
-  if (!v) return undefined;
-  return v.split('\u0000').filter(Boolean);
 }
 
 function jailFor(workspaceRoot: string): JailMap {
@@ -1075,22 +1207,7 @@ export class LocalProvider implements ComputerProvider {
   }
 
   async reap(): Promise<string[]> {
-    const removed: string[] = [];
-    const now = Date.now();
-    for (const info of await this.list()) {
-      const idle = info.spec.idleTimeoutSec ?? 0;
-      const life = info.spec.maxLifetimeSec ?? 0;
-      const idleFor = (now - new Date(info.lastUsedAt).getTime()) / 1000;
-      const aliveFor = (now - new Date(info.createdAt).getTime()) / 1000;
-      if ((idle > 0 && idleFor > idle) || (life > 0 && aliveFor > life)) {
-        const c = await this.get(info.id);
-        if (c) {
-          await c.destroy();
-          removed.push(info.id);
-        }
-      }
-    }
-    return removed;
+    return reapExpired(this);
   }
 }
 
@@ -1118,4 +1235,50 @@ export async function portAnswers(port: number, attempts = 3): Promise<boolean> 
     if (i < attempts - 1) await new Promise((r) => setTimeout(r, 150));
   }
   return false;
+}
+
+/** Kill a shell and everything it started: its process group on posix, the tree on Windows. */
+function killProcessTree(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+    return;
+  }
+  try {
+    process.kill(-child.pid, 'SIGKILL');
+  } catch {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+/**
+ * Up to `n` bytes from the start of a regular file. A device or a pipe is
+ * refused: a read of /dev/zero never ends, and opening a pipe nobody writes to
+ * would hang (O_NONBLOCK opens it without waiting, so it can be refused).
+ */
+async function headOf(file: string, n: number): Promise<Uint8Array> {
+  const fh = await open(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  try {
+    if (!(await fh.stat()).isFile()) {
+      throw new HuskError('E_FS_DENIED', `${file} is not a regular file`, {
+        hint: 'read a device or a pipe with a command you can stop',
+      });
+    }
+    const chunks: Buffer[] = [];
+    let got = 0;
+    while (got < n) {
+      const chunk = Buffer.alloc(Math.min(64 * 1024, n - got));
+      const { bytesRead } = await fh.read(chunk, 0, chunk.byteLength, null);
+      if (bytesRead === 0) break;
+      chunks.push(chunk.subarray(0, bytesRead));
+      got += bytesRead;
+    }
+    return new Uint8Array(Buffer.concat(chunks));
+  } finally {
+    await fh.close();
+  }
 }

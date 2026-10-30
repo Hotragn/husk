@@ -1,27 +1,33 @@
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, connect as tcpConnect, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { HuskError, ensurePaths, id as newId } from '@husk-ai/core';
+import { HuskError, READ_FILE_MAX_BYTES, ensurePaths, fileTooLarge, headText, id as newId } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
   ComputerInfo,
+  ComputerProcess,
   ComputerProvider,
+  ComputerUsage,
   ComputerSpec,
   DirEntry,
   ExecRequest,
   ExecResult,
   PortBinding,
   ProviderName,
+  SpawnRequest,
   WriteFileOptions,
 } from '@husk-ai/core';
 import { type ImagePlan, installScript, resolveImage } from '../images.js';
-import { OutputBuffer, evaluateCommand } from '../policy.js';
-import { expired, forgetInfo, lastUsedTimes, touchInfo } from '../registry.js';
+import { OutputBuffer, commandRulesOf, evaluateCommand } from '../policy.js';
+import { forgetInfo, lastUsedTimes, reapExpired, touchInfo } from '../registry.js';
+import { EXEC_TAG, STOP_UNCONFIRMED, newExecTag, reapArgv, timerMs } from '../reap.js';
+import { wireSpawned } from './spawned.js';
 
 /**
  * Everything Docker and Podman have in common, which is very nearly everything.
@@ -140,6 +146,12 @@ export function buildRunArgs(cfg: OciConfig, plan: OciRunPlan): string[] {
   // allow-list hostnames, and implying it did would be the dangerous kind of vague.
   if (spec.network?.mode === 'none') args.push('--network=none');
 
+  // An init as PID 1 reaps what a stopped command leaves behind. `sleep infinity`
+  // never waits on anything, so every orphan stayed a zombie and counted
+  // against the pid limit. Docker always ships its init; podman's needs an
+  // optional package (catatonit), so podman keeps `sleep` rather than fail to start.
+  if (cfg.provider === 'docker') args.push('--init');
+
   args.push(image, 'sleep', 'infinity');
   return args;
 }
@@ -162,14 +174,22 @@ export interface OciExecPlan {
   env?: Record<string, string>;
   user?: string;
   tty?: boolean;
+  /** Input will be written to the process's stdin. */
+  stdin?: boolean;
 }
 
 export function buildExecArgs(_cfg: OciConfig, plan: OciExecPlan): string[] {
-  const args = ['exec', '-i'];
   // A pty is what makes `isatty` true, which is what makes half of CLI tooling
   // print progress instead of nothing. It is never the default: with a tty the
   // engine merges stderr into stdout and we lose the split.
-  if (plan.tty) args.push('-t');
+  //
+  // `-t` with `-i` needs the engine CLI's own stdin to be a terminal, and the
+  // shared Husk's never is: Docker answers "the input device is not a TTY" and
+  // runs nothing. A tty command with no input to send needs no stdin, so it
+  // gets `-t` alone; one with input keeps `-i` and goes without the pty,
+  // because a pipe cannot be the person's terminal.
+  const tty = plan.tty === true && plan.stdin !== true;
+  const args = tty ? ['exec', '-t'] : ['exec', '-i'];
   if (plan.cwd) args.push('-w', plan.cwd);
   if (plan.env) {
     for (const [k, v] of Object.entries(plan.env)) args.push('-e', `${k}=${v}`);
@@ -266,6 +286,42 @@ function snapshotDir(): string {
   return join(ensurePaths().cache, 'snapshots');
 }
 
+const UNITS: Record<string, number> = {
+  B: 1,
+  KB: 1e3,
+  MB: 1e6,
+  GB: 1e9,
+  TB: 1e12,
+  KIB: 1024,
+  MIB: 1024 ** 2,
+  GIB: 1024 ** 3,
+  TIB: 1024 ** 4,
+};
+
+function parseSize(text: string): number | undefined {
+  const m = /^([\d.]+)\s*([a-z]+)$/i.exec(text.trim());
+  if (!m) return undefined;
+  const unit = UNITS[m[2]!.toUpperCase()];
+  return unit === undefined ? undefined : Math.round(Number(m[1]) * unit);
+}
+
+/** `"1.23%|12.5MiB / 1.94GiB"` -> numbers. Anything it cannot read is left out, not guessed. */
+export function parseStatsLine(line: string): ComputerUsage {
+  const [cpu, mem] = line.trim().split('|');
+  const out: ComputerUsage = {};
+  const pct = cpu ? Number(cpu.trim().replace(/%$/, '')) : NaN;
+  if (Number.isFinite(pct)) out.cpuPercent = pct;
+  const [used, limit] = (mem ?? '').split('/');
+  const usedBytes = used ? parseSize(used) : undefined;
+  const limitBytes = limit ? parseSize(limit) : undefined;
+  if (usedBytes !== undefined) out.memoryBytes = usedBytes;
+  if (limitBytes !== undefined) out.memoryLimitBytes = limitBytes;
+  return out;
+}
+
+/** How long one file read may take in the computer before it is stopped: a pipe nobody writes to never ends. */
+const READ_TIMEOUT_SEC = 60;
+
 export class OciComputer implements Computer {
   readonly info: ComputerInfo;
   protected readonly cfg: OciConfig;
@@ -321,28 +377,53 @@ export class OciComputer implements Computer {
     return this.info;
   }
 
-  async exec(req: ExecRequest): Promise<ExecResult> {
-    // Same policy as the local provider. A container limits the blast radius of a
-    // destructive command; it does not make running one a good idea.
-    const labels = this.info.spec.labels ?? {};
-    const decision = evaluateCommand(req.cmd, {
-      deny: splitList(labels['husk.denyCommands']),
-      allow: splitList(labels['husk.allowCommands']),
-    });
+  /** Same policy as the local provider. A container limits the blast radius of a destructive command; it does not make running one a good idea. */
+  private assertAllowed(cmd: string | string[]): void {
+    const decision = evaluateCommand(cmd, commandRulesOf(this.info.spec.labels));
     if (!decision.allowed) {
       throw new HuskError('E_EXEC_DENIED', `refused: ${decision.reason}`, {
         hint: 'add a pattern to guardrails.allowCommands in husk.yaml if this is intentional',
         details: { rule: decision.rule },
       });
     }
+  }
 
+  markUsed(): void {
+    this.info.lastUsedAt = new Date().toISOString();
+    void touchInfo(this.info.id).catch(() => {});
+  }
+
+  /** `exec -i` with stdin left open. Not use by itself; see `SpawnRequest`. */
+  spawn(req: SpawnRequest): ComputerProcess {
+    this.assertAllowed(req.cmd);
     const args = buildExecArgs(this.cfg, {
       containerId: this.native,
       cmd: req.cmd,
       ...(req.cwd ? { cwd: req.cwd } : {}),
       ...(req.env ? { env: req.env } : {}),
       ...(req.user ? { user: req.user } : {}),
+    });
+    return wireSpawned(spawn(this.cfg.binary, args, { windowsHide: true }), req);
+  }
+
+  async exec(req: ExecRequest): Promise<ExecResult> {
+    this.assertAllowed(req.cmd);
+    // A stop that arrived before the start runs nothing at all. Started and
+    // killed at once, the command could begin after the reap had looked for it.
+    if (req.signal?.aborted) {
+      return { exitCode: 124, stdout: '', stderr: '', durationMs: 0, truncated: false, timedOut: true };
+    }
+
+    // Inherited by everything the command starts, so a stop can find all of it (reap.ts).
+    const tag = newExecTag();
+    const args = buildExecArgs(this.cfg, {
+      containerId: this.native,
+      cmd: req.cmd,
+      ...(req.cwd ? { cwd: req.cwd } : {}),
+      env: { ...(req.env ?? {}), [EXEC_TAG]: tag },
+      ...(req.user ? { user: req.user } : {}),
       ...(req.tty ? { tty: true } : {}),
+      ...(req.stdin !== undefined ? { stdin: true } : {}),
     });
 
     const started = Date.now();
@@ -359,6 +440,8 @@ export class OciComputer implements Computer {
       let timedOut = false;
       let timer: NodeJS.Timeout | undefined;
       let done = false;
+      /** Set once a stop has started: whether the command is gone from the container. */
+      let reaping: Promise<boolean> | undefined;
 
       const child = spawn(this.cfg.binary, args, { windowsHide: true });
 
@@ -372,12 +455,15 @@ export class OciComputer implements Computer {
         settle(result);
       };
 
+      // Killing the `docker exec` client does not kill the command it started:
+      // the engine keeps it running. The reap kills it where it runs.
       const kill = () => {
         try {
           child.kill('SIGKILL');
         } catch {
           /* already gone */
         }
+        reaping ??= this.reap(tag, req.user);
       };
 
       function onAbort() {
@@ -388,11 +474,14 @@ export class OciComputer implements Computer {
       if (req.signal?.aborted) onAbort();
       else req.signal?.addEventListener('abort', onAbort, { once: true });
 
-      if (req.timeoutSec && req.timeoutSec > 0) {
+      // 120 s when none is given, as on every other provider: a command that
+      // never ends must not hold the call open forever.
+      const ms = timerMs(req.timeoutSec ?? 120);
+      if (ms !== undefined) {
         timer = setTimeout(() => {
           timedOut = true;
           kill();
-        }, req.timeoutSec * 1000);
+        }, ms);
       }
 
       child.stdout?.on('data', (c: Buffer) => {
@@ -422,19 +511,46 @@ export class OciComputer implements Computer {
       // 'close' rather than 'exit', so stdio is flushed first -- otherwise the
       // last chunk of output is lost on fast-exiting commands.
       child.on('close', (code, signal) => {
-        finish({
-          // 124 is what `timeout(1)` uses; callers key off `timedOut` anyway.
-          exitCode: timedOut ? 124 : (code ?? (signal ? 137 : 1)),
-          stdout: out.toString(),
-          stderr: err.toString(),
-          durationMs: Date.now() - started,
-          truncated: out.truncated || err.truncated,
-          timedOut,
+        void (reaping ?? Promise.resolve(true)).then((stopped) => {
+          const stderr = err.toString();
+          finish({
+            // 124 is what `timeout(1)` uses; callers key off `timedOut` anyway.
+            exitCode: timedOut ? 124 : (code ?? (signal ? 137 : 1)),
+            stdout: out.toString(),
+            stderr: stopped ? stderr : `${stderr}${stderr ? '\n' : ''}${STOP_UNCONFIRMED}`,
+            durationMs: Date.now() - started,
+            truncated: out.truncated || err.truncated,
+            timedOut,
+          });
         });
       });
 
       if (req.stdin !== undefined && child.stdin) child.stdin.end(req.stdin);
       else child.stdin?.end();
+    });
+  }
+
+  /** Kill, inside the container, every process one exec started. Resolves true once that is done. */
+  private reap(tag: string, user?: string): Promise<boolean> {
+    return new Promise((settle) => {
+      const args = ['exec', ...(user ? ['-u', user] : []), this.native, ...reapArgv(tag)];
+      const p = spawn(this.cfg.binary, args, { windowsHide: true, stdio: 'ignore' });
+      const timer = setTimeout(() => {
+        try {
+          p.kill('SIGKILL');
+        } catch {
+          /* already gone */
+        }
+        settle(false);
+      }, 15_000);
+      p.on('error', () => {
+        clearTimeout(timer);
+        settle(false);
+      });
+      p.on('close', (code) => {
+        clearTimeout(timer);
+        settle(code === 0);
+      });
     });
   }
 
@@ -512,39 +628,58 @@ export class OciComputer implements Computer {
    * Every path husk actually uses is on one of those mounts, so this failed for
    * everything that mattered while looking like a missing-file problem.
    */
-  async readFile(path: string): Promise<Uint8Array> {
+  async readFile(path: string, opts: { maxBytes?: number } = {}): Promise<Uint8Array> {
+    const max = opts.maxBytes ?? READ_FILE_MAX_BYTES;
+    const bytes = await this.readHead(path, max);
+    if (bytes.byteLength > max) throw fileTooLarge(path, max);
+    return bytes;
+  }
+
+  /**
+   * At most `maxBytes + 1` bytes from the start of a file, stopped where it is
+   * read: one past the limit tells the caller the file was longer. `timeout`
+   * ends a read that never would, such as a pipe nobody writes to.
+   */
+  private async readHead(path: string, maxBytes: number): Promise<Uint8Array> {
     try {
-      return await this.execCapture(['exec', this.native, 'cat', path]);
+      const args = ['exec', this.native, 'timeout', String(READ_TIMEOUT_SEC), 'head', '-c', String(maxBytes + 1), '--', path];
+      return await this.execCapture(args, maxBytes + 1);
     } catch (e) {
-      throw new HuskError('E_FS_DENIED', `cannot read ${path}`, {
-        hint: 'check the path exists inside the computer',
+      const stuck = (e as Error).message === 'exit 124';
+      throw new HuskError('E_FS_DENIED', stuck ? `reading ${path} did not finish in ${READ_TIMEOUT_SEC}s` : `cannot read ${path}`, {
+        hint: stuck ? 'it is probably a pipe or a device that never ends; read it with a command you can stop' : 'check the path exists inside the computer',
         cause: e,
       });
     }
   }
 
-  /** Run the CLI and collect stdout as raw bytes, so binaries survive intact. */
-  protected execCapture(args: string[]): Promise<Uint8Array> {
+  /** Run the CLI and collect stdout as raw bytes, so binaries survive intact. Past `limit` bytes it stops reading. */
+  protected execCapture(args: string[], limit = Number.POSITIVE_INFINITY): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
       const child = spawn(this.cfg.binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
       const chunks: Buffer[] = [];
+      let got = 0;
       let stderr = '';
-      child.stdout?.on('data', (b: Buffer) => chunks.push(b));
+      child.stdout?.on('data', (b: Buffer) => {
+        if (got >= limit) return;
+        chunks.push(b);
+        got += b.byteLength;
+        // The read in the computer bounds itself; this is the backstop for one that does not.
+        if (got >= limit) child.kill();
+      });
       child.stderr?.on('data', (b: Buffer) => {
         stderr += b.toString('utf8');
       });
       child.on('error', reject);
       child.on('close', (code) => {
-        if (code === 0) return resolve(new Uint8Array(Buffer.concat(chunks)));
+        if (code === 0 || got >= limit) return resolve(new Uint8Array(Buffer.concat(chunks).subarray(0, Math.min(got, limit))));
         reject(new Error(stderr.trim() || `exit ${code}`));
       });
     });
   }
 
-  async readTextFile(path: string, maxBytes?: number): Promise<string> {
-    const buf = await this.readFile(path);
-    const text = new TextDecoder().decode(buf);
-    return maxBytes && text.length > maxBytes ? text.slice(0, maxBytes) : text;
+  async readTextFile(path: string, maxBytes = 1024 * 1024): Promise<string> {
+    return headText(await this.readHead(path, maxBytes), maxBytes);
   }
 
   async listDir(path: string): Promise<DirEntry[]> {
@@ -677,6 +812,16 @@ export class OciComputer implements Computer {
     });
   }
 
+  /**
+   * CPU and memory from `<engine> stats --no-stream`, using the documented
+   * `CPUPerc` and `MemUsage` placeholders.
+   * https://docs.docker.com/reference/cli/docker/container/stats/
+   */
+  async usage(): Promise<ComputerUsage> {
+    const { stdout } = await this.cli(['stats', '--no-stream', '--format', '{{.CPUPerc}}|{{.MemUsage}}', this.native], 20_000);
+    return parseStatsLine(stdout);
+  }
+
   async stop(): Promise<void> {
     await this.cli(['stop', this.native], 120_000);
     this.info.state = 'stopped';
@@ -690,18 +835,20 @@ export class OciComputer implements Computer {
   /**
    * Remove the container; keep the workspace only if it belongs to someone.
    *
-   * A keyed machine is a bot's, and `husk rm` on it is "stop this for now" --
-   * the next `ensure` with the same key reattaches to the same volume and finds
-   * its files. An anonymous machine has nothing to come back to, so its volume
-   * goes with it; `rm -f` without `-v` was leaving those behind forever.
+   * A keyed machine is a chat's or a bot's, and `husk rm` on it is "stop this
+   * for now" -- the next `ensure` with the same key reattaches to the same
+   * volume and finds its files. An anonymous machine has nothing to come back
+   * to, so its volume goes with it; `rm -f` without `-v` was leaving those
+   * behind forever. `erase` is the console's delete: the volume goes even when
+   * keyed, and with it the browser profile and the logins in it.
    */
-  async destroy(): Promise<void> {
+  async destroy(opts: { erase?: boolean } = {}): Promise<void> {
     this.closeForwarders();
-    const keyed = Boolean(this.info.spec.labels?.['husk.key']);
-    const args = keyed ? ['rm', '-f', this.native] : ['rm', '-f', '-v', this.native];
+    const keep = Boolean(this.info.spec.labels?.['husk.key']) && !opts.erase;
+    const args = keep ? ['rm', '-f', this.native] : ['rm', '-f', '-v', this.native];
     await this.cli(args, 120_000);
     // Docker's rm -v removes anonymous volumes, not our named /work volume.
-    if (!keyed && this.info.spec.persist) {
+    if (!keep && this.info.spec.persist) {
       await this.cli(['volume', 'rm', volumeName(this.info.id, this.info.spec)]);
     }
     // The last-use record outlives the container otherwise, and ids are
@@ -760,7 +907,7 @@ export class OciComputer implements Computer {
   async restore(snapshotId: string): Promise<void> {
     if (!this.recreate) {
       throw new HuskError('E_NOT_IMPLEMENTED', 'this computer was not created by a provider that can rebuild it', {
-        hint: 'restore from `husk up --snapshot <id>` instead',
+        hint: 'get the computer again from its provider (ComputerManager.get), which can rebuild it, and restore that',
       });
     }
     const dir = snapshotDir();
@@ -822,11 +969,6 @@ export class OciComputer implements Computer {
       createReadStream(hostFile).pipe(child.stdin);
     });
   }
-}
-
-function splitList(v: string | undefined): string[] | undefined {
-  if (!v) return undefined;
-  return v.split('\u0000').filter(Boolean);
 }
 
 function readState(data: { State?: { Running?: boolean; Status?: string } }): ComputerInfo['state'] {
@@ -904,7 +1046,7 @@ export abstract class OciProvider implements ComputerProvider {
   async create(spec: ComputerSpec): Promise<Computer> {
     const cid = newId('cmp');
     const plan = resolveImage(spec);
-    const image = await this.pullable(plan);
+    const image = await this.withPackages(await this.pullable(plan), spec);
     const workdir = spec.workdir ?? '/work';
     // Before the container, not after: see initVolume.
     if (spec.persist) {
@@ -947,13 +1089,6 @@ export abstract class OciProvider implements ComputerProvider {
 
     this.lastNative = nativeId;
     const comp = this.wrap(info);
-
-    // `computer.packages` used to be accepted and dropped on the floor here:
-    // `installScript` existed, was exported, and was called by nothing, so a
-    // husk.yaml asking for curl got a machine without curl and no complaint.
-    // It matters most on the fallback image, which is where the tools the
-    // browser needs are absent.
-    await this.installPackages(spec, image);
     if (spec.setup) await comp.exec({ cmd: spec.setup, timeoutSec: 300 });
     return comp;
   }
@@ -1024,36 +1159,44 @@ export abstract class OciProvider implements ComputerProvider {
   }
 
   /**
-   * Install `computer.packages`, as root.
+   * `computer.packages`, in an image of their own.
    *
-   * The container runs as an unprivileged user -- that is the point -- so the
-   * package manager has to be reached with `exec -u 0`. Installing is a
-   * create-time privilege, not one the agent ever holds: by the time the agent
-   * can run anything, this has already finished and every later exec is
-   * unprivileged again.
+   * A computer's root filesystem is read-only and it holds no capabilities, so
+   * no package manager can run in one, as root or not: installing into the
+   * running container failed every time. They are installed where that is
+   * normal instead, in a build FROM the computer's image with an empty
+   * context, once, cached under a tag named for the image and the list. The
+   * computer then runs that image as hardened as any other. The build reaches
+   * the package mirror with the engine's own network, before the computer and
+   * its network policy exist.
    */
-  protected async installPackages(spec: ComputerSpec, image: string): Promise<void> {
-    const script = installScript(spec.flavor, spec.packages ?? []);
-    if (!script) return;
+  protected async withPackages(image: string, spec: ComputerSpec): Promise<string> {
+    const packages = [...new Set(spec.packages ?? [])].sort();
+    const script = installScript(spec.flavor, packages);
+    if (!script) return image;
+    const key = createHash('sha256').update(JSON.stringify([image, spec.flavor ?? 'base', packages])).digest('hex');
+    const tag = `husk-packages:${key.slice(0, 16)}`;
     try {
-      await this.cli(['exec', '-u', '0', this.lastNative, 'sh', '-lc', script], 600_000);
+      await this.cli(['image', 'inspect', tag], 15_000);
+      return tag;
+    } catch {
+      // Not built yet.
+    }
+    const context = await mkdtemp(join(tmpdir(), 'husk-build-'));
+    try {
+      const build = this.cli(['build', '--quiet', '-t', tag, '-f', '-', context], 900_000);
+      build.child.stdin?.end(`FROM ${image}\nUSER root\nRUN ${script}\n`);
+      await build;
     } catch (e) {
-      // Not fatal: an agent can usually do its job without the extras, and a
-      // machine that refuses to exist because apt was unreachable is worse than
-      // one that comes up and says what is missing.
-      // Almost always the read-only rootfs rather than the network: husk starts
-      // these containers with `--read-only` and `--cap-drop ALL`, so apt cannot
-      // write to /var/lib/dpkg and its http method cannot setuid to `_apt`.
-      // Saying "check your egress" would send someone to their firewall for a
-      // problem that is entirely local and by design.
-      throw new HuskError('E_COMPUTER_FAILED', `could not install packages into ${image}`, {
-        hint:
-          'container computers run with a read-only root filesystem and no capabilities, so a ' +
-          'package manager cannot run in one. Use a flavor or `computer.image` whose image ' +
-          'already has what you need, or use `--provider local`, where packages do install.',
+      const said = String((e as { stderr?: string }).stderr || (e as Error).message).trim().split('\n').slice(-3).join(' ');
+      throw new HuskError('E_COMPUTER_FAILED', `could not install ${packages.join(', ')} into ${image}: ${said}`, {
+        hint: "check the names are this image's package manager's, and that the engine can reach its mirror",
         cause: e,
       });
+    } finally {
+      await rm(context, { recursive: true, force: true });
     }
+    return tag;
   }
 
   protected wrap(info: ComputerInfo): OciComputer {
@@ -1133,19 +1276,13 @@ export abstract class OciProvider implements ComputerProvider {
    * only when it removed something, so "not implemented" and "swept, found
    * nothing" produced identical output.
    *
-   * `expired` is shared with the other providers deliberately. Budget
+   * `reapExpired` is shared with the other providers deliberately. Budget
    * arithmetic in two places is two chances to get an off-by-one wrong in a
-   * function whose job is deleting the user's work.
+   * function whose job is deleting the user's work, and the browser has to be
+   * closed before the machine goes on every one of them.
    */
   async reap(): Promise<string[]> {
-    const removed: string[] = [];
-    for (const info of expired(await this.list())) {
-      const c = await this.get(info.id).catch(() => null);
-      if (!c) continue;
-      await c.destroy();
-      removed.push(info.id);
-    }
-    return removed;
+    return reapExpired(this);
   }
 
   private async inspect(nativeId: string): Promise<ComputerInfo | null> {

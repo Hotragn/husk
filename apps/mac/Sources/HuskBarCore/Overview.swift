@@ -1,0 +1,126 @@
+import Foundation
+
+/// `GET /v1/overview` from the local Husk server. Only the fields the app shows.
+public struct Overview: Decodable, Equatable {
+    public var computers: [Computer]
+    public var activeRuns: [ActiveRun]
+    public var handoffs: [Handoff]
+    /// Present when this Husk was started with remote access.
+    public var remote: RemoteAccess?
+
+    public init(computers: [Computer], activeRuns: [ActiveRun], handoffs: [Handoff], remote: RemoteAccess? = nil) {
+        self.computers = computers
+        self.activeRuns = activeRuns
+        self.handoffs = handoffs
+        self.remote = remote
+    }
+}
+
+/// Chat apps on the web reaching this Husk (`husk serve --remote`).
+public struct RemoteAccess: Decodable, Equatable {
+    public var on: Bool
+    public var publicUrl: String
+    /// Apps signed in.
+    public var apps: Int
+    public var offReason: String?
+    /// Advisories short of high against this install, or a check that could not be made.
+    public var warning: String?
+
+    public init(on: Bool, publicUrl: String, apps: Int, offReason: String? = nil, warning: String? = nil) {
+        self.on = on
+        self.publicUrl = publicUrl
+        self.apps = apps
+        self.offReason = offReason
+        self.warning = warning
+    }
+
+    /// The menu's line: on, at which URL, for how many apps; or why it is off.
+    public var line: String {
+        if on { return "Remote access on · \(publicUrl) · \(apps == 1 ? "1 app" : "\(apps) apps")" }
+        return offReason.map { "Remote access off: \($0)" } ?? "Remote access off"
+    }
+}
+
+public struct Computer: Decodable, Equatable, Identifiable {
+    public var id: String
+    public var name: String?
+    public var state: String
+    public var provider: String
+    public var platform: String?
+    public var chatLabel: String?
+
+    public init(id: String, name: String? = nil, state: String, provider: String, platform: String? = nil, chatLabel: String? = nil) {
+        self.id = id
+        self.name = name
+        self.state = state
+        self.provider = provider
+        self.platform = platform
+        self.chatLabel = chatLabel
+    }
+
+    /// What a person calls it: the chat label, else its name, else its id.
+    public var title: String { chatLabel ?? name ?? id }
+}
+
+public struct ActiveRun: Decodable, Equatable {
+    public var runId: String
+    public var husk: String
+    public var computerId: String?
+    public var step: Int?
+    public var tool: String?
+}
+
+public struct Handoff: Decodable, Equatable {
+    public var handoffId: String
+    public var reason: String
+    public var computerId: String?
+    /// "person" when the person took the computer from the console, rather than a chat asking.
+    public var runId: String?
+
+    public init(handoffId: String, reason: String, computerId: String? = nil, runId: String? = nil) {
+        self.handoffId = handoffId
+        self.reason = reason
+        self.computerId = computerId
+        self.runId = runId
+    }
+}
+
+/// What the pill and the menu-bar icon show.
+public enum Summary: Equatable {
+    /// Nothing running and nothing waiting: the pill hides.
+    case idle
+    case running(Int)
+    case waiting(Int)
+    /// The server did not answer.
+    case disconnected
+
+    public init(_ overview: Overview?) {
+        guard let overview else {
+            self = .disconnected
+            return
+        }
+        // A computer the person took themselves is not waiting on them.
+        let waiting = overview.handoffs.filter { $0.runId != "person" }
+        if !waiting.isEmpty {
+            self = .waiting(waiting.count)
+            return
+        }
+        let running = overview.computers.filter { $0.state == "running" }.count
+        self = running == 0 ? .idle : .running(running)
+    }
+
+    /// The pill's text, or nil when it should be hidden.
+    public var pillText: String? {
+        switch self {
+        case .idle, .disconnected: return nil
+        case .running(1): return "1 computer"
+        case let .running(n): return "\(n) computers"
+        case .waiting: return "Waiting for you"
+        }
+    }
+
+    public var isWaiting: Bool {
+        if case .waiting = self { return true }
+        return false
+    }
+}
