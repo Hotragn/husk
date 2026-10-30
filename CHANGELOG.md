@@ -168,7 +168,8 @@ pre-release of 7 October.
   checksum, and always starts with its telemetry off. Lightpanda draws no screen, so a
   computer on it moves to Chrome, with its address and cookies, when it needs a
   screenshot, a second tab or a person, and then stays on Chrome. It runs on Docker,
-  Podman and the local provider. Chrome is still the default.
+  Podman and the local provider. Chrome is still the default
+  ([#270](https://github.com/Hotragn/husk/pull/270)).
 
 ### Changed
 
