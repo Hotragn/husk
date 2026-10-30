@@ -70,13 +70,13 @@ jobs:
             sleep 10
             npm run smoke
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: desktop-screens-${{ matrix.os }}
           path: ${{ runner.temp }}/desktop-shots
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: husk-desktop-${{ matrix.os }}
           path: |
