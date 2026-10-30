@@ -37,7 +37,7 @@ const ComputerSpecSchema = z
     idleTimeoutSec: z.number().int().min(0).optional(),
     maxLifetimeSec: z.number().int().min(0).optional(),
     network: NetworkPolicySchema.optional(),
-    env: z.record(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
     mounts: z
       .array(z.object({ source: z.string(), target: z.string(), readonly: z.boolean().optional() }))
       .optional(),
@@ -46,7 +46,7 @@ const ComputerSpecSchema = z
     persist: z.boolean().optional(),
     packages: z.array(z.string()).optional(),
     setup: z.string().optional(),
-    labels: z.record(z.string()).optional(),
+    labels: z.record(z.string(), z.string()).optional(),
   })
   .strict();
 
@@ -54,7 +54,7 @@ const ExecSchema = z
   .object({
     cmd: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
     cwd: z.string().optional(),
-    env: z.record(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
     timeoutSec: z.number().int().positive().max(3600).optional(),
     stdin: z.string().optional(),
     tty: z.boolean().optional(),
