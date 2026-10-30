@@ -11,7 +11,8 @@ import {
 import type { CallToolResult, ClientCapabilities, Implementation, InputRequiredResult, ServerContext, Tool } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import type { StdioServerHandle } from '@modelcontextprotocol/server/stdio';
-import { HUSK_VERSION, IDENTITY_LABELS, chatClient, chatLabel, createLogger, loadConfig, networkEnforcement, platformName, quiet, redact } from '@husk-ai/core';
+import { HUSK_VERSION, IDENTITY_LABELS, MEMORY_TOOL, Notes, chatClient, chatLabel, createLogger, loadConfig, networkEnforcement, platformName, quiet, redact } from '@husk-ai/core';
+import type { MemoryInput } from '@husk-ai/core';
 import type { IdentitySource } from '@husk-ai/core';
 import type { Computer, ComputerInfo, ComputerSpec, Logger } from '@husk-ai/core';
 import { ComputerManager, ensureRunning } from '@husk-ai/runtime';
@@ -175,6 +176,13 @@ export class HuskMcpServer {
   private readonly identity: IdentitySource;
   /** A bot that continues a Claude Code chat names that chat, and gets its computer, files and logins (HUSK_CHAT_SESSION). */
   private readonly hostSessionId = process.env.HUSK_CHAT_SESSION || process.env.CLAUDE_CODE_SESSION_ID;
+  /**
+   * A bot's notes between runs, as the `memory` tool: its engine names the
+   * folder (HUSK_MEMORY_DIR), and a bot with no computer gets the tool alone
+   * (HUSK_MEMORY_ONLY). Never a remote chat's: the folder is on this machine.
+   */
+  private readonly notes: Notes | undefined;
+  private readonly notesOnly: boolean;
   /** This process's computers. One for a session; one per chat when chats share the process. */
   private readonly computers = new Map<string, Computer>();
   private creating: Promise<Computer> | undefined;
@@ -257,6 +265,9 @@ export class HuskMcpServer {
     // hosts may share one process across every chat, so there the chat itself
     // carries its computer id forward.
     this.remote = opts.remote;
+    const notesDir = opts.remote ? undefined : process.env.HUSK_MEMORY_DIR;
+    this.notes = notesDir ? new Notes(notesDir) : undefined;
+    this.notesOnly = Boolean(this.notes) && process.env.HUSK_MEMORY_ONLY === '1';
     this.identity = opts.remote ? 'first-call' : this.namedSession ? 'named' : this.hostSessionId ? 'session' : 'first-call';
     this.spec = opts.spec ?? {};
     this.ephemeral = opts.ephemeral ?? true;
@@ -287,6 +298,8 @@ export class HuskMcpServer {
         capabilities: { tools: { listChanged: true }, prompts: {}, resources: {} },
         instructions: this.remote
           ? COMPUTER_INSTRUCTIONS
+          : this.notesOnly
+          ? 'Your one Husk tool is `memory`: your notes, kept between runs.'
           : WORKSPACE_INSTRUCTIONS + '\n' + (this.profile === 'starter'
             ? 'This session starts with workspace tools only. The user can enable computer tools in the viewer Advanced settings after reviewing the environment.'
             :
@@ -302,9 +315,11 @@ export class HuskMcpServer {
     server.setRequestHandler('tools/list', async (_request, ctx) => {
       this.noteClient(ctx);
       // Plain JSON Schema objects, each with `type: 'object'`, which ToolDef does not spell out.
+      const notes = this.notes ? [{ name: MEMORY_TOOL.name, description: MEMORY_TOOL.description, inputSchema: MEMORY_TOOL.parameters }] : [];
+      if (this.notesOnly) return { tools: notes as Tool[] };
       // Workspaces live on the machine Husk runs on, and fetch from its network: never a remote chat's.
       const workspace = this.remote ? [] : WORKSPACE_TOOLS;
-      return { tools: [...workspace, ...(this.profile === 'computer' ? this.computerTools() : [])] as Tool[] };
+      return { tools: [...notes, ...workspace, ...(this.profile === 'computer' ? this.computerTools() : [])] as Tool[] };
     });
 
     // The computer card, for clients that render MCP Apps. CSP is left empty on
@@ -324,6 +339,15 @@ export class HuskMcpServer {
       this.noteClient(ctx);
       const extra = ctx.mcpReq;
       const { name, arguments: args } = request.params;
+      if (this.notes && name === MEMORY_TOOL.name) {
+        try {
+          return { content: [{ type: 'text', text: redact(this.notes.run((args ?? {}) as MemoryInput)) }] };
+        } catch (err) {
+          const error = err as Error & { hint?: string };
+          return { isError: true, content: [{ type: 'text', text: redact(error.hint ? `${error.message}\n${error.hint}` : error.message) }] };
+        }
+      }
+      if (this.notesOnly) return { isError: true, content: [{ type: 'text', text: 'This bot has no computer: its one Husk tool is memory.' }] };
       if (WORKSPACE_TOOL_NAMES.has(name)) {
         if (this.remote) return { isError: true, content: [{ type: 'text', text: 'Workspace tools are not offered remotely: they work on the files of the machine Husk runs on.' }] };
         return this.workspaceTools.call(name, (args ?? {}) as Record<string, unknown>);

@@ -163,7 +163,7 @@ hint:  add a pattern to guardrails.allowCommands in husk.yaml if this is intenti
           <p>
             The current set of those, so you can find them quickly:{' '}
             <LinkPreview {...preview('/chat-to-bot/husk-yaml#memory')}>
-              memory.backend is checked and then ignored
+              memory.backend sqlite is not built yet
             </LinkPreview>
             ,{' '}
             <LinkPreview {...preview('/chat-to-bot/import#the-seven-importers')}>

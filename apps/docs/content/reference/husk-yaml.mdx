@@ -154,14 +154,17 @@ matches: a command chained after an allowed one is checked on its own. See
 | Path | Type | Constraint | Default |
 | --- | --- | --- | --- |
 | `memory.enabled` | boolean | — | `false` |
-| `memory.backend` | enum | `sqlite` \| `memory` \| `file` | `sqlite` |
+| `memory.backend` | enum | `file` \| `memory` \| `sqlite` | `file` |
 | `memory.windowTurns` | integer | > 0 | `20` |
 | `memory.summarise` | boolean | — | `true` |
 
+`backend: file` keeps notes between runs in `~/.husk/bots/<name>/memory/`, through a
+`memory` tool, on every engine; `memory` keeps nothing once the run ends. See
+[Notes between runs](/chat-to-bot/husk-yaml#notes-between-runs).
+
 <NotYet>
-`memory.backend` is validated, defaulted and then ignored. Nothing in any package reads
-it, there is no persistence layer, and trimming happens entirely in memory over the
-current run's message array. Husk ships no SQLite driver at all.
+`backend: sqlite` keeps no notes: Husk ships no SQLite driver. A run on it says so in a
+warning and goes on without notes.
 </NotYet>
 
 ## `triggers[]`
@@ -293,7 +296,8 @@ guardrails:
   redactSecrets: true
 
 memory:
-  enabled: false              # the only gate; off means history is never trimmed
+  enabled: false              # the only gate; off means no notes and no trimming
+  backend: file               # file keeps notes between runs | memory | sqlite (not built)
   windowTurns: 20
   summarise: true
 

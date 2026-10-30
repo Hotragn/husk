@@ -15,7 +15,7 @@ const STUB = `
 import { readFileSync, writeFileSync } from 'node:fs';
 let input = '';
 process.stdin.setEncoding('utf8').on('data', (d) => (input += d)).on('end', () => {
-  writeFileSync(process.env.STUB_RECORD, JSON.stringify({ argv: process.argv.slice(2), input, cwd: process.cwd(), claudecode: process.env.CLAUDECODE ?? null }));
+  writeFileSync(process.env.STUB_RECORD, JSON.stringify({ argv: process.argv.slice(2), input, cwd: process.cwd(), claudecode: process.env.CLAUDECODE ?? null, memoryDir: process.env.HUSK_MEMORY_DIR ?? null }));
   if (process.env.STUB_HANG) return void setInterval(() => {}, 1000);
   for (const line of JSON.parse(readFileSync(process.env.STUB_LINES, 'utf8'))) process.stdout.write(JSON.stringify(line) + '\\n');
   process.stderr.write(process.env.STUB_STDERR ?? '');
@@ -44,7 +44,8 @@ afterEach(() => {
 const log = createLogger({ level: 'silent' });
 const agent = (spec: Partial<HuskSpecInput>) => new CliAgent({ spec: parseSpec({ name: 'nightly', persona: 'Check the site.', ...spec }), logger: log });
 const prints = (lines: unknown[]) => writeFileSync(join(dir, 'lines.json'), JSON.stringify(lines));
-const started = () => JSON.parse(readFileSync(join(dir, 'record.json'), 'utf8')) as { argv: string[]; input: string; cwd: string; claudecode: string | null };
+const started = () => JSON.parse(readFileSync(join(dir, 'record.json'), 'utf8')) as { argv: string[]; input: string; cwd: string; claudecode: string | null; memoryDir: string | null };
+const notesFolder = () => join(dir, 'home', 'bots', 'nightly', 'memory');
 const after = (argv: string[], flag: string) => argv[argv.indexOf(flag) + 1];
 async function drain(a: CliAgent, input = 'Is the site up?', signal?: AbortSignal): Promise<AgentRunEvent[]> {
   const events: AgentRunEvent[] = [];
@@ -122,6 +123,36 @@ describe('the claude-code engine', () => {
     expect(after(argv, '--append-system-prompt')).toContain('You have no tools');
   });
 
+  it("gives a bot that keeps notes its own notes through Husk's tools, and never another bot's", async () => {
+    // Left by the bot whose MCP server started the shared Husk this runs in.
+    vi.stubEnv('HUSK_MEMORY_DIR', join(dir, 'another-bot'));
+    prints(claudeRun());
+    await drain(agent({ engine: { type: 'claude-code' }, memory: { enabled: true } }));
+    const { argv, memoryDir } = started();
+    expect(memoryDir).toBeNull();
+    const config = JSON.parse(readFileSync(after(argv, '--mcp-config')!, 'utf8'));
+    expect(config.mcpServers.husk.env).toEqual({ HUSK_BOT: 'nightly', HUSK_MEMORY_DIR: notesFolder() });
+    expect(after(argv, '--append-system-prompt')).toContain('## Your notes');
+  });
+
+  it('gives a bot with no computer that keeps notes its notes alone', async () => {
+    prints(claudeRun());
+    await drain(agent({ engine: { type: 'claude-code' }, tools: [], memory: { enabled: true } }));
+    const { argv } = started();
+    const husk = JSON.parse(readFileSync(after(argv, '--mcp-config')!, 'utf8')).mcpServers.husk;
+    expect(husk.args).toEqual(['bin.js', '--flavor', 'base']);
+    expect(husk.env).toEqual({ HUSK_BOT: 'nightly', HUSK_MEMORY_DIR: notesFolder(), HUSK_MEMORY_ONLY: '1' });
+    expect(after(argv, '--allowedTools')).toBe('mcp__husk');
+    expect(after(argv, '--append-system-prompt')).toContain('Your only tool is your notes');
+  });
+
+  it('says a bot that asks for sqlite notes keeps none', async () => {
+    prints(claudeRun());
+    const events = await drain(agent({ engine: { type: 'claude-code' }, memory: { enabled: true, backend: 'sqlite' } }));
+    expect(events[1]).toEqual({ type: 'warning', message: expect.stringContaining('sqlite is not built yet') });
+    expect(after(started().argv, '--append-system-prompt')).not.toContain('## Your notes');
+  });
+
   it("stops when Husk's tools did not start, rather than let the model only talk", async () => {
     prints([{ type: 'system', subtype: 'init', mcp_servers: [{ name: 'husk', status: 'failed' }] }, ...claudeRun().slice(1)]);
     const result = resultOf(await drain(agent({ engine: { type: 'claude-code' } })));
@@ -192,6 +223,15 @@ describe('the codex engine', () => {
     expect(events.map((e) => e.type)).toEqual(['run_start', 'step_start', 'tool_start', 'tool_end', 'text_delta', 'usage', 'run_end']);
     expect(events.find((e) => e.type === 'tool_end')).toMatchObject({ call: { name: 'shell' }, output: 'up 3 days', isError: false });
     expect(resultOf(events)).toMatchObject({ text: 'Up three days.', stopReason: 'complete', usage: { inputTokens: 30, outputTokens: 5, cacheReadTokens: 10 } });
+  });
+
+  it('gives a Codex bot that keeps notes its notes as well', async () => {
+    prints(codexRun());
+    await drain(agent({ engine: { type: 'codex' }, memory: { enabled: true } }));
+    const { argv } = started();
+    const set = argv.filter((_, i) => argv[i - 1] === '-c');
+    expect(set).toContain(`mcp_servers.husk.env={HUSK_BOT="nightly",HUSK_MEMORY_DIR=${JSON.stringify(notesFolder())}}`);
+    expect(set.find((s) => s.startsWith('developer_instructions='))).toContain('## Your notes');
   });
 
   it('stops a run in which Codex acted on its own, outside Husk', async () => {

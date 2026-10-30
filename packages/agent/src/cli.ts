@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { AGENT_CLIS, HuskError, clampText, createLogger, ensurePaths, findCli, huskLaunch, id, messageText, redact, renderPersona } from '@husk-ai/core';
+import { AGENT_CLIS, HuskError, clampText, createLogger, ensurePaths, findCli, huskLaunch, id, keepsNotes, messageText, notesDir, notesInstructions, notesWarning, redact, renderPersona } from '@husk-ai/core';
 import type { AgentCli, CliCommand, HuskSpec, Logger, RunResult, Tool, ToolCallPart, Usage } from '@husk-ai/core';
 import type { AgentOptions, AgentRunEvent, AgentRunOptions } from './types.js';
 
@@ -23,6 +23,12 @@ const STOP_GRACE_MS = 5000;
 const MAX_OUTPUT = 64 * 1024;
 /** Set by the Claude Code a shared Husk may have been started from. Claude Code refuses to start under them. */
 const PARENT_SESSION = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_SSE_PORT'];
+/**
+ * Set for one bot's MCP server (huskServer). The shared Husk keeps the
+ * environment of the bot server that started it, and one of these must not
+ * reach another bot's: its notes, or the chat it continues.
+ */
+const ONE_BOT = ['HUSK_BOT', 'HUSK_CHAT_SESSION', 'HUSK_MEMORY_DIR', 'HUSK_MEMORY_ONLY'];
 /** Codex's own ways to act, beside the MCP servers it is given. Unknown names are ignored by older versions. */
 const CODEX_OFF = ['shell_tool', 'unified_exec', 'apps', 'plugins', 'hooks', 'multi_agent', 'browser_use', 'browser_use_external', 'computer_use', 'in_app_browser', 'image_generation', 'view_image', 'code_mode_host'];
 /** Codex items that mean it acted outside Husk's tools after all. */
@@ -81,7 +87,9 @@ export class CliAgent {
     const started = Date.now();
     const { name } = AGENT_CLIS[this.cli];
     yield { type: 'run_start', runId, husk: this.spec.name, model: this.cli };
-    const end = (out: Outcome): AgentRunEvent[] => {
+    const unkept = notesWarning(this.spec);
+    if (unkept) yield { type: 'warning', message: unkept };
+    const end =(out: Outcome): AgentRunEvent[] => {
       const error = out.fatal ?? out.error;
       const result: RunResult = {
         runId,
@@ -206,15 +214,23 @@ function promptOf(opts: AgentRunOptions): string {
   return earlier.length ? `The conversation so far:\n${earlier.join('\n')}\n\nNow: ${now}` : now;
 }
 
-/** What the CLI is told, beside its own system prompt: who it is running as, and the husk's persona. */
-function instructions(spec: HuskSpec, opts: AgentRunOptions, tools: boolean): string {
+/** A husk with no tools, or no computer, only talks. */
+const hasComputer = (spec: HuskSpec): boolean => spec.computer.enabled && spec.tools.length > 0;
+
+/** What the CLI is told, beside its own system prompt: who it is running as, the husk's persona, and its notes. */
+function instructions(spec: HuskSpec, opts: AgentRunOptions): string {
   const parts = [
     `You are running unattended, as the Husk bot "${spec.name}". Nobody is watching this run, so finish the task without asking questions.`,
-    tools ? "Your only tools are Husk's. They act on a computer of your own: use them for everything the task needs." : 'You have no tools: answer from what you know.',
+    hasComputer(spec)
+      ? "Your only tools are Husk's. They act on a computer of your own: use them for everything the task needs."
+      : keepsNotes(spec)
+        ? 'Your only tool is your notes: answer from what you know.'
+        : 'You have no tools: answer from what you know.',
   ];
   const persona = renderPersona(spec, opts.vars ?? {});
   if (persona) parts.push(persona);
   if (spec.examples.length) parts.push(`## Examples\n${spec.examples.map((e) => `User: ${e.user}\nYou: ${e.assistant}`).join('\n\n')}`);
+  if (keepsNotes(spec)) parts.push(notesInstructions(notesDir(spec.name)));
   return parts.join('\n\n');
 }
 
@@ -222,28 +238,32 @@ function instructions(spec: HuskSpec, opts: AgentRunOptions, tools: boolean): st
  * How the CLI starts Husk's MCP server: this install's launch line, the
  * husk's computer, and `--keep`, since the shared Husk stops computers itself.
  * A bot that continues a Claude Code chat names the chat, and so gets its
- * computer, files and logins; any other bot has a computer of its own.
+ * computer, files and logins; any other bot has a computer of its own. A bot
+ * that keeps notes gets them as the `memory` tool, and a bot with no computer
+ * that keeps notes gets that tool alone.
  */
 export function huskServer(spec: HuskSpec): CliCommand | undefined {
   const c = spec.computer;
-  // A husk with no tools, or no computer, only talks.
-  if (!c.enabled || !spec.tools.length) return undefined;
+  const notes = keepsNotes(spec);
+  if (!hasComputer(spec) && !notes) return undefined;
   const launch = huskLaunch({ ...(c.provider ? { provider: c.provider } : {}), flavor: c.flavor });
+  // A bot's calls wait out a person's take-over, where a chat's are told to stop (J5-e).
+  const env: Record<string, string> = { ...(launch.env ?? {}), HUSK_BOT: spec.name };
+  if (notes) env['HUSK_MEMORY_DIR'] = notesDir(spec.name);
+  if (!hasComputer(spec)) return { command: launch.command, args: launch.args, env: { ...env, HUSK_MEMORY_ONLY: '1' } };
   const args = [...launch.args, '--keep', '--network', c.network.mode];
   if (c.network.strict) args.push('--network-strict');
   if (c.memoryMb) args.push('--memory', String(c.memoryMb));
   if (c.cpus) args.push('--cpus', String(c.cpus));
-  // A bot's calls wait out a person's take-over, where a chat's are told to stop (J5-e).
-  const env: Record<string, string> = { ...(launch.env ?? {}), HUSK_BOT: spec.name };
   if (spec.engine.resume) env['HUSK_CHAT_SESSION'] = spec.engine.resume;
   else args.push('--session', `bot-${spec.name}`);
   return { command: launch.command, args, env };
 }
 
-/** The CLI's environment: this one's, without a parent Claude Code session's markers. */
+/** The CLI's environment: this one's, without a parent Claude Code session's markers or another bot's. */
 function cliEnv(cli: CliCommand): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, ...(cli.env ?? {}) };
-  for (const key of PARENT_SESSION) delete env[key];
+  for (const key of [...PARENT_SESSION, ...ONE_BOT]) delete env[key];
   return env;
 }
 
@@ -268,7 +288,7 @@ export function claudeArgs(spec: HuskSpec, dir: string, opts: AgentRunOptions): 
   args.push('--tools', '', '--strict-mcp-config', '--mcp-config', config, '--setting-sources', 'user');
   if (server) args.push('--allowedTools', 'mcp__husk');
   args.push('--permission-mode', 'dontAsk');
-  args.push('--append-system-prompt', instructions(spec, opts, Boolean(server)), '--max-budget-usd', String(opts.maxCostUsd ?? spec.limits.maxCostUsd));
+  args.push('--append-system-prompt', instructions(spec, opts), '--max-budget-usd', String(opts.maxCostUsd ?? spec.limits.maxCostUsd));
   const model = modelOf(spec, opts);
   if (model) args.push('--model', model);
   // A fork: the chat's own session is never written to.
@@ -289,7 +309,7 @@ export function codexArgs(spec: HuskSpec, dir: string, opts: AgentRunOptions): s
   const args = ['exec', '--json', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only', '-C', dir];
   for (const feature of CODEX_OFF) args.push('-c', `features.${feature}=false`);
   args.push('-c', 'web_search="disabled"', '-c', 'approval_policy="never"');
-  args.push('-c', `developer_instructions=${toml(instructions(spec, opts, Boolean(s)))}`);
+  args.push('-c', `developer_instructions=${toml(instructions(spec, opts))}`);
   if (s) {
     args.push('-c', `mcp_servers.husk.command=${toml(s.command)}`, '-c', `mcp_servers.husk.args=[${s.args.map(toml).join(',')}]`);
     const env = Object.entries(s.env ?? {});

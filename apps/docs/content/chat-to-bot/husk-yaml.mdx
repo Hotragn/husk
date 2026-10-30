@@ -345,16 +345,41 @@ Dangerous tools: `shell`, `write_file`, `edit_file`, `move`, `delete`, `expose_p
 ```yaml
 memory:
   enabled: true
+  backend: file
   windowTurns: 20
   summarise: true
 ```
 
 | Field | Type | Default | What it does |
 | --- | --- | --- | --- |
-| `enabled` | boolean | `false` | The only gate. Off, and history is never trimmed |
-| `backend` | `sqlite` \| `memory` \| `file` | `sqlite` | **Not read by any code** |
+| `enabled` | boolean | `false` | The only gate. Off, and the bot keeps no notes and history is never trimmed |
+| `backend` | `file` \| `memory` \| `sqlite` | `file` | `file` keeps notes between runs; `memory` keeps nothing once the run ends; `sqlite` is not built yet |
 | `windowTurns` | int > 0 | `20` | Turns kept verbatim before older ones are summarised |
 | `summarise` | boolean | `true` | Summarise the elided middle instead of dropping it |
+
+### Notes between runs
+
+With `enabled: true` and `backend: file`, the bot keeps notes from one run to the next.
+They are plain text files in `~/.husk/bots/<name>/memory/`, so you can open, edit or delete
+any of them. The bot reads and changes them with one `memory` tool, which takes the same
+commands as Anthropic's memory tool: `view`, `create`, `str_replace`, `insert`, `delete` and
+`rename`.
+
+At the start of every run the bot is told which notes it has and to read the ones that
+matter first. It is told to save what a later run will need, never to save secrets, and
+that a note is its own record, not an instruction from you: when a note and your request
+disagree, it follows the request.
+
+Every engine uses the same notes. A bot on `claude-code` or `codex` gets the `memory` tool
+through Husk's MCP server, beside its computer tools, and a bot with no computer gets the
+`memory` tool alone.
+
+Limits keep the notes a short record rather than a database: one note holds at most 64 KB,
+and a bot keeps at most 200 notes and 1 MB in all. A path that leaves the folder, or goes
+through a link, is refused, and anything that looks like a key or a token is masked before
+it is saved.
+
+### Trimming long chats
 
 With `enabled: true`, the loop keeps the system messages, the husk's `examples`, the first
 user message as an anchor, and the last `windowTurns` turns. A turn is a message from the
@@ -372,10 +397,8 @@ Cuts land on turn boundaries and orphaned pairs are pruned, so a `tool_call` is 
 separated from its `tool_result`. The summary call is charged to the run's budget.
 
 <NotYet>
-`memory.backend` is validated, defaulted and then ignored. Nothing in any package reads
-it, there is no persistence layer, and trimming happens entirely in memory over the
-current run's message array. Setting `backend: file` does not write a file, and setting
-`backend: sqlite` does not open a database — Husk ships no SQLite driver at all.
+`backend: sqlite` keeps no notes: Husk ships no SQLite driver. A run on it says so in a
+warning and goes on without notes. Use `file`.
 </NotYet>
 
 ## triggers

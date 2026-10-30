@@ -156,6 +156,11 @@ pre-release of 7 October.
 - **`husk rm --erase`** erases what a chat's or a bot's computer keeps on Docker and
   Podman, its files and browser logins, as the console's Delete does
   ([#259](https://github.com/Hotragn/husk/pull/259)).
+- **Bots remember between runs.** A bot with `memory.enabled` keeps notes from one run to
+  the next, as plain files in `~/.husk/bots/<name>/memory/` that you can open, edit or
+  delete. It reads and changes them with one `memory` tool on every engine: Husk's own,
+  Claude Code and Codex. `memory.backend` now defaults to `file`; `sqlite` is not built
+  yet, and a run on it says so ([#269](https://github.com/Hotragn/husk/pull/269)).
 
 ### Changed
 

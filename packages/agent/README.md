@@ -174,7 +174,14 @@ const wordCount = defineTool({
 
 ## Memory
 
-With `memory.enabled`, history is trimmed before each model call: the system prompt,
+With `memory.enabled` and `backend: file` (the default), a bot keeps notes between runs:
+plain files in `~/.husk/bots/<name>/memory/`, which it reads and changes with one `memory`
+tool (Anthropic's memory-tool commands: `view`, `create`, `str_replace`, `insert`, `delete`,
+`rename`). Each run is told which notes it has. The Claude Code and Codex engines get the
+same tool, and the same notes, through Husk's MCP server. Paths stay inside the folder,
+links are refused, secrets are masked, and a bot keeps at most 200 notes and 1 MB.
+
+With `memory.enabled`, history is also trimmed before each model call: the system prompt,
 the examples, the opening user message and the last `windowTurns` turns survive; the
 middle is summarised by `summaryModel` (or dropped with a marker when summarisation is
 unavailable). A turn is a user message with its answer, or one model step after its tool

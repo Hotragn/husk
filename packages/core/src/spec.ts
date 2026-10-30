@@ -100,7 +100,8 @@ export const TriggerSchema = z.discriminatedUnion('type', [
 
 export const MemorySchema = z.object({
   enabled: z.boolean().default(false),
-  backend: z.enum(['sqlite', 'memory', 'file']).default('sqlite'),
+  /** `file` keeps notes between runs (notes.ts); `memory` keeps nothing; `sqlite` is not built yet, and keeps nothing. */
+  backend: z.enum(['sqlite', 'memory', 'file']).default('file'),
   /** Turns of raw history kept verbatim before older turns get summarised. */
   windowTurns: z.number().int().positive().default(20),
   summarise: z.boolean().default(true),
