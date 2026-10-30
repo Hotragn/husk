@@ -114,6 +114,13 @@ describe('the claude-code engine', () => {
     expect(resultOf(events).usage).toMatchObject({ inputTokens: 40, costUsd: 0 });
   });
 
+  it("starts Husk's MCP server on the browser the husk names", async () => {
+    prints(claudeRun());
+    await drain(agent({ engine: { type: 'claude-code' }, computer: { browser: 'lightpanda' } }));
+    const husk = JSON.parse(readFileSync(after(started().argv, '--mcp-config')!, 'utf8')).mcpServers.husk;
+    expect(after(husk.args, '--browser')).toBe('lightpanda');
+  });
+
   it('starts no MCP server for a husk with no tools', async () => {
     prints(claudeRun());
     await drain(agent({ engine: { type: 'claude-code' }, tools: [] }));

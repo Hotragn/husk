@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { livePageFor } from '@husk-ai/browser';
+import { livePageFor, toChromeFor } from '@husk-ai/browser';
 import { id } from '@husk-ai/core';
 import type { HandoffOutcome } from '@husk-ai/core';
 import { notFound } from './errors.js';
@@ -241,16 +241,20 @@ export class HandoffRegistry {
 
   private readonly file: string | undefined;
   private readonly keepAlive: (computerId: string) => unknown;
+  private readonly forPerson: (computerId: string) => Promise<void>;
 
   /**
    * @param opts.file where the person's holds and chats' handoffs outlive a
    *   restart of this server. Without it they last as long as this registry.
    * @param opts.keepAlive what an open hold does to its computer's browser
    *   every minute: touch the live page, so it does not close for idleness.
+   * @param opts.forPerson what a hold does to its computer's browser as it
+   *   opens: one on Lightpanda, which draws nothing, moves to Chrome.
    */
-  constructor(opts: { file?: string | undefined; keepAlive?: (computerId: string) => unknown } = {}) {
+  constructor(opts: { file?: string | undefined; keepAlive?: (computerId: string) => unknown; forPerson?: (computerId: string) => Promise<void> } = {}) {
     this.file = opts.file;
     this.keepAlive = opts.keepAlive ?? livePageFor;
+    this.forPerson = opts.forPerson ?? ((computerId) => toChromeFor(computerId));
   }
 
   /** `open`, or how it ended (`done`, `aborted`), or undefined if this server never had it. */
@@ -308,6 +312,8 @@ export class HandoffRegistry {
     const { computerId } = record;
     const keepAlive = computerId ? setInterval(() => this.keepAlive(computerId), KEEP_ALIVE_MS) : undefined;
     keepAlive?.unref?.();
+    // A person sees and uses the page, which a browser that draws nothing cannot show them.
+    if (computerId) void this.forPerson(computerId).catch(() => undefined);
     const settle = (outcome: HandoffOutcome): void => {
       if (!this.pending.delete(record.handoffId)) return;
       clearInterval(keepAlive);

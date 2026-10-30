@@ -252,6 +252,7 @@ export function huskServer(spec: HuskSpec): CliCommand | undefined {
   if (notes) env['HUSK_MEMORY_DIR'] = notesDir(spec.name);
   if (!hasComputer(spec)) return { command: launch.command, args: launch.args, env: { ...env, HUSK_MEMORY_ONLY: '1' } };
   const args = [...launch.args, '--keep', '--network', c.network.mode];
+  if (c.browser) args.push('--browser', c.browser);
   if (c.network.strict) args.push('--network-strict');
   if (c.memoryMb) args.push('--memory', String(c.memoryMb));
   if (c.cpus) args.push('--cpus', String(c.cpus));

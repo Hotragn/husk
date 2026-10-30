@@ -57,14 +57,17 @@ export interface DoctorReport {
     isolationKind: 'kernel' | 'machine' | 'guardrails' | null;
     model: string | null;
     modelReason: string;
+    browser: 'chrome' | 'lightpanda';
+    browserReason: string;
   };
   warnings: string[];
 }
 
-/** What ~/.husk/config.json makes `auto` mean: a provider, and a model. */
+/** What ~/.husk/config.json makes `auto` mean: a provider, and a model. And the browser, when it is not Chrome. */
 export interface AutoConfig {
   provider?: string;
   model?: string;
+  browser?: 'lightpanda';
 }
 
 /**
@@ -151,7 +154,11 @@ export const liveProbes: DoctorProbes = {
   },
   autoConfig() {
     const c = loadConfig();
-    return { ...(c.provider && c.provider !== 'auto' ? { provider: c.provider } : {}), ...(c.modelAliases.auto ? { model: c.modelAliases.auto } : {}) };
+    return {
+      ...(c.provider && c.provider !== 'auto' ? { provider: c.provider } : {}),
+      ...(c.modelAliases.auto ? { model: c.modelAliases.auto } : {}),
+      ...(c.browser === 'lightpanda' ? { browser: c.browser } : {}),
+    };
   },
 };
 
@@ -216,6 +223,12 @@ export async function collect(force = false, probes: DoctorProbes = liveProbes):
     );
   }
 
+  if (auto.browser === 'lightpanda' && chosen && !['docker', 'podman', 'local'].includes(chosen.name)) {
+    warnings.push(`~/.husk/config.json sets the browser to lightpanda, and ${chosen.name} computers cannot keep its driver running, so they use Chrome.`);
+  } else if (auto.browser === 'lightpanda' && chosen?.name === 'local') {
+    warnings.push('~/.husk/config.json sets the browser to lightpanda, which has no sandbox of its own, and on the local provider nothing else holds it. Use docker or podman for pages you do not trust.');
+  }
+
   if (belowNodeFloor(process.versions.node)) warnings.push(`Node ${process.versions.node} is below the supported floor of 20.10.`);
 
   // One root cause with two faces. Docker Desktop runs its engine inside
@@ -274,6 +287,10 @@ export async function collect(force = false, probes: DoctorProbes = liveProbes):
         : chosenModel
           ? `preferred available model on ${chosenModel.displayName} (capabilities, catalog quality, and local size tier)`
           : 'no provider has credentials or is listening',
+      browser: auto.browser ?? 'chrome',
+      browserReason: auto.browser
+        ? 'set in ~/.husk/config.json; a husk or a chat can still choose its own'
+        : 'the default; set browser to lightpanda in ~/.husk/config.json for the lighter one',
     },
     warnings,
   };
@@ -414,6 +431,7 @@ export async function run(argv: string[]): Promise<number> {
       ['computer', report.selection.provider ? `${report.selection.provider}  ${ui.dim(report.selection.providerReason)}` : `${ui.red('none')}  ${ui.dim(report.selection.providerReason)}`],
       ['isolation', ui.isolation(report.selection.isolationKind ?? undefined, report.selection.isolated)],
       ['model', report.selection.model ? `${report.selection.model}  ${ui.dim(report.selection.modelReason)}` : ui.yellow('none — computers still work')],
+      ['browser', `${report.selection.browser}  ${ui.dim(report.selection.browserReason)}`],
     ]),
   );
   ui.print();

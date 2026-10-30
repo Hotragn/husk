@@ -71,3 +71,23 @@ jobs:
           name: console-screenshots
           path: ${{ runner.temp }}/e2e-shots
           if-no-files-found: ignore
+
+  # The browser journeys on computers whose browser is Lightpanda, timed beside
+  # Chrome. It fails only when Lightpanda stops working in Husk at all; a
+  # journey Lightpanda cannot do yet is written to the job's summary instead,
+  # with the numbers that decide whether it can be the default.
+  lightpanda:
+    name: the browser journeys on lightpanda
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run e2e:computers
+        env:
+          E2E_BROWSER: lightpanda

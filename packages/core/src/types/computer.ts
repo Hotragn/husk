@@ -38,6 +38,13 @@ export interface MountSpec {
 /** Prebuilt environments. A provider maps these onto concrete images. */
 export type Flavor = 'base' | 'python' | 'node' | 'full';
 
+/**
+ * What runs the computer's browser. `lightpanda` is lighter and draws no
+ * screen, so a computer on it moves to Chrome when a person, a picture or a
+ * second tab needs one (@husk-ai/browser's session.ts).
+ */
+export type BrowserEngine = 'chrome' | 'lightpanda';
+
 export interface ComputerSpec {
   /** Human label. Also used for the container name when it is unique. */
   name?: string;
@@ -45,6 +52,8 @@ export interface ComputerSpec {
   /** Explicit image reference. Overrides `flavor`. */
   image?: string;
   flavor?: Flavor;
+  /** Unset, the machine's `browser` setting (config.json) decides, and that is `chrome` unless set. */
+  browser?: BrowserEngine;
   cpus?: number;
   memoryMb?: number;
   diskMb?: number;

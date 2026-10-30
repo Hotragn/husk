@@ -17,7 +17,7 @@ interface McpModule {
   HuskMcpServer?: new (opts?: {
     sessionKey?: string;
     ephemeral?: boolean;
-    spec?: { provider?: string; flavor?: string };
+    spec?: { provider?: string; flavor?: string; browser?: string };
   }) => { connectStdio(): Promise<void>; close(): Promise<void> };
 }
 
@@ -27,6 +27,7 @@ export async function run(argv: string[]): Promise<number> {
     {
       provider: { type: 'string' },
       flavor: { type: 'string' },
+      browser: { type: 'string' },
       'session-key': { type: 'string' },
       keep: { type: 'boolean', default: false },
     },
@@ -58,7 +59,11 @@ export async function run(argv: string[]): Promise<number> {
     ephemeral: values.keep !== true,
     // The chat is offered the browser tools, and only `full` runs the browser,
     // as `npx @husk-ai/mcp` gives it.
-    spec: { flavor: (values.flavor as string | undefined) ?? 'full', ...(values.provider ? { provider: values.provider as string } : {}) },
+    spec: {
+      flavor: (values.flavor as string | undefined) ?? 'full',
+      ...(values.provider ? { provider: values.provider as string } : {}),
+      ...(values.browser ? { browser: browserOf(values.browser as string) } : {}),
+    },
   });
 
   ui.note(ui.dim('husk mcp — speaking MCP on stdio. Logs are on stderr; stdout is the protocol.'));
@@ -74,4 +79,9 @@ export async function run(argv: string[]): Promise<number> {
 
   await server.close().catch(() => {});
   return EXIT_OK;
+}
+
+function browserOf(value: string): 'chrome' | 'lightpanda' {
+  if (value === 'chrome' || value === 'lightpanda') return value;
+  throw new HuskError('E_CONFIG', `--browser must be chrome or lightpanda, not ${value}`, { hint: 'leave it out to use the browser setting in ~/.husk/config.json' });
 }

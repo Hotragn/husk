@@ -805,6 +805,7 @@ export function computerSpecFor(spec: HuskSpec, env: NodeJS.ProcessEnv = process
     provider: c.provider,
     image: c.image,
     flavor: c.flavor,
+    ...(c.browser ? { browser: c.browser } : {}),
     cpus: c.cpus,
     memoryMb: c.memoryMb,
     diskMb: c.diskMb,

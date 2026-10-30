@@ -93,7 +93,7 @@ export async function browserRoutes(app: FastifyInstance): Promise<void> {
   app.get('/v1/computers/:id/browser/status', async (req: FastifyRequest) => {
     const { id } = req.params as { id: string };
     const computer = await mustGet(app, id);
-    return inspectBrowserCapability(computer);
+    return inspectBrowserCapability(computer, await sessionFor(app, computer).plannedEngine());
   });
 
   /**
@@ -171,7 +171,7 @@ export async function browserRoutes(app: FastifyInstance): Promise<void> {
   app.get('/v1/computers/:id/browser/screenshot', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
     const { fullPage } = req.query as { fullPage?: string };
-    const page = await sessionFor(app, await mustGet(app, id)).activePage();
+    const page = await sessionFor(app, await mustGet(app, id)).activePage('a screenshot was asked for');
     const data = await page.screenshot({ fullPage: fullPage === '1' || fullPage === 'true' });
     // Sent as the image rather than as base64 JSON so the console can point an
     // <img> at it and a human can open the URL.

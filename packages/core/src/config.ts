@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { HuskError } from './errors.js';
+import type { BrowserEngine } from './types/computer.js';
 
 /**
  * Where Husk keeps its state.
@@ -65,6 +66,8 @@ export function ensurePaths(p: HuskPaths = paths()): HuskPaths {
 export interface HuskConfig {
   /** Preferred computer provider. 'auto' picks the best available. */
   provider: string;
+  /** The browser a computer runs when it does not say: `chrome`, or the lighter `lightpanda`. */
+  browser: BrowserEngine;
   /** Preferred model alias. 'auto' picks the best available. */
   model: string;
   /** Control-plane bind address for `husk serve`. */
@@ -83,6 +86,7 @@ export interface HuskConfig {
 
 export const DEFAULT_CONFIG: HuskConfig = {
   provider: 'auto',
+  browser: 'chrome',
   model: 'auto',
   host: '127.0.0.1',
   port: 7377,
@@ -97,6 +101,7 @@ export const DEFAULT_CONFIG: HuskConfig = {
 const ConfigFileSchema = z
   .object({
     provider: z.string().min(1),
+    browser: z.enum(['chrome', 'lightpanda']),
     model: z.string().min(1),
     maxCostUsd: z.number().nonnegative(),
     maxComputers: z.number().int().positive(),
@@ -132,7 +137,7 @@ export function loadConfig(file: string = paths().configFile): HuskConfig {
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     throw new HuskError('E_CONFIG', `${file}: ${issue?.path.join('.') || 'the file'}: ${issue?.message}`, {
-      hint: 'it takes provider, model, maxCostUsd, maxComputers and modelAliases',
+      hint: 'it takes provider, browser, model, maxCostUsd, maxComputers and modelAliases',
     });
   }
   const { model, modelAliases, ...rest } = parsed.data;

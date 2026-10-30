@@ -185,6 +185,7 @@ computer:
 | `enabled` | boolean | `true` | `false` disables the machine entirely |
 | `provider` | string | best available | `docker`, `podman`, `local`, `ssh`, `fly` |
 | `flavor` | enum | `base` | `base`, `python`, `node`, `full` |
+| `browser` | enum | `browser` in `~/.husk/config.json`, else `chrome` | `chrome` or `lightpanda`. See [The browser](/computers#the-browser) |
 | `image` | string | — | Explicit image reference. Overrides `flavor` |
 | `cpus` | number > 0, ≤ 64 | `2` on Docker and Podman, `1` on Fly | CPU allocation. `local` and `ssh` set no limit |
 | `memoryMb` | int > 0, ≤ 131072 | `2048` on Docker and Podman, `1024` on Fly | Memory ceiling. Fly rounds it up to a multiple of 256 |

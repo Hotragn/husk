@@ -169,6 +169,10 @@ hint:  add a pattern to guardrails.allowCommands in husk.yaml if this is intenti
             <LinkPreview {...preview('/chat-to-bot/import#the-seven-importers')}>
               four declared transcript sources have no importer
             </LinkPreview>
+            ,{' '}
+            <LinkPreview {...preview('/computers#the-browser')}>
+              Lightpanda is not the default browser yet
+            </LinkPreview>
             , and{' '}
             <LinkPreview {...preview('/start/install#the-npm-packages')}>
               npm still has 0.1.4

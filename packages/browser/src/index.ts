@@ -34,16 +34,21 @@ export {
   CACHE_ROOT,
   DOWNLOADS_DIR,
   CHROME_FOR_TESTING_MANIFEST,
+  LIGHTPANDA_BINARY,
+  LIGHTPANDA_BUILDS,
+  LIGHTPANDA_VERSION,
   PLAYWRIGHT_CHROMIUM_REVISION,
   downloadPlanFor,
   findInstalledChromium,
+  findLightpanda,
   inspectBrowserCapability,
   normaliseArch,
   parseMissingLibs,
   pickChromeForTestingAsset,
   provisionChromium,
+  provisionLightpanda,
 } from './provision.js';
-export type { BrowserArch, BrowserCapability, DownloadPlan, ProvisionOptions, ProvisionResult } from './provision.js';
+export type { BrowserArch, BrowserCapability, DownloadPlan, LightpandaBuild, ProvisionOptions, ProvisionResult } from './provision.js';
 
 export {
   BrowserSession,
@@ -53,6 +58,8 @@ export {
   closeBrowserFor,
   livePageFor,
   markUsedFor,
+  toChromeFor,
+  wantedEngine,
   warnIfDebugPortIsExposed,
 } from './session.js';
 export type { SessionOptions } from './session.js';

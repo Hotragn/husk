@@ -333,6 +333,11 @@ class Conn(object):
         # loads it stopped since the action began. None: nothing is intercepted.
         self.policy = None
         self.blocked = []
+        # 'lightpanda' when the host says so; Chromium otherwise. Lightpanda's page
+        # lives as long as this connection, and its dialogs answer themselves.
+        self.engine = None
+        self.downloads_dir = None
+        self.downloads_armed = False
 
     def _pump(self, deadline):
         # A screencast frame waits for its ack, and Chromium sends no other until
@@ -732,10 +737,25 @@ def session_for(conn, target_id, deadline):
     """
     session_id = conn.sessions.get(target_id)
     if not session_id:
-        session_id = attach(conn, target_id, deadline)
+        try:
+            session_id = attach(conn, target_id, deadline)
+        except DriverError as exc:
+            # A new connection to Lightpanda is a new, empty browser: the page is
+            # gone, so the host starts the browser again rather than retry forever.
+            if exc.kind == BAD_TARGET and conn.engine == 'lightpanda':
+                raise DriverError(BROWSER_GONE, "Lightpanda's page ended with its connection", {'cause': exc.message})
+            raise
         conn.sessions[target_id] = session_id
         conn.guard(session_id, 'page', False)
     auto_attach(conn, session_id, deadline)
+    if conn.engine == 'lightpanda' and conn.downloads_dir and not conn.downloads_armed:
+        # Lightpanda takes a download folder only once its page exists.
+        conn.downloads_armed = True
+        try:
+            conn.call('Browser.setDownloadBehavior', {'behavior': 'allow', 'downloadPath': conn.downloads_dir, 'eventsEnabled': True}, None, deadline)
+        except DriverError as exc:
+            if exc.kind != PROTOCOL:
+                raise
     return session_id
 
 
@@ -809,6 +829,13 @@ DESCRIBE = r'''function () {
   return '<' + el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + cls + '>' + (text ? ' "' + text + '"' : '');
 }'''
 GONE = '%s is no longer on the page; take a snapshot and use the new ref'
+# The address a link opens in a tab of its own, or null.
+NEW_TAB = r'''function () {
+  const el = this.nodeType === 1 ? this : this.parentElement;
+  const a = el && el.closest('a[href], area[href]');
+  const t = a ? (a.getAttribute('target') || '').toLowerCase() : '';
+  return a && t && !['_self', '_top', '_parent'].includes(t) ? a.href : null;
+}'''
 
 
 def evaluate(conn, session_id, expression, deadline):
@@ -867,7 +894,7 @@ def resolve(conn, session_id, step, deadline, unique=False):
     return elements[0]['backendDOMNodeId']
 
 
-def prepare(conn, deadline, downloads, policy=None):
+def prepare(conn, deadline, downloads, policy=None, engine=None):
     """
     Once per connection: hear about the tabs pages open; attach to every tab,
     a new one held until it is guarded, so its first load goes by the network
@@ -878,6 +905,10 @@ def prepare(conn, deadline, downloads, policy=None):
     """
     if policy is not None:
         conn.policy = policy
+    if engine:
+        conn.engine = engine
+    if downloads:
+        conn.downloads_dir = downloads
     if conn.prepared:
         return
     conn.prepared = True
@@ -1194,6 +1225,12 @@ def page_object(conn, session_id, backend, deadline):
         return None
 
 
+def point_object(conn, session_id, x, y, deadline):
+    """What the page's own hit test finds at (x, y), as a page object, or None."""
+    res = conn.call('Runtime.evaluate', {'expression': 'document.elementFromPoint(%f, %f)' % (x, y)}, session_id, deadline)
+    return (res.get('result') or {}).get('objectId')
+
+
 def call_on(conn, session_id, object_id, fn, deadline, args=None):
     """`fn` run on a page object, and its value. A page that throws is an ACTION error."""
     res = conn.call(
@@ -1217,6 +1254,15 @@ def covering(conn, el, target, x, y, deadline):
     process, and in the element's own frame, the element or something in it.
     """
     levels = list(el['outer']) + [(el['sid'], el['backend'])]
+    if conn.engine == 'lightpanda':
+        # No getNodeForLocation there. In the top document the page's own hit
+        # test stands in, the one Lightpanda's click uses; in a frame, no check.
+        if len(levels) > 1:
+            return None
+        hit_object = point_object(conn, el['sid'], x, y, deadline)
+        if not hit_object or call_on(conn, el['sid'], target, WITHIN, deadline, [{'objectId': hit_object}]) is True:
+            return None
+        return call_on(conn, el['sid'], hit_object, DESCRIBE, deadline) or 'something else'
     for i, ((sid, want), (ox, oy)) in enumerate(zip(levels, el.get('origins') or [(0.0, 0.0)])):
         try:
             hit = conn.call(
@@ -1292,6 +1338,10 @@ def act_click(conn, sid, step, deadline):
         over = covering(conn, el, target, x, y, deadline)
         if over:
             raise DriverError(ACTION, '%s is covered: a click on it would land on %s instead; close or move that first, or pass force to click anyway' % (el['ref'], over))
+        # Lightpanda opens no second tab, so a link meant for one would seem to do nothing.
+        away = call_on(conn, el['sid'], target, NEW_TAB, deadline) if conn.engine == 'lightpanda' else None
+        if away:
+            raise DriverError(ACTION, '%s opens %s in a new tab, which Lightpanda cannot show: browser_goto it to open it here, or browser_tabs open it, which moves this computer to Chrome' % (el['ref'], away))
     started = set(conn.downloads)
     # The page's session takes the click wherever it lands, a cross-site frame included.
     to_front(conn, sid, deadline)
@@ -2010,7 +2060,11 @@ def execute(conn, session_id, steps, deadline):
             conn.dialog_answer = step.get('dialog')
             started = set(conn.downloads)
             popped = len(conn.popups)
+            # Lightpanda answers a dialog the moment it opens, so the answer is given first.
+            armed = conn.engine == 'lightpanda' and conn.dialog_answer == 'accept'
             try:
+                if armed:
+                    conn.call('LP.handleJavaScriptDialog', {'accept': True}, session_id, step_deadline)
                 result = fn(conn, session_id, step, step_deadline)
                 settle_popups(conn, session_id, popped, step_deadline)
                 result.update(happened(conn, started, popped))
@@ -2026,6 +2080,12 @@ def execute(conn, session_id, steps, deadline):
                 halted = True
             finally:
                 conn.dialog_answer = None
+                if armed and not conn.dialogs:
+                    # Unused, the answer would wait for a later action's dialog: take it back.
+                    try:
+                        conn.call('LP.handleJavaScriptDialog', {'accept': False}, session_id, step_deadline)
+                    except DriverError:
+                        pass
         else:
             raise DriverError(INTERNAL, 'unknown step op %r' % (op,))
     return results
@@ -2036,7 +2096,7 @@ def run(req):
     deadline = _now() + float(req.get('timeoutMs', 60000)) / 1000.0
     conn, ws_url, browser = connect(req.get('port'), req.get('ws'), deadline)
     try:
-        prepare(conn, deadline, req.get('downloads'), req.get('policy'))
+        prepare(conn, deadline, req.get('downloads'), req.get('policy'), req.get('engine'))
         session_id = None
         target_id = req.get('targetId')
         # A session belongs to a connection, so it cannot be cached across
@@ -2261,7 +2321,7 @@ def serve(port):
         conn = state['conn']
         # Events are only ever waited for within the request that caused them.
         conn.events = []
-        prepare(conn, deadline, req.get('downloads'), req.get('policy'))
+        prepare(conn, deadline, req.get('downloads'), req.get('policy'), req.get('engine'))
         op = req.get('op')
         target_id = req.get('targetId')
         if op == 'screencastStop':

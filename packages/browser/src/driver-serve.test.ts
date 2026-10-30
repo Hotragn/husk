@@ -45,6 +45,10 @@ interface FakeChromium {
   onRelease: unknown[];
   /** A frame in the page's process, its <iframe> node 9, whose nodes number afresh: its document now. */
   child?: { loader: string };
+  /** Lightpanda's: where a link meant for a new tab goes; whether the page's own hit test finds something; a page this connection does not have. */
+  newTab?: string;
+  pointHit?: boolean;
+  attachFails?: boolean;
   close(): Promise<void>;
 }
 
@@ -116,15 +120,19 @@ async function fakeChromium(frames = 4): Promise<FakeChromium> {
         const reply = (result: unknown) => send({ id: msg.id, ...(msg.sessionId ? { sessionId: msg.sessionId } : {}), result });
         switch (msg.method) {
           case 'Target.attachToTarget':
-            reply({ sessionId: 'S1' });
+            if (fake.attachFails) send({ id: msg.id, error: { code: -32000, message: 'No target with given id found' } });
+            else reply({ sessionId: 'S1' });
             break;
           case 'Page.navigate':
             reply({ frameId: 'F' });
             send({ method: 'Page.loadEventFired', sessionId: 'S1', params: { timestamp: 1 } });
             break;
-          case 'Runtime.evaluate':
-            reply({ result: { value: String(msg.params?.['expression']).includes('location.href') ? 'https://fake.test/' : true } });
+          case 'Runtime.evaluate': {
+            const expression = String(msg.params?.['expression']);
+            if (expression.includes('elementFromPoint')) reply({ result: fake.pointHit ? { type: 'object', objectId: 'Opoint' } : { type: 'object', subtype: 'null', value: null } });
+            else reply({ result: { value: expression.includes('location.href') ? 'https://fake.test/' : true } });
             break;
+          }
           case 'DOM.getBoxModel': {
             const d = fake.shifts.shift() ?? 0;
             if (msg.params?.['backendNodeId'] === 404) send({ id: msg.id, sessionId: msg.sessionId, error: { code: -32000, message: 'No node with given id found' } });
@@ -138,7 +146,15 @@ async function fakeChromium(frames = 4): Promise<FakeChromium> {
           case 'Runtime.callFunctionOn': {
             // Told apart by what each asks: the click's state, containment, a description.
             const fn = String(msg.params?.['functionDeclaration']);
-            const value = fn.includes('getComputedStyle') ? fake.element : fn.includes('ShadowRoot') ? fake.within : fn.includes('className') ? '<div.backdrop> "Backdrop"' : undefined;
+            const value = fn.includes('getComputedStyle')
+              ? fake.element
+              : fn.includes('ShadowRoot')
+                ? fake.within
+                : fn.includes('className')
+                  ? '<div.backdrop> "Backdrop"'
+                  : fn.includes("'_self'")
+                    ? (fake.newTab ?? null)
+                    : undefined;
             reply({ result: { value } });
             break;
           }
@@ -573,6 +589,71 @@ describe.skipIf(!python)('driver.py --serve', { timeout: 30_000 }, () => {
     const exited = new Promise<number | null>((resolve) => driver!.child.on('exit', resolve));
     driver.child.stdin.end();
     expect(await exited).toBe(0);
+  });
+});
+
+describe.skipIf(!python)('driver.py --serve, on Lightpanda', { timeout: 30_000 }, () => {
+  const lp = (steps: unknown[], more: Record<string, unknown> = {}) => driver!.request({ targetId: 'T1', engine: 'lightpanda', steps, ...more });
+  const clickOn = async (step: Record<string, unknown>) => ((await lp([{ op: 'action', do: 'click', ...step }]))['results'] as Array<Record<string, unknown>>)[0]!;
+  const pressed = () => fake!.received.filter((m) => m.method === 'Input.dispatchMouseEvent' && m.params?.['type'] === 'mousePressed').length;
+
+  it('gives a confirm its answer before the click that opens it, and takes it back when none opened', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    await lp([{ op: 'action', do: 'snapshot' }]);
+    // Lightpanda says a dialog opened only once it has answered itself.
+    fake.onRelease = [{ method: 'Page.javascriptDialogOpening', sessionId: 'S1', params: { type: 'confirm', message: 'Delete?' } }];
+    expect(await clickOn({ ref: 'e7', dialog: 'accept' })).toMatchObject({ dialogs: [{ type: 'confirm', answer: 'accepted' }] });
+    const arm = fake.received.findIndex((m) => m.method === 'LP.handleJavaScriptDialog' && m.params?.['accept'] === true);
+    const press = fake.received.findIndex((m) => m.method === 'Input.dispatchMouseEvent' && m.params?.['type'] === 'mousePressed');
+    expect(arm).toBeGreaterThan(-1);
+    expect(arm).toBeLessThan(press);
+
+    fake.onRelease = [];
+    await clickOn({ ref: 'e7', dialog: 'accept' });
+    expect(fake.received.filter((m) => m.method === 'LP.handleJavaScriptDialog').map((m) => m.params?.['accept'])).toEqual([true, true, false]);
+  });
+
+  it('refuses a click on a link meant for a new tab, naming where it goes, and force still clicks', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    await lp([{ op: 'action', do: 'snapshot' }]);
+    fake.newTab = 'https://fake.test/elsewhere';
+    expect(String((await clickOn({ ref: 'e7' }))['error'])).toMatch(/e7 opens https:\/\/fake\.test\/elsewhere in a new tab, which Lightpanda cannot show/);
+    expect(pressed()).toBe(0);
+    expect(await clickOn({ ref: 'e7', force: true })).toMatchObject({ ref: 'e7', checked: false });
+  });
+
+  it("checks what covers an element with the page's own hit test", async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    await lp([{ op: 'action', do: 'snapshot' }]);
+    fake.pointHit = true;
+    fake.within = false;
+    expect(String((await clickOn({ ref: 'e7' }))['error'])).toMatch(/e7 is covered: a click on it would land on <div\.backdrop> "Backdrop" instead/);
+    fake.within = true;
+    expect(await clickOn({ ref: 'e7' })).toMatchObject({ ref: 'e7', checked: true });
+    expect(fake.received.some((m) => m.method === 'DOM.getNodeForLocation')).toBe(false);
+  });
+
+  it('says the browser is gone when its connection no longer has the page, so the host starts it again', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    fake.attachFails = true;
+    expect(await lp([{ op: 'send', method: 'Page.enable', session: true }])).toMatchObject({ ok: false, kind: 'browser_gone' });
+  });
+
+  it('names the download folder again once the page exists, which is when Lightpanda takes it', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    const folder = join(tmpdir(), `husk-lp-downloads-${process.pid}`);
+    try {
+      await lp([{ op: 'send', method: 'Page.enable', session: true }], { downloads: folder });
+      await lp([{ op: 'send', method: 'Page.enable', session: true }], { downloads: folder });
+      expect(fake.received.filter((m) => m.method === 'Browser.setDownloadBehavior')).toHaveLength(2);
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
   });
 });
 

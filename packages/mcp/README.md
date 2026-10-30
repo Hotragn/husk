@@ -70,6 +70,7 @@ probing it with `uname`, `nproc`, `df` and `which python3`.
 --session <key>     reuse a named machine (default: unique to this server process)
 --provider <name>   docker | podman | local | ssh | fly
 --flavor <name>     base | python | node | full
+--browser <name>    chrome | lightpanda (default: the browser in ~/.husk/config.json, else chrome)
 --network <mode>    none | egress | full (default: full, minus internal addresses)
 --network-strict    refuse a provider that cannot enforce --network for every process
 --profile <name>    computer (all tools; default) | starter (workspace tools only)

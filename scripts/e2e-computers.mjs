@@ -102,10 +102,18 @@ env.HUSK_CLAUDE_CLI = join(home, 'claude.mjs');
 // Where the shared Husk looks for Codex's sessions (J5-d): this run's own folder.
 env.CODEX_HOME = join(home, 'codex');
 
+/**
+ * E2E_BROWSER=lightpanda: the browser journeys on Lightpanda, a job of its
+ * own (lightpandaJourney). Its lines start "lp ", so a count of the main
+ * job's "ok" and "FAIL" lines never takes them in.
+ */
+const LIGHTPANDA = process.env.E2E_BROWSER === 'lightpanda';
+const mark = LIGHTPANDA ? 'lp ' : '';
+
 const steps = [];
 function check(name, ok, detail = '') {
   steps.push({ name, ok });
-  console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? ` -- ${detail}` : ''}`);
+  console.log(`${mark}${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? ` -- ${detail}` : ''}`);
   if (!ok) throw new Error(`failed: ${name}${detail ? ` -- ${detail}` : ''}`);
 }
 
@@ -114,7 +122,7 @@ function check(name, ok, detail = '') {
  * said, never failing the run. A site being slow or down is not a Husk bug.
  */
 function note(name, ok, detail = '') {
-  console.log(`${ok ? 'ok  ' : 'warn'} ${name}${detail ? ` -- ${detail}` : ''}`);
+  console.log(`${mark}${ok ? 'ok  ' : 'warn'} ${name}${detail ? ` -- ${detail}` : ''}`);
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -1185,8 +1193,8 @@ async function checkPolicyBelowTheTool(id) {
  */
 async function checkBrowserRecovers(id) {
   await tool(id, 'browser_goto', { url: FIXTURE });
-  // por[t]: the pattern matches Chromium's command line and not the shell's that runs it.
-  await tool(id, 'shell', { command: "pkill -KILL -f -- '--remote-debugging-por[t]'; sleep 1" });
+  // por[t], serv[e]: the pattern matches the browser's command line, Chromium's or Lightpanda's, and not the shell's that runs it.
+  await tool(id, 'shell', { command: "pkill -KILL -f -- '--remote-debugging-por[t]|lightpanda serv[e]'; sleep 1" });
   const gone = await tool(id, 'browser_snapshot');
   check('a call that finds Chromium dead says so, and that the next call starts it again', gone.isError === true && /starts it again/.test(textOf(gone)), textOf(gone).slice(0, 300));
   const back = await tool(id, 'browser_goto', { url: FIXTURE });
@@ -1320,18 +1328,20 @@ async function checkTakeover(id) {
  * screen actually delivers at ?fps=4. The page it watches animates, so a
  * pushed screencast has something to push.
  */
+/** The median milliseconds of `n` calls of one tool. */
+async function timedCall(id, name, args, n) {
+  const ms = [];
+  for (let i = 0; i < n; i++) {
+    const started = performance.now();
+    const r = await tool(id, name, args);
+    ms.push(performance.now() - started);
+    if (r.isError) throw new Error(`${name} failed while measuring: ${textOf(r).slice(0, 300)}`);
+  }
+  return Math.round([...ms].sort((a, b) => a - b)[Math.floor(ms.length / 2)]);
+}
+
 async function measureBrowser(id) {
-  const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
-  const timed = async (name, args, n) => {
-    const ms = [];
-    for (let i = 0; i < n; i++) {
-      const started = performance.now();
-      const r = await tool(id, name, args);
-      ms.push(performance.now() - started);
-      if (r.isError) throw new Error(`${name} failed while measuring: ${textOf(r).slice(0, 300)}`);
-    }
-    return Math.round(median(ms));
-  };
+  const timed = (name, args, n) => timedCall(id, name, args, n);
 
   await tool(id, 'write_file', {
     path: '/work/anim/index.html',
@@ -1411,6 +1421,120 @@ for f in glob.glob('/proc/[0-9]*/cmdline'):
 print(n)"`;
   const drivers = textOf(await tool(id, 'shell', { command: count })).trim();
   check('one long-lived driver serves the computer', drivers === '1', `${drivers} running`);
+}
+
+/**
+ * E2E_BROWSER=lightpanda, a job of its own: computers whose browser is
+ * Lightpanda, timed beside one on Chrome, and the browser journeys run on
+ * them. What must work is checked: Lightpanda opens and reads a page, says it
+ * draws no screen, and moves to Chrome for a screenshot or a person. A
+ * journey it cannot do yet is a finding, written to the job's summary, and
+ * the next one runs. Whether Lightpanda can be the default is decided from
+ * these numbers and findings.
+ */
+async function lightpandaJourney() {
+  const computer = async (browser) => {
+    const r = await api('POST', '/v1/computers', { name: `e2e-${browser}-${process.pid}-${Date.now()}`, provider: 'docker', flavor: 'full', browser });
+    check(`a docker computer on ${browser} is created`, r.status === 201, JSON.stringify(r.body).slice(0, 300));
+    created.push(r.body.id);
+    await serveFixture(r.body.id);
+    return r.body.id;
+  };
+  const onLightpanda = async (id) => /browser is Lightpanda/.test(textOf(await tool(id, 'browser_status')));
+  // What the browser itself holds in memory, Chromium's processes or Lightpanda's one.
+  const memoryMb = async (id) =>
+    Math.round(Number(textOf(await tool(id, 'shell', { command: "ps -eo rss=,args= | awk '/lightpanda serv[e]|headless[_-]shel[l]/ {s+=$1} END {print s+0}'" })).trim()) / 1024);
+  const firstGoto = async (id) => {
+    const started = performance.now();
+    const r = await tool(id, 'browser_goto', { url: FIXTURE });
+    return { r, ms: Math.round(performance.now() - started) };
+  };
+
+  const lp = await computer('lightpanda');
+  check('a Lightpanda computer says so before its browser starts', await onLightpanda(lp));
+  const lpFirst = await firstGoto(lp);
+  check('Lightpanda opens a page', !lpFirst.r.isError && /Husk fixture/i.test(textOf(lpFirst.r)), textOf(lpFirst.r).slice(0, 200));
+  const snap = textOf(await tool(lp, 'browser_snapshot'));
+  check('a Lightpanda snapshot lists elements with refs', /^ *e\d+ {2}\w+/m.test(snap), snap.slice(0, 200));
+  const said = await new Promise((resolveSaid, reject) => {
+    const ws = new WebSocket(`${rec.url.replace('http', 'ws')}/v1/computers/${lp}/screen?token=${rec.token}`);
+    const timer = setTimeout(() => reject(new Error('the screen said nothing in 30s')), 30_000);
+    ws.onmessage = (ev) => {
+      clearTimeout(timer);
+      ws.close();
+      resolveSaid(JSON.parse(String(ev.data)));
+    };
+    ws.onerror = () => reject(new Error('screen socket failed'));
+  });
+  check('the live screen says Lightpanda draws none, rather than freezing', said.type === 'noScreen', JSON.stringify(said).slice(0, 200));
+
+  // The same calls on each browser, medians, the first one with its install and start.
+  const chrome = await computer('chrome');
+  const chromeFirst = await firstGoto(chrome);
+  check('Chrome opens the same page', !chromeFirst.r.isError, textOf(chromeFirst.r).slice(0, 200));
+  const speed = {};
+  for (const [name, id, first] of [['Chrome', chrome, chromeFirst], ['Lightpanda', lp, lpFirst]]) {
+    speed[name] = {
+      'first browser_goto (install and start)': `${first.ms} ms`,
+      browser_goto: `${await timedCall(id, 'browser_goto', { url: FIXTURE }, 3)} ms`,
+      browser_snapshot: `${await timedCall(id, 'browser_snapshot', {}, 5)} ms`,
+      browser_wait_for: `${await timedCall(id, 'browser_wait_for', { text: 'Press' }, 5)} ms`,
+      'browser_run (goto, click, snapshot)': `${await timedCall(id, 'browser_run', { actions: [{ do: 'goto', url: FIXTURE }, { do: 'click', role: 'button', name: 'Press' }, { do: 'snapshot' }] }, 3)} ms`,
+      'browser memory': `${await memoryMb(id)} MB`,
+    };
+  }
+  check('Lightpanda is still the browser after the timed calls', await onLightpanda(lp));
+
+  // The journeys, each on a computer of its own: a screenshot or a second tab moves one to Chrome.
+  const findings = [];
+  for (const journey of [checkHonestClicks, checkFreshRefs, checkFrames, checkPolicyBelowTheTool, checkFewerTurns, checkBrowserRecovers, checkDialogsDownloadsTabs, checkHardPageJourney]) {
+    const id = await computer('lightpanda');
+    let outcome = 'passed';
+    try {
+      await journey(id);
+    } catch (err) {
+      outcome = `failed: ${String(err.message).split('\n')[0].slice(0, 240)}`;
+    }
+    if (!(await onLightpanda(id).catch(() => true))) outcome += ', moving to Chrome on the way';
+    findings.push(`${journey.name}: ${outcome}`);
+    console.log(`lp journey ${journey.name}: ${outcome}`);
+  }
+
+  // A person taking over gets Chrome, and a screen, with no call from the AI.
+  const held = await computer('lightpanda');
+  await tool(held, 'browser_goto', { url: FIXTURE });
+  const opened = await api('POST', `/v1/computers/${held}/handoffs`, { reason: 'e2e: Lightpanda to Chrome for a person' });
+  check('a handoff opens on a Lightpanda computer', opened.status === 201, JSON.stringify(opened.body).slice(0, 200));
+  let screen;
+  for (let i = 0; i < 180 && screen?.status !== 200; i++) {
+    screen = await api('GET', `/v1/handoffs/${opened.body.handoffId}/screen`, undefined, opened.body.token);
+    if (screen.status !== 200) await sleep(1000);
+  }
+  check('the person gets a screen: the computer moved to Chrome for them', screen?.status === 200 && screen.type.includes('image/jpeg'), `status ${screen?.status}`);
+  await api('POST', `/v1/handoffs/${opened.body.handoffId}/done`, undefined, opened.body.token);
+  check('after the handoff it stays on Chrome', !(await onLightpanda(held)));
+
+  // And a screenshot moves the first computer, with the page it was on.
+  await tool(lp, 'browser_goto', { url: FIXTURE });
+  const shot = await tool(lp, 'browser_screenshot', {});
+  check('a screenshot moves a Lightpanda computer to Chrome and takes it', !shot.isError, textOf(shot).slice(0, 200));
+  check('it stays on Chrome after the move', !(await onLightpanda(lp)));
+  const reopened = textOf(await tool(lp, 'browser_snapshot'));
+  check('the page it was on is open again in Chrome', /Husk fixture page/.test(reopened), reopened.slice(0, 200));
+
+  const names = Object.keys(speed.Chrome);
+  const table = [
+    '| | Chrome | Lightpanda |',
+    '| --- | --- | --- |',
+    ...names.map((n) => `| ${n} | ${speed.Chrome[n]} | ${speed.Lightpanda[n]} |`),
+  ];
+  const passed = findings.filter((f) => f.endsWith(': passed')).length;
+  const report = `### Lightpanda beside Chrome\n\n${table.join('\n')}\n\n**${passed} of ${findings.length} browser journeys passed on Lightpanda.**\n\n${findings.map((f) => `- ${f}`).join('\n')}\n`;
+  console.log(`\n${report}`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const { appendFileSync } = await import('node:fs');
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, report);
+  }
 }
 
 /**
@@ -2233,7 +2357,7 @@ async function checkRemoteAccess() {
   }
 }
 
-try {
+journey: try {
   // 1. A fresh home and a non-interactive setup, as the README's line runs it:
   // Husk added to one chat app on the computer chosen, the image with the
   // browser pulled now, and the shared Husk started. HUSK_LAUNCH points the app
@@ -2261,6 +2385,12 @@ try {
   check('setup starts the shared Husk, which writes daemon.json', Boolean(rec?.token), rec?.url);
   check('the console page loads without the token', (await fetch(`${rec.url}/`)).status === 200);
   check('the API refuses a request without the token', (await fetch(`${rec.url}/v1/computers`)).status === 401);
+
+  if (LIGHTPANDA) {
+    await lightpandaJourney();
+    console.log(`\n${steps.length} checks passed`);
+    break journey;
+  }
 
   // 1b. A bot's trigger runs in a job host of its own, through the shared Husk.
   await checkJobHost();

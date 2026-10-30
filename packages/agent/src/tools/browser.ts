@@ -188,7 +188,7 @@ export const browserScreenshot = defineTool<
 
   async handler(input, ctx) {
     const session = await sessionOf(ctx);
-    const page = await session.activePage();
+    const page = await session.activePage('a screenshot was asked for');
     const data = await page.screenshot({ fullPage: input.fullPage === true });
     const bytes = Buffer.from(data, 'base64');
     const path = input.path ?? '/work/screenshot.png';

@@ -25,6 +25,15 @@ describe('HandoffRegistry', () => {
     expect(settled).toBe(false);
   });
 
+  it("readies the computer's browser for the person as the hold opens, and only for a computer", () => {
+    const forPerson = vi.fn(async () => undefined);
+    const registry = new HandoffRegistry({ forPerson });
+    registry.request({ runId: 'run_1', husk: 'h', reason: 'Sign in', computerId: 'cmp_1', signal: new AbortController().signal }, () => undefined);
+    expect(forPerson).toHaveBeenCalledWith('cmp_1');
+    raise(registry);
+    expect(forPerson).toHaveBeenCalledTimes(1);
+  });
+
   it('resumes as done only when the person completes it, and clears the list', async () => {
     const registry = new HandoffRegistry();
     const { outcome, raised } = raise(registry);

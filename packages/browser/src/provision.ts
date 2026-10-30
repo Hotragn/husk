@@ -1,5 +1,5 @@
 import { HuskError } from '@husk-ai/core';
-import type { Computer } from '@husk-ai/core';
+import type { BrowserEngine, Computer } from '@husk-ai/core';
 
 /**
  * Find, or install, a Chromium *inside the computer*.
@@ -52,6 +52,35 @@ export const CHROME_FOR_TESTING_MANIFEST =
 
 /** Where installs live inside the computer. Under /work so `persist: true` keeps them. */
 export const CACHE_ROOT = '/work/.husk-browser';
+
+/**
+ * Lightpanda, pinned: one static binary per architecture, run only once its
+ * SHA-256 matches the digest GitHub publishes for the release. Pinned rather
+ * than "latest", because what Husk downloads and runs must be what these
+ * digests describe. AGPL-3.0, run unmodified as a program of its own.
+ */
+export const LIGHTPANDA_VERSION = '1.0.2';
+
+export interface LightpandaBuild {
+  url: string;
+  sha256: string;
+  bytes: number;
+}
+
+export const LIGHTPANDA_BUILDS: Record<BrowserArch, LightpandaBuild> = {
+  x64: {
+    url: `https://github.com/lightpanda-io/browser/releases/download/${LIGHTPANDA_VERSION}/lightpanda-x86_64-linux`,
+    sha256: 'ae7d01d261efb9e480e18ce3424533332883863bcf70b12a4321b5733f37e19e',
+    bytes: 76_408_136,
+  },
+  arm64: {
+    url: `https://github.com/lightpanda-io/browser/releases/download/${LIGHTPANDA_VERSION}/lightpanda-aarch64-linux`,
+    sha256: 'ac546dfc43c533430da92b75ab36f2a29da7d6324d5d38baf606ef2e0d849345',
+    bytes: 73_830_456,
+  },
+};
+
+export const LIGHTPANDA_BINARY = `${CACHE_ROOT}/lightpanda-${LIGHTPANDA_VERSION}/lightpanda`;
 /** Where a page's downloads land: beside the browser cache, in /work, so they stay with the computer. */
 export const DOWNLOADS_DIR = '/work/downloads';
 
@@ -187,21 +216,24 @@ export interface ProvisionResult {
   version?: string;
 }
 
-export type BrowserCapability =
+export type BrowserCapability = { engine: BrowserEngine } & (
   | { installed: true; readyToInstall: false; source: ProvisionResult['source']; binary: string; version?: string }
   | { installed: false; readyToInstall: true; arch: BrowserArch }
-  | { installed: false; readyToInstall: false; reason: string; hint?: string };
+  | { installed: false; readyToInstall: false; reason: string; hint?: string }
+);
 
-/** Read-only checks shared by status and installation; never fetches a binary. */
-export async function inspectBrowserCapability(computer: Computer): Promise<BrowserCapability> {
+/** Read-only checks shared by status and installation, for the browser this computer runs; never fetches a binary. */
+export async function inspectBrowserCapability(computer: Computer, engine: BrowserEngine = 'chrome'): Promise<BrowserCapability> {
   try {
-    const found = await findInstalledChromium(computer);
-    if (found) return { ...found, installed: true, readyToInstall: false };
+    const found = engine === 'lightpanda' ? await findLightpanda(computer) : await findInstalledChromium(computer);
+    if (found) return { ...found, engine, installed: true, readyToInstall: false };
     const arch = await archOf(computer);
-    await assertDownloadPrerequisites(computer);
-    return { installed: false, readyToInstall: true, arch };
+    if (engine === 'lightpanda') await assertLightpandaPrerequisites(computer, arch);
+    else await assertDownloadPrerequisites(computer);
+    return { engine, installed: false, readyToInstall: true, arch };
   } catch (error) {
     return {
+      engine,
       installed: false,
       readyToInstall: false,
       reason: error instanceof Error ? error.message : String(error),
@@ -391,6 +423,99 @@ export async function provisionChromium(
   return { binary, arch, source: 'downloaded', ...(version ? { version } : {}) };
 }
 
+/**
+ * Lightpanda inside the computer: the pinned build, downloaded once and kept
+ * in the cache. The download lands beside its final name and is moved there
+ * only after its digest matches, so a binary at that name was checked.
+ */
+export async function provisionLightpanda(computer: Computer, opts: ProvisionOptions = {}): Promise<ProvisionResult> {
+  const say = opts.onProgress ?? ((): void => {});
+  const signal = opts.signal;
+  const found = await findLightpanda(computer, signal);
+  if (found) {
+    say(`reusing Lightpanda ${LIGHTPANDA_VERSION} at ${found.binary}`);
+    return found;
+  }
+  const arch = await archOf(computer, signal);
+
+  say('checking this computer can run Lightpanda before downloading it');
+  await assertLightpandaPrerequisites(computer, arch, signal);
+
+  const build = LIGHTPANDA_BUILDS[arch];
+  const mb = Math.round(build.bytes / (1024 * 1024));
+  const part = `${LIGHTPANDA_BINARY}.part`;
+  say(
+    `downloading Lightpanda ${LIGHTPANDA_VERSION} for ${arch} from GitHub (~${mb} MB; AGPL-3.0, source at ` +
+      'https://github.com/lightpanda-io/browser). This happens once per computer.',
+  );
+  await sh(computer, `mkdir -p ${CACHE_ROOT}/lightpanda-${LIGHTPANDA_VERSION}`, { signal, timeoutSec: 30 });
+  const stopWatching = watchDownload(computer, part, mb, say, signal, 'Lightpanda');
+  const dl = await download(computer, build.url, part, {
+    timeoutSec: opts.downloadTimeoutSec ?? 600,
+    ...(signal ? { signal } : {}),
+  }).finally(stopWatching);
+  if (!dl.ok) {
+    throw new HuskError('E_PROVIDER_UNAVAILABLE', `could not download Lightpanda for ${arch}`, {
+      hint: dl.haveTool
+        ? 'the computer could not reach GitHub; check its network policy, or set the browser to chrome'
+        : 'this computer has neither curl nor python3 to download with; use --flavor full, or set the browser to chrome',
+      details: { url: build.url, detail: dl.detail.slice(0, 500) },
+    });
+  }
+
+  const sum = await sh(computer, `python3 -c ${SHA256_SNIPPET} ${part}`, { signal, timeoutSec: 120 });
+  if (sum.out.trim() !== build.sha256) {
+    await sh(computer, `rm -f ${part}`, { signal, timeoutSec: 30 });
+    throw new HuskError('E_PROVIDER_UNAVAILABLE', 'the Lightpanda download did not match its published checksum, so it was deleted and never run', {
+      hint: 'try again; if it keeps happening, something between this computer and GitHub is changing the file',
+      details: { url: build.url, expected: build.sha256, got: sum.out.trim().slice(0, 64) },
+    });
+  }
+  await sh(computer, `chmod +x ${part} && mv -f ${part} ${LIGHTPANDA_BINARY}`, { signal, timeoutSec: 30 });
+  say(`Lightpanda ${LIGHTPANDA_VERSION} ready`);
+  return { binary: LIGHTPANDA_BINARY, arch, source: 'downloaded', version: LIGHTPANDA_VERSION };
+}
+
+/** The pinned Lightpanda, if this computer already has it. Never fetches anything. */
+export async function findLightpanda(computer: Computer, signal?: AbortSignal): Promise<ProvisionResult | null> {
+  const r = await sh(computer, `test -x ${LIGHTPANDA_BINARY} && echo yes || echo no`, { signal, timeoutSec: 30 });
+  if (!r.out.includes('yes')) return null;
+  return { binary: LIGHTPANDA_BINARY, arch: 'unknown', source: 'cached', version: LIGHTPANDA_VERSION };
+}
+
+/** A file's SHA-256, by Python, which every computer that can run a browser here has. */
+const SHA256_SNIPPET = `"import hashlib,sys; h=hashlib.sha256(); f=open(sys.argv[1],'rb'); [h.update(b) for b in iter(lambda: f.read(1<<20), b'')]; print(h.hexdigest())"`;
+
+/**
+ * What Lightpanda's binary needs, checked before paying for it: Linux, glibc
+ * (it does not run on musl), and on arm64 a 4 KB page size, since it crashes
+ * on 64 KB-page kernels (lightpanda-io/browser#1370).
+ */
+async function assertLightpandaPrerequisites(computer: Computer, arch: BrowserArch, signal?: AbortSignal): Promise<void> {
+  const probe = await sh(
+    computer,
+    `python3 -c "import json, os, platform; print(json.dumps({'system': platform.system(), 'libc': platform.libc_ver()[0], 'page': os.sysconf('SC_PAGE_SIZE')}))"`,
+    { signal, timeoutSec: 30 },
+  );
+  let found: { system?: string; libc?: string; page?: number } = {};
+  try {
+    found = JSON.parse(probe.out.trim()) as typeof found;
+  } catch {
+    throw new HuskError('E_PROVIDER_UNAVAILABLE', 'setting up Lightpanda needs Python 3 in this computer; nothing was downloaded', {
+      hint: 'use --flavor full, or set the browser to chrome',
+    });
+  }
+  const problem =
+    found.system !== 'Linux'
+      ? `Lightpanda runs on Linux, and this computer reports ${found.system ?? 'an unknown system'}`
+      : found.libc !== 'glibc'
+        ? 'Lightpanda needs glibc, and this computer has another C library (musl, perhaps)'
+        : arch === 'arm64' && found.page !== 4096
+          ? `Lightpanda crashes on arm64 kernels with ${found.page ?? 'unknown'}-byte pages; it needs 4096`
+          : undefined;
+  if (problem) throw new HuskError('E_NOT_IMPLEMENTED', `${problem}; nothing was downloaded`, { hint: 'set the browser to chrome for this computer' });
+}
+
 async function findSystemChromium(
   computer: Computer,
   signal?: AbortSignal,
@@ -475,6 +600,7 @@ function watchDownload(
   approxMb: number,
   say: (m: string) => void,
   signal?: AbortSignal,
+  what = 'Chromium',
 ): () => void {
   const expected = approxMb * 1024 * 1024;
   let stopped = false;
@@ -494,7 +620,7 @@ function watchDownload(
     if (mb === lastMb) return;
     lastMb = mb;
     const pct = expected > 0 ? Math.min(99, Math.floor((bytes / expected) * 100)) : 0;
-    say(`downloading Chromium: ${mb} of about ${approxMb} MB (${pct}%)`);
+    say(`downloading ${what}: ${mb} of about ${approxMb} MB (${pct}%)`);
   };
 
   const timer = setInterval(() => void tick(), 3000);

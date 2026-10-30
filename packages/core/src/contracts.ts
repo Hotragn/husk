@@ -24,6 +24,7 @@ export type {
   NetworkPolicy,
   MountSpec,
   Flavor,
+  BrowserEngine,
   ComputerSpec,
   ComputerInfo,
   PortBinding,

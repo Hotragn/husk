@@ -148,6 +148,19 @@ describe('doctor', () => {
     });
   });
 
+  it('says which browser computers run, and when Lightpanda cannot run on the provider in use', async () => {
+    expect((await collect(false, probes)).selection).toMatchObject({ browser: 'chrome', browserReason: expect.stringContaining('the default') });
+    const local = await collect(false, { ...probes, autoConfig: () => ({ provider: 'local', browser: 'lightpanda' }) });
+    expect(local.selection).toMatchObject({ browser: 'lightpanda', browserReason: expect.stringContaining('config.json') });
+    expect(local.warnings.join(' ')).toMatch(/lightpanda, which has no sandbox of its own/);
+    const withSsh = {
+      ...probes,
+      autoConfig: () => ({ provider: 'ssh', browser: 'lightpanda' as const }),
+      providerStatus: async () => [{ name: 'ssh', description: 'a box you own', priority: 16, available: true, isolated: true, isolationKind: 'machine' as const }],
+    };
+    expect((await collect(false, withSsh)).warnings.join(' ')).toMatch(/ssh computers cannot keep its driver running, so they use Chrome/);
+  });
+
   it('says when ~/.husk/config.json names a provider that is not usable, rather than picking another', async () => {
     const report = await collect(false, { ...probes, autoConfig: () => ({ provider: 'docker' }) });
     expect(report.selection.provider).toBeNull();
