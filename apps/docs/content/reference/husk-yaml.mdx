@@ -328,8 +328,8 @@ Every problem at once, each as `path: message`:
 ```text
 error husk.yaml is not a valid husk
   ✗ name: name must be lowercase alphanumeric with dashes
-  ✗ limits.maxSteps: Number must be less than or equal to 500
-  ✗ triggers.0.schedule: Required
+  ✗ limits.maxSteps: Too big: expected number to be <=500
+  ✗ triggers.0.schedule: Invalid input: expected string, received undefined
 hint:  `husk init --force` regenerates a valid file, or see `husk help init`
 ```
 

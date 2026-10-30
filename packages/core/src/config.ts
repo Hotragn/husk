@@ -100,7 +100,7 @@ const ConfigFileSchema = z
     model: z.string().min(1),
     maxCostUsd: z.number().nonnegative(),
     maxComputers: z.number().int().positive(),
-    modelAliases: z.record(z.string()),
+    modelAliases: z.record(z.string(), z.string()),
   })
   .partial()
   .strict();

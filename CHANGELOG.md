@@ -417,6 +417,14 @@ pre-release of 7 October.
 
 ### Security
 
+- **zod 4.** `@husk-ai/core`, `@husk-ai/server` and `@husk-ai/sessions` move from zod
+  3.25.76 to 4.6.7, out of [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)
+  (high: memory exhaustion validating large arrays, every version below 4.6.6). The
+  schemas `@husk-ai/core` exports are zod 4 schemas now, and a husk.yaml's errors read
+  as zod 4 words them: `Too big: expected number to be <=500` where zod 3 said
+  `Number must be less than or equal to 500`. With no zod 3 left in what Husk runs,
+  `husk serve --remote` passes its advisory check and starts
+  ([#250](https://github.com/Hotragn/husk/pull/250)).
 - **The desktop app is on Electron 44.9.3**, which no longer trusts the compromised
   eMudhra intermediate certificates
   ([GHSA-jr5w-w6x2-84p9](https://github.com/advisories/GHSA-jr5w-w6x2-84p9),
