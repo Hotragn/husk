@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from 'next';
-import { Analytics } from '@/components/Analytics';
 import { Footer } from '@/components/Footer';
 import { Header } from '@/components/Header';
 import { ThemeScript } from '@/components/ThemeScript';
@@ -9,7 +8,7 @@ import { commitMono, generalSans } from './fonts';
 import './globals.css';
 
 /**
- * Page views are counted by PostHog (`components/Analytics.tsx`), which is a
+ * Page views are counted by PostHog (`instrumentation-client.ts`), which is a
  * third party: the browser sends each view to us.i.posthog.com. It sets no
  * cookie and records no session, and the pages that disclose analytics name
  * it.
@@ -78,7 +77,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Header />
         {children}
         <Footer />
-        <Analytics />
       </body>
     </html>
   );
