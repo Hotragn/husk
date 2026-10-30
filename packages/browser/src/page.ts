@@ -1,5 +1,6 @@
 import { HuskError } from '@husk-ai/core';
 import { waitResultOf } from './cdp.js';
+import { DOWNLOADS_DIR } from './provision.js';
 import type { CdpConnection, CdpParams, DriverStep, SendStep } from './cdp.js';
 
 /**
@@ -20,6 +21,10 @@ export interface AxNodeLike {
   value?: { value?: unknown };
   backendDOMNodeId?: number;
   properties?: Array<{ name?: string; value?: { value?: unknown } }>;
+  parentId?: string;
+  childIds?: string[];
+  /** The frame a node is in, `f<k>`, for a node of a frame the driver spliced in under its <iframe>. */
+  frame?: string;
 }
 
 export interface SnapshotNode {
@@ -28,6 +33,8 @@ export interface SnapshotNode {
   role: string;
   name: string;
   value?: string;
+  /** Nesting in the compact tree, 0 at the top. Absent from `flattenAxTree`, which has no tree. */
+  depth?: number;
 }
 
 /** Roles worth showing even when they carry no accessible name. */
@@ -95,7 +102,7 @@ export function flattenAxTree(nodes: AxNodeLike[], opts: { limit?: number } = {}
     // works after the next one. Nodes without one are informational only, and
     // get an `a`-prefixed ref that click will refuse rather than mis-resolve.
     const ref =
-      node.backendDOMNodeId !== undefined ? `e${node.backendDOMNodeId}` : `a${str(node.nodeId) || out.length}`;
+      node.backendDOMNodeId !== undefined ? `${node.frame ?? ''}e${node.backendDOMNodeId}` : `a${str(node.nodeId) || out.length}`;
     if (seen.has(ref)) continue;
     seen.add(ref);
 
@@ -105,13 +112,132 @@ export function flattenAxTree(nodes: AxNodeLike[], opts: { limit?: number } = {}
   return out;
 }
 
-/** The DOM node a ref points at, or null when the ref is not clickable. */
+/** Text roles. A text node is page text, so only an empty one is ever dropped. */
+const TEXT_ROLES: ReadonlySet<string> = new Set(['StaticText', 'text']);
+
+/** Pieces of text Chromium splits out of a text node: the node already carries them. */
+const DROP_ROLES: ReadonlySet<string> = new Set(['InlineTextBox', 'LineBreak']);
+
+/**
+ * Nodes kept even when they are unnamed and empty, because what they are is
+ * the information: a picture, a frame boundary, a list item or a table cell.
+ */
+const SEMANTIC_ROLES: ReadonlySet<string> = new Set([
+  'image', 'img', 'graphics-document', 'SvgRoot', 'svg', 'canvas', 'Canvas', 'Iframe', 'IframePresentational',
+  'listitem', 'cell', 'gridcell', 'columnheader', 'rowheader', 'main', 'navigation', 'banner', 'contentinfo',
+  'complementary', 'form', 'search', 'dialog', 'alertdialog',
+]);
+
+/** Whitespace, NBSP and zero-width formatting characters count as no text at all. */
+function clean(v: unknown): string {
+  return str(v).replace(/[​-‍⁠﻿]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+interface Built {
+  node: SnapshotNode;
+  children: Built[];
+}
+
+/**
+ * `Accessibility.getFullAXTree` as a compact tree, in document order.
+ *
+ * The rules come from a third-party snapshot spec (see THIRD_PARTY_NOTICES.md):
+ * drop text that is
+ * empty or only whitespace, drop an unnamed container left with no children,
+ * and replace an unnamed container that has one child with that child. An
+ * unnamed container with several children stays, because it is what keeps two
+ * groups of siblings apart. Named nodes, interactive ones and the semantic
+ * roles above always stay, so refs, order and frame boundaries survive, and
+ * page text is never dropped for being non-interactive. One addition of
+ * husk's: a lone text child that only repeats its parent's name is dropped,
+ * since the parent's line already says it -- a link is one line, not two.
+ *
+ * A flat list of nodes with no `childIds` is a forest of leaves, so old
+ * fixtures and partial trees still come out in order.
+ */
+export function compactAxTree(nodes: AxNodeLike[], opts: { limit?: number } = {}): SnapshotNode[] {
+  const limit = opts.limit ?? 1000;
+  const byId = new Map<string, AxNodeLike>();
+  for (const n of nodes) if (n.nodeId !== undefined) byId.set(str(n.nodeId), n);
+  const seen = new Set<AxNodeLike>();
+
+  const build = (n: AxNodeLike, index: number): Built[] => {
+    if (seen.has(n)) return [];
+    seen.add(n);
+    const role = str(n.role?.value);
+    const kids = (n.childIds ?? []).flatMap((id, i) => {
+      const child = byId.get(id);
+      return child ? build(child, i) : [];
+    });
+    if (DROP_ROLES.has(role)) return [];
+
+    const name = clean(n.name?.value);
+    const value = clean(n.value?.value);
+    const ref = n.backendDOMNodeId !== undefined ? `${n.frame ?? ''}e${n.backendDOMNodeId}` : `a${str(n.nodeId) || index}`;
+    const node: SnapshotNode = { ref, role, name, ...(value ? { value } : {}) };
+
+    if (TEXT_ROLES.has(role)) return name ? [{ node, children: [] }] : [];
+    // The document itself is the frame everything is in; its children start at the top.
+    // A frame's document too: its <iframe>'s line already says where the frame starts.
+    if (role === 'RootWebArea') return kids;
+    // An ignored node is not a node to a reader at all.
+    if (n.ignored || !role) return kids;
+
+    const container = !name && !value && !INTERACTIVE_ROLES.has(role) && !SEMANTIC_ROLES.has(role);
+    if (container) {
+      if (kids.length <= 1) return kids;
+      return [{ node, children: kids }];
+    }
+    const only = kids.length === 1 ? kids[0] : undefined;
+    if (only && only.children.length === 0 && TEXT_ROLES.has(only.node.role) && only.node.name === name) {
+      return [{ node, children: [] }];
+    }
+    return [{ node, children: kids }];
+  };
+
+  const roots = nodes.filter((n) => !n.parentId || !byId.has(n.parentId));
+  const forest = roots.flatMap((n, i) => build(n, i));
+
+  const out: SnapshotNode[] = [];
+  const refs = new Set<string>();
+  const walk = (list: Built[], depth: number): void => {
+    for (const b of list) {
+      if (out.length >= limit) return;
+      if (!refs.has(b.node.ref)) {
+        refs.add(b.node.ref);
+        out.push({ ...b.node, depth });
+      }
+      walk(b.children, depth + 1);
+    }
+  };
+  walk(forest, 0);
+  return out;
+}
+
+/**
+ * The DOM node a ref points at, or null when the ref is not clickable. A
+ * frame's ref, `f<k>e<n>`, names node n of frame k: a frame in another process
+ * numbers its nodes afresh, so the id alone does not say which node.
+ */
 export function backendNodeIdOf(ref: string): number | null {
-  const m = /^e(\d+)$/.exec(ref);
+  const m = /^(?:f\d+)?e(\d+)$/.exec(ref);
   return m?.[1] ? Number(m[1]) : null;
 }
 
-export interface GotoResult {
+/**
+ * What a page did during an action besides its own result: the dialogs it
+ * showed and how Husk answered them, the files it downloaded (into
+ * DOWNLOADS_DIR), and the tabs it opened.
+ */
+export interface Happened {
+  dialogs?: Array<{ type: string; message: string; answer: string }>;
+  downloads?: Array<{ name: string; state: string; bytes?: number }>;
+  popups?: Array<{ targetId: string; url: string }>;
+  /** Document loads the network policy stopped: a redirect's next hop, a link, a frame, a pop-up. */
+  blocked?: Array<{ url: string; reason: string }>;
+}
+
+export interface GotoResult extends Happened {
   url: string;
   /** False when the load timed out; the page is still usable, just not finished. */
   loaded: boolean;
@@ -161,13 +287,13 @@ export function keyDescriptor(name: string): { key: string; code: string; keyCod
 /**
  * One tab, addressed by its target id.
  *
- * There is deliberately no long-lived session id here. A CDP session belongs to
- * a websocket, and this package's websockets last exactly one driver
- * invocation; a target id belongs to the browser and outlives all of them. So
- * the driver re-attaches on every call, and the domain enables a fresh session
- * needs are replayed as a prelude. Three extra commands on a loopback socket
- * cost well under a millisecond; getting this wrong costs a protocol error on
- * every second call.
+ * There is deliberately no session id here. A CDP session belongs to a
+ * websocket: a served driver keeps one per tab for as long as it runs, a
+ * one-shot driver attaches afresh on every call, and a target id outlives
+ * both. So the domain enables a fresh session needs are replayed as a prelude
+ * on every call, whichever kind answers. Three extra commands on a loopback
+ * socket cost well under a millisecond; getting this wrong costs a protocol
+ * error on every second call.
  *
  * Each public method is one driver invocation wherever the CDP sequence allows
  * it, and two where husk has to do arithmetic in the middle -- a click needs
@@ -183,6 +309,10 @@ export class Page {
 
   /** Emulation is per-session too, so an override has to be re-applied, not just set once. */
   private viewport: { width: number; height: number } | undefined;
+  /** Which document, and which frame, each ref a snapshot here handed out came from: it acts only there. */
+  private readonly refDocuments = new Map<string, { document: string; frame?: string }>();
+  /** Each frame's number, by frame id, so a frame keeps its `f<k>` for as long as this page is open. */
+  private readonly frameKeys = new Map<string, number>();
 
   constructor(
     private readonly conn: CdpConnection,
@@ -239,39 +369,23 @@ export class Page {
    * the full load timeout before reporting the refusal.
    */
   async goto(url: string, opts: { timeoutMs?: number } = {}): Promise<GotoResult> {
-    const timeoutMs = opts.timeoutMs ?? 30_000;
-    const [nav, load, href] = await this.run(
-      [
-        { op: 'send', method: 'Page.navigate', params: { url }, session: true },
-        {
-          op: 'wait',
-          event: 'Page.loadEventFired',
-          session: true,
-          timeoutMs,
-          optional: true,
-          skipIf: { step: 0, key: 'errorText' },
-        },
-        {
-          op: 'send',
-          method: 'Runtime.evaluate',
-          params: evalParams('location.href'),
-          session: true,
-          skipIf: { step: 0, key: 'errorText' },
-        },
-      ],
-      timeoutMs + 30_000,
-    );
-
-    const errorText = ((nav ?? {}) as CdpParams)['errorText'];
-    if (typeof errorText === 'string' && errorText) {
-      throw new HuskError('E_EXEC_FAILED', `could not load ${url}: ${errorText}`, {
-        hint: 'the browser reached the network stack and was refused -- check the host and the scheme',
-        details: { url, errorText },
+    // The driver's goto: a dialog the page shows on load is answered and said,
+    // and a URL that is a file to download is a download, not a failure.
+    const [out] = await this.actions([{ do: 'goto', url, ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}) }]);
+    if (!out?.ok && out?.blocked?.length) {
+      // Husk checked this URL; a redirect from it went where the policy refuses, and the driver stopped it.
+      throw new HuskError('E_EXEC_DENIED', out.error ?? `the network policy refused where ${url} led`, {
+        hint: 'nothing was sent there; name the host in computer.network.allow if this page should reach it',
+        details: { url, blocked: out.blocked },
       });
     }
-
-    const settled = valueOf((href ?? {}) as CdpParams);
-    return { url: typeof settled === 'string' ? settled : url, loaded: waitResultOf(load).fired };
+    if (!out?.ok) {
+      throw new HuskError('E_EXEC_FAILED', out?.error ?? `could not load ${url}`, {
+        hint: 'the browser reached the network stack and was refused -- check the host and the scheme',
+        details: { url },
+      });
+    }
+    return { url: out.url ?? url, loaded: out.loaded === true, ...happenedOf(out) };
   }
 
   /**
@@ -290,10 +404,10 @@ export class Page {
    * interaction feel broken. Watch for navigation *starting* in a short window
    * instead, and only then wait for it to finish.
    */
-  /** `click`, named for what a caller cares about: did the page move. */
-  async clickAndSettle(ref: string, loadTimeoutMs = 5000): Promise<{ navigated: boolean }> {
-    const { navigationStarted } = await this.click(ref, loadTimeoutMs);
-    return { navigated: navigationStarted };
+  /** `click`, named for what a caller cares about: did the page move, and what else it did. */
+  async clickAndSettle(ref: string, loadTimeoutMs = 5000, opts: ClickOptions = {}): Promise<{ navigated: boolean; waited?: Waited } & Happened> {
+    const { navigationStarted, ...rest } = await this.click(ref, loadTimeoutMs, opts);
+    return { navigated: navigationStarted, ...rest };
   }
 
   async waitForLoad(timeoutMs = 30_000): Promise<boolean> {
@@ -307,6 +421,31 @@ export class Page {
   async url(): Promise<string> {
     const res = await this.evaluate('location.href');
     return typeof res === 'string' ? res : '';
+  }
+
+  /**
+   * Where the page is, in one line a browser tool can end with: its address,
+   * its title, whether it has finished loading, and how many tabs are open when
+   * there is more than one. A model that has it does not spend its next turn
+   * asking, or miss the tab a click opened.
+   */
+  async status(): Promise<string> {
+    const [state, targets] = await this.run([
+      {
+        op: 'send',
+        method: 'Runtime.evaluate',
+        params: evalParams('({ url: location.href, title: document.title, ready: document.readyState })'),
+        session: true,
+        soft: true,
+      },
+      { op: 'send', method: 'Target.getTargets', soft: true },
+    ]);
+    const s = (valueOf((state ?? {}) as CdpParams) ?? {}) as { url?: string; title?: string; ready?: string };
+    const infos = ((targets ?? {}) as { targetInfos?: Array<{ type?: string }> }).targetInfos ?? [];
+    const tabs = infos.filter((t) => t.type === 'page').length;
+    const title = s.title ? JSON.stringify(s.title) : 'untitled';
+    const ready = s.ready === 'complete' ? 'loaded' : 'still loading';
+    return `now at ${s.url ?? 'an unknown address'} -- ${title}, ${ready}${tabs > 1 ? `; ${tabs} tabs are open (browser_tabs lists them)` : ''}`;
   }
 
   async title(): Promise<string> {
@@ -334,48 +473,107 @@ export class Page {
   }
 
   /**
-   * Everything on this page a caller can read or act on.
+   * Everything on this page a caller can read or act on, frames included.
    *
-   * The tree comes from the page's own session, which covers same-origin
-   * iframes and does *not* cover cross-origin ones -- those render in their own
-   * process and appear here as a single empty `Iframe` node. That matters more
-   * than it sounds: consent dialogs, card fields and embedded sign-in are
-   * routinely cross-origin, so the most important element on the page can be
-   * the one thing missing from the list.
-   *
-   * It cannot be fixed by asking harder; it needs attaching to the child
-   * target, which is a different connection. Until that exists, the gap is
-   * *reported* rather than left as a silence a model would read as "the page
-   * does not have one".
+   * The page's own tree has each iframe as an empty `Iframe` node, so the
+   * driver reads every frame and puts its tree under that node: a same-site
+   * frame from the page's session, a cross-site one from its own, since
+   * Chromium runs it in another process. That matters more than it sounds:
+   * consent dialogs, card fields and embedded sign-in are routinely
+   * cross-origin, so the most important element on the page can be in one.
+   * A frame's refs are `f<k>e<n>`, and a frame that cannot be read is said,
+   * not left as a silence a model would read as "the page does not have one".
    */
-  async snapshot(opts: { limit?: number } = {}): Promise<SnapshotNode[]> {
-    const [, tree, frames] = await this.run([
-      { op: 'send', method: 'Accessibility.enable', session: true },
-      { op: 'send', method: 'Accessibility.getFullAXTree', session: true },
-      {
-        op: 'send',
-        method: 'Runtime.evaluate',
-        params: evalParams(unreachableFramesExpression()),
-        session: true,
-        soft: true,
-      },
+  async snapshot(opts: { limit?: number; root?: string } = {}): Promise<SnapshotNode[]> {
+    // The driver's snapshot action, which also records which document its refs belong to.
+    const [out] = await this.actions([
+      { do: 'snapshot', ...(opts.limit !== undefined ? { limit: opts.limit } : {}), ...(opts.root !== undefined ? { root: opts.root } : {}) },
     ]);
+    if (!out?.ok && opts.root !== undefined && out?.nodes === undefined) {
+      throw new HuskError('E_TOOL_ERROR', out?.error ?? `${opts.root} is not on the page`, { hint: 'take a snapshot without ref to see the page as it is now', details: { ref: opts.root } });
+    }
+    if (!out?.ok) {
+      throw new HuskError('E_EXEC_FAILED', out?.error ?? 'could not read the page', { hint: 'the page may be mid-navigation; try again' });
+    }
+    return out.nodes ?? [];
+  }
 
-    const res = (tree ?? {}) as CdpParams;
-    const nodes = Array.isArray(res['nodes']) ? (res['nodes'] as AxNodeLike[]) : [];
-    const flat = flattenAxTree(nodes, opts);
+  /**
+   * Several page actions in one driver round, stopping at the first that fails.
+   *
+   * Code over calls (credited in THIRD_PARTY_NOTICES.md): the
+   * cost of a browser tool is mostly the round trip, so a model that knows its
+   * next five steps should pay for one. The actions are data and the driver
+   * runs them; the only page script involved is what this file builds from
+   * JSON-quoted arguments. Gotos must already be policy-checked -- `session.ts`
+   * does it, as it does for `goto`.
+   */
+  /**
+   * Run a Python script against this page, in its own process inside the
+   * computer, killed at `limitSec`. It reaches the page only through `page.*`,
+   * which the driver answers with the same actions `browser_run` uses, and
+   * whose gotos the session checks against the network policy (see
+   * `BrowserSession.script`). Needs the long-lived driver.
+   */
+  async script(source: string, limitSec: number): Promise<ScriptOutcome> {
+    const limitMs = limitSec * 1000;
+    const [raw] = await this.run(
+      [{ op: 'action', session: true, do: 'script', source, limitSec, timeoutMs: limitMs }],
+      limitMs + 45_000,
+    );
+    const r = (raw ?? {}) as Record<string, unknown>;
+    return {
+      output: typeof r['output'] === 'string' ? r['output'] : '',
+      truncated: r['truncated'] === true,
+      result: r['result'] ?? null,
+      resultTruncated: r['resultTruncated'] === true,
+      ms: typeof r['ms'] === 'number' ? r['ms'] : 0,
+      ...(typeof r['error'] === 'string' ? { error: r['error'] } : {}),
+      ...happenedOf(r as Happened),
+    };
+  }
 
-    const unreachable = ((frames ?? {}) as { result?: { value?: unknown } }).result?.value;
-    if (Array.isArray(unreachable) && unreachable.length > 0) {
-      flat.push({
-        ref: 'x0',
-        role: 'UnreachableFrames',
-        name:
-          `${unreachable.length} cross-origin iframe${unreachable.length === 1 ? '' : 's'} on this page ` +
-          `cannot be read or clicked from here: ${unreachable.map(String).join(', ')}`,
+  async actions(list: PageAction[]): Promise<ActionOutcome[]> {
+    let budget = 10_000;
+    const steps: DriverStep[] = list.map((a) => {
+      const step = actionStep(a);
+      budget += step.timeoutMs ?? 30_000;
+      // For a driver that keeps nothing between requests: the frame numbers so far, and where a ref came from.
+      if (a.do === 'snapshot') return this.frameKeys.size > 0 ? { ...step, frames: Object.fromEntries(this.frameKeys) } : step;
+      const known = 'ref' in a && a.ref ? this.refDocuments.get(a.ref) : undefined;
+      return known ? { ...step, document: known.document, ...(known.frame ? { frame: known.frame } : {}) } : step;
+    });
+    const results = await this.run(steps, budget);
+    const outcomes = list.map((a, i) => outcomeOf(a, results[i]));
+    for (const o of outcomes) if (o.nodes && o.document) this.remember(o.nodes, o.document, o.frames ?? {});
+    return outcomes;
+  }
+
+  /** The refs a snapshot showed, as belonging to its document, or to their frame's. */
+  private remember(nodes: SnapshotNode[], document: string, frames: Record<string, SnapshotFrame>): void {
+    // ponytail: forgotten wholesale past a bound; a forgotten ref is checked by the driver, or refused there.
+    if (this.refDocuments.size > 50_000) this.refDocuments.clear();
+    if (this.frameKeys.size > 10_000) this.frameKeys.clear();
+    for (const [key, f] of Object.entries(frames)) this.frameKeys.set(f.id, Number(key.slice(1)));
+    for (const n of nodes) {
+      if (backendNodeIdOf(n.ref) === null) continue;
+      const key = /^(f\d+)e/.exec(n.ref)?.[1];
+      const frame = key ? frames[key] : undefined;
+      if (!key) this.refDocuments.set(n.ref, { document });
+      else if (frame?.document) this.refDocuments.set(n.ref, { document: frame.document, frame: frame.id });
+    }
+  }
+
+  /** One action on a ref, refused with the driver's reason. */
+  private async act(a: PageAction & ElementTarget): Promise<ActionOutcome> {
+    const [out] = await this.actions([a]);
+    if (!out?.ok) {
+      throw new HuskError('E_TOOL_ERROR', out?.error ?? `could not ${a.do} ${a.ref ?? 'that'}`, {
+        hint: 'browser_snapshot shows the page as it is now',
+        details: { ref: a.ref },
       });
     }
-    return flat;
+    return out;
   }
 
   /** Base64 png (or jpeg). `fullPage` captures past the viewport. */
@@ -406,108 +604,114 @@ export class Page {
     return data;
   }
 
-  private async centreOf(ref: string): Promise<{ x: number; y: number; backendNodeId: number }> {
-    const backendNodeId = backendNodeIdOf(ref);
-    if (backendNodeId === null) {
-      throw new HuskError('E_TOOL_ERROR', `${ref} is not a clickable element`, {
-        hint: 'refs beginning with `a` are informational nodes with no DOM element; take a fresh snapshot',
-      });
-    }
-
-    // Both soft: a detached or display:none node cannot be scrolled to, and the
-    // box model gives the better error, so the scroll failing on its own is not
-    // worth surfacing.
-    const [, box] = await this.run([
-      { op: 'send', method: 'DOM.scrollIntoViewIfNeeded', params: { backendNodeId }, session: true, soft: true },
-      { op: 'send', method: 'DOM.getBoxModel', params: { backendNodeId }, session: true, soft: true },
+  /**
+   * One frame for a person watching: a JPEG of the viewport, and the viewport's
+   * size in CSS pixels so a click on the image can be mapped back whatever the
+   * device scale. One driver invocation.
+   */
+  async frame(quality = 70): Promise<{ data: string; width: number; height: number }> {
+    const [metrics, shot] = await this.run([
+      { op: 'send', method: 'Page.getLayoutMetrics', params: {}, session: true },
+      { op: 'send', method: 'Page.captureScreenshot', params: { format: 'jpeg', quality }, session: true },
     ]);
-
-    const model = ((box ?? {}) as CdpParams)['model'] as { content?: number[] } | undefined;
-    const quad = model?.content;
-    if (!quad || quad.length < 8) {
-      throw new HuskError('E_TOOL_ERROR', `${ref} is no longer on the page`, {
-        hint: 'the page changed since the snapshot -- call browser_snapshot again and use the new ref',
-        details: { ref },
+    const vp = ((metrics ?? {}) as CdpParams)['cssLayoutViewport'] as
+      | { clientWidth?: number; clientHeight?: number }
+      | undefined;
+    const data = ((shot ?? {}) as CdpParams)['data'];
+    if (typeof data !== 'string' || !vp?.clientWidth || !vp.clientHeight) {
+      throw new HuskError('E_EXEC_FAILED', 'Chromium returned no frame', {
+        hint: 'the page may be mid-navigation; try again',
       });
     }
-
-    const xs = [quad[0]!, quad[2]!, quad[4]!, quad[6]!];
-    const ys = [quad[1]!, quad[3]!, quad[5]!, quad[7]!];
-    return {
-      backendNodeId,
-      x: (Math.min(...xs) + Math.max(...xs)) / 2,
-      y: (Math.min(...ys) + Math.max(...ys)) / 2,
-    };
+    return { data, width: vp.clientWidth, height: vp.clientHeight };
   }
 
   /**
-   * Click, and report whether that started a navigation.
+   * Input from a person, at viewport coordinates.
    *
-   * The watch is part of the *same* driver invocation as the click, not a call
-   * after it. The driver buffers events as they arrive and `wait` checks that
-   * buffer first, so a navigation that completes before the listener would
-   * otherwise have attached is still seen. Watching from a second invocation
-   * loses exactly the fast local navigations this is for -- measured: the URL
-   * had already changed and the watcher reported nothing.
+   * Only `Input.*` commands: a person gets a mouse and a keyboard, not script.
+   * Nothing here can evaluate in the page or read the profile.
    */
-  async click(ref: string, loadTimeoutMs = 5000): Promise<{ navigationStarted: boolean }> {
-    const { x, y } = await this.centreOf(ref);
-    const base = { x, y, button: 'left', clickCount: 1, buttons: 1 };
-    const results = await this.run([
-      { op: 'send', method: 'Input.dispatchMouseEvent', params: { ...base, type: 'mousePressed' }, session: true },
-      {
-        op: 'send',
-        method: 'Input.dispatchMouseEvent',
-        params: { ...base, type: 'mouseReleased', buttons: 0 },
-        session: true,
-      },
-      { op: 'wait', event: 'Page.frameStartedLoading', session: true, timeoutMs: 250, optional: true },
-      // Same batch, and skipped entirely when nothing navigated. It has to be
-      // here rather than in a follow-up call: each driver invocation is a fresh
-      // process on a fresh connection, so a load event that fired during the
-      // click is simply gone by the time a second invocation starts listening.
-      {
-        op: 'wait',
-        event: 'Page.loadEventFired',
-        session: true,
-        timeoutMs: loadTimeoutMs,
-        optional: true,
-        skipUnless: { step: 2, key: 'fired' },
-      },
+  async clickAt(x: number, y: number, opts: { button?: 'left' | 'right'; clickCount?: 1 | 2 } = {}): Promise<void> {
+    const button = opts.button ?? 'left';
+    const base = { x, y, button, clickCount: opts.clickCount ?? 1 };
+    await this.run([
+      { op: 'send', method: 'Input.dispatchMouseEvent', params: { type: 'mouseMoved', x, y, button: 'none', buttons: 0 }, session: true },
+      { op: 'send', method: 'Input.dispatchMouseEvent', params: { ...base, type: 'mousePressed', buttons: button === 'left' ? 1 : 2 }, session: true },
+      { op: 'send', method: 'Input.dispatchMouseEvent', params: { ...base, type: 'mouseReleased', buttons: 0 }, session: true },
     ]);
-    return { navigationStarted: waitResultOf(results[2]).fired };
   }
 
-  async type(ref: string, text: string, opts: { clear?: boolean } = {}): Promise<void> {
-    const { backendNodeId } = await this.centreOf(ref);
-    const steps: DriverStep[] = [{ op: 'send', method: 'DOM.focus', params: { backendNodeId }, session: true }];
+  async wheelAt(x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
+    await this.run([
+      { op: 'send', method: 'Input.dispatchMouseEvent', params: { type: 'mouseWheel', x, y, deltaX, deltaY }, session: true },
+    ]);
+  }
 
-    if (opts.clear !== false) {
-      // Selecting first means `type` replaces rather than appends, which is what
-      // "type this into the search box" means every single time.
-      steps.push({
-        op: 'send',
-        method: 'Runtime.evaluate',
-        params: evalParams(`(() => { const el = document.activeElement; if (el && 'select' in el) el.select(); })()`),
-        session: true,
+  /** Text into whatever has focus. An input event, not an evaluate. */
+  async insertText(text: string): Promise<void> {
+    await this.run([{ op: 'send', method: 'Input.insertText', params: { text }, session: true }]);
+  }
+
+  /**
+   * Click, honestly, and report whether that started a navigation.
+   *
+   * The driver's `click` action: it refuses, saying why, an element that is
+   * gone, disabled, hidden, still moving or covered by something the click
+   * would land on instead; `force` skips the checks and presses at the
+   * centre, as clicks always did. The navigation watch is in the same driver
+   * round as the click, so a fast local navigation is not missed.
+   */
+  async click(ref: string, loadTimeoutMs = 5000, opts: ClickOptions = {}): Promise<{ navigationStarted: boolean; waited?: Waited } & Happened> {
+    const [out] = await this.actions([
+      {
+        do: 'click',
+        ref,
+        loadTimeoutMs,
+        ...(opts.force ? { force: true } : {}),
+        ...(opts.dialog ? { dialog: opts.dialog } : {}),
+        ...(opts.waitFor ? { waitFor: opts.waitFor } : {}),
+      },
+    ]);
+    if (!out?.ok) {
+      throw new HuskError('E_TOOL_ERROR', out?.error ?? `could not click ${ref}`, {
+        hint: 'browser_snapshot shows the page as it is now',
+        details: { ref },
       });
     }
+    return { navigationStarted: out.navigated === true, ...(out.waited ? { waited: out.waited } : {}), ...happenedOf(out) };
+  }
 
-    steps.push({ op: 'send', method: 'Input.insertText', params: { text }, session: true });
-    // insertText does not fire key events; frameworks listening for `input` are
-    // satisfied by it, but ones listening for change need the nudge.
-    steps.push({
-      op: 'send',
-      method: 'Runtime.evaluate',
-      params: evalParams(
-        `(() => { const el = document.activeElement; if (el) el.dispatchEvent(new Event('change', { bubbles: true })); })()`,
-      ),
-      session: true,
-    });
-
-    for (const result of await this.run(steps)) {
-      assertNoPageException((result ?? {}) as CdpParams);
+  /**
+   * Type into the field with this ref: the driver's `fill`, which focuses the
+   * field, selects what is there unless `clear` is false (so "type this into
+   * the search box" replaces it), inserts the text and fires `change` -- all
+   * on the field itself, never on `document.activeElement`, which inside a
+   * frame is the frame.
+   */
+  async type(
+    ref: string,
+    text: string,
+    opts: { clear?: boolean; submit?: boolean; dialog?: 'accept' | 'dismiss'; waitFor?: WaitTarget } = {},
+  ): Promise<Happened & { waited?: Waited }> {
+    const [out] = await this.actions([
+      {
+        do: 'fill',
+        ref,
+        text,
+        ...(opts.clear === false ? { clear: false } : {}),
+        ...(opts.submit ? { submit: true } : {}),
+        ...(opts.dialog ? { dialog: opts.dialog } : {}),
+        ...(opts.waitFor ? { waitFor: opts.waitFor } : {}),
+      },
+    ]);
+    if (!out?.ok) {
+      throw new HuskError('E_TOOL_ERROR', out?.error ?? `could not type into ${ref}`, {
+        hint: 'browser_snapshot shows the page as it is now',
+        details: { ref },
+      });
     }
+    return { ...(out.waited ? { waited: out.waited } : {}), ...happenedOf(out) };
   }
 
   async press(key: string): Promise<void> {
@@ -542,25 +746,11 @@ export class Page {
     timeoutMs = 15_000,
   ): Promise<{ found: boolean; waitedMs: number }> {
     const started = Date.now();
-    const probe = what.selector
-      ? `!!document.querySelector(${JSON.stringify(what.selector)})`
-      : `document.body ? document.body.innerText.includes(${JSON.stringify(what.text ?? '')}) : false`;
-    const want = what.gone === true ? 'false' : 'true';
-
     const [result] = await this.run([
       {
         op: 'send',
         method: 'Runtime.evaluate',
-        params: evalParams(
-          `(async () => {
-             const deadline = Date.now() + ${Math.max(0, timeoutMs)};
-             while (Date.now() < deadline) {
-               if ((${probe}) === ${want}) return true;
-               await new Promise((r) => setTimeout(r, 100));
-             }
-             return (${probe}) === ${want};
-           })()`,
-        ),
+        params: evalParams(waitExpression(what, timeoutMs)),
         session: true,
         // The page's own clock decides; the transport only has to outlast it.
         timeoutMs: timeoutMs + 5000,
@@ -581,9 +771,8 @@ export class Page {
    */
   async scroll(opts: { ref?: string; by?: number; to?: 'top' | 'bottom' } = {}): Promise<void> {
     if (opts.ref) {
-      // `centreOf` already scrolls into view; this is the same operation, named
-      // for what a caller wants when they are not about to click.
-      await this.centreOf(opts.ref);
+      // The driver's `scroll`: the element into view, its frames' <iframe>s first.
+      await this.act({ do: 'scroll', ref: opts.ref });
       return;
     }
 
@@ -609,20 +798,9 @@ export class Page {
    * events a framework listens for is the only thing that does.
    */
   async select(ref: string, value: string): Promise<{ selected: string }> {
-    const { backendNodeId } = await this.centreOf(ref);
-    const [, result] = await this.run([
-      { op: 'send', method: 'DOM.focus', params: { backendNodeId }, session: true },
-      {
-        op: 'send',
-        method: 'Runtime.evaluate',
-        params: evalParams(selectExpression(value)),
-        session: true,
-      },
-    ]);
-
-    assertNoPageException((result ?? {}) as CdpParams);
-    const chosen = ((result ?? {}) as { result?: { value?: unknown } }).result?.value;
-    return { selected: String(chosen ?? '') };
+    // The driver's `select`, called on the <select> itself: the option is an argument, never script.
+    const out = await this.act({ do: 'select', ref, value });
+    return { selected: out.selected ?? '' };
   }
 
   /**
@@ -633,29 +811,12 @@ export class Page {
    * as far as this page is concerned.
    */
   async setFiles(ref: string, files: string[]): Promise<void> {
-    const backendNodeId = backendNodeIdOf(ref);
-    if (backendNodeId === null) {
-      throw new HuskError('E_TOOL_ERROR', `${ref} is not an element`, {
-        hint: 'take a fresh snapshot and use the ref of the file input',
-      });
-    }
-    const [result] = await this.run([
-      { op: 'send', method: 'DOM.setFileInputFiles', params: { backendNodeId, files }, session: true },
-    ]);
-    assertNoPageException((result ?? {}) as CdpParams);
+    await this.act({ do: 'upload', ref, files });
   }
 
   /** Hover, for the menus that only exist under the pointer. */
   async hover(ref: string): Promise<void> {
-    const { x, y } = await this.centreOf(ref);
-    await this.run([
-      {
-        op: 'send',
-        method: 'Input.dispatchMouseEvent',
-        params: { type: 'mouseMoved', x, y, button: 'none', buttons: 0 },
-        session: true,
-      },
-    ]);
+    await this.act({ do: 'hover', ref });
   }
 
   /** Back, forward or reload, waiting for whatever it starts. */
@@ -704,6 +865,352 @@ export class Page {
   }
 }
 
+/**
+ * The page-side wait loop: true once the text, URL or selector is there (or
+ * gone), false at the deadline. Polling rather than a MutationObserver, so a
+ * one-shot driver -- a process per call -- waits the same way a served one does.
+ */
+function waitProbe(what: WaitTarget): string {
+  return what.selector
+    ? `!!document.querySelector(${JSON.stringify(what.selector)})`
+    : what.url !== undefined
+      ? `location.href.includes(${JSON.stringify(what.url)})`
+      : `document.body ? document.body.innerText.includes(${JSON.stringify(what.text ?? '')}) : false`;
+}
+
+/**
+ * The page-side wait loop. With `armed`, what `armExpression` saw before the
+ * action counts too: a toast that came and went while the click settled was
+ * there, even if it is gone by the time anyone looks. A page the action
+ * replaced has no watcher, so there the condition is looked for afresh.
+ */
+export function waitExpression(what: WaitTarget, timeoutMs: number, armed = false): string {
+  const probe = waitProbe(what);
+  const want = what.gone === true ? 'false' : 'true';
+  const seen = armed ? '(window.__huskArmed && window.__huskArmed.seen) || ' : '';
+  const done = armed ? 'if (window.__huskArmed && window.__huskArmed.stop) window.__huskArmed.stop(); ' : '';
+  return `(async () => {
+     const deadline = Date.now() + ${Math.max(0, timeoutMs)};
+     while (Date.now() < deadline) {
+       if (${seen}(${probe}) === ${want}) { ${done}return true; }
+       await new Promise((r) => setTimeout(r, 100));
+     }
+     const found = ${seen}(${probe}) === ${want};
+     ${done}return found;
+   })()`;
+}
+
+/**
+ * A watcher installed just before an action, for the wait the action asked
+ * for: it notes the moment the page shows what is waited for, so a change the
+ * action causes and undoes before anyone looks is still seen. It stops itself
+ * when it has seen it, when the wait ends, or after ten minutes at most.
+ */
+export function armExpression(what: WaitTarget): string {
+  const probe = waitProbe(what);
+  const want = what.gone === true ? 'false' : 'true';
+  return `(() => {
+     const probe = () => { try { return (${probe}) === ${want}; } catch { return false; } };
+     if (window.__huskArmed && window.__huskArmed.stop) window.__huskArmed.stop();
+     const w = { seen: probe() };
+     window.__huskArmed = w;
+     if (!w.seen) {
+       const mo = new MutationObserver(() => { if (probe()) { w.seen = true; w.stop(); } });
+       const timer = setTimeout(() => w.stop(), 600000);
+       w.stop = () => { mo.disconnect(); clearTimeout(timer); };
+       mo.observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
+     }
+     return true;
+   })()`;
+}
+
+/** A wait in a few words: `text "Saved"`, `selector .toast`, `url "/done"`. */
+export function describeWait(what: WaitTarget): string {
+  return what.selector !== undefined ? `selector ${what.selector}` : what.url !== undefined ? `url ${JSON.stringify(what.url)}` : `text ${JSON.stringify(what.text ?? '')}`;
+}
+
+/** What a wait an action asked for found, in words a model reads. */
+export function describeWaited(w: Waited): string {
+  const verb = w.gone ? 'went away' : 'appeared';
+  return w.found
+    ? `Then waited for ${w.what}: it ${verb} after ${w.waitedMs} ms.`
+    : `Then waited for ${w.what}: it did not ${w.gone ? 'go away' : 'appear'} within ${w.waitedMs} ms. Take a snapshot to see what is there.`;
+}
+
+/** How a click goes: `force` skips its checks; `dialog` answers a confirm or prompt it opens (dismissed unless "accept"); `waitFor`, armed before it. */
+export interface ClickOptions {
+  force?: boolean;
+  dialog?: 'accept' | 'dismiss';
+  waitFor?: WaitTarget;
+}
+
+/** What to wait for on the page's own document: text, a selector or part of the address, or `gone` for it to go. */
+export interface WaitTarget {
+  text?: string;
+  url?: string;
+  selector?: string;
+  gone?: boolean;
+  timeoutMs?: number;
+}
+
+/** What a wait an action asked for found. */
+export interface Waited {
+  what: string;
+  found: boolean;
+  waitedMs: number;
+  gone?: boolean;
+}
+
+/** The dialogs, downloads and tabs an outcome carries, and nothing else. */
+export function happenedOf(o: Happened): Happened {
+  return {
+    ...(o.dialogs?.length ? { dialogs: o.dialogs } : {}),
+    ...(o.downloads?.length ? { downloads: o.downloads } : {}),
+    ...(o.popups?.length ? { popups: o.popups } : {}),
+    ...(o.blocked?.length ? { blocked: o.blocked } : {}),
+  };
+}
+
+/**
+ * What else an action did, in words a model reads: a dialog Husk answered
+ * (and how to answer it the other way), a file it downloaded, a tab it opened,
+ * a load the network policy stopped.
+ */
+export function describeHappened(h: Happened): string[] {
+  const lines: string[] = [];
+  for (const d of h.dialogs ?? []) {
+    const article = /^[aeiou]/.test(d.type) ? 'an' : 'a';
+    lines.push(
+      `The page showed ${article} ${d.type} dialog: ${JSON.stringify(d.message)}. Husk ${d.answer} it.` +
+        (d.answer === 'dismissed' ? ' To accept it instead, do this again with dialog: "accept".' : ''),
+    );
+  }
+  for (const f of h.downloads ?? []) {
+    const where = `${DOWNLOADS_DIR}/${f.name}`;
+    lines.push(
+      f.state === 'completed'
+        ? `It downloaded ${f.name}${f.bytes ? ` (${f.bytes} bytes)` : ''} to ${where}.`
+        : `It started downloading ${f.name} to ${where}; the download is ${f.state}.`,
+    );
+  }
+  for (const p of h.popups ?? []) lines.push(`It opened a new tab: ${p.url || 'about:blank'} (browser_tabs with switchTo "${p.targetId}" goes there).`);
+  for (const b of h.blocked ?? []) lines.push(`The network policy stopped the page from loading ${b.url}: ${b.reason}.`);
+  return lines;
+}
+
+/** Which element an action means: a ref from a snapshot, or a role and its accessible name. */
+export interface ElementTarget {
+  ref?: string;
+  role?: string;
+  name?: string;
+}
+
+/**
+ * One step of `browser_run`, or one of Page's own (hover, scroll, upload),
+ * which browser_run does not offer. Data only: the driver does it, nothing
+ * evaluates it.
+ */
+export type PageAction =
+  | { do: 'goto'; url: string; timeoutMs?: number }
+  | ({ do: 'click'; force?: boolean; loadTimeoutMs?: number; dialog?: 'accept' | 'dismiss'; waitFor?: WaitTarget } & ElementTarget)
+  | ({ do: 'fill'; text: string; submit?: boolean; clear?: boolean; dialog?: 'accept' | 'dismiss'; waitFor?: WaitTarget } & ElementTarget)
+  | ({ do: 'select'; value: string } & ElementTarget)
+  | { do: 'wait'; text?: string; url?: string; selector?: string; gone?: boolean; timeoutMs?: number }
+  | { do: 'snapshot'; limit?: number; root?: string }
+  | { do: 'screenshot'; fullPage?: boolean }
+  | ({ do: 'hover' | 'scroll' } & ElementTarget)
+  | ({ do: 'upload'; files: string[] } & ElementTarget);
+
+/** A frame a snapshot read: its frame id, and the document its refs act on. */
+export interface SnapshotFrame {
+  id: string;
+  document?: string;
+}
+
+/** What a script printed and left in `result`, or the traceback it died with. */
+export interface ScriptOutcome extends Happened {
+  output: string;
+  /** Output past 64 KB was dropped. */
+  truncated: boolean;
+  result: unknown;
+  /** The result's JSON was over 64 KB, so `result` is that JSON as a string, cut. */
+  resultTruncated: boolean;
+  ms: number;
+  error?: string;
+}
+
+/** What one action did. `skipped` follows an earlier failure; `error` is that failure. */
+export interface ActionOutcome extends Happened {
+  do: PageAction['do'];
+  ok: boolean;
+  skipped?: boolean;
+  error?: string;
+  url?: string;
+  loaded?: boolean;
+  ref?: string;
+  navigated?: boolean;
+  /** A click's checks ran; false when it was forced. */
+  checked?: boolean;
+  /** The option a `select` chose, by its text. */
+  selected?: string;
+  /** A snapshot's document: its refs act only there. */
+  document?: string;
+  /** A snapshot's frames, by number (`f1`): the refs `f<k>e<n>` act in their frame's document. */
+  frames?: Record<string, SnapshotFrame>;
+  /** What a wait the click or fill asked for found. */
+  waited?: Waited;
+  waitedMs?: number;
+  nodes?: SnapshotNode[];
+  /** Base64 PNG, for `screenshot`. */
+  data?: string;
+}
+
+function actionStep(a: PageAction): DriverStep {
+  const base = { op: 'action' as const, session: true };
+  switch (a.do) {
+    case 'goto': {
+      const load = a.timeoutMs ?? 30_000;
+      return { ...base, do: 'goto', url: a.url, loadTimeoutMs: load, timeoutMs: load + 30_000 };
+    }
+    case 'click':
+      return {
+        ...base,
+        do: 'click',
+        ...target(a),
+        ...(a.force ? { force: true } : {}),
+        ...(a.loadTimeoutMs !== undefined ? { loadTimeoutMs: a.loadTimeoutMs } : {}),
+        ...(a.dialog ? { dialog: a.dialog } : {}),
+        ...armed(a.waitFor),
+        timeoutMs: 30_000 + waitMs(a.waitFor),
+      };
+    case 'fill':
+      return {
+        ...base,
+        do: 'fill',
+        ...target(a),
+        text: a.text,
+        ...(a.submit ? { submit: true } : {}),
+        ...(a.clear === false ? { clear: false } : {}),
+        ...(a.dialog ? { dialog: a.dialog } : {}),
+        ...armed(a.waitFor),
+        timeoutMs: 30_000 + waitMs(a.waitFor),
+      };
+    case 'select':
+      return { ...base, do: 'select', ...target(a), value: a.value, timeoutMs: 30_000 };
+    case 'wait': {
+      const wait = a.timeoutMs ?? 15_000;
+      const what = a.selector !== undefined ? `selector ${a.selector}` : a.url !== undefined ? `url ${JSON.stringify(a.url)}` : `text ${JSON.stringify(a.text ?? '')}`;
+      return {
+        ...base,
+        do: 'wait',
+        expression: waitExpression(a, wait),
+        what,
+        ...(a.gone ? { gone: true } : {}),
+        // The page's own clock decides; the driver only has to outlast it.
+        timeoutMs: wait + 5000,
+      };
+    }
+    case 'snapshot':
+      return { ...base, do: 'snapshot', timeoutMs: 30_000 };
+    case 'hover':
+    case 'scroll':
+      return { ...base, do: a.do, ...target(a), timeoutMs: 30_000 };
+    case 'upload':
+      return { ...base, do: 'upload', ...target(a), files: a.files, timeoutMs: 30_000 };
+    case 'screenshot':
+      return { ...base, do: 'screenshot', ...(a.fullPage ? { fullPage: true } : {}), timeoutMs: 60_000 };
+  }
+}
+
+/** The default wait, as browser_wait_for's: fifteen seconds. */
+function waitMs(w: WaitTarget | undefined): number {
+  return w ? (w.timeoutMs ?? 15_000) : 0;
+}
+
+/** A click's or a fill's wait, as the driver takes it: armed just before it acts, looked for after. */
+function armed(w: WaitTarget | undefined): Record<string, unknown> {
+  if (!w) return {};
+  return {
+    arm: armExpression(w),
+    wait: { expression: waitExpression(w, waitMs(w), true), what: describeWait(w), ...(w.gone ? { gone: true } : {}) },
+  };
+}
+
+function target(a: ElementTarget): ElementTarget {
+  return {
+    ...(a.ref !== undefined ? { ref: a.ref } : {}),
+    ...(a.role !== undefined ? { role: a.role } : {}),
+    ...(a.name !== undefined ? { name: a.name } : {}),
+  };
+}
+
+function outcomeOf(a: PageAction, raw: unknown): ActionOutcome {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  if (r['skipped'] === true) return { do: a.do, ok: false, skipped: true };
+  // A failure says what else happened on the way, too: a dialog, a load the policy stopped.
+  if (typeof r['error'] === 'string') return { do: a.do, ok: false, error: r['error'], ...happenedOf(r as Happened) };
+  const out: ActionOutcome = { do: a.do, ok: true };
+  if (typeof r['url'] === 'string') out.url = r['url'];
+  if (typeof r['loaded'] === 'boolean') out.loaded = r['loaded'];
+  if (typeof r['ref'] === 'string') out.ref = r['ref'];
+  if (typeof r['navigated'] === 'boolean') out.navigated = r['navigated'];
+  if (typeof r['checked'] === 'boolean') out.checked = r['checked'];
+  if (typeof r['selected'] === 'string') out.selected = r['selected'];
+  if (typeof r['document'] === 'string') out.document = r['document'];
+  if (r['frames'] && typeof r['frames'] === 'object') out.frames = r['frames'] as Record<string, SnapshotFrame>;
+  if (r['waited'] && typeof r['waited'] === 'object') out.waited = r['waited'] as Waited;
+  if (Array.isArray(r['dialogs'])) out.dialogs = r['dialogs'] as NonNullable<Happened['dialogs']>;
+  if (Array.isArray(r['downloads'])) out.downloads = r['downloads'] as NonNullable<Happened['downloads']>;
+  if (Array.isArray(r['popups'])) out.popups = r['popups'] as NonNullable<Happened['popups']>;
+  if (Array.isArray(r['blocked'])) out.blocked = r['blocked'] as NonNullable<Happened['blocked']>;
+  if (typeof r['waitedMs'] === 'number') out.waitedMs = r['waitedMs'];
+  if (typeof r['data'] === 'string') out.data = r['data'];
+  if (a.do === 'snapshot') {
+    const all = Array.isArray(r['nodes']) ? (r['nodes'] as AxNodeLike[]) : [];
+    const nodes = a.root !== undefined ? subtree(all, a.root) : all;
+    if (!nodes) return { do: a.do, ok: false, error: `${a.root} is not on the page` };
+    out.nodes = snapshotOf(nodes, a.root !== undefined ? [] : r['unreachable'], a.limit !== undefined ? { limit: a.limit } : {});
+  }
+  return out;
+}
+
+/**
+ * The part of the tree under the node a ref names, that node included, or
+ * undefined when the page has no such node: a form, a dialog or a list read on
+ * its own, for a model that needs only that.
+ */
+function subtree(nodes: AxNodeLike[], root: string): AxNodeLike[] | undefined {
+  const top = nodes.find((n) => n.backendDOMNodeId !== undefined && `${n.frame ?? ''}e${n.backendDOMNodeId}` === root);
+  if (!top) return undefined;
+  const byId = new Map(nodes.map((n) => [str(n.nodeId), n]));
+  const out: AxNodeLike[] = [];
+  const todo = [top];
+  for (let n = todo.pop(); n; n = todo.pop()) {
+    out.push(n);
+    for (const id of n.childIds ?? []) {
+      const child = byId.get(id);
+      if (child) todo.push(child);
+    }
+  }
+  return out;
+}
+
+/** The compact tree, plus a line saying which frames could not be read. */
+function snapshotOf(nodes: AxNodeLike[], unreachable: unknown, opts: { limit?: number }): SnapshotNode[] {
+  const tree = compactAxTree(nodes, opts);
+  if (Array.isArray(unreachable) && unreachable.length > 0) {
+    tree.push({
+      ref: 'x0',
+      role: 'UnreachableFrames',
+      name:
+        `${unreachable.length} iframe${unreachable.length === 1 ? '' : 's'} on this page ` +
+        `could not be read, so nothing in ${unreachable.length === 1 ? 'it' : 'them'} is listed: ${unreachable.slice(0, 10).map(String).join(', ')}`,
+      depth: 0,
+    });
+  }
+  return tree;
+}
+
 /** The one shape every `Runtime.evaluate` in this file uses. */
 function evalParams(expression: string): CdpParams {
   return {
@@ -731,50 +1238,4 @@ function valueOf(res: CdpParams | undefined): unknown {
   return result?.value;
 }
 
-/**
- * The page-side half of `select`, as a string.
- *
- * Extracted so it can be run against a real DOM in a test. Everything here
- * executes inside the page, where there is no husk, no types and no way to see
- * a failure except the exception text -- so the message on the way out has to
- * carry the options, or a model that guessed wrong has nothing to guess from.
- */
-export function selectExpression(value: string): string {
-  return `(() => {
-     const el = document.activeElement;
-     if (!el || el.tagName !== 'SELECT') throw new Error('that ref is not a <select>');
-     const want = ${JSON.stringify(value)};
-     const match = [...el.options].find((o) => o.value === want)
-       || [...el.options].find((o) => o.text.trim() === want.trim());
-     if (!match) {
-       throw new Error('no option matching ' + JSON.stringify(want) +
-         '; options are ' + JSON.stringify([...el.options].map((o) => o.text.trim())));
-     }
-     el.value = match.value;
-     el.dispatchEvent(new Event('input', { bubbles: true }));
-     el.dispatchEvent(new Event('change', { bubbles: true }));
-     return match.text.trim();
-   })()`;
-}
 
-/**
- * The page-side half of the cross-origin iframe report.
- *
- * `contentDocument` is null for a frame the document may not read, and reading
- * it can itself throw in some engines, so both are treated as "cannot see in".
- * A same-origin frame is readable and is deliberately not reported: it is
- * already in the accessibility tree, and naming it would train a reader to
- * ignore the warning.
- */
-export function unreachableFramesExpression(limit = 10): string {
-  return `(() => [...document.querySelectorAll('iframe')]
-     .filter((f) => { try { return !f.contentDocument; } catch { return true; } })
-     .map((f) => {
-       // The src property resolves against the document, so an iframe with
-       // no src reports the page's own URL -- which reads as a frame that is
-       // somewhere it is not. The attribute says whether there is one at all.
-       const raw = f.getAttribute('src');
-       return raw && raw.trim() ? f.src : '(no src)';
-     })
-     .slice(0, ${limit}))()`;
-}

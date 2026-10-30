@@ -1,6 +1,8 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { z } from 'zod';
+import { HuskError } from './errors.js';
 
 /**
  * Where Husk keeps its state.
@@ -90,6 +92,82 @@ export const DEFAULT_CONFIG: HuskConfig = {
   logLevel: 'info',
   modelAliases: {},
 };
+
+/** What ~/.husk/config.json may set. A key it does not know is refused: a setting that silently does nothing is the bug. */
+const ConfigFileSchema = z
+  .object({
+    provider: z.string().min(1),
+    model: z.string().min(1),
+    maxCostUsd: z.number().nonnegative(),
+    maxComputers: z.number().int().positive(),
+    modelAliases: z.record(z.string(), z.string()),
+  })
+  .partial()
+  .strict();
+
+/**
+ * ~/.husk/config.json over the defaults.
+ *
+ * No file is the defaults. A file that is not JSON, or a setting of the wrong
+ * type, is refused with its name rather than read as a default nobody asked
+ * for. `model` is what `auto` means on this machine, so it is folded into
+ * `modelAliases` here, and every consumer reads aliases alone; an `auto` entry
+ * in `modelAliases` wins over it.
+ */
+export function loadConfig(file: string = paths().configFile): HuskConfig {
+  let text: string;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { ...DEFAULT_CONFIG, modelAliases: {} };
+    throw new HuskError('E_CONFIG', `could not read ${file}: ${(err as Error).message}`, { hint: 'check its permissions, or move it aside to use the defaults' });
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch (err) {
+    throw new HuskError('E_CONFIG', `${file} is not valid JSON: ${(err as Error).message}`, { hint: 'fix it, or move it aside to use the defaults' });
+  }
+  const parsed = ConfigFileSchema.safeParse(json);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw new HuskError('E_CONFIG', `${file}: ${issue?.path.join('.') || 'the file'}: ${issue?.message}`, {
+      hint: 'it takes provider, model, maxCostUsd, maxComputers and modelAliases',
+    });
+  }
+  const { model, modelAliases, ...rest } = parsed.data;
+  return {
+    ...DEFAULT_CONFIG,
+    ...rest,
+    ...(model ? { model } : {}),
+    modelAliases: { ...(model && model !== 'auto' ? { auto: model } : {}), ...modelAliases },
+  };
+}
+
+/**
+ * ~/.husk/.env into `env`, for the keys `env` does not have yet: the
+ * environment Husk was started with wins. `KEY=value` lines, with `#`
+ * comments, `export ` and quotes allowed. Returns the keys it set, never a
+ * value: the file is for API keys.
+ */
+export function loadEnvFile(file: string = paths().envFile, env: NodeJS.ProcessEnv = process.env): string[] {
+  let text: string;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw new HuskError('E_CONFIG', `could not read ${file}: ${(err as Error).message}`, { hint: 'check its permissions, or move it aside' });
+  }
+  const set: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
+    if (!m || env[m[1]!] !== undefined) continue;
+    const quoted = /^(['"])(.*)\1$/.exec(m[2]!);
+    env[m[1]!] = quoted ? quoted[2]! : m[2]!.replace(/\s+#.*$/, '');
+    set.push(m[1]!);
+  }
+  return set;
+}
 
 /** Environment variable names Husk reads. Documented so `husk doctor` can list them. */
 export const ENV_KEYS = {

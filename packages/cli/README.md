@@ -13,20 +13,27 @@ Node >= 20.10. No native modules, so `npm install` is clean on Windows.
 
 ```console
 $ husk doctor
-husk 0.1.0  node 24.14.0 · win32-arm64
+husk 0.2.0  node 24.14.0 · win32-arm64
+state: C:\Users\me\.husk
 
 COMPUTERS
   ✗ docker   isolated
+      Kernel-level isolation via Docker
       docker is installed but the daemon is not reachable
       fix: start Docker Desktop (or `sudo systemctl start docker`), then re-run `husk doctor`
+  …
   ✓ local    not isolated
       A guarded working directory on this machine. Free, always available, not isolated.
       via WSL2 (Ubuntu)
+      guarded working directory -- process guardrails, not a sandbox
+      fix: start Docker for kernel-level isolation
+…
 
 SELECTION  what husk would use right now
   computer   local  highest-priority available provider (10)
   isolation  guardrails only
-  model      ollama/qwen2.5:7b  first reachable model on Ollama
+  model      ollama/qwen2.5:7b  preferred available model on Ollama (capabilities, catalog quality, and local size tier)
+…
 
 $ husk up scratch
 ✓ scratch is up
@@ -34,7 +41,9 @@ $ husk up scratch
   id         cmp_jwhzm6carxtq
   provider   local  (WSL2 (Ubuntu))
   isolation  guardrails only — not a sandbox
+  image      local:wsl
   workdir    /work
+  network    full (internal addresses refused)
 
 $ husk exec scratch -- 'echo hi > /work/a.txt; cat /work/a.txt; uname -sr'
 hi
@@ -44,6 +53,10 @@ $ husk rm scratch --yes
 ✓ destroyed scratch
 ```
 
+On Windows `cmd.exe` the single quotes above are not stripped and would reach the
+container as part of the command, so use double quotes there:
+`husk exec scratch -- "echo hi > /work/a.txt; cat /work/a.txt; uname -sr"`.
+
 No account, no API key, no Docker. `husk doctor` is the command to run when
 anything is confusing — it tells you what is available, what is not, and the one
 command that fixes each gap.
@@ -52,10 +65,13 @@ command that fixes each gap.
 
 Run `husk help <command>` for flags and examples. Every command has both.
 
-**Computers** — `up` `ps` `rm` `stop` `start` `exec` `shell` `cp`
-**Agents** — `init` `run` `validate`
-**Chats** — `import` `distill`
-**System** — `doctor` `serve` `mcp` `models` `version`
+- **Computers** — `up` `ps` `rm` `stop` `start` `exec` `shell` `cp`
+- **Agents** — `init` `run` `validate`
+- **Chats** — `import` `distill`
+- **Setup** — `setup` (pick where computers run, connect your chat apps, start the shared Husk; `--remove` undoes it) and `onboard`
+- **System** — `doctor` `serve` `remote` `mcp` `models` `version`
+
+In 0.1.4, `setup` is another name for `onboard`.
 
 ## Built for pipes as well as people
 
@@ -82,8 +98,8 @@ name	state
 scratch	running
 ```
 
-Colour follows `NO_COLOR`, `FORCE_COLOR`, `TERM=dumb` and `--no-color`, and turns
-itself off when stdout is not a terminal.
+Colour follows `NO_COLOR`, `FORCE_COLOR`, `TERM=dumb` and `--no-color`, and each
+stream keeps it only when it is a terminal: `husk doctor > report.txt` carries none.
 
 ## Exit codes
 
@@ -169,9 +185,13 @@ dependency cannot silently regress it.
 
 ## Privacy
 
-No telemetry. Not "off by default" — absent. Nothing leaves your machine except
-calls to the model provider you configured. State lives in `~/.husk`; delete that
-directory to reset husk completely.
+No product telemetry. Not "off by default" — absent. What leaves your machine is
+what your tasks need: calls to the model provider you configured, the pages and
+sources they fetch, image pulls, and a computer provider's own API, such as Fly's.
+With remote access on, Husk also checks its install against npm's security
+advisories when it starts and every day after. Settings and records live in `~/.husk`.
+Computers keep their files elsewhere (Docker volumes, or the WSL distro's own
+`~/.husk`), so `husk rm` each computer before deleting that directory.
 
 ## MCP
 
@@ -181,4 +201,5 @@ claude mcp add husk -- npx -y @husk-ai/mcp
 
 That gives Claude Code — or Cursor, or Zed, or anything speaking MCP — a Linux
 computer mid-conversation, with no account and no config file. `husk mcp` runs
-the same server directly on stdio.
+the same tools on stdio, with fewer flags: `--provider`, `--flavor`, `--session-key`
+and `--keep`.

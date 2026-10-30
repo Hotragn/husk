@@ -1,6 +1,7 @@
 import { slug } from '@husk-ai/core';
+import { ensureRunning } from '@husk-ai/runtime';
 import type { ComputerSpec } from '@husk-ai/core';
-import { parse, parseChoice, parseCount, parseMemory } from '../args.js';
+import { parse, parseChoice, parseCount, parseEnvPairs, parseMemory } from '../args.js';
 import { manager } from '../lib/computers.js';
 import { orient } from '../lib/first-run.js';
 import * as ui from '../ui.js';
@@ -33,6 +34,8 @@ export async function run(argv: string[]): Promise<number> {
     'up',
   );
   ui.configure(values);
+  // Before the header, as exec and run check theirs: `--env FOO` was dropped without a word.
+  const env = parseEnvPairs(values.env as string[] | undefined, 'up');
 
   const name = positionals[0] ? slug(positionals[0]) : `box-${Math.random().toString(36).slice(2, 7)}`;
   const mgr = manager();
@@ -41,10 +44,14 @@ export async function run(argv: string[]): Promise<number> {
   // read before a machine exists, not once it already does.
   const requested = (values.provider as string | undefined) ?? 'auto';
   const status = await mgr.status();
-  const picked = requested === 'auto' ? status.find((s) => s.available) : status.find((s) => s.name === requested);
+  // What `auto` picks, asked of the manager that will pick it: the provider
+  // ~/.husk/config.json names, and never Fly unasked.
+  const pickedName = requested === 'auto' ? await mgr.resolveProvider('auto').then((p) => String(p.name), () => undefined) : requested;
+  const picked = status.find((s) => s.name === pickedName);
   orient({
     provider: picked ? String(picked.name) : requested,
     isolated: picked?.isolated ?? null,
+    ...(picked?.isolationKind ? { isolationKind: picked.isolationKind } : {}),
     detail: picked?.version,
     hint: `husk exec ${name} -- uname -sr`,
   });
@@ -72,13 +79,17 @@ export async function run(argv: string[]): Promise<number> {
     ...(values['idle-timeout']
       ? { idleTimeoutSec: parseCount(values['idle-timeout'] as string, '--idle-timeout', 'up') }
       : {}),
-    ...(parseEnv(values.env as string[] | undefined) ? { env: parseEnv(values.env as string[] | undefined) } : {}),
+    ...(env ? { env } : {}),
   };
 
-  const spin = ui.spinner(`creating ${name}`);
+  // `up` on a name that exists brings that computer up rather than making a
+  // second one under the same name (#112). Its settings are left as they are.
+  const existing = (await mgr.list()).find((c) => c.name === name && c.state !== 'destroyed');
+  const spin = ui.spinner(existing ? `starting ${name}` : `creating ${name}`);
   let computer;
   try {
-    computer = await mgr.create(spec);
+    const found = existing ? await mgr.get(existing.id) : null;
+    computer = found ? await ensureRunning(found) : await mgr.create(spec);
   } finally {
     spin.stop();
   }
@@ -91,7 +102,10 @@ export async function run(argv: string[]): Promise<number> {
   }
 
   const availability = status.find((s) => s.name === info.provider);
-  ui.print(`${ui.green('✓')} ${ui.bold(info.name)} is up`);
+  ui.print(`${ui.green('✓')} ${ui.bold(info.name)} ${existing ? 'was already here, and is up' : 'is up'}`);
+  if (existing && argv.some((a) => a.startsWith('--') && !a.startsWith('--json') && !a.startsWith('--no-color'))) {
+    ui.print(ui.dim(`  its settings were not changed -- \`husk rm ${info.name}\` first to make it again with new ones`));
+  }
   ui.print();
   ui.print(
     ui.fields([
@@ -99,13 +113,14 @@ export async function run(argv: string[]): Promise<number> {
       ['provider', `${info.provider}${availability?.version ? ui.dim(`  (${availability.version})`) : ''}`],
       [
         'isolation',
-        availability?.isolated
-          ? ui.green('kernel-level')
-          : ui.yellow('guardrails only — not a sandbox'),
+        availability?.isolationKind === 'guardrails' || availability?.isolated === false
+          ? ui.yellow('guardrails only — not a sandbox')
+          : ui.isolation(availability?.isolationKind, availability?.isolated),
       ],
       ['image', info.imageFallback ? `${info.image} ${ui.yellow('(fallback)')}` : ui.dim(info.image)],
       ['workdir', info.workdir],
-      ['network', spec.network?.mode ?? 'egress'],
+      // No policy means full access minus internal addresses (core/net.ts), not egress.
+      ['network', info.spec?.network?.mode ?? spec.network?.mode ?? 'full (internal addresses refused)'],
     ]),
   );
 
@@ -135,14 +150,4 @@ export async function run(argv: string[]): Promise<number> {
   ui.print(`  ${ui.gray('$')} husk rm ${info.name}`);
 
   return EXIT_OK;
-}
-
-function parseEnv(pairs: string[] | undefined): Record<string, string> | undefined {
-  if (!pairs?.length) return undefined;
-  const out: Record<string, string> = {};
-  for (const p of pairs) {
-    const i = p.indexOf('=');
-    if (i > 0) out[p.slice(0, i)] = p.slice(i + 1);
-  }
-  return out;
 }

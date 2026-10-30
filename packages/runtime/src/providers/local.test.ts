@@ -1,27 +1,204 @@
-/**
- * The local provider's honesty about isolation.
- *
- * This is the one claim in husk that must never drift optimistically. The build
- * contract says the local provider is guardrails only and never to claim
- * isolation it does not provide, and `husk doctor` renders whatever this
- * returns. A boolean flipped here would quietly tell someone their
- * prompt-injected agent was sandboxed.
- *
- * It lived as a subprocess assertion in the CLI smoke tests, where it shared a
- * describe block with tests that probed docker and podman and so inherited
- * their latency and their flake. The invariant belongs next to the code that
- * owns it.
- *
- * `isAvailable()` calls `detectShell()`, which on Windows spawns `wsl.exe -l -q`
- * once, capped at 8s and cached. That is bounded and unavoidable if the version
- * label is to be real; on posix it does no I/O at all. The isolation fields
- * asserted below are literals either way.
- */
-import { describe, expect, it } from 'vitest';
-import { LocalProvider, windowsHint, windowsReason } from './local.js';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { LocalProvider, setShellPlan, windowsHint, windowsReason, wslWorks } from './local.js';
 import type { ShellPlan } from './local.js';
+import type { Computer } from '@husk-ai/core';
+import { ComputerManager } from '../manager.js';
 
+/**
+ * The local provider's workspace contract, exercised the way an agent hits it:
+ * write through the file tools, then read and execute through the shell using
+ * the same documented /work path.
+ *
+ * The shell side of this was broken on posix hosts: file tools translated
+ * /work, the shell did not, so "write a script, then run it" -- the most
+ * basic agent workflow -- failed on the default provider.
+ */
+
+let home: string | undefined;
+const original = process.env.HUSK_HOME;
+const computers: Computer[] = [];
+
+/**
+ * Remove the scratch HUSK_HOME, allowing for a filesystem that is still settling.
+ *
+ * Each test has just had a provider writing under `computers/`, and teardown can
+ * start before the last of those writes has landed -- `rm` then loses the race
+ * and reports `ENOTEMPTY: directory not empty, rmdir`. Seen on macos-latest for
+ * 0f664b6. `maxRetries` is Node's answer: with `recursive`, it backs off linearly
+ * and retries exactly that error set (EBUSY, EMFILE, ENFILE, ENOTEMPTY, EPERM).
+ * `force` alone does not help -- it suppresses "does not exist", not "is busy".
+ *
+ * This is the same fix #80 applied to `packages/cli/src/smoke.test.ts`, including
+ * the part that matters most: teardown cannot fail the run. Every assertion has
+ * already passed by the time this runs, the directory is under the OS temp dir,
+ * and a CI runner is discarded whole. The warning keeps a leak visible rather
+ * than silent.
+ */
+async function removeHome(dir: string): Promise<void> {
+  try {
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (err) {
+    console.warn(`[local.test] could not remove ${dir}: ${(err as Error).message}`);
+  }
+}
+
+afterEach(async () => {
+  for (const c of computers.splice(0)) await c.destroy().catch(() => {});
+  if (home) await removeHome(home);
+  home = undefined;
+  if (original === undefined) delete process.env.HUSK_HOME;
+  else process.env.HUSK_HOME = original;
+});
+
+async function freshComputer(): Promise<Computer> {
+  home = await mkdtemp(join(tmpdir(), 'husk-local-'));
+  process.env.HUSK_HOME = home;
+  await mkdir(join(home, 'computers'), { recursive: true });
+  const c = await new LocalProvider().create({});
+  computers.push(c);
+  return c;
+}
+
+// The /work contract is a posix-and-WSL promise; the cmd.exe fallback reports
+// its own truthful workdir instead and is covered by the degradation tests.
+describe.skipIf(process.platform === 'win32')('local provider /work contract', () => {
+  // #113: a link made in the shell holds a guest target the host cannot follow.
+  it('follows a symlink that stays inside /work, for a file and a directory', async () => {
+    const c = await freshComputer();
+    const r = await c.exec({
+      cmd: 'echo INSIDE > /work/real.txt && ln -s /work/real.txt /work/link.txt && mkdir /work/sub && echo X > /work/sub/x && ln -s /work/sub /work/link-dir',
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+
+    expect(Buffer.from(await c.readFile('/work/link.txt')).toString().trim()).toBe('INSIDE');
+    expect((await c.listDir('/work/link-dir')).map((e) => e.name)).toEqual(['x']);
+    expect((await c.stat('/work/link.txt'))?.type).toBe('file');
+  });
+
+  // /etc/hosts exists on Linux and macOS; a dangling link would only prove "missing".
+  it('refuses a symlink that leaves the workspace, as a path outside it', async () => {
+    const c = await freshComputer();
+    const r = await c.exec({ cmd: 'ln -s /etc/hosts /work/escape' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    // Refused as a path outside the workspace, not reported as missing.
+    await expect(c.readFile('/work/escape')).rejects.toMatchObject({ code: 'E_FS_DENIED', message: expect.not.stringMatching(/^cannot read/) });
+  });
+
+  it('runs a script written through the file tools via its /work path', async () => {
+    const c = await freshComputer();
+    await c.writeFile('/work/hello.sh', 'echo marker-from-work\n');
+
+    const r = await c.exec({ cmd: 'sh /work/hello.sh' });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('marker-from-work');
+
+    // And the file tools still see the same file the shell just ran.
+    const back = Buffer.from(await c.readFile('/work/hello.sh')).toString('utf8');
+    expect(back).toBe('echo marker-from-work\n');
+  });
+
+  it('sees files the shell wrote to /work through the file tools', async () => {
+    const c = await freshComputer();
+    const w = await c.exec({ cmd: 'printf shell-made > /work/out.txt' });
+    expect(w.exitCode).toBe(0);
+    expect(Buffer.from(await c.readFile('/work/out.txt')).toString('utf8')).toBe('shell-made');
+  });
+
+  it('reads no further than it was asked to, and refuses a whole file over its limit', async () => {
+    const c = await freshComputer();
+    expect((await c.exec({ cmd: 'head -c 200000 /dev/zero | tr "\\0" a > /work/big.txt' })).exitCode).toBe(0);
+    await expect(c.readFile('/work/big.txt', { maxBytes: 1000 })).rejects.toMatchObject({ code: 'E_QUOTA' });
+    const head = await c.readTextFile('/work/big.txt', 10);
+    expect(head.startsWith('aaaaaaaaaa\n')).toBe(true);
+    expect(head).toContain('goes on past 10 bytes');
+    expect((await c.readFile('/work/big.txt')).byteLength).toBe(200000);
+  });
+
+  it('refuses a pipe at once instead of waiting for a writer that never comes', async () => {
+    const c = await freshComputer();
+    expect((await c.exec({ cmd: 'mkfifo /work/pipe' })).exitCode).toBe(0);
+    const started = Date.now();
+    await expect(c.readFile('/work/pipe')).rejects.toMatchObject({ code: 'E_FS_DENIED', message: expect.stringContaining('not a regular file') });
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it('maps /tmp to the computer tmp the file tools use', async () => {
+    const c = await freshComputer();
+    await c.writeFile('/tmp/setup.sh', 'echo tmp-marker\n');
+    const r = await c.exec({ cmd: 'sh /tmp/setup.sh' });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('tmp-marker');
+  });
+
+  it('starts the shell in the workspace and says so in $PWD', async () => {
+    const c = await freshComputer();
+    const r = await c.exec({ cmd: 'pwd && echo "PWD=$PWD" && printf rel > relative.txt && cat /work/relative.txt' });
+    expect(r.exitCode).toBe(0);
+    // The relative write landed in the workspace and reads back through /work.
+    expect(r.stdout).toContain('rel');
+    const [pwdLine, envLine] = r.stdout.split('\n');
+    expect(envLine).toBe(`PWD=${pwdLine}`);
+  });
+
+  it('does not repoint a guest path that escapes the jail', async () => {
+    const c = await freshComputer();
+    const r = await c.exec({ cmd: 'cat /work/../../etc/passwd' });
+    expect(r.exitCode).not.toBe(0);
+  });
+});
+
+/**
+ * The isolation claim and the Windows messaging, which run on every platform.
+ *
+ * These are literals and pure functions, so they belong outside the /work
+ * contract block above -- that one is posix-only, and skipping it on Windows
+ * would otherwise take the honesty invariant with it. The build contract says
+ * the local provider is guardrails only and never to claim isolation it does
+ * not provide, and `husk doctor` renders whatever `isAvailable()` returns. A
+ * boolean flipped here would quietly tell someone their prompt-injected agent
+ * was sandboxed.
+ */
 describe('the local provider', () => {
+  // These are about the registry, not the shell. On Windows, detecting the shell
+  // runs wsl.exe synchronously for up to 8s + 15s per distro, and a slow or
+  // broken WSL made whichever test created the first computer here time out.
+  beforeAll(() => {
+    if (process.platform === 'win32') setShellPlan({ kind: 'windows', degradation: 'wsl-absent', label: 'test: Windows host shell' });
+  });
+  afterAll(() => setShellPlan(undefined));
+
+  it('can remove a registered computer after its workspace disappears', async () => {
+    const computer = await freshComputer();
+    const provider = new LocalProvider();
+    const workspace = computer.info.spec.labels?.['husk.workspace'];
+    expect(workspace).toBeTruthy();
+    await rm(workspace!, { recursive: true, force: true });
+
+    expect((await provider.list()).map((info) => info.id)).toContain(computer.id);
+    const stale = await provider.get(computer.id);
+    expect(stale).not.toBeNull();
+    expect(stale!.info.state).toBe('destroyed');
+    await stale!.destroy();
+    expect((await provider.list()).map((info) => info.id)).not.toContain(computer.id);
+  });
+
+  it('recreates a stable-key computer when its workspace disappears', async () => {
+    home = await mkdtemp(join(tmpdir(), 'husk-local-'));
+    process.env.HUSK_HOME = home;
+    const manager = new ComputerManager({ providers: [new LocalProvider()] });
+    const first = await manager.ensure('missing-workspace', { provider: 'local' });
+    computers.push(first);
+    await rm(first.info.spec.labels!['husk.workspace']!, { recursive: true, force: true });
+
+    const replacement = await manager.ensure('missing-workspace', { provider: 'local' });
+    computers.push(replacement);
+    expect(replacement.id).not.toBe(first.id);
+    expect(replacement.info.state).toBe('running');
+  });
+
   it('is always available, because the free path depends on it', async () => {
     const a = await new LocalProvider().isAvailable();
     expect(a.available).toBe(true);
@@ -40,6 +217,12 @@ describe('the local provider', () => {
     expect(a.reason).toBeTruthy();
     expect(a.hint).toBeTruthy();
     expect(`${a.reason} ${a.hint}`).toMatch(/guard|sandbox|Docker|wsl/i);
+  });
+
+  it('does not advertise isolation in its own description', async () => {
+    const p = new LocalProvider();
+    expect(p.description).toMatch(/not isolated/i);
+    expect(p.priority).toBe(10);
   });
 
   /**
@@ -77,10 +260,41 @@ describe('the local provider', () => {
       expect(windowsHint(plan())).toBeNull();
     });
   });
+});
 
-  it('does not advertise isolation in its own description', async () => {
-    const p = new LocalProvider();
-    expect(p.description).toMatch(/not isolated/i);
-    expect(p.priority).toBe(10);
+// #110: the first WSL use after boot can outlast the probe that starts it.
+describe('wslWorks', () => {
+  const answer = (stdout: string, error?: string) =>
+    (() => ({ stdout: Buffer.from(stdout), stderr: Buffer.alloc(0), status: 0, signal: null, pid: 1, output: [], ...(error ? { error: Object.assign(new Error(error), { code: error }) } : {}) })) as never;
+
+  it('tries a cold distro once more when the first probe times out', () => {
+    const calls: number[] = [];
+    let n = 0;
+    const run = ((_cmd: string, _args: string[], opts: { timeout: number }) => {
+      calls.push(opts.timeout);
+      return n++ === 0 ? (answer('', 'ETIMEDOUT') as () => unknown)() : (answer('husk-wsl-ok\n') as () => unknown)();
+    }) as never;
+    expect(wslWorks('Ubuntu', run)).toBe(true);
+    expect(calls).toEqual([15_000, 30_000]);
+  });
+
+  it('does not retry on a re-check, which runs inside a live server', () => {
+    const calls: number[] = [];
+    const run = ((_c: string, _a: string[], opts: { timeout: number }) => {
+      calls.push(opts.timeout);
+      return (answer('', 'ETIMEDOUT') as () => unknown)();
+    }) as never;
+    expect(wslWorks('Ubuntu', run, false)).toBe(false);
+    expect(calls).toEqual([15_000]);
+  });
+
+  it('does not retry a distro that answered with an error', () => {
+    let n = 0;
+    const run = (() => {
+      n++;
+      return (answer('Catastrophic failure') as () => unknown)();
+    }) as never;
+    expect(wslWorks('Ubuntu', run)).toBe(false);
+    expect(n).toBe(1);
   });
 });

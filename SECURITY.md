@@ -32,11 +32,12 @@ Expect that to change at 1.0, when a released minor is worth holding open.
 The full analysis is in [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md). The short
 version, because a security page that buries the caveat is not a security page:
 
-**The `local` provider is not a sandbox.** It is a guarded working directory. It pins
-the working directory, resolves every path through `realpath` and refuses escapes,
-scrubs credential-shaped environment variables, caps output, kills the process tree on
-timeout, and refuses a deny list of unrecoverable commands. That stops accidents. It
-does not stop an adversary. `husk doctor` reports `isolationKind: guardrails` for it,
+**The `local` provider is not a sandbox.** It is a guarded working directory. Its file
+tools resolve every path through `realpath` and refuse escapes, shell commands start in
+the workspace, credential-shaped environment variables are scrubbed, output is capped,
+the process tree is killed on timeout, and a deny list of unrecoverable commands is
+refused. That stops accidents. It does not stop an adversary: a shell command can still
+read and write anything your user can, including outside the workspace. `husk doctor` reports `isolationKind: guardrails` for it,
 and the CLI says so before you use it.
 
 **A prompt-injected model is closer to an adversary than to an accident.** If an agent
@@ -52,7 +53,7 @@ than a plain "isolated", because the difference matters.
 
 | control | what it does |
 | --- | --- |
-| Path jail | `/work` and `/tmp` only; `..` traversal and escaping symlinks both refused |
+| Path jail (file tools) | `/work` and `/tmp` only; `..` traversal and escaping symlinks both refused |
 | Env scrubbing | `*_API_KEY`, `*_TOKEN`, `*_SECRET`, `AWS_*` and friends never reach a command |
 | Command policy | a deny list of unrecoverable commands, anchored to command position |
 | Network floor | loopback, link-local and RFC1918 refused **even in `network.mode: full`** |

@@ -106,10 +106,11 @@ Each checks a different layer, and none substitutes for another.
 | `npm run drift` | source copies of one fact still agree with each other |
 | `npm run preflight` | manifests, publish order and registry state, before publishing |
 | `packages/cli/src/pack.test.ts` | the *installed* binary prints what its manifest claims |
-| `scripts/secret-scan.mjs` | every ref, tree and the full history |
+| `scripts/secret-scan.mjs` | every ref, tree and the full history: merges by their first parent, and commit and tag messages |
 
 A green suite is narrower than it looks. Integration tests are opt-in behind
-`HUSK_INTEGRATION=1`, so passing CI does not mean Docker was exercised — and the Windows
+`HUSK_INTEGRATION=1`, so the package tests alone do not exercise Docker; the `e2e`
+workflow and the SDK conformance suite on ubuntu do, on a real Docker computer — and the Windows
 job skips the `local` free-path test on every run
 ([#63](https://github.com/Hotragn/husk/issues/63)), which is the one platform where that
 path is most likely to be the only one a user has.
@@ -161,6 +162,26 @@ npm run build:packages && npm run typecheck && npm test
 Then actually run the thing you changed. `husk doctor`, `husk up`, `husk exec` — the
 CLI is the product's face, and a change that typechecks but reads badly in a terminal
 is not done.
+
+### Two checks that fail on every PR from a fork
+
+If you are contributing from a fork, `Vercel – husk-dev` and `Vercel – husk-dev-docs`
+will both go red with **"Authorization required to deploy."** That is not your change
+and there is nothing to fix on your side.
+
+Vercel requires a maintainer to authorise a deployment built from a fork, because the
+build would otherwise run your branch's code with this project's environment variables
+and OIDC token. The red mark is that protection working. We would rather a contributor
+see two confusing checks than hand every fork a set of deployment credentials.
+
+The check that speaks for your change is **`packages`** — the matrix across Node 20 and
+22 on Linux, macOS and Windows — along with `duplicated facts still agree` and
+`no credentials in the tree or the history`. Those are the ones to read.
+
+**Your first PR will also sit with no checks at all until a maintainer approves the
+run.** GitHub holds workflows from first-time contributors until someone clicks through,
+so an empty check list means you are waiting on us, not that something is broken. Say so
+in the PR if it has been a while.
 
 ### Scripts that import the packages
 

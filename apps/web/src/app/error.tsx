@@ -25,7 +25,7 @@ export default function Error({
 }) {
   useEffect(() => {
     // The reader cannot see the console; whoever they send this to can.
-    console.error("husk.dev route error", error);
+    console.error("huskai.dev route error", error);
   }, [error]);
 
   return (

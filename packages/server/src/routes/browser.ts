@@ -1,10 +1,12 @@
 import { Buffer } from 'node:buffer';
-import { browserFor, closeBrowserFor, findInstalledChromium } from '@husk-ai/browser';
+import { browserFor, browserSessionFor, closeBrowserFor, inspectBrowserCapability, withCallSignal } from '@husk-ai/browser';
 import type { Computer } from '@husk-ai/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ctxOf } from '../context.js';
 import { invalidSpec, notFound } from '../errors.js';
+import { closedEarly } from '../sse.js';
+import { programCall } from './handoffs.js';
 
 /**
  * The real browser, over HTTP.
@@ -91,23 +93,42 @@ export async function browserRoutes(app: FastifyInstance): Promise<void> {
   app.get('/v1/computers/:id/browser/status', async (req: FastifyRequest) => {
     const { id } = req.params as { id: string };
     const computer = await mustGet(app, id);
-    const found = await findInstalledChromium(computer).catch(() => null);
-    return found
-      ? { installed: true, source: found.source, ...(found.version ? { version: found.version } : {}) }
-      : { installed: false };
+    return inspectBrowserCapability(computer);
   });
 
-  app.post('/v1/computers/:id/browser/goto', async (req: FastifyRequest) => {
+  /**
+   * The open tabs, for a computer window's tab names. A viewer's call: it never
+   * starts a browser and never counts as using the computer.
+   */
+  app.get('/v1/computers/:id/browser/tabs', async (req: FastifyRequest) => {
+    const { id } = req.params as { id: string };
+    await mustGet(app, id);
+    return { tabs: (await browserSessionFor(id)?.liveTabs()) ?? [] };
+  });
+
+  // A program's browser action: a take-over refuses it or stops it where it runs.
+  const acting = async <T>(req: FastifyRequest, reply: FastifyReply, id: string, what: string, act: () => Promise<T>): Promise<T> => {
+    const call = programCall(ctx.runner.handoffs, id, req, what, closedEarly(reply));
+    try {
+      return await withCallSignal(call.signal, act);
+    } finally {
+      call.done();
+    }
+  };
+
+  app.post('/v1/computers/:id/browser/goto', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
     const body = parseOr422(GotoSchema, req.body);
     const computer = await mustGet(app, id);
 
     const session = sessionFor(app, computer);
-    // The policy check lives in the session, on the parsed URL it then navigates
-    // to, so there is no gap between what was authorised and what was loaded.
-    const result = await session.goto(body.url, { timeoutMs: (body.timeoutSec ?? 30) * 1000 });
-    const page = await session.activePage();
-    const out = { url: result.url, loaded: result.loaded, title: await page.title() };
+    const out = await acting(req, reply, id, 'browser_goto', async () => {
+      // The policy check lives in the session, on the parsed URL it then navigates
+      // to, so there is no gap between what was authorised and what was loaded.
+      const result = await session.goto(body.url, { timeoutMs: (body.timeoutSec ?? 30) * 1000 });
+      const page = await session.activePage();
+      return { url: result.url, loaded: result.loaded, title: await page.title() };
+    });
     ctx.bus.emit('computers', 'browsed', { id, url: out.url, status: out.loaded ? 200 : 0 });
     return out;
   });
@@ -119,26 +140,32 @@ export async function browserRoutes(app: FastifyInstance): Promise<void> {
     return { url: await page.url(), nodes: await page.snapshot({ limit: body.limit ?? 400 }) };
   });
 
-  app.post('/v1/computers/:id/browser/click', async (req: FastifyRequest) => {
+  app.post('/v1/computers/:id/browser/click', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
     const body = parseOr422(RefSchema, req.body);
-    const page = await sessionFor(app, await mustGet(app, id)).activePage();
-    // Only pays for a load when the click started one. A click that opens a
-    // menu used to cost a flat 5s waiting for an event that was never coming.
-    await page.clickAndSettle(body.ref);
-    return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }) };
+    const session = sessionFor(app, await mustGet(app, id));
+    return acting(req, reply, id, 'browser_click', async () => {
+      const page = await session.activePage();
+      // Only pays for a load when the click started one. A click that opens a
+      // menu used to cost a flat 5s waiting for an event that was never coming.
+      await page.clickAndSettle(body.ref);
+      return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }) };
+    });
   });
 
-  app.post('/v1/computers/:id/browser/type', async (req: FastifyRequest) => {
+  app.post('/v1/computers/:id/browser/type', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
     const body = parseOr422(TypeSchema, req.body);
-    const page = await sessionFor(app, await mustGet(app, id)).activePage();
-    await page.type(body.ref, body.text);
-    if (body.submit) {
-      await page.press('Enter');
-      await page.waitForLoad(10_000);
-    }
-    return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }) };
+    const session = sessionFor(app, await mustGet(app, id));
+    return acting(req, reply, id, 'browser_type', async () => {
+      const page = await session.activePage();
+      await page.type(body.ref, body.text);
+      if (body.submit) {
+        await page.press('Enter');
+        await page.waitForLoad(10_000);
+      }
+      return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }) };
+    });
   });
 
   app.get('/v1/computers/:id/browser/screenshot', async (req: FastifyRequest, reply: FastifyReply) => {

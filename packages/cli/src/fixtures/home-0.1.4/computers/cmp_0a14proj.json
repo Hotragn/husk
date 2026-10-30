@@ -1,0 +1,22 @@
+{
+  "id": "cmp_0a14proj",
+  "name": "mcp-proj",
+  "provider": "local",
+  "state": "running",
+  "image": "local:bash",
+  "workdir": "{{HOME}}/workspaces/cmp_0a14proj",
+  "createdAt": "2026-09-19T10:00:00.000Z",
+  "lastUsedAt": "2026-09-19T10:00:00.000Z",
+  "nativeId": "{{HOME}}/workspaces/cmp_0a14proj",
+  "spec": {
+    "name": "mcp-proj",
+    "idleTimeoutSec": 3600,
+    "persist": true,
+    "labels": {
+      "husk.key": "proj",
+      "husk.shell": "bash",
+      "husk.workspace": "{{HOME}}/workspaces/cmp_0a14proj"
+    },
+    "provider": "local"
+  }
+}

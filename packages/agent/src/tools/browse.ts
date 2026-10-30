@@ -48,13 +48,9 @@ export const browse = defineTool<{ url: string; maxBytes?: number; timeoutSec?: 
   needsComputer: true,
 
   async handler(input, ctx) {
-    if (!ctx.computer) {
-      throw new HuskError('E_TOOL_ERROR', 'browse needs a computer, and this husk has none', {
-        hint: 'set computer.enabled: true in husk.yaml, or use fetch_url to read from the host instead',
-      });
-    }
-
-    const page = await browseInComputer(ctx.computer, {
+    // Comes up on first use; acquireComputer explains itself when there is none.
+    const computer = ctx.computer ?? (await ctx.acquireComputer());
+    const page = await browseInComputer(computer, {
       url: input.url,
       maxBytes: input.maxBytes ?? 120_000,
       timeoutSec: input.timeoutSec ?? 30,

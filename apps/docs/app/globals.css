@@ -13,94 +13,40 @@
 @import '../src/styles/tokens.css';
 
 /* -----------------------------------------------------------------------------
-   FONTS -- self-hosted woff2 from public/fonts.
+   The faces, and the three tokens that name them.
 
-   Nothing here is fetched from a third-party origin. A product whose pitch is
-   that nothing leaves your machine has no business loading a typeface from
-   Google's CDN, which would hand every reader's IP address to a company they
-   did not choose to talk to.
+   Declared by next/font/local in app/fonts.ts,
+   which emits the @font-face, fingerprints the file, preloads it per route and
+   synthesises a metric-matched fallback. Nothing is fetched from a third-party
+   origin: the woff2 files are in src/fonts and the licences sit beside them.
 
-   Sources: the OFL 1.1 releases published on npm as @fontsource-variable/*,
-   copied into public/fonts. The licences sit next to the files.
+   tokens.css is a byte-identical copy of brand/tokens.css and drift-check
+   enforces that, so the three family tokens are re-pointed here rather than
+   edited there. The fallback stacks are kept -- they are what renders during
+   swap, and next/font inserts its own metric-adjusted face ahead of them.
+
+   General Sans      display + UI   wght 200-700, latin
+   Commit Mono       anything a machine wrote   wght 200-700, latin + the box
+                     drawing, arrows and dingbats the terminal blocks print
+   No serif here. Newsreader exists for one essay on the marketing site.
 -------------------------------------------------------------------------------- */
 
-@font-face {
-  font-family: 'Bricolage Grotesque';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 200 800;
-  font-stretch: 75% 100%;
-  src: url('/fonts/BricolageGrotesque-latin.woff2') format('woff2-variations');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+:root {
+  --font-display: var(--font-general-sans), 'Archivo', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-ui: var(--font-general-sans), 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: var(--font-commit-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+
+  /* Bricolage carried an `opsz` axis and tokens.css sets it per heading level.
+     General Sans has one axis, `wght`, so those five tokens now resolve to a
+     setting no face reads. Neutralised here rather than left to apply a
+     variation the font does not have. */
+  --font-display-opsz-body: normal;
+  --font-display-opsz-h3: normal;
+  --font-display-opsz-h2: normal;
+  --font-display-opsz-h1: normal;
+  --font-display-opsz-section: normal;
 }
 
-@font-face {
-  font-family: 'Bricolage Grotesque';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 200 800;
-  font-stretch: 75% 100%;
-  src: url('/fonts/BricolageGrotesque-latin-ext.woff2') format('woff2-variations');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
-    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
-    U+2C60-2C7F, U+A720-A7FF;
-}
-
-@font-face {
-  font-family: 'Instrument Sans';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 400 700;
-  font-stretch: 75% 100%;
-  src: url('/fonts/InstrumentSans-latin.woff2') format('woff2-variations');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'Instrument Sans';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 400 700;
-  font-stretch: 75% 100%;
-  src: url('/fonts/InstrumentSans-latin-ext.woff2') format('woff2-variations');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
-    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
-    U+2C60-2C7F, U+A720-A7FF;
-}
-
-@font-face {
-  font-family: 'Instrument Sans';
-  font-style: italic;
-  font-display: swap;
-  font-weight: 400 700;
-  font-stretch: 75% 100%;
-  src: url('/fonts/InstrumentSans-latin-italic.woff2') format('woff2-variations');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 100 800;
-  src: url('/fonts/JetBrainsMono-latin.woff2') format('woff2-variations');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 100 800;
-  src: url('/fonts/JetBrainsMono-latin-ext.woff2') format('woff2-variations');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
-    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
-    U+2C60-2C7F, U+A720-A7FF;
-}
 
 /* =============================================================================
    1. PAGE FRAME
@@ -557,6 +503,28 @@ body {
 .drawer-close {
   width: var(--control-height-lg);
   height: var(--control-height-lg);
+}
+
+/* The link back to the marketing site. It lives in `.header-nav` on desktop,
+   and `.header-nav` is `display: none` below --bp-lg -- so without this the
+   cross-link the audit asked for does not exist on a phone. */
+.drawer-cross {
+  display: flex;
+  align-items: center;
+  min-height: var(--control-height-lg);
+  margin: 0 var(--space-2) var(--space-3);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+  transition: var(--transition-colors);
+}
+
+.drawer-cross:hover {
+  background-color: var(--color-surface);
+  color: var(--color-text);
 }
 
 /* =============================================================================
@@ -1062,7 +1030,15 @@ html[data-theme='light'] .code-figure pre span {
   }
 }
 
+/* Lighthouse `target-size`. These were bare inline links in a flex row: 13.33px
+   text at 1.5 line-height is a 20px-tall tap target, under the 24px floor, and
+   the row packed four of them together. `inline-flex` plus the standard control
+   height makes each one 36px without changing where the text sits, because the
+   box grows symmetrically around the same baseline. */
 .footer a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-height-md);
   color: var(--color-text-muted);
   text-decoration: underline;
   text-decoration-thickness: 1px;
@@ -1545,3 +1521,103 @@ html:not([data-theme]) .theme-icon-dark {
     display: block;
   }
 }
+
+/* -----------------------------------------------------------------------------
+   Link previews.
+
+   A floating card on hover or focus, showing the destination's own share
+   image. Absolutely positioned inside an inline-block wrapper, so it cannot
+   reflow the sentence it sits in -- section 3 bans hover effects that move
+   layout, and an inline link inside a paragraph is the least forgiving place
+   to break that rule.
+
+   Opaque surface, not glass. Section 8.10: a backdrop-filter panel over
+   scrolling text has a contrast ratio that changes with whatever is behind it,
+   so the same card is compliant in one scroll position and not in the next.
+-------------------------------------------------------------------------------- */
+
+.lp {
+  position: relative;
+  display: inline-block;
+}
+
+.lp-card {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  width: 20rem;
+  overflow: hidden;
+  border: var(--border-width-hairline) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--duration-3) var(--ease-exit),
+    transform var(--duration-3) var(--ease-exit);
+}
+
+/* The script writes left and top; these two decide which way the card hangs
+   off that point, so a link near the top of the window flips below it. */
+.lp-card[data-side='above'] {
+  transform: translate(-50%, calc(-100% - 4px));
+}
+
+.lp-card[data-side='below'] {
+  transform: translate(-50%, 4px);
+}
+
+.lp[data-open='true'] .lp-card {
+  opacity: 1;
+  transition:
+    opacity var(--duration-3) var(--ease-enter),
+    transform var(--duration-3) var(--ease-enter);
+}
+
+.lp[data-open='true'] .lp-card[data-side='above'] {
+  transform: translate(-50%, -100%);
+}
+
+.lp[data-open='true'] .lp-card[data-side='below'] {
+  transform: translate(-50%, 0);
+}
+
+.lp-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-bottom: var(--border-width-hairline) solid var(--color-border);
+}
+
+.lp-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.lp-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.lp-summary {
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
+/* The docs section grid is a grid whose children are the cards. The wrapper is
+   the child now, so it has to behave like one -- and `overflow: hidden` on
+   that grid is exactly why the card is fixed rather than absolute. */
+.section-grid > .lp {
+  display: block;
+}
+
+.section-grid > .lp > .section-card {
+  height: 100%;
+}
+

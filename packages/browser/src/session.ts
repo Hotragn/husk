@@ -1,8 +1,9 @@
 import { HuskError, assertUrlAllowed, onComputerDestroyed, ownsLoopback } from '@husk-ai/core';
 import type { Computer, NetworkPolicy } from '@husk-ai/core';
-import { CdpConnection, ComputerDriverTransport, createTarget } from './cdp.js';
-import type { CdpTransport } from './cdp.js';
-import { Page } from './page.js';
+import { CdpConnection, ComputerDriverTransport, createTarget, forNoCall } from './cdp.js';
+import type { CdpTransport, ScreencastEvent, ScreenFrame } from './cdp.js';
+import { Page, compactAxTree } from './page.js';
+import type { ActionOutcome, AxNodeLike, GotoResult, PageAction, ScriptOutcome } from './page.js';
 import { CACHE_ROOT, provisionChromium } from './provision.js';
 import type { ProvisionResult } from './provision.js';
 
@@ -50,6 +51,8 @@ export interface SessionOptions {
 }
 
 const DEFAULT_IDLE_MS = 5 * 60_000;
+/** How long a new screencast may show nothing before husk takes the first picture itself. */
+const FIRST_FRAME_MS = 1000;
 const PROFILE_DIR = `${CACHE_ROOT}/profile`;
 const LOG_PATH = `${CACHE_ROOT}/chromium.log`;
 
@@ -83,6 +86,19 @@ export function warnIfDebugPortIsExposed(
   );
 }
 
+interface Viewer {
+  fps: number;
+  send: (frame: ScreenFrame) => void;
+  lastAt: number;
+  pending?: ScreenFrame;
+  timer?: ReturnType<typeof setTimeout>;
+  /** Told when pushing stops for good, so the caller can poll. */
+  stopped?: () => void;
+}
+
+/** What Chromium logs when its sandbox cannot run here: no user namespaces, or running as root. */
+const SANDBOX_UNUSABLE = 'No usable sandbox|without --no-sandbox is not supported';
+
 export class BrowserSession {
   private conn: CdpConnection | undefined;
   private page: Page | undefined;
@@ -91,6 +107,22 @@ export class BrowserSession {
   private chromium: ProvisionResult | undefined;
   private port = 0;
   private readonly progressListeners = new Set<(message: string) => void>();
+  private transport: CdpTransport | undefined;
+  /** People watching the screen, each held to their own frame rate. */
+  private readonly viewers = new Set<Viewer>();
+  /** The tab being pushed, and how fast. */
+  private cast: { targetId: string; fps: number } | undefined;
+  /** False once the transport has said it cannot push frames: watchers poll instead. */
+  private pushes: boolean | undefined;
+  /**
+   * The newest frame of the cast running now, so a viewer who joins a still
+   * page sees it at once rather than at the next repaint. Valid only for the
+   * cast that produced it: once that stops, the page may move with nobody
+   * watching, and showing the old picture would be showing a page that is gone.
+   */
+  private lastFrame: { cast: { targetId: string; fps: number }; frame: ScreenFrame } | undefined;
+  private castSync: Promise<void> = Promise.resolve();
+  private castUnlisten: (() => void) | undefined;
 
   constructor(
     readonly computer: Computer,
@@ -105,16 +137,44 @@ export class BrowserSession {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     if (this.idleMs <= 0) return;
     this.idleTimer = setTimeout(() => {
+      // A ten-minute script or wait is not idleness: closing the browser
+      // under it would kill the page it is working on. Check again later.
+      if (this.transport?.busy?.()) return this.touch();
       void this.close('idle');
     }, this.idleMs);
     this.idleTimer.unref?.();
   }
 
-  /** The live page, launching Chromium if this is the first call. */
+  /**
+   * The live page if Chromium is already up, and never a launch.
+   *
+   * For a person watching a handoff: showing them the screen must not start a
+   * 111 MB download, and their watching counts as use, so the idle close does
+   * not shut the browser in the middle of a login.
+   */
+  livePage(): Page | undefined {
+    if (!this.page || !this.conn || this.conn.closed) return undefined;
+    this.touch();
+    return this.page;
+  }
+
+  /**
+   * The live page, launching Chromium if this is the first call, or the first
+   * since Chromium stopped: a connection closes itself when it finds Chromium
+   * gone, and the next call here starts a new one.
+   *
+   * This is the door every tool call comes through, and the only one that
+   * counts as using the computer. With a long-lived driver nothing here runs
+   * an `exec`, so nothing else would record the use -- and the screen, the
+   * thumbnail and a handoff come in through `livePage`, which must not.
+   */
   async activePage(): Promise<Page> {
     this.touch();
+    this.computer.markUsed?.();
     if (this.page && this.conn && !this.conn.closed) return this.page;
-    this.launching ??= this.launch().finally(() => {
+    // Every caller waits on the same launch, so the one whose call started it
+    // going away must not stop it for the rest.
+    this.launching ??= forNoCall(() => this.launch()).finally(() => {
       this.launching = undefined;
     });
     return await this.launching;
@@ -123,18 +183,202 @@ export class BrowserSession {
   /**
    * Navigate, after the policy check.
    *
-   * This is the only door into the browser that takes a URL from a caller, so
-   * it is the only place the check has to happen -- and it happens against the
-   * parsed URL that is then handed on, so there is no window in which the
-   * checked string and the fetched string could differ.
+   * This, `run` and `newTab` are the doors into the browser that take a URL
+   * from a caller, and a script's `page.goto` comes back through `answerHost`.
+   * The check happens against the parsed URL that is then handed on, so there is
+   * no window in which the checked string and the fetched string could differ.
+   * What a page loads by itself -- a redirect's next hop, a link, a frame, a
+   * pop-up -- the driver checks against the same policy (DriverPolicy).
    */
-  async goto(url: string, opts: { timeoutMs?: number } = {}): Promise<{ url: string; loaded: boolean }> {
-    const policy = this.opts.network ?? this.computer.info.spec.network;
-    const parsed = assertUrlAllowed(url, policy, {
-      loopbackIsOwn: ownsLoopback(this.computer.info.provider),
-    });
+  async goto(url: string, opts: { timeoutMs?: number } = {}): Promise<GotoResult> {
+    // Checked before the browser starts: a refused URL must not cost a launch.
+    const checked = this.allowed(url);
     const page = await this.activePage();
-    return await page.goto(parsed.toString(), opts);
+    return await page.goto(checked, opts);
+  }
+
+  /**
+   * A Python script with real control flow against the active page, run in
+   * its own process inside the computer. Every `page.goto` it makes comes back
+   * here and is checked like `goto` before Chromium is told to go.
+   */
+  async script(source: string, limitSec: number): Promise<ScriptOutcome> {
+    const page = await this.activePage();
+    return await page.script(source, limitSec);
+  }
+
+  /** The driver's questions mid-request: may a script go here, and what does this tree compact to. */
+  private answerHost(op: string, args: Record<string, unknown>): unknown {
+    if (op === 'checkUrl') {
+      try {
+        return this.allowed(String(args['url'] ?? ''));
+      } catch (err) {
+        // The refusal goes back into the computer; its "not a valid URL: <url>"
+        // would echo whatever the script sent, so that one is said without it.
+        if (err instanceof HuskError && err.message.startsWith('not a valid URL')) {
+          throw new HuskError('E_EXEC_DENIED', 'not a valid URL', { hint: 'include the scheme, e.g. https://example.com' });
+        }
+        throw err;
+      }
+    }
+    if (op === 'compact') {
+      const nodes = Array.isArray(args['nodes']) ? (args['nodes'] as AxNodeLike[]) : [];
+      const limit = typeof args['limit'] === 'number' ? args['limit'] : 400;
+      return compactAxTree(nodes, { limit });
+    }
+    throw new HuskError('E_INTERNAL', `the driver asked something husk does not answer: ${op}`, { hint: 'this is a husk bug' });
+  }
+
+  /** Several page actions in one driver round, each goto checked like `goto`. */
+  async run(actions: PageAction[]): Promise<ActionOutcome[]> {
+    const checked = actions.map((a) => (a.do === 'goto' ? { ...a, url: this.allowed(a.url) } : a));
+    const page = await this.activePage();
+    return await page.actions(checked);
+  }
+
+  private allowed(url: string): string {
+    const policy = this.opts.network ?? this.computer.info.spec.network;
+    return assertUrlAllowed(url, policy, { loopbackIsOwn: ownsLoopback(this.computer.info.provider) }).toString();
+  }
+
+  /**
+   * The screen, pushed, for a person watching. Resolves to a stop function, or
+   * to `undefined` when this browser cannot push frames and the caller should
+   * ask for them with `Page.frame` instead.
+   *
+   * One screencast serves every viewer: it runs at the fastest rate anyone
+   * asked for, follows the active tab, and stops when the last viewer leaves.
+   * Each viewer is held to its own rate, and always gets the newest frame in
+   * the end -- a page that repaints once and goes still must not leave a slow
+   * viewer looking at the frame before. None of this counts as using the
+   * computer, and none of it launches a browser.
+   *
+   * `onStop` fires if pushing becomes impossible later -- a tab that will not
+   * cast, a driver that fell back to one exec per call -- so the caller can
+   * start polling rather than show a frozen frame forever.
+   */
+  async watchScreen(
+    fps: number,
+    onFrame: (frame: ScreenFrame) => void,
+    onStop?: () => void,
+  ): Promise<(() => void) | undefined> {
+    const viewer: Viewer = { fps: Math.max(1, fps), send: onFrame, lastAt: 0, ...(onStop ? { stopped: onStop } : {}) };
+    this.viewers.add(viewer);
+    await this.syncCast();
+    if (this.pushes === false || !this.viewers.has(viewer)) {
+      this.viewers.delete(viewer);
+      return undefined;
+    }
+    // Only a frame from the cast running now: one kept from an earlier cast is
+    // of a page that may have moved on since nobody was watching.
+    const last = this.lastFrame;
+    if (last && this.cast && last.cast === this.cast) this.deliver(viewer, last.frame);
+    return () => {
+      this.viewers.delete(viewer);
+      if (viewer.timer) clearTimeout(viewer.timer);
+      void this.syncCast();
+    };
+  }
+
+  /** Bring the screencast in line with the viewers and the active tab. Serialised, so two changes cannot cross. */
+  private syncCast(): Promise<void> {
+    this.castSync = this.castSync
+      .then(() => this.syncCastNow())
+      .catch(() => undefined)
+      .then(() => {
+        if (this.pushes !== false) return;
+        // Nothing will be pushed to these viewers again: hand each back to its
+        // caller, which polls instead.
+        for (const viewer of [...this.viewers]) {
+          this.viewers.delete(viewer);
+          if (viewer.timer) clearTimeout(viewer.timer);
+          viewer.stopped?.();
+        }
+      });
+    return this.castSync;
+  }
+
+  private async syncCastNow(): Promise<void> {
+    const t = this.transport;
+    const page = this.page && this.conn && !this.conn.closed ? this.page : undefined;
+    const want =
+      t && page && this.viewers.size > 0
+        ? { targetId: page.id, fps: Math.max(...[...this.viewers].map((v) => v.fps)) }
+        : undefined;
+    const have = this.cast;
+    if (have && (!want || have.targetId !== want.targetId)) {
+      this.cast = undefined;
+      this.lastFrame = undefined;
+      await t?.stopScreencast?.(have.targetId).catch(() => undefined);
+    }
+    const starting = this.cast?.targetId !== want?.targetId;
+    if (!want || !t || (this.cast?.targetId === want.targetId && this.cast.fps === want.fps)) return;
+    if (!t.screencast) {
+      this.pushes = false;
+      return;
+    }
+    this.castUnlisten ??= t.onScreencast?.((e) => this.onCast(e));
+    try {
+      this.pushes = await t.screencast(want.targetId, want.fps);
+    } catch {
+      // A tab that will not cast is still a tab that will take a screenshot.
+      this.pushes = false;
+    }
+    if (!this.pushes) return;
+    if (!starting && this.cast) {
+      // Same tab, new rate: the cast, and the frames it already sent, carry on.
+      this.cast.fps = want.fps;
+      return;
+    }
+    const cast = { ...want };
+    this.cast = cast;
+    // Chromium pushes a frame when the page paints, and a still page may not
+    // paint for a new screencast at all. So a cast that has shown nothing
+    // after a second takes one picture itself, the way a frame request does:
+    // not a tool call, so not use.
+    setTimeout(() => void this.firstFrame(cast), FIRST_FRAME_MS).unref?.();
+  }
+
+  private async firstFrame(cast: { targetId: string; fps: number }): Promise<void> {
+    if (this.cast !== cast || this.lastFrame?.cast === cast) return;
+    const page = this.page;
+    if (!page || page.id !== cast.targetId) return;
+    const frame = await page.frame(60).catch(() => undefined);
+    if (!frame || this.cast !== cast || this.lastFrame?.cast === cast) return;
+    this.lastFrame = { cast, frame };
+    for (const viewer of this.viewers) this.deliver(viewer, frame);
+  }
+
+  private onCast(e: ScreencastEvent): void {
+    if (e.type === 'ended') {
+      if (e.targetId !== undefined && e.targetId !== this.cast?.targetId) return;
+      this.cast = undefined;
+      this.lastFrame = undefined;
+      // The driver died or the tab closed. Try again, but not in a tight loop.
+      setTimeout(() => void this.syncCast(), 1000).unref?.();
+      return;
+    }
+    const cast = this.cast;
+    if (!cast || e.targetId !== cast.targetId) return;
+    this.lastFrame = { cast, frame: e.frame };
+    for (const viewer of this.viewers) this.deliver(viewer, e.frame);
+  }
+
+  /** Send now if this viewer is due, or once it is -- always the newest frame. */
+  private deliver(viewer: Viewer, frame: ScreenFrame): void {
+    viewer.pending = frame;
+    if (viewer.timer) return;
+    const flush = (): void => {
+      viewer.timer = undefined;
+      const next = viewer.pending;
+      viewer.pending = undefined;
+      if (!next || !this.viewers.has(viewer)) return;
+      viewer.lastAt = Date.now();
+      viewer.send(next);
+    };
+    const wait = viewer.lastAt + 1000 / viewer.fps - Date.now();
+    if (wait <= 0) flush();
+    else viewer.timer = setTimeout(flush, wait);
   }
 
   /**
@@ -173,9 +417,19 @@ export class BrowserSession {
    * becomes usable.
    */
   async tabs(): Promise<Array<{ targetId: string; url: string; title: string; active: boolean }>> {
-    const page = await this.activePage();
+    await this.activePage();
+    return this.liveTabs();
+  }
+
+  /**
+   * The open tabs, for someone watching: a computer window's tab names. Like
+   * the screen, it never starts the browser and never counts as use, so with
+   * no browser up it is an empty list.
+   */
+  async liveTabs(): Promise<Array<{ targetId: string; url: string; title: string; active: boolean }>> {
+    const page = this.livePage();
     const conn = this.conn;
-    if (!conn) return [];
+    if (!page || !conn) return [];
 
     const res = await conn.send('Target.getTargets', {});
     const infos = Array.isArray(res['targetInfos']) ? (res['targetInfos'] as Array<Record<string, unknown>>) : [];
@@ -219,46 +473,92 @@ export class BrowserSession {
     await conn.send('Target.activateTarget', { targetId }).catch(() => undefined);
     this.page = page;
     this.touch();
+    // A new tab gets its own try at casting, whatever the last one did.
+    this.pushes = undefined;
+    void this.syncCast();
     return { url: await page.url(), title: await page.title() };
   }
 
   /** Open a new tab and switch to it. */
   async newTab(url = 'about:blank'): Promise<{ targetId: string; url: string }> {
+    // Checked like goto, and before the browser starts: a new tab is a navigation
+    // too, and a refused one must not cost a launch. about:blank is no address.
+    const checked = url === 'about:blank' ? url : this.allowed(url);
     await this.activePage();
     const conn = this.conn;
     if (!conn) throw new HuskError('E_TOOL_ERROR', 'the browser is not running', { hint: 'call goto first' });
 
-    const targetId = await createTarget(conn, url);
+    const targetId = await createTarget(conn, checked);
     await this.switchTab(targetId);
-    return { targetId, url };
+    return { targetId, url: checked };
   }
 
   private async launch(): Promise<Page> {
     const say = (m: string): void => this.say(m);
+    // What is left of a browser that stopped under an earlier call goes first:
+    // its driver, and its process if it is wedged rather than gone.
+    if (this.conn || this.port) await this.close('restarted');
 
     this.chromium ??= await provisionChromium(this.computer, { onProgress: say });
     this.port = await this.startChromium(this.chromium.binary, say);
 
-    const transport = this.opts.transport
-      ? this.opts.transport(this.computer, this.port)
-      : new ComputerDriverTransport(this.computer, this.port);
-    const conn = new CdpConnection(transport);
-    this.conn = conn;
+    let page: Page;
+    try {
+      const transport = this.opts.transport
+        ? this.opts.transport(this.computer, this.port)
+        : new ComputerDriverTransport(this.computer, this.port, {
+            // What a page loads by itself goes by the policy too, checked by the driver.
+            policy: { network: this.opts.network ?? this.computer.info.spec.network, loopbackIsOwn: ownsLoopback(this.computer.info.provider) },
+          });
+      const conn = new CdpConnection(transport);
+      this.conn = conn;
+      this.transport = transport;
+      transport.onHostCall?.((op, args) => this.answerHost(op, args));
 
-    const targetId = await createTarget(conn, 'about:blank');
-    const page = new Page(conn, targetId);
-    await page.init();
-    if (this.opts.viewport) await page.setViewport(this.opts.viewport.width, this.opts.viewport.height);
+      const targetId = await createTarget(conn, 'about:blank');
+      page = new Page(conn, targetId);
+      await page.init();
+      if (this.opts.viewport) await page.setViewport(this.opts.viewport.width, this.opts.viewport.height);
+    } catch (err) {
+      // Chromium is up but cannot be driven: reap it, or every failed launch leaks one.
+      await this.close('not started');
+      throw err;
+    }
 
     this.page = page;
     this.touch();
+    // Anyone still watching from before an idle close gets the new browser.
+    void this.syncCast();
     say(`Chromium is up on the computer's own 127.0.0.1:${this.port}`);
     warnIfDebugPortIsExposed(this.computer, this.port, say);
     return page;
   }
 
-  /** Start the browser detached, and wait until its debugger answers -- from inside. */
+  /**
+   * Start the browser with its own sandbox wherever the computer is not one.
+   *
+   * A container (docker, podman) or a fly machine is the sandbox, and Chromium's
+   * namespace sandbox cannot nest inside it. On this machine, in WSL or on an ssh
+   * box, Chromium's sandbox is the only thing between a hostile page and the
+   * person's account, so it stays on, and goes only where it cannot run at all
+   * -- no unprivileged user namespaces, or running as root -- with a warning.
+   */
   private async startChromium(binary: string, say: (m: string) => void): Promise<number> {
+    if (ownsLoopback(this.computer.info.provider)) return this.launchChromium(binary, say, false);
+    try {
+      return await this.launchChromium(binary, say, true);
+    } catch (err) {
+      if (!(err instanceof HuskError) || err.details?.['sandbox'] !== 'unusable') throw err;
+      say(
+        'warning: Chromium cannot use its own sandbox on this machine (no unprivileged user namespaces, or ' +
+          'running as root), so it runs without one. Open pages you do not trust in a docker or podman computer.',
+      );
+      return this.launchChromium(binary, say, false);
+    }
+  }
+
+  /** Start the browser detached, and wait until its debugger answers -- from inside. */
+  private async launchChromium(binary: string, say: (m: string) => void, sandboxed: boolean): Promise<number> {
     const port = await this.freePort();
     const size = this.opts.viewport ?? { width: 1280, height: 800 };
 
@@ -271,9 +571,7 @@ export class BrowserSession {
     //
     // stdio goes to a file rather than being inherited, because `exec` resolves
     // when the pipes close and a background child holding stdout open would hang
-    // the call forever. `--no-sandbox` is not carelessness: the computer *is* the
-    // sandbox, and Chromium's namespace sandbox cannot nest inside an
-    // unprivileged container.
+    // the call forever. `--no-sandbox` only where startChromium says so.
     //
     // The poll runs inside the machine because that is where the port is. It is
     // also the only place it ever will be -- there is no bind address flag here,
@@ -283,19 +581,43 @@ export class BrowserSession {
     // emulation is per-session and every driver invocation is a new session.
     const cmd =
       `mkdir -p ${PROFILE_DIR}; ` +
-      `(setsid ${binary} --headless --disable-gpu --no-sandbox ` +
+      `(setsid ${binary} --headless --disable-gpu ${sandboxed ? '' : '--no-sandbox '}` +
       `--remote-debugging-port=${port} --user-data-dir=${PROFILE_DIR} ` +
       `--window-size=${size.width},${size.height} ` +
       `about:blank >${LOG_PATH} 2>&1 </dev/null &) ; ` +
       `for i in $(seq 1 80); do ` +
       `curl -sf --max-time 2 -o /dev/null http://127.0.0.1:${port}/json/version && exit 0; ` +
+      // A sandbox that cannot run says so at once: stop polling a browser that has already gone.
+      `grep -qE '${SANDBOX_UNUSABLE}' ${LOG_PATH} 2>/dev/null && exit 3; ` +
       `sleep 0.5; done; exit 1`;
 
-    const ready = await this.computer.exec({ cmd, timeoutSec: 120 });
+    // The poll is 80 x (0.5s sleep + an instantly-refused connect), about 40s on
+    // a machine where Chromium simply never comes up. 90s covers a listener that
+    // accepts and wedges (each curl paying its full --max-time) with the exec
+    // kill as the hard backstop, so a failed launch is always bounded.
+    const ready = await this.computer.exec({ cmd, timeoutSec: 90 });
 
     if (ready.exitCode !== 0) {
-      const log = await this.computer.readTextFile(LOG_PATH, 4000).catch(() => '');
-      throw new HuskError('E_COMPUTER_FAILED', 'Chromium started but never opened its debugging port', {
+      // A browser that never opened its port, or whose sandbox could not run,
+      // may still be running, and close() only knows how to kill a port this
+      // method returned. Reap it here or every failed launch leaks one.
+      const reap = () =>
+        this.computer.exec({ cmd: `pkill -f -- "--remote-debugging-port=${port}" || true`, timeoutSec: 15 }).catch(() => undefined);
+      if (ready.exitCode === 3 && sandboxed) {
+        await reap();
+        throw new HuskError('E_COMPUTER_FAILED', 'Chromium cannot use its sandbox on this machine', {
+          hint: 'it is started again without one, with a warning',
+          details: { port, sandbox: 'unusable' },
+        });
+      }
+      // The end of the log, where Chromium says why it stopped.
+      const log = (await this.computer.exec({ cmd: ['tail', '-c', '4000', LOG_PATH], timeoutSec: 15 }).catch(() => undefined))?.stdout ?? '';
+      await reap();
+      // "40 seconds" was the poll's own arithmetic, not its ceiling: 80 attempts
+      // x 0.5s only holds while each connect is refused instantly. A listener
+      // that accepts and wedges makes every curl pay its full --max-time and the
+      // wait runs to the 90s exec kill. Quote the bound, not the fast path.
+      throw new HuskError('E_COMPUTER_FAILED', 'Chromium started but never opened its debugging port (waited up to 90 seconds)', {
         hint: 'the log is in details -- a missing shared library or a stale singleton lock in the profile are the usual causes',
         details: { port, log: log.slice(-2000) },
       });
@@ -320,6 +642,13 @@ export class BrowserSession {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = undefined;
     this.page = undefined;
+    // Viewers stay: a browser launched later picks them up. The cast does not.
+    this.castUnlisten?.();
+    this.castUnlisten = undefined;
+    this.cast = undefined;
+    this.lastFrame = undefined;
+    this.pushes = undefined;
+    this.transport = undefined;
     await this.conn?.close(`the browser session was ${reason}`);
     this.conn = undefined;
 
@@ -346,6 +675,28 @@ export function browserFor(computer: Computer, opts: SessionOptions = {}): Brows
   const created = new BrowserSession(computer, opts);
   sessions.set(computer.id, created);
   return created;
+}
+
+/** The live page on this computer, if its browser is already up. Never launches. */
+export function livePageFor(computerId: string): Page | undefined {
+  return sessions.get(computerId)?.livePage();
+}
+
+/**
+ * Record a person's input to this computer's browser as use.
+ *
+ * A tool call records itself through `activePage`. A person in a handoff or a
+ * take-over comes in through `livePage`, which must not, because frames do
+ * too, so their input routes call this. With a long-lived driver nothing else
+ * would: the clicks and keystrokes run no `exec`.
+ */
+export function markUsedFor(computerId: string): void {
+  sessions.get(computerId)?.computer.markUsed?.();
+}
+
+/** This computer's browser session if it has one, for watching its screen. Never creates one. */
+export function browserSessionFor(computerId: string): BrowserSession | undefined {
+  return sessions.get(computerId);
 }
 
 export async function closeBrowserFor(computerId: string): Promise<void> {

@@ -48,6 +48,68 @@ async function codeOf(fn: () => Promise<unknown>): Promise<string> {
   }
 }
 
+describe('a failed Chromium launch', () => {
+  it('is bounded, reports the browser log, and reaps the failed process', async () => {
+    const info = {
+      id: 'browser-failure',
+      name: 'browser-failure',
+      provider: 'docker',
+      state: 'running',
+      image: 'none',
+      workdir: '/work',
+      createdAt: '',
+      lastUsedAt: '',
+      spec: { network: { mode: 'full' } },
+    } as ComputerInfo;
+    const calls: Array<{ cmd: string; timeoutSec?: number }> = [];
+    const computer = {
+      id: info.id,
+      info,
+      async exec(input: { cmd: string | string[]; timeoutSec?: number }): Promise<ExecResult> {
+        // The end of Chromium's log, where it says why it stopped.
+        if (Array.isArray(input.cmd)) {
+          if (input.cmd[0] === 'tail') return { exitCode: 0, stdout: 'missing libnss3.so', stderr: '', durationMs: 1, truncated: false, timedOut: false };
+          throw new Error(`unexpected command: ${input.cmd.join(' ')}`);
+        }
+        calls.push(input as { cmd: string; timeoutSec?: number });
+        if (input.cmd.includes('command -v chromium')) {
+          return { exitCode: 0, stdout: '/usr/bin/chromium\n', stderr: '', durationMs: 1, truncated: false, timedOut: false };
+        }
+        if (input.cmd.includes('--version')) {
+          return { exitCode: 0, stdout: 'Chromium 140.0\n', stderr: '', durationMs: 1, truncated: false, timedOut: false };
+        }
+        if (input.cmd.includes('python3 -c "import socket')) {
+          return { exitCode: 0, stdout: '43123\n', stderr: '', durationMs: 1, truncated: false, timedOut: false };
+        }
+        if (input.cmd.includes('for i in $(seq 1 80)')) {
+          return { exitCode: 1, stdout: '', stderr: '', durationMs: 40_000, truncated: false, timedOut: false };
+        }
+        if (input.cmd.includes('pkill -f')) {
+          return { exitCode: 0, stdout: '', stderr: '', durationMs: 1, truncated: false, timedOut: false };
+        }
+        throw new Error(`unexpected command: ${input.cmd}`);
+      },
+    } as unknown as Computer;
+
+    let caught: unknown;
+    try {
+      await new BrowserSession(computer, { idleTimeoutMs: 0 }).activePage();
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(isHuskError(caught) && caught.code).toBe('E_COMPUTER_FAILED');
+    expect((caught as Error).message).toMatch(/waited up to 90 seconds/);
+    expect(JSON.stringify(caught)).toContain('missing libnss3.so');
+
+    const poll = calls.find((call) => call.cmd.includes('for i in $(seq 1 80)'));
+    expect(poll?.timeoutSec).toBe(90);
+    const cleanup = calls.find((call) => call.cmd.includes('pkill -f'));
+    expect(cleanup?.cmd).toContain('--remote-debugging-port=43123');
+    expect(cleanup?.timeoutSec).toBe(15);
+  });
+});
+
 describe('navigation is subject to the computer’s network policy', () => {
   it('refuses a host outside an egress allow-list before opening a socket', async () => {
     const c = fakeComputer('local', { mode: 'egress', allow: ['example.com'] });
@@ -112,6 +174,14 @@ describe('an explicit policy overrides the computer’s', () => {
     const s = new BrowserSession(c, { network: { mode: 'egress', allow: ['example.com'] } });
     expect(await codeOf(() => s.goto('https://evil.test/'))).toBe('E_EXEC_DENIED');
   });
+
+  it('checks every goto in a browser_run before anything runs', async () => {
+    const c = fakeComputer('docker', { mode: 'full' });
+    const s = new BrowserSession(c, { network: { mode: 'egress', allow: ['example.com'] } });
+    const run = () => s.run([{ do: 'goto', url: 'https://example.com/' }, { do: 'snapshot' }, { do: 'goto', url: 'https://evil.test/' }]);
+    expect(await codeOf(run)).toBe('E_EXEC_DENIED');
+    expect(c.execs).toBe(0);
+  });
 });
 
 describe('warnIfDebugPortIsExposed', () => {
@@ -152,5 +222,75 @@ describe('warnIfDebugPortIsExposed', () => {
     warnIfDebugPortIsExposed(c, 1, (m) => said.push(m));
     warnIfDebugPortIsExposed(c, 1, (m) => said.push(m));
     expect(said).toHaveLength(1);
+  });
+});
+
+describe('Chromium’s own sandbox', () => {
+  /** A computer whose launch poll answers `poll` in turn, recording every command. */
+  function launching(provider: string, poll: number[]) {
+    const cmds: string[] = [];
+    const ok = (stdout = '') => ({ exitCode: 0, stdout, stderr: '', durationMs: 1, truncated: false, timedOut: false });
+    const computer = {
+      id: 'cmp_sandbox',
+      info: { id: 'cmp_sandbox', name: 'x', provider, state: 'running', image: 'x', workdir: '/work', createdAt: '', lastUsedAt: '', spec: {} },
+      async exec(input: { cmd: string | string[] }): Promise<ExecResult> {
+        const cmd = Array.isArray(input.cmd) ? input.cmd.join(' ') : input.cmd;
+        cmds.push(cmd);
+        if (cmd.includes('command -v chromium')) return ok('/usr/bin/chromium\n');
+        if (cmd.includes('--version')) return ok('Chromium 140.0\n');
+        if (cmd.includes('python3 -c "import socket')) return ok('43123\n');
+        if (cmd.includes('for i in $(seq 1 80)')) return { ...ok(), exitCode: poll.shift() ?? 1 };
+        return ok();
+      },
+    } as unknown as Computer;
+    const launches = () => cmds.filter((c) => c.includes('for i in $(seq 1 80)'));
+    // The flag, where it sits on Chromium's command line: the poll's own pattern names it too.
+    const unsandboxed = () => launches().map((c) => /--disable-gpu --no-sandbox /.test(c));
+    return { computer, launches, unsandboxed };
+  }
+
+  async function tryLaunch(computer: Computer): Promise<string[]> {
+    const said: string[] = [];
+    const session = new BrowserSession(computer, { idleTimeoutMs: 0 });
+    session.onProgress((m) => said.push(m));
+    await session.activePage().catch(() => undefined);
+    return said;
+  }
+
+  it('runs without it in a container, which is the sandbox', async () => {
+    const { computer, unsandboxed } = launching('docker', [1]);
+    await tryLaunch(computer);
+    expect(unsandboxed()).toEqual([true]);
+  });
+
+  it('keeps it on this machine, where it is the only boundary', async () => {
+    const { computer, unsandboxed } = launching('local', [1]);
+    await tryLaunch(computer);
+    expect(unsandboxed()).toEqual([false]);
+  });
+
+  it('goes without it only where it cannot run, and says so', async () => {
+    const { computer, unsandboxed } = launching('ssh', [3, 1]);
+    const said = await tryLaunch(computer);
+    expect(unsandboxed()).toEqual([false, true]);
+    expect(said.some((m) => m.includes('cannot use its own sandbox'))).toBe(true);
+  });
+});
+
+describe('a new tab', () => {
+  it('is checked like goto, before anything starts', async () => {
+    const execs: unknown[] = [];
+    const computer = {
+      id: 'cmp_tab',
+      info: { id: 'cmp_tab', name: 'x', provider: 'docker', state: 'running', image: 'x', workdir: '/work', createdAt: '', lastUsedAt: '', spec: { network: { mode: 'egress', allow: ['example.com'] } } },
+      async exec(input: unknown) {
+        execs.push(input);
+        throw new Error('nothing should run');
+      },
+    } as unknown as Computer;
+    const session = new BrowserSession(computer, { idleTimeoutMs: 0 });
+    await expect(session.newTab('http://169.254.169.254/')).rejects.toMatchObject({ code: 'E_EXEC_DENIED' });
+    await expect(session.newTab('file:///etc/passwd')).rejects.toMatchObject({ code: 'E_EXEC_DENIED' });
+    expect(execs).toEqual([]);
   });
 });

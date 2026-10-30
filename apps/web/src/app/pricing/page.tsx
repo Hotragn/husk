@@ -7,12 +7,12 @@ import { REPO_URL } from "@/lib/content";
 export const metadata: Metadata = {
   title: "Pricing",
   description:
-    "Husk is free and Apache-2.0. There is no paid tier, no trial and no edition you are not already using. Here is why, and what a hosted tier would have to add before it was worth charging for.",
+    "Husk is free and open source. There’s no paid plan and no trial. Here’s why, and what a hosted version would need to offer before we charged for it.",
   alternates: { canonical: "/pricing" },
   openGraph: {
     title: "Pricing — Husk",
     description:
-      "Husk is free and Apache-2.0. There is no paid tier and no edition you are not already using.",
+      "Husk is free and open source, with no paid plan and no trial.",
     url: "/pricing",
   },
 };
@@ -26,8 +26,8 @@ export default function Pricing() {
             <p className="eyebrow">pricing</p>
             <h1 className="h-page">Husk costs nothing.</h1>
             <p className="lead" style={{ marginTop: "var(--space-6)" }}>
-              Not a free tier, not a trial, not a community edition. The whole
-              product is Apache-2.0 and runs on hardware you already own.
+              There&rsquo;s no paid plan, no trial and no cut-down free version.
+              All of Husk is open source and runs on a computer you already own.
             </p>
 
             <div style={{ marginTop: "var(--space-8)", maxWidth: "40rem" }}>
@@ -44,20 +44,19 @@ export default function Pricing() {
         <div className="grid12">
           <div className="col-7">
             <h2 id="why-title" className="h-section">
-              Why there is no paid tier yet.
+              Why there&rsquo;s no paid plan yet.
             </h2>
             <div className="prose" style={{ marginTop: "var(--space-6)" }}>
               <p>
-                Husk is a runtime that turns a machine you already own into
-                something an agent can drive. Nobody has to pay for that,
-                because nobody is paying for the machine twice. The local
-                provider is the primitive and every hosted provider is a plugin
-                behind the same interface, so there is no code path that
-                requires an account — which means there is nothing to gate.
+                Husk lets your AI use a computer you already own. There&rsquo;s
+                nothing to pay for there, because you&rsquo;ve already paid for the
+                computer. Everything in Husk is built on that local setup, and
+                nothing in it needs an account, so there&rsquo;s nothing to put
+                behind a paywall.
               </p>
               <p>
-                Charging for a runtime with no server in it would mean building
-                one artificially: a licence check, a seat count, a thing that
+                Charging for something with no server behind it would mean adding
+                one just to charge: a licence check, a seat count, a thing that
                 phones home to ask whether you are allowed. That is a server we
                 do not want to run and a network call we have promised is not
                 there.
@@ -84,7 +83,7 @@ export default function Pricing() {
               <li>
                 <span className="rl-term">local models</span>
                 <span className="rl-desc">
-                  nothing — Ollama runs gemma, qwen or llama on your machine
+                  nothing, if you run a model like Gemma or Llama on your own machine with Ollama
                 </span>
               </li>
               <li>
@@ -104,8 +103,8 @@ export default function Pricing() {
               <li>
                 <span className="rl-term">ssh</span>
                 <span className="rl-desc">
-                  whatever your box costs, which for an Oracle Always Free ARM
-                  instance is nothing
+                  whatever that machine costs, which for a free Oracle Cloud server
+                  is nothing
                 </span>
               </li>
             </ul>
@@ -117,37 +116,37 @@ export default function Pricing() {
         <div className="grid12">
           <div className="col-7">
             <h2 id="hosted-title" className="h-section">
-              What a hosted tier would have to add.
+              What a paid, hosted version would need.
             </h2>
             <div className="prose" style={{ marginTop: "var(--space-6)" }}>
               <p>
-                If Husk is ever charged for, it will be for work that genuinely
-                costs someone money to do, and it will sit beside the free path
-                rather than on top of it. Four things would qualify, and none of
+                If Husk ever costs money, it will be for work that costs someone
+                money to do, and it will sit next to the free version rather than
+                replace it. Four things would qualify, and none of
                 them exists today:
               </p>
             </div>
             <ul className="rule-list" style={{ marginTop: "var(--space-6)" }}>
               <li>
-                <span className="rl-term">a control plane</span>
+                <span className="rl-term">team features</span>
                 <span className="rl-desc">
-                  more than one person sharing husks, with roles, an audit log
-                  and revocable credentials. v1 is single-user by design and
-                  says so
+                  several people sharing the same bots, with roles, a record of who
+                  did what, and access you can take back. Husk is built for one
+                  person today, and says so
                 </span>
               </li>
               <li>
-                <span className="rl-term">always-on triggers</span>
+                <span className="rl-term">bots that run while you&rsquo;re away</span>
                 <span className="rl-desc">
-                  a cron husk that keeps running when your laptop is shut. That
-                  is somebody&rsquo;s server, and somebody has to pay for it
+                  a scheduled bot that keeps running when your laptop is closed.
+                  That needs a server, and someone has to pay for it
                 </span>
               </li>
               <li>
-                <span className="rl-term">managed compute</span>
+                <span className="rl-term">faster machines</span>
                 <span className="rl-desc">
-                  pooled warm machines with faster cold starts than a local
-                  Docker daemon can give you
+                  machines kept ready, so they start faster than Docker can on
+                  your own computer
                 </span>
               </li>
               <li>
@@ -160,13 +159,14 @@ export default function Pricing() {
             </ul>
             <div className="prose" style={{ marginTop: "var(--space-8)" }}>
               <p>
-                The commitment that constrains all of it:{" "}
-                <strong>the free path always works</strong>. No feature ships
-                that makes the no-account, no-key, no-Docker path worse. The
+                The rule behind all of this:{" "}
+                <strong>the free version always works</strong>. Nothing ships
+                that makes Husk worse for someone with no account, no API key and
+                no Docker. The
                 same <code className="inline">husk.yaml</code> that runs on your
-                laptop today runs on someone else&rsquo;s machine later without
-                being rewritten, and the day that stops being true is the day
-                the promise has been broken.
+                laptop today will run on someone else&rsquo;s machine later without
+                changes. If that ever stops being true, we&rsquo;ve broken the
+                promise.
               </p>
             </div>
           </div>

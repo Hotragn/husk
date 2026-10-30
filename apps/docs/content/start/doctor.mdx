@@ -24,15 +24,10 @@ husk doctor --json | jq .selection
 | `--json` | The full `DoctorReport` as JSON, and the only thing on stdout |
 | `--force` | Re-probe every provider, ignoring the 30-second cache |
 
-<Note>
-`--force` is real and works, but `husk help doctor` does not list it. The help text
-shows only `--json`.
-</Note>
-
 ## The header
 
 ```text
-husk 0.1.0  node 24.14.0 · win32-arm64
+husk 0.2.0  node 24.14.0 · win32-arm64
 state: C:\Users\me\.husk
 ```
 
@@ -54,20 +49,23 @@ when four of them cannot run.
       A guarded working directory on this machine. Free, always available, not isolated.
       via WSL2 (Ubuntu)
       guarded working directory -- process guardrails, not a sandbox
+      fix: start Docker for kernel-level isolation
 ```
 
 | Line | What it is |
 | --- | --- |
 | `✓` / `✗` | Whether the provider can create a machine right now |
-| `isolated` / `not isolated` | `Availability.isolated`. A kernel boundary, or not |
-| Second line | The provider's fixed one-line description |
+| `isolated` / `isolated from this machine` / `not isolated` | `Availability.isolationKind`: a kernel boundary, another machine (`ssh`), or guardrails only |
+| The line under the name | The provider's fixed one-line description |
 | `via …` | `Availability.version`. For `local` this is the shell it found |
-| Third line | Why, in one sentence |
-| `fix:` | Printed only when the provider is unavailable |
+| The line after that | Why, in one sentence |
+| `fix:` | The provider's hint, whenever it has one, available or not. `local` always has one |
 
-The two words that matter most are `isolated` and `not isolated`, and they are reported
+The words that matter most are `isolated` and `not isolated`, and they are reported
 independently of availability. Docker reports `isolated: true` even while its daemon is
 down, because the field describes what the provider *is*, not what it can do this second.
+An `ssh` box is `isolated from this machine`, not from itself: commands run as your user
+on that box.
 
 "Docker is installed but the daemon is not reachable" and "the docker CLI is not on PATH"
 are different rows with different fixes. Conflating them sends people to a download page
@@ -80,14 +78,15 @@ asks `@husk-ai/models` for its own list rather than carrying a hardcoded one.
 
 ```text
   ✓ ollama
-      ollama/qwen2.5:1.5b, ollama/qwen2.5:7b, ollama/llama3.2:latest
+      ollama/qwen2.5:7b, ollama/llama3.2:latest, ollama/qwen2.5:1.5b
   ✗ anthropic
       ANTHROPIC_API_KEY is not set
-      fix: Set ANTHROPIC_API_KEY for Claude, or run `ollama pull gemma3` for a free local model.
+      fix: Set ANTHROPIC_API_KEY for Claude, or run `ollama pull qwen2.5:7b` for a free local model that can call tools.
 ```
 
-An available provider lists up to four model ids, then `+N more`. An unavailable one
-gives the reason and the fix.
+Available providers come first, and each lists up to four model ids, best first, then
+`+N more`. SELECTION's model is the first one listed. An unavailable provider gives the
+reason and the fix.
 
 Two probe styles sit behind those ticks, and the difference matters when you are
 debugging:
@@ -109,13 +108,18 @@ should not have to wonder why Husk cannot see it.
 SELECTION  what husk would use right now
   computer   local  highest-priority available provider (10)
   isolation  guardrails only
-  model      ollama/qwen2.5:1.5b  first reachable model on Ollama
+  model      ollama/qwen2.5:7b  preferred available model on Ollama (capabilities, catalog quality, and local size tier)
 ```
 
 This is the block to read first when a run behaved unexpectedly. It carries the *reason*
 next to the choice, because "husk picked local" is not actionable on its own.
 
-`isolation` is one of `kernel-level`, `guardrails only`, or `unknown`.
+`isolation` is one of `kernel-level`, `isolated from this machine, not from itself` (an
+`ssh` box), `guardrails only`, or `unknown`.
+
+When `~/.husk/config.json` sets a `provider` or a `model`, SELECTION shows it, as `auto`
+will use it, with the reason `set for auto in ~/.husk/config.json`. A provider it names
+that is not usable is shown as `none` with a warning, since `auto` does not pick another.
 
 ## WARNINGS
 
@@ -130,16 +134,23 @@ Warnings are conditions, not errors. The report generates them for:
 - Node below 20.10.
 - Windows with no WSL, where the `local` provider runs commands in the Windows shell and
   is not a Linux computer at all.
+- Windows whose WSL is installed but not answering, with the same result. When Docker is
+  down too, the warning says why: its engine runs inside WSL2.
+- Workspaces under `~/.husk/workspaces` that belong to no computer, left by a destroy
+  that could not remove its files.
+- A `~/.husk/config.json` that cannot be read, or that names a provider for `auto` that
+  is not usable, or a model whose provider is not reachable.
 
 ## The JSON shape
 
-`husk doctor --json` prints the same `DoctorReport` the control plane serves from
-`GET /v1/doctor`. One shape, three consumers.
+`husk doctor --json` prints the whole `DoctorReport`, shown here with one row of each
+kind. `GET /v1/doctor` on the control plane answers with the same fields; the note
+below says where they differ.
 
 ```json
 {
-  "version": "0.1.0",
-  "node": "v24.14.0",
+  "version": "0.2.0",
+  "node": "24.14.0",
   "platform": "win32-arm64",
   "huskHome": "C:\\Users\\me\\.husk",
   "firstRun": false,
@@ -150,6 +161,7 @@ Warnings are conditions, not errors. The report generates them for:
       "priority": 20,
       "available": false,
       "isolated": true,
+      "isolationKind": "kernel",
       "reason": "docker is installed but the daemon is not reachable",
       "hint": "start Docker Desktop (or `sudo systemctl start docker`), then re-run `husk doctor`"
     }
@@ -162,17 +174,21 @@ Warnings are conditions, not errors. The report generates them for:
       "available": true,
       "envKey": "OLLAMA_HOST",
       "implemented": true,
-      "models": ["ollama/qwen2.5:7b"]
+      "models": ["ollama/qwen2.5:7b", "ollama/llama3.2:latest", "ollama/qwen2.5:1.5b"]
     }
   ],
   "selection": {
     "provider": "local",
     "providerReason": "highest-priority available provider (10)",
     "isolated": false,
+    "isolationKind": "guardrails",
     "model": "ollama/qwen2.5:7b",
-    "modelReason": "first reachable model on Ollama"
+    "modelReason": "preferred available model on Ollama (capabilities, catalog quality, and local size tier)"
   },
-  "warnings": []
+  "warnings": [
+    "The \"local\" provider gives guardrails, not isolation. A prompt-injected model is closer to an adversary than to an accident — start Docker before running anything you did not write.",
+    "Docker is installed but its daemon is not running, so husk is falling back to weaker isolation."
+  ]
 }
 ```
 
@@ -185,10 +201,13 @@ husk doctor --json | jq -r '.models[] | select(.available) | .models[]'
 ```
 
 <Note>
-The CLI's report includes `implemented` on each model row. The control plane's
-`GET /v1/doctor` returns the same shape without that field, and it ignores the
-`?force=true` query parameter — the server always calls the manager with `force: false`,
-so a `/v1/doctor` request can serve an answer up to 30 seconds stale.
+The control plane builds its report itself, so `GET /v1/doctor` differs in a few
+places: `node` keeps its leading `v`, a model row has no `implemented` and lists at most
+12 model ids, `selection` has no `isolationKind` and does not follow
+`~/.husk/config.json`, and the warnings are its own, one of them for a server with no
+`HUSK_TOKEN`. It also ignores the `?force=true` query parameter — the server always
+calls the manager with `force: false`, so a `/v1/doctor` request can serve an answer up
+to 30 seconds stale.
 </Note>
 
 ## Why probes are cached for 30 seconds

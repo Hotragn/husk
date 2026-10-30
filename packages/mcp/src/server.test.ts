@@ -33,10 +33,25 @@ describe('the note the model reads first', () => {
     expect(isolationNote(info('docker'))).toMatch(/isolated from the host/);
   });
 
+  it('says when the computer cannot enforce the network policy it was given', () => {
+    const offline = (provider: ProviderName) => ({ ...info(provider), spec: { provider, network: { mode: 'none' as const } } });
+    expect(isolationNote(offline('docker'))).not.toMatch(/Note:/);
+    expect(isolationNote(offline('ssh'))).toMatch(/Note: network mode "none" is not enforced on ssh/);
+  });
+
   it('refuses to call a guarded directory a sandbox', () => {
     const note = isolationNote(info('local', { 'husk.shell': 'wsl:Ubuntu' }));
     expect(note).toMatch(/NOT a sandbox/);
     expect(note).toMatch(/real Linux via Ubuntu/);
+  });
+
+  it('does not claim the shell is confined when it is not', () => {
+    // Shell commands on the local provider can read /etc/passwd and write
+    // outside the workspace. "/work is jailed" told the model otherwise.
+    const note = isolationNote(info('local', { 'husk.shell': 'posix' }));
+    expect(note).not.toMatch(/jail/i);
+    expect(note).toMatch(/file tools are confined to \/work/);
+    expect(note).toMatch(/shell commands can still reach/);
   });
 
   describe('on a Windows host that could not give it Linux', () => {

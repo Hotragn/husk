@@ -7,6 +7,7 @@
  */
 
 export { Agent, buildAssistantMessage, computerSpecFor, stableArgs } from './loop.js';
+export { CliAgent } from './cli.js';
 export { Budget, pricingOf } from './budget.js';
 export type { BudgetDecision, BudgetLimits, BudgetStop, CallEstimate, Pricing } from './budget.js';
 

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { NavSection } from '@/lib/content';
+import { WEB_URL } from '@/lib/site';
 import { CloseIcon, MenuIcon } from './Icons';
 import { SidebarNav } from './SidebarNav';
 
@@ -99,6 +100,9 @@ export function MobileNav({ nav }: { nav: NavSection[] }) {
               </button>
             </div>
             <div className="drawer-body">
+              <a className="drawer-cross" href={WEB_URL}>
+                &larr; Husk home
+              </a>
               <SidebarNav nav={nav} onNavigate={() => setOpen(false)} />
             </div>
           </div>

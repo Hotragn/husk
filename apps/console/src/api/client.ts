@@ -28,15 +28,31 @@ import type {
   DirListResponse,
   DoctorReport,
   ExecStreamEvent,
+  HandoffFrame,
+  HandoffInput,
   HealthReport,
   HuskDetail,
   HuskListResponse,
   HuskSummary,
   ModelListResponse,
+  PendingHandoff,
+  ScopedComputer,
+  Overview,
+  ComputerStats,
   RunRequestBody,
   RunStreamEvent,
   BrowserStatus,
+  BrowserTab,
   ValidateResult,
+  ActivityEntry,
+  BotDraft,
+  BotEngine,
+  FoundChat,
+  ImportedChat,
+  ComputerChoice,
+  ConnectResult,
+  RemoteStatus,
+  SetupState,
 } from './wire';
 
 export { HuskError, isHuskError };
@@ -54,6 +70,8 @@ const PROVISION_BUDGET_MS = 600_000;
 export interface HuskApiOptions {
   baseUrl: string;
   token?: string;
+  /** Under remote access's public URL: the owner session a link needs besides its token (`x-husk-owner`). */
+  owner?: string;
 }
 
 /** A shell command to run in a computer. Mirrors the server's `ExecSchema`. */
@@ -67,14 +85,28 @@ export interface ExecRequest {
   maxOutputBytes?: number;
 }
 
+/**
+ * The console acts as the person: what they change on a computer goes through
+ * while they hold it, where a program's change is refused.
+ */
+function asPerson(init?: RequestInit, owner?: string): RequestInit {
+  const headers = new Headers(init?.headers);
+  headers.set('x-husk-as', 'person');
+  if (owner) headers.set('x-husk-owner', owner);
+  return { ...init, headers };
+}
+
 export class HuskApi {
   readonly baseUrl: string;
   private readonly client: HuskClient;
   private readonly token: string | undefined;
+  private readonly owner: string | undefined;
 
   constructor(opts: HuskApiOptions) {
     this.baseUrl = stripTrailingSlash(opts.baseUrl);
     this.token = opts.token && opts.token.length > 0 ? opts.token : undefined;
+    this.owner = opts.owner || undefined;
+    const owner = this.owner;
     this.client = new HuskClient({
       baseUrl: this.baseUrl,
       ...(this.token ? { token: this.token } : {}),
@@ -83,15 +115,20 @@ export class HuskApi {
       // which detaches it from `window`. In Node that is fine; in a browser it
       // is `TypeError: Illegal invocation` on the first request. Handing it a
       // closure keeps the receiver intact.
-      fetch: (input, init) => globalThis.fetch(input, init),
+      fetch: (input, init) => globalThis.fetch(input, asPerson(init, owner)),
     });
   }
 
-  /** The websocket origin for this base URL. `http:` -> `ws:`, `https:` -> `wss:`. */
+  /**
+   * The websocket URL for a path. `http:` -> `ws:`, `https:` -> `wss:`. A browser
+   * cannot put a header on a websocket, so the token rides in the query, which
+   * the server accepts for websocket upgrades only.
+   */
   socketUrl(path: string, query?: Record<string, string | number>): string {
     const url = new URL(this.baseUrl + path);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     for (const [k, v] of Object.entries(query ?? {})) url.searchParams.set(k, String(v));
+    if (this.token) url.searchParams.set('token', this.token);
     return url.toString();
   }
 
@@ -142,8 +179,126 @@ export class HuskApi {
     return this.client.computers.start(id, { timeoutMs: 120_000 });
   }
 
+  /**
+   * `DELETE /v1/computers/:id?confirm=<id>&erase=true`: the computer, its files
+   * and its browser's logins, even those a chat's computer keeps for its next
+   * one. Call only after the person has confirmed: the id is typed back.
+   */
   destroyComputer(id: string): Promise<void> {
-    return this.client.computers.destroy(id, { timeoutMs: 60_000 });
+    return this.client.http.request<void>('DELETE', `/v1/computers/${enc(id)}`, {
+      query: { confirm: id, erase: 'true' },
+      timeoutMs: 60_000,
+    });
+  }
+
+  /** `GET /v1/overview`: computers, what each run is doing, and who is waiting on a person. */
+  overview(signal?: AbortSignal): Promise<Overview> {
+    return this.client.http.request<Overview>('GET', '/v1/overview', { ...(signal ? { signal } : {}) });
+  }
+
+  /** `GET /v1/computers/:id/activity`: every tool call on it, oldest first. */
+  async computerActivity(id: string, signal?: AbortSignal): Promise<ActivityEntry[]> {
+    const res = await this.client.http.request<{ entries: ActivityEntry[] }>('GET', `/v1/computers/${enc(id)}/activity`, {
+      ...(signal ? { signal } : {}),
+    });
+    return res.entries;
+  }
+
+  /** `POST /v1/computers/:id/bot`: a husk draft distilled from the chat that owns this computer. */
+  makeBot(id: string, opts: { useModel?: boolean; engine?: BotEngine } = {}): Promise<BotDraft> {
+    const body = { useModel: opts.useModel ?? false, ...(opts.engine ? { engine: opts.engine } : {}) };
+    return this.client.http.request<BotDraft>('POST', `/v1/computers/${enc(id)}/bot`, { body, timeoutMs: 600_000 });
+  }
+
+  /** `GET /v1/sessions/discover`: chats found where each app keeps them, newest first. */
+  async findChats(signal?: AbortSignal): Promise<FoundChat[]> {
+    const res = await this.client.http.request<{ sessions: FoundChat[] }>('GET', '/v1/sessions/discover', { ...(signal ? { signal } : {}), timeoutMs: 60_000 });
+    return res.sessions;
+  }
+
+  /** `POST /v1/sessions/import`: a chat by its file or its text; `pick` chooses one from a file that holds many. */
+  importChat(input: { path?: string; content?: string; pick?: string }): Promise<ImportedChat> {
+    return this.client.http.request<ImportedChat>('POST', '/v1/sessions/import', { body: input, timeoutMs: 600_000 });
+  }
+
+  /** `POST /v1/sessions/distill`: a bot draft from an imported chat. */
+  draftBot(transcriptId: string, opts: { engine?: BotEngine } = {}): Promise<BotDraft> {
+    return this.client.http.request<BotDraft>('POST', '/v1/sessions/distill', { body: { transcriptId, ...opts }, timeoutMs: 600_000 });
+  }
+
+  // -- setup ----------------------------------------------------------------
+
+  /** `GET /v1/setup`: the chat apps on this machine and the computers it can run. */
+  setupState(signal?: AbortSignal): Promise<SetupState> {
+    return this.client.http.request<SetupState>('GET', '/v1/setup', { ...(signal ? { signal } : {}), timeoutMs: 20_000 });
+  }
+
+  connectApp(id: string, choice: ComputerChoice): Promise<ConnectResult> {
+    return this.client.http.request<ConnectResult>('POST', `/v1/setup/apps/${enc(id)}`, { body: choice, timeoutMs: 90_000 });
+  }
+
+  disconnectApp(id: string): Promise<ConnectResult> {
+    return this.client.http.request<ConnectResult>('DELETE', `/v1/setup/apps/${enc(id)}`, { timeoutMs: 90_000 });
+  }
+
+  // -- remote access --------------------------------------------------------
+
+  /** `GET /v1/remote`, or null when this Husk was not started with remote access. */
+  async remoteStatus(signal?: AbortSignal): Promise<RemoteStatus | null> {
+    try {
+      return await this.client.http.request<RemoteStatus>('GET', '/v1/remote', { ...(signal ? { signal } : {}) });
+    } catch (err) {
+      if (isHuskError(err) && err.details?.status === 404) return null;
+      throw err;
+    }
+  }
+
+  /** `POST /v1/remote/claim`: a code that makes whoever types it first the owner. */
+  remoteClaim(): Promise<{ code: string }> {
+    return this.client.http.request('POST', '/v1/remote/claim', {});
+  }
+
+  /** `POST /v1/remote/reset`: forgets the owner, every app and every token, and gives a new claim code. */
+  remoteReset(): Promise<{ code: string }> {
+    return this.client.http.request('POST', '/v1/remote/reset', {});
+  }
+
+  /** `POST /v1/remote/off` or `/on`. Off signs every app out; on refuses while a high or critical advisory stands. */
+  remoteSwitch(on: boolean): Promise<RemoteStatus> {
+    return this.client.http.request<RemoteStatus>('POST', on ? '/v1/remote/on' : '/v1/remote/off', {});
+  }
+
+  /** `DELETE /v1/remote/apps/:id`: signs one app out and forgets it. */
+  remoteSignOut(id: string): Promise<RemoteStatus> {
+    return this.client.http.request<RemoteStatus>('DELETE', `/v1/remote/apps/${enc(id)}`, {});
+  }
+
+  /** `POST /v1/setup/test`: a throwaway computer, one command, then removed. */
+  testComputer(choice: ComputerChoice): Promise<{ ok: boolean; provider: string; output: string; ms: number }> {
+    return this.client.http.request('POST', '/v1/setup/test', { body: choice, timeoutMs: 300_000 });
+  }
+
+  /** `GET /v1/computers/:id/stats`. */
+  computerStats(id: string, signal?: AbortSignal): Promise<ComputerStats> {
+    return this.client.http.request<ComputerStats>('GET', `/v1/computers/${enc(id)}/stats`, { ...(signal ? { signal } : {}) });
+  }
+
+  /** `GET /v1/computers/:id/thumbnail`: a frame of an already-open browser, or a 404. */
+  async computerThumbnail(id: string, signal?: AbortSignal): Promise<Blob> {
+    return (await this.frame(`/v1/computers/${enc(id)}/thumbnail`, signal)).image;
+  }
+
+  /** `GET /v1/computers/:id/browser/tabs`: the open tabs, or none. Never starts a browser, never counts as use. */
+  async browserTabs(id: string, signal?: AbortSignal): Promise<BrowserTab[]> {
+    const res = await this.client.http.request<{ tabs: BrowserTab[] }>('GET', `/v1/computers/${enc(id)}/browser/tabs`, {
+      ...(signal ? { signal } : {}),
+    });
+    return res.tabs;
+  }
+
+  /** `GET /v1/computers/:id/disk`, measured from the host. `bytes` is null where it is not measured. */
+  computerDisk(id: string, signal?: AbortSignal): Promise<{ bytes: number | null; note?: string }> {
+    return this.client.http.request('GET', `/v1/computers/${enc(id)}/disk`, { ...(signal ? { signal } : {}) });
   }
 
   // -- exec -----------------------------------------------------------------
@@ -197,7 +352,7 @@ export class HuskApi {
    */
   async writeFileBytes(id: string, path: string, bytes: Uint8Array): Promise<void> {
     const url = this.client.http.url(`/v1/computers/${enc(id)}/fs/write`, { path });
-    const headers: Record<string, string> = { 'content-type': 'application/octet-stream' };
+    const headers: Record<string, string> = { 'content-type': 'application/octet-stream', 'x-husk-as': 'person' };
     if (this.token) headers.authorization = `Bearer ${this.token}`;
 
     let res: Response;
@@ -362,6 +517,11 @@ export class HuskApi {
     return this.client.http.request<ValidateResult>('POST', '/v1/husks/validate', { body: { yaml } });
   }
 
+  /** `POST /v1/husks` -> `HuskSummary`: a new husk. It replaces one of the same name, so ask first. */
+  createHusk(yaml: string): Promise<HuskSummary> {
+    return this.client.http.request<HuskSummary>('POST', '/v1/husks', { body: { yaml } });
+  }
+
   /** `PUT /v1/husks/:name` -> `HuskSummary`. */
   saveHusk(name: string, yaml: string): Promise<HuskSummary> {
     return this.client.http.request<HuskSummary>('PUT', `/v1/husks/${enc(name)}`, { body: { yaml } });
@@ -384,6 +544,80 @@ export class HuskApi {
     return this.client.http.request<ApprovalAnswer>('POST', `/v1/approvals/${enc(approvalId)}`, {
       body: { approve, remember },
     });
+  }
+
+  // -- handoffs -------------------------------------------------------------
+
+  /** `GET /v1/handoffs`: runs paused until a person finishes something. */
+  async listHandoffs(signal?: AbortSignal): Promise<PendingHandoff[]> {
+    const res = await this.client.http.request<{ handoffs: PendingHandoff[] }>('GET', '/v1/handoffs', {
+      ...(signal ? { signal } : {}),
+    });
+    return res.handoffs;
+  }
+
+  /** `GET /v1/scoped/computer`: the computer a card's short-lived link opens, and its waiting handoff. */
+  scopedComputer(signal?: AbortSignal): Promise<ScopedComputer> {
+    return this.client.http.request<ScopedComputer>('GET', '/v1/scoped/computer', { ...(signal ? { signal } : {}) });
+  }
+
+  /** `GET /v1/scoped/computer/screen`: a read-only frame of that computer's browser. */
+  scopedComputerScreen(signal?: AbortSignal): Promise<HandoffFrame> {
+    return this.frame('/v1/scoped/computer/screen', signal);
+  }
+
+  /** `POST /v1/scoped/computer/takeover`: take the link's computer from its chat, as Take over on the console does. */
+  scopedTakeOver(): Promise<PendingHandoff> {
+    return this.client.http.request<PendingHandoff>('POST', '/v1/scoped/computer/takeover');
+  }
+
+  /** `GET /v1/handoffs/:id`: one open handoff, e.g. the one a handoff link opens. */
+  getHandoff(handoffId: string, signal?: AbortSignal): Promise<PendingHandoff> {
+    return this.client.http.request<PendingHandoff>('GET', `/v1/handoffs/${enc(handoffId)}`, {
+      ...(signal ? { signal } : {}),
+    });
+  }
+
+  /**
+   * `GET /v1/handoffs/:id/screen` -> a JPEG and the page's CSS viewport.
+   *
+   * Through `fetch` directly because the viewport rides in a response header,
+   * which `Http.bytes` does not hand back.
+   */
+  handoffScreen(handoffId: string, signal?: AbortSignal): Promise<HandoffFrame> {
+    return this.frame(`/v1/handoffs/${enc(handoffId)}/screen`, signal);
+  }
+
+  /** A JPEG frame and the page's CSS viewport, which rides in `x-husk-viewport`. */
+  private async frame(path: string, signal?: AbortSignal): Promise<HandoffFrame> {
+    const url = this.client.http.url(path);
+    const headers: Record<string, string> = {};
+    if (this.token) headers.authorization = `Bearer ${this.token}`;
+    if (this.owner) headers['x-husk-owner'] = this.owner;
+    let res: Response;
+    try {
+      res = await fetch(url, { headers, cache: 'no-store', ...(signal ? { signal } : {}) });
+    } catch (err) {
+      throw transportError(err, url);
+    }
+    if (!res.ok) throw errorFromResponse(res.status, await safeJson(res), url);
+    const [w, h] = (res.headers.get('x-husk-viewport') ?? '').split('x').map(Number);
+    return { image: await res.blob(), width: w && w > 0 ? w : 0, height: h && h > 0 ? h : 0 };
+  }
+
+  /** `POST /v1/handoffs/:id/input`. A mouse and a keyboard, nothing more. */
+  handoffInput(handoffId: string, input: HandoffInput): Promise<void> {
+    return this.client.http.request<void>('POST', `/v1/handoffs/${enc(handoffId)}/input`, { body: input });
+  }
+
+  /** `POST /v1/computers/:id/takeover`: take the computer from its chat now. The chat waits until it is given back. */
+  takeOver(computerId: string): Promise<PendingHandoff> {
+    return this.client.http.request<PendingHandoff>('POST', `/v1/computers/${enc(computerId)}/takeover`);
+  }
+
+  /** `POST /v1/handoffs/:id/done`. The only call that hands the run back to the agent. */
+  handoffDone(handoffId: string): Promise<{ handoffId: string; outcome: 'done' }> {
+    return this.client.http.request('POST', `/v1/handoffs/${enc(handoffId)}/done`);
   }
 
   // -- models ---------------------------------------------------------------

@@ -8,7 +8,7 @@
  *
  * There used to be three User-Agent literals, each holding both facts at once:
  *
- *     'husk/0.1.3 (+https://github.com/Hotragn/husk)'
+ *     'husk/0.2.0 (+https://github.com/Hotragn/husk)'
  *
  * A version bump has to edit that string. So does a change to the repository
  * URL. When both happened at once the merge had no correct side -- `--theirs`
@@ -27,7 +27,21 @@
  */
 
 /** Must equal the root manifest's `version`. Asserted by the drift check. */
-export const HUSK_VERSION = '0.1.3';
+export const HUSK_VERSION = '0.2.0';
+
+/**
+ * What a chat's process and the shared Husk must agree on: the tool route and
+ * its results. Bumped only when that changes incompatibly, so a patch, or a
+ * release that only adds a tool, still shares one Husk.
+ */
+export const HUSK_PROTOCOL = 1;
+
+/**
+ * The releases a chat app's launch line accepts: this minor's, which all speak
+ * HUSK_PROTOCOL, so npx still picks up fixes. A tilde, not a caret: cmd.exe
+ * eats a caret.
+ */
+export const HUSK_RANGE = `~${HUSK_VERSION.split('.').slice(0, 2).join('.')}`;
 
 /**
  * Must equal the root manifest's `repository.url`, without the `git+` prefix

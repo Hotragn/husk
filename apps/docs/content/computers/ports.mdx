@@ -20,7 +20,7 @@ From an agent, the tool is `expose_port`:
 which answers:
 
 ```text
-port 8000 is reachable at http://127.0.0.1:52431
+port 8000 is published at http://127.0.0.1:52431
 ```
 
 The host port is not the guest port. Port `0` is passed to the OS so it picks a free one,
@@ -33,14 +33,28 @@ which means two computers can both expose `8000` without colliding.
 | `docker`, `podman` | A TCP proxy on the host, bound to `127.0.0.1:0`, piping to the container | `http://127.0.0.1:<random>` |
 | `local` | Nothing to forward — the process already bound the host's own stack | `http://127.0.0.1:<the same port>` |
 | `ssh` | An ssh tunnel to the remote box | `http://127.0.0.1:<random>` |
-| `fly` | The machine's own address | A Fly URL |
+| `fly` | A service Fly attaches when the machine is created, for a port named in its `husk.fly.ports` label | `https://<app>.fly.dev` |
 
 On the container providers the forwarder is a Node TCP server created on demand and
 `unref`'d, so it never holds the CLI open. It is closed when the machine is destroyed.
+It needs a route from this machine to the container's address. Docker Desktop keeps
+containers inside a VM, and rootless Podman behind a user-mode network, so there
+`exposePort` refuses, saying why, rather than hand back a port that accepts a connection
+and then hangs.
+
+Fly publishes ports only when it creates a machine, so a port must be named up front, as
+a comma-separated list; any other is refused with the fix:
+
+```yaml
+computer:
+  provider: fly
+  labels:
+    husk.fly.ports: '8000'
+```
 
 `PortBinding` carries `hostPort`, `url`, and an optional `publicUrl` set only by
-providers that can offer a public tunnel. The `expose_port` tool prints `publicUrl` when
-it exists and `url` otherwise.
+providers that can offer a public address. The MCP server's `expose_port` prints
+`publicUrl` when there is one and `url` otherwise; a husk's own `expose_port` prints both.
 
 `exposePort` is idempotent: calling it twice for the same port returns the same binding
 rather than allocating a second forwarder.
@@ -58,7 +72,9 @@ Docker.
 
 ## Ports in `husk ps --json`
 
-Published ports are recorded on the computer under `ports`, keyed by the in-machine port:
+On `local`, `ssh` and `fly`, published ports are recorded on the computer under `ports`,
+keyed by the in-machine port. Docker and Podman hold them only in the process that
+published them, beside its forwarder, so another process's `husk ps` does not list them:
 
 ```json
 {

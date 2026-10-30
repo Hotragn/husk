@@ -3,7 +3,9 @@ import type { Metadata, Viewport } from 'next';
 import { Footer } from '@/components/Footer';
 import { Header } from '@/components/Header';
 import { ThemeScript } from '@/components/ThemeScript';
-import { SITE_DESCRIPTION, SITE_NAME, SITE_URL } from '@/lib/site';
+import { SITE_DESCRIPTION, SITE_NAME } from '@/lib/site';
+import { SITE_URL } from '@/lib/site-url';
+import { commitMono, generalSans } from './fonts';
 import './globals.css';
 
 /**
@@ -19,11 +21,36 @@ import './globals.css';
  * is cheaper than being caught omitting it.
  */
 
+/**
+ * `metadataBase` was here before the Open Graph tags were, which is why the
+ * audit found neither a canonical nor an `og:` tag on any page sampled: a base
+ * URL is what `alternates` and `openGraph` are resolved *against*, not a
+ * substitute for declaring them.
+ *
+ * These are the defaults. Both routes that render anything -- the landing page
+ * and `[...slug]` -- override `title`, `description`, `canonical` and the
+ * `openGraph` pair with the page's own frontmatter, which is already written
+ * per page and needs no second copy.
+ */
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: { default: SITE_NAME, template: `%s — ${SITE_NAME}` },
   description: SITE_DESCRIPTION,
   icons: { icon: '/favicon.svg' },
+  alternates: { canonical: '/' },
+  openGraph: {
+    type: 'website',
+    siteName: SITE_NAME,
+    url: '/',
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
+  },
+  robots: { index: true, follow: true },
 };
 
 export const viewport: Viewport = {
@@ -36,25 +63,13 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${generalSans.variable} ${commitMono.variable}`}
+      suppressHydrationWarning
+    >
       <head>
         <ThemeScript />
-        {/* The two faces above the fold. The mono face is not preloaded: the
-            first code block is below the fold on every page. */}
-        <link
-          rel="preload"
-          as="font"
-          type="font/woff2"
-          href="/fonts/InstrumentSans-latin.woff2"
-          crossOrigin="anonymous"
-        />
-        <link
-          rel="preload"
-          as="font"
-          type="font/woff2"
-          href="/fonts/BricolageGrotesque-latin.woff2"
-          crossOrigin="anonymous"
-        />
       </head>
       <body>
         <a className="skip-link" href="#content">

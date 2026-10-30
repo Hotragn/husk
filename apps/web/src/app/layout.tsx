@@ -3,14 +3,16 @@ import type { Metadata, Viewport } from "next";
 
 import { SiteFooter } from "@/components/SiteFooter";
 import { SiteHeader } from "@/components/SiteHeader";
-import { SITE_DESCRIPTION, SITE_URL } from "@/lib/content";
+import { SITE_DESCRIPTION } from "@/lib/content";
+import { SITE_URL } from "@/lib/site-url";
+import { commitMono, generalSans } from "./fonts";
 import "./globals.css";
 
 /**
  * No next/font/google here, and no <link> to a font CDN. The product's claim
  * is that nothing leaves your machine; a third-party font origin on the
- * homepage would contradict it in the first 200ms. The three brand faces are
- * self-hosted from /fonts — see public/fonts/README.md.
+ * homepage would contradict it in the first 200ms. The faces are self-hosted
+ * from src/fonts through next/font/local — see src/app/fonts.ts.
  */
 
 /**
@@ -29,31 +31,25 @@ import "./globals.css";
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: "Husk — a real computer for your AI chat",
+    default: "Husk — your AI chat gets a computer",
     template: "%s — Husk",
   },
   description: SITE_DESCRIPTION,
   applicationName: "Husk",
-  keywords: [
-    "AI agent",
-    "MCP",
-    "Claude Code",
-    "Linux container",
-    "Docker",
-    "local-first",
-    "husk.yaml",
-  ],
+  /* No `keywords`. Google dropped the meta keywords signal in 2009 and every
+     other major engine followed; it was seven strings of payload that no
+     crawler reads. */
   alternates: { canonical: "/" },
   openGraph: {
     type: "website",
     siteName: "Husk",
     url: "/",
-    title: "Husk — a real computer for your AI chat",
+    title: "Husk — your AI chat gets a computer",
     description: SITE_DESCRIPTION,
   },
   twitter: {
     card: "summary_large_image",
-    title: "Husk — a real computer for your AI chat",
+    title: "Husk — your AI chat gets a computer",
     description: SITE_DESCRIPTION,
   },
   robots: { index: true, follow: true },
@@ -78,28 +74,14 @@ const THEME_SCRIPT = `try{var t=localStorage.getItem('husk-theme');if(t==='light
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" data-scroll-behavior="smooth" suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${generalSans.variable} ${commitMono.variable}`}
+      data-scroll-behavior="smooth"
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
-        {/* The two faces above the fold, and only those. The mono face is not
-            preloaded: the first thing set in it is the install command, which
-            sits below the headline, and preloading a third file would delay
-            the two that paint first. Latin only — latin-ext is requested by
-            unicode-range when a page actually needs it. */}
-        <link
-          rel="preload"
-          as="font"
-          type="font/woff2"
-          href="/fonts/BricolageGrotesque-latin.woff2"
-          crossOrigin="anonymous"
-        />
-        <link
-          rel="preload"
-          as="font"
-          type="font/woff2"
-          href="/fonts/InstrumentSans-latin.woff2"
-          crossOrigin="anonymous"
-        />
       </head>
       <body>
         <a className="skip-link" href="#main">

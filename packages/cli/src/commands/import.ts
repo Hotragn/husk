@@ -39,8 +39,10 @@ export async function run(argv: string[]): Promise<number> {
     ui.note('');
     ui.note(ui.dim('husk looked in:'));
     ui.note(ui.dim('  ~/.claude/projects   Claude Code sessions'));
-    ui.note(ui.dim('  ~/Downloads          ChatGPT and Gemini exports'));
-    ui.note(ui.dim('  ~/.cursor            Cursor chat history'));
+    ui.note(ui.dim('  ~/.codex/sessions    Codex sessions'));
+    ui.note(ui.dim('  ~/Downloads          ChatGPT exports, and ~/Documents'));
+    ui.note(ui.dim('  ~/.gemini/tmp        Gemini CLI chats'));
+    ui.note(ui.dim("  Cursor's state.vscdb Cursor chat history"));
     ui.note(ui.dim('  ./                   markdown and jsonl'));
     ui.note('');
     ui.note(`${ui.dim('point at one directly:')} husk import ./chat.md`);

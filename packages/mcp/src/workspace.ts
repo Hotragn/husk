@@ -66,5 +66,5 @@ export async function findWorkspace(computerId: string, timeoutMs = 600): Promis
 /** One line to append to a tool result, or empty when there is nothing useful to say. */
 export async function workspaceNote(computerId: string): Promise<string> {
   const link = await findWorkspace(computerId);
-  return link.live ? `\nworkspace  ${link.url}` : `\nworkspace  not running -- \`husk serve\` to watch this machine`;
+  return link.live ? `\nviewer     ${link.url}` : `\nviewer     not running (optional) -- \`husk serve\` to watch this machine`;
 }

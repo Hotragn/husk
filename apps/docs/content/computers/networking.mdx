@@ -29,27 +29,48 @@ as "everything" is the interpretation that leaks data, so it is not the one Husk
 This is the part most sandbox documentation is vague about, and vagueness here is how
 people end up believing they have containment they do not have.
 
-| Mode | Docker / Podman | Tool layer (`fetch_url`, `http_request`) |
+| Mode | Docker / Podman | Husk's tools and the browser's page loads |
 | --- | --- | --- |
 | `none` | `--network=none`, enforced by the kernel | Refused |
 | `egress` | **Not enforced.** The container has normal networking | Enforced by hostname |
 | `full` | Not enforced, by design | Enforced only by the floor and by `deny` |
 
 Neither Docker nor Podman can allow-list hostnames, so `egress` is enforced where the
-hostname is actually known: in the tools. A process inside the machine that opens a raw
-socket, or runs `curl` in a shell, is not stopped by an `egress` policy.
+hostname is actually known: in Husk's tools (`fetch_url`, `http_request`, `browse` and
+the browser's own navigation), and in the browser driver, which checks every document a
+page loads by itself before anything is sent. A process inside the machine that opens a
+raw socket, or runs `curl` in a shell, is not stopped by an `egress` policy, and nor are
+a page's images, scripts and `fetch` calls. [Network policy](/security/network#where-each-mode-is-enforced)
+says what each check covers.
 
 <Warning>
-`mode: egress` constrains the agent's `fetch_url` and `http_request` tools. It does not
+`mode: egress` constrains Husk's tools and the browser's page loads. It does not
 constrain `curl` run through `shell`. If the distinction matters for your threat model,
 `none` and `full` are the honest choices: `none` is a kernel-enforced boundary on the
 container providers, and `full` is an admission that there is no boundary.
 </Warning>
 
+Where a provider cannot hold every process in the computer to the policy, Husk warns
+when it makes the computer. Ask for `strict` and it refuses to make one instead:
+
+```yaml
+computer:
+  network:
+    mode: none
+    strict: true    # or: husk-mcp --network none --network-strict
+```
+
+Only `none` on Docker or Podman, and `full` with no `deny` list, pass: no provider
+firewalls `egress` or a deny list for a process yet.
+
 ## The floor
 
-`isHostAllowed` refuses loopback, link-local and RFC1918 hosts **even in `mode: full`**,
-unless the operator names them in `allow`.
+`isHostAllowed` refuses link-local and RFC1918 hosts **even in `mode: full`**, unless the
+operator names them in `allow`. Loopback is refused too, except on a computer that has
+a loopback of its own (Docker, Podman and Fly): there `127.0.0.1` is the computer, not
+your machine, so the dev server an agent starts is one it can look at with `browse` or
+the browser. `fetch_url` and `http_request` run on your machine, not in the computer, so
+they never get that exception.
 
 `mode: full` means the internet. It does not mean the cloud metadata service at
 `169.254.169.254` that hands IAM credentials to anything that asks — and an agent that
@@ -65,8 +86,8 @@ Refused by default, in every mode:
 | IPv4 | `0.0.0.0/8`, `10.0.0.0/8`, `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` (CGNAT) |
 
 ```text
-error refused private address 169.254.169.254
-hint:  loopback, link-local and RFC1918 hosts must be named in computer.network.allow
+error network policy refuses 169.254.169.254
+hint:  link-local and RFC1918 hosts must be named in computer.network.allow
 ```
 
 To reach one deliberately, name it:
@@ -80,21 +101,15 @@ computer:
 
 Explicit beats implicit, and now the decision is in the file where a reviewer can see it.
 
-Both `@husk-ai/runtime` and `@husk-ai/agent` implement the floor. The agent package
-re-implements it rather than importing the runtime, because dependencies run downhill and
-`agent` sits above `runtime` — which means the two copies have to be kept in step by
-hand.
+The floor is one function, `isInternalHost` in `@husk-ai/core`, which the runtime and the
+agent both use, so a host refused in one place is refused everywhere.
 
 ### What the floor does not catch
 
-It matches on the hostname string. There is no DNS resolution, so:
-
-- A public name that resolves to `169.254.169.254` passes. Classic DNS rebinding.
-- Alternative IPv4 encodings — `http://2130706433/` for `127.0.0.1` — do not match the
-  dotted-quad pattern.
-- IPv4-mapped IPv6 forms such as `::ffff:127.0.0.1` are not matched by the private-host
-  check. (They *are* matched by the control plane's separate loopback check, which is a
-  different function for a different job.)
+It reads the host as written, decoded: `http://2130706433/` (`127.0.0.1` as one number),
+octal and hex forms, and IPv4-mapped IPv6 such as `::ffff:127.0.0.1` are refused as the
+addresses they are. There is no DNS resolution, though, so a public name that resolves
+to `169.254.169.254` passes. Classic DNS rebinding.
 
 A `*` entry in `allow` satisfies the match and therefore reopens the whole private range.
 Do not write `allow: ['*']` and expect the floor to hold.
@@ -118,24 +133,32 @@ at least one more character. Both sides are lower-cased and lose a trailing dot.
 
 For `fetch_url` and `http_request`, in this order:
 
-1. The URL parses. Otherwise `E_TOOL_ERROR`, `not a valid URL`.
+1. The URL parses. Otherwise `E_EXEC_DENIED`, `not a valid URL`.
 2. The protocol is `http:` or `https:`. `file:`, `ftp:`, `data:` and `gopher:` are
-   refused with `E_EXEC_DENIED`, `refused <scheme> URL`.
-3. `isHostAllowed(host, policy)` — `deny`, then `mode`.
-4. The private-address floor.
+   refused with `E_EXEC_DENIED`, `refusing the <scheme> scheme`.
+3. The private-address floor, unless the host is named in `allow`.
+4. `isHostAllowed(host, policy)` — `deny`, then `mode`.
 
-Every check runs **twice**: once on the URL you passed, and again on `res.url` after
-redirects. A 302 to `http://169.254.169.254/` is caught on the second pass.
+A refusal at 3 or 4 is `E_EXEC_DENIED`, `network policy refuses <host>`.
+
+The checks run on the URL you passed, and again on each redirect's target **before it
+is requested**. A 302 to `http://169.254.169.254/` is refused without asking that
+address anything, and a public → internal → public chain stops at the internal hop.
 
 `web_search` calls neither check. It talks to Tavily or Brave directly and is not
 filtered by the husk's network policy.
 
 ## Requests Husk itself makes
 
-Only two kinds, and you can name both:
+Requests depend on the task and provider:
 
 - The model provider you configured.
 - A container registry, when a flavor's image is not already pulled.
+- Chrome for Testing (Playwright's CDN on arm64), from inside the computer, the first
+  time it needs the browser and has no Chromium of its own.
+- Public sources and search services you ask the agent to access.
+- The remote computer provider you configured, if any.
+- With remote access on, the npm registry, for advisories against Husk's own packages.
 
-There is no telemetry, no analytics, and no crash reporter — absent from the codebase,
-not disabled by a flag.
+The installed runtime has no product telemetry or crash reporter. The hosted website
+and docs use Vercel Web Analytics.

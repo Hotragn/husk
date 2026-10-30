@@ -9,7 +9,9 @@
 export { createApp } from './app.js';
 export type { CreateAppOptions } from './app.js';
 
-export { serve, createDefaultDeps } from './serve.js';
+export { serve, serveJobs, createDefaultDeps } from './serve.js';
+export { JobsLink, createJobsApp, hasJobs, readJobsRecord, remoteRunner } from './jobs.js';
+export type { JobsRecord, SharedHusk } from './jobs.js';
 export type { ServeOptions, RunningServer } from './serve.js';
 
 export { Store } from './store.js';
@@ -26,9 +28,13 @@ export type {
   ServerConfig,
   ServerDeps,
   ServerRunOptions,
+  ToolRunner,
+  ToolRunResult,
 } from './deps.js';
 
 export { createContext, ctxOf } from './context.js';
+export { ActivityLog, summarise } from './activity.js';
+export type { ActivityEntry } from './activity.js';
 export type { ServerContext } from './context.js';
 
 export { Runner } from './runner.js';
@@ -57,6 +63,11 @@ export type { ErrorBody, ServerErrorCode } from './errors.js';
 
 export { assertBindIsSafe, bearerToken, installAuth, isLoopbackHost } from './auth.js';
 export type { AuthOptions } from './auth.js';
+
+export { Remote, parsePublicUrl } from './remote/oauth.js';
+export type { RemoteOptions } from './remote/oauth.js';
+export type { RemoteApp, RemoteMcp } from './remote/routes.js';
+export type { Verdict } from './remote/approvals.js';
 
 export { CronScheduler, nextFireTime, nextFireTimes, parseCron } from './cron.js';
 export type { CronExpression, CronJob } from './cron.js';

@@ -7,106 +7,56 @@
    Every value below resolves to a token. There is no literal hex in this file
    or in any component, per UI-PRINCIPLES.md §9.
 
-   FONTS. The three brand faces are vendored in public/fonts and declared
-   directly below. No third-party font origin is contacted. The fallback stacks
-   in tokens.css still matter -- they are what renders during swap and if a
-   woff2 ever fails to load.
+   FONTS. Three faces, vendored in src/fonts and declared by next/font/local.
+   No third-party font origin is contacted. The fallback stacks still matter --
+   they are what renders during swap and if a woff2 ever fails to load.
    ========================================================================== */
 
 @import "../styles/tokens.css";
 
 /* -----------------------------------------------------------------------------
-   The three faces, self-hosted.
+   The faces, and the three tokens that name them.
 
-   Byte-identical files and byte-identical @font-face rules to `apps/docs` --
-   both sites ship the same OFL 1.1 releases from @fontsource-variable/*, and
-   the licences sit next to the files. Not Google's CDN: a product whose pitch
-   is that nothing leaves your machine must not hand every reader's IP address
-   to a company they did not choose to talk to.
+   Declared by next/font/local in src/app/fonts.ts and src/app/manifesto/fonts.ts,
+   which emits the @font-face, fingerprints the file, preloads it per route and
+   synthesises a metric-matched fallback. Nothing is fetched from a third-party
+   origin: the woff2 files are in src/fonts and the licences sit beside them.
 
-   Until these landed, `--font-display`, `--font-ui` and `--font-mono` resolved
-   to the fallback stacks in tokens.css, so the product site rendered in system
-   faces while the docs site rendered in the brand's. See public/fonts/README.md
-   for the history.
+   tokens.css is a byte-identical copy of brand/tokens.css and drift-check
+   enforces that, so the three family tokens are re-pointed here rather than
+   edited there. The fallback stacks are kept -- they are what renders during
+   swap, and next/font inserts its own metric-adjusted face ahead of them.
+
+   General Sans      display + UI   wght 200-700, latin
+   Commit Mono       anything a machine wrote   wght 200-700, latin + the box
+                     drawing, arrows and dingbats the terminal blocks print
+   Newsreader        /manifesto body copy only. See --font-serif below; it
+                     resolves to the fallback serif on every other route,
+                     which is correct -- no other route sets it.
 -------------------------------------------------------------------------------- */
 
-@font-face {
-  font-family: 'Bricolage Grotesque';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 200 800;
-  font-stretch: 75% 100%;
-  src: url('/fonts/BricolageGrotesque-latin.woff2') format('woff2-variations');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+:root {
+  --font-display: var(--font-general-sans), "Archivo", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-ui: var(--font-general-sans), "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-commit-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --font-serif: var(--font-newsreader), "Iowan Old Style", Charter, Georgia, "Times New Roman", serif;
+
+  /* 18px. Between --font-size-md (16) and --font-size-lg (19.2) on the 1.2
+     scale, which has no step there, because the step it needs is an optical
+     correction for one face rather than a level in the hierarchy. */
+  --font-size-manifesto: 1.125rem;
+
+  /* Bricolage carried an `opsz` axis and tokens.css sets it per heading level.
+     General Sans has one axis, `wght`, so those five tokens now resolve to a
+     setting no face reads. Neutralised here rather than left to apply a
+     variation the font does not have. */
+  --font-display-opsz-body: normal;
+  --font-display-opsz-h3: normal;
+  --font-display-opsz-h2: normal;
+  --font-display-opsz-h1: normal;
+  --font-display-opsz-section: normal;
 }
 
-@font-face {
-  font-family: 'Bricolage Grotesque';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 200 800;
-  font-stretch: 75% 100%;
-  src: url('/fonts/BricolageGrotesque-latin-ext.woff2') format('woff2-variations');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
-    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
-    U+2C60-2C7F, U+A720-A7FF;
-}
-
-@font-face {
-  font-family: 'Instrument Sans';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 400 700;
-  font-stretch: 75% 100%;
-  src: url('/fonts/InstrumentSans-latin.woff2') format('woff2-variations');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'Instrument Sans';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 400 700;
-  font-stretch: 75% 100%;
-  src: url('/fonts/InstrumentSans-latin-ext.woff2') format('woff2-variations');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
-    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
-    U+2C60-2C7F, U+A720-A7FF;
-}
-
-@font-face {
-  font-family: 'Instrument Sans';
-  font-style: italic;
-  font-display: swap;
-  font-weight: 400 700;
-  font-stretch: 75% 100%;
-  src: url('/fonts/InstrumentSans-latin-italic.woff2') format('woff2-variations');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 100 800;
-  src: url('/fonts/JetBrainsMono-latin.woff2') format('woff2-variations');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 100 800;
-  src: url('/fonts/JetBrainsMono-latin-ext.woff2') format('woff2-variations');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
-    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
-    U+2C60-2C7F, U+A720-A7FF;
-}
 
 
 /* -----------------------------------------------------------------------------
@@ -293,6 +243,34 @@ svg {
 .prose ul + p {
   margin-top: var(--space-6);
 }
+
+/* -----------------------------------------------------------------------------
+   The manifesto, in a serif.
+
+   Body copy only, and only on this route. The page is an essay -- read start
+   to finish rather than scanned -- and a serif says that before the argument
+   has to. Headings stay in General Sans so the page still reads as part of
+   this site, and `code.inline` stays in Commit Mono because the rule that a
+   machine's words are monospaced does not bend for one page.
+
+   The size bump is not decoration. Newsreader's x-height is 0.426 of its em
+   against General Sans's 0.538, so the same nominal size renders visibly
+   smaller; 18px brings the two back into optical agreement without reaching
+   the full 20.2px that strict x-height matching would demand, which reads as
+   large-print. Measure stays at --measure-prose, 68ch, inside the 75 the type
+   scale is held to.
+-------------------------------------------------------------------------------- */
+
+.manifesto-body p,
+.manifesto-body li {
+  font-family: var(--font-serif);
+  font-size: var(--font-size-manifesto);
+  line-height: var(--leading-relaxed);
+  letter-spacing: var(--tracking-md);
+}
+
+/* The lead is the deck, not the essay: it belongs to the title block above and
+   stays in the UI face with the h1. */
 
 .prose strong {
   color: var(--color-text);
@@ -955,11 +933,38 @@ table.data tbody tr:hover {
   grid-template-columns: minmax(0, 1fr);
 }
 
+/* Two columns at --bp-md, five at --bp-lg. Four link lists plus the brand does
+   not fit at 768 without each column wrapping every label onto two lines. */
 @media (min-width: 48rem) {
   .footer-grid {
-    grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-8);
   }
+
+  .footer-brand {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 64rem) {
+  .footer-grid {
+    grid-template-columns: minmax(0, 1.6fr) repeat(4, minmax(0, 1fr));
+  }
+
+  .footer-brand {
+    grid-column: auto;
+  }
+}
+
+/* The wordmark at a size worth looking at. No shimmer, no gradient: the mark
+   is the one element on the page that is purely the brand, and
+   brand/logo/USAGE.md bans decoration on it outright. Large is the part of
+   that idea that survives the rule. */
+.footer-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--color-text);
 }
 
 .footer-heading {
@@ -985,10 +990,28 @@ table.data tbody tr:hover {
   border-radius: var(--radius-xs);
 }
 
-.footer-list a:hover {
+/* The underline draws from the left rather than appearing all at once. A
+   background gradient sized 0% to 100%, so nothing about the box changes and
+   no neighbour reflows -- section 3 bans hover animations that move layout,
+   and a real text-decoration cannot be animated at all.
+
+   120ms on --ease-move, the same as every other hover on the site. Under
+   reduced motion tokens.css collapses the duration and the underline simply
+   appears, which is the state change intact. */
+.footer-list a {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  background-size: 0% var(--border-width-hairline);
+  transition:
+    background-size var(--duration-2) var(--ease-move),
+    color var(--duration-1) var(--ease-move);
+}
+
+.footer-list a:hover,
+.footer-list a:focus-visible {
   color: var(--color-text);
-  text-decoration: underline;
-  text-underline-offset: 0.18em;
+  background-size: 100% var(--border-width-hairline);
 }
 
 .footer-legal {
@@ -1039,9 +1062,853 @@ table.data tbody tr:hover {
   max-width: var(--measure-prose);
 }
 
+.hero-preview {
+  max-width: var(--measure-prose);
+  margin-top: var(--space-8);
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--color-accent-fill);
+}
+
 .hero-figure {
   grid-column: span 5;
   align-self: start;
+}
+
+/* -----------------------------------------------------------------------------
+   The hero's two columns, and the object in the right one.
+
+   8/4 at 72rem, and both halves of that are load-bearing.
+
+   The ratio is 8/4 rather than the 7/5 asymmetry section 1 reaches for first,
+   because the left column carries a 19.2px mono install command and the object
+   is a square that looks right at any size. 7/5 truncates the command at
+   1152px -- which is exactly how the previous attempt at this hero broke it,
+   and the note it left in this file is the reason this one did not ship the
+   same bug twice.
+
+   The breakpoint is 72rem, not --bp-lg, for the same reason: at 1024 the copy
+   column is 537px and the command wants 507 plus a copy button. Below 72rem
+   the hero is one column, which is the arrangement that was measured across
+   six viewport widths, and the object sits *above* the copy rather than
+   between the headline and its own install command -- that is what `order`
+   is for here.
+-------------------------------------------------------------------------------- */
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-10);
+  align-items: center;
+}
+
+@media (min-width: 72rem) {
+  .hero-grid {
+    grid-template-columns: minmax(0, 8fr) minmax(0, 4fr);
+    gap: var(--grid-gap);
+  }
+}
+
+/* aspect-ratio, not min-height. The canvas is height: 100%, and 100% of a
+   parent whose height is only a minimum resolves against a height the canvas
+   is itself supposed to determine -- it collapses and draws the object at a
+   fraction of the box. A definite ratio is what the SVG needs too, so neither
+   shifts the column when it replaces the other. */
+.hero-object {
+  position: relative;
+  order: -1;
+  width: 100%;
+  max-width: 22rem;
+  margin-inline: auto;
+  aspect-ratio: 1 / 1;
+  touch-action: pan-y;
+}
+
+@media (min-width: 72rem) {
+  .hero-object {
+    order: 0;
+    max-width: 26rem;
+    margin-inline: 0;
+  }
+}
+
+.hero-object canvas {
+  display: block;
+}
+
+/* The SVG fallback. Same object, same box, drawn from the same tables --
+   colours come from the same tokens the WebGL scene reads. */
+.hero-scene-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The shadow side of both slabs, offset where the key light puts it. */
+.hs-depth {
+  fill: var(--color-primary-700);
+}
+
+.hs-panel {
+  fill: var(--color-surface);
+  stroke: var(--color-border-strong);
+  stroke-width: 1;
+}
+
+.hs-machine {
+  fill: var(--color-primary-300);
+}
+
+.hs-bar {
+  fill: var(--color-text-muted);
+  opacity: 0.45;
+}
+
+/* The reader's own message, in the accent -- the same distinction the chat
+   widget at the corner of the page makes. */
+.hs-bar-mine {
+  fill: var(--color-accent-300);
+  opacity: 0.85;
+}
+
+.hs-composer {
+  fill: var(--color-text-muted);
+  opacity: 0.22;
+}
+
+.hs-header {
+  fill: var(--color-text-muted);
+  opacity: 0.3;
+}
+
+.hs-plate {
+  fill: var(--color-primary-700);
+  opacity: 0.42;
+}
+
+.hs-cable {
+  fill: none;
+  stroke: var(--color-accent-300);
+  stroke-width: 6;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
+
+.hs-port {
+  fill: var(--color-accent-300);
+}
+
+.hs-vent {
+  fill: var(--color-primary-700);
+  opacity: 0.55;
+}
+
+/* -----------------------------------------------------------------------------
+   The provider orbit.
+
+   Five parallel options round the object they describe. No numbers on the
+   nodes: docker, podman, local, ssh and fly are a set, not a sequence, and
+   numbering a set invents an order the product does not have.
+
+   On the drift. The brief for this asked for a slow orbital drift, and the
+   nodes do not have it -- they are click targets, and a target that moves is a
+   target you miss, which is a worse trade than the one the motion buys. What
+   drifts is one faint ring with nothing on it: the same read, no hit area
+   crossing the pointer. It stops entirely under prefers-reduced-motion.
+
+   Everything this draws is also in the DOM twice over -- as a pressed button
+   and as a row of the table above -- so the SVG is aria-hidden.
+-------------------------------------------------------------------------------- */
+
+.orbit {
+  position: relative;
+  width: 100%;
+  max-width: 30rem;
+  margin-inline: auto;
+  aspect-ratio: 1 / 1;
+}
+
+.orbit-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.orbit-ring {
+  fill: none;
+  stroke: var(--color-border);
+  stroke-width: 0.25;
+}
+
+.orbit-ring-drift {
+  stroke: var(--color-border-strong);
+  stroke-dasharray: 1.2 2.6;
+  transform-origin: 50% 50%;
+  animation: orbit-drift 140s linear infinite;
+}
+
+.orbit-spoke {
+  stroke: var(--color-border);
+  stroke-width: 0.25;
+}
+
+.orbit-spoke[data-active="true"] {
+  stroke: var(--color-accent-fill);
+  stroke-width: 0.45;
+}
+
+@keyframes orbit-drift {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* tokens.css already collapses every animation to 1ms and one iteration, which
+   happens to end this one where it started. Saying it outright anyway: a loop
+   is removed under reduced motion, not run once very fast. */
+@media (prefers-reduced-motion: reduce) {
+  .orbit-ring-drift {
+    animation: none;
+  }
+}
+
+/* The core sits in the middle of the ring, inside the spokes' inner radius. */
+.orbit-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 42%;
+  height: 42%;
+  transform: translate(-50%, -50%);
+}
+
+/* Inside the ring the stage loses its surface and its rule. Both belonged to
+   the .frame that used to wrap it; a hard-edged rectangle in the middle of a
+   circle of nodes reads as a hole rather than a centre. The object keeps its
+   own silhouette against --color-bg, which is what the SVG fallback assumes. */
+.orbit-core .core-stage {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  background: transparent;
+  border-bottom: 0;
+}
+
+/* The focus ring has to stay reachable now the box has no edge of its own. */
+.orbit-core .core-stage:focus-visible {
+  outline-offset: 2px;
+  border-radius: var(--radius-md);
+}
+
+.orbit-node {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-3);
+  transform: translate(-50%, -50%);
+  border: var(--border-width-hairline) solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  letter-spacing: var(--tracking-mono);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: var(--transition-colors);
+}
+
+.orbit-node:hover {
+  background: var(--color-raised);
+  color: var(--color-text);
+  border-color: var(--color-text-subtle);
+}
+
+.orbit-node:active {
+  background: var(--color-surface);
+}
+
+.orbit-node[aria-pressed="true"] {
+  background: var(--color-raised);
+  border-color: var(--color-border-focus);
+  color: var(--color-text);
+}
+
+/* Colour is never the only channel: the selected node also fills its dot. */
+.orbit-node-dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  border: var(--border-width-hairline) solid var(--color-text-subtle);
+  background: transparent;
+}
+
+.orbit-node[aria-pressed="true"] .orbit-node-dot {
+  background: var(--color-accent-fill);
+  border-color: var(--color-accent-fill);
+}
+
+/* Under 40rem the ring is smaller than the labels it has to carry, so the
+   nodes stop being a ring and become the list they always were underneath. */
+@media (max-width: 39.99rem) {
+  .orbit {
+    aspect-ratio: auto;
+    max-width: none;
+  }
+
+  .orbit-lines,
+  .orbit-ring-drift {
+    display: none;
+  }
+
+  .orbit-core {
+    position: static;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+    transform: none;
+  }
+
+  .orbit-nodes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-5);
+  }
+
+  .orbit-node {
+    position: static;
+    transform: none;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   The install selector.
+
+   A segmented control, from section 4 of UI-PRINCIPLES: the pills get the same
+   rest/hover/active/focus/selected treatment every other control here gets,
+   and the selected one changes background rather than only colour. Restrained
+   on purpose -- it is a functional control, not a showpiece, and it has no
+   entrance of its own.
+
+   The pills wrap rather than scroll. Six client names at 13.33px fit two rows
+   on a 360px screen, and a horizontally scrolling tab strip hides the option
+   the reader came for.
+-------------------------------------------------------------------------------- */
+
+.installer {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.installer-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.installer-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-4);
+  border: var(--border-width-hairline) solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: var(--transition-colors);
+}
+
+.installer-pill:hover {
+  background: var(--color-raised);
+  color: var(--color-text);
+  border-color: var(--color-text-subtle);
+}
+
+.installer-pill:active {
+  transform: translateY(1px);
+}
+
+.installer-pill[aria-selected="true"] {
+  background: var(--color-raised);
+  border-color: var(--color-border-focus);
+  color: var(--color-text);
+}
+
+.installer-panel {
+  display: grid;
+  gap: var(--space-3);
+}
+
+/* The panel is focusable so the keyboard reaches its scrollable code block;
+   it must not draw a ring when the pointer put focus there. */
+.installer-panel:focus {
+  outline: none;
+}
+
+.installer-panel:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: var(--radius-md);
+}
+
+.installer-where {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.installer-path {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.installer-note {
+  margin: 0;
+  max-width: var(--measure-prose);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-subtle);
+}
+
+/* -----------------------------------------------------------------------------
+   The scroll narrative, as a docked widget.
+
+   Three rules govern this block:
+
+   1. There is ONE copy of the content and it ships visible, in the page flow.
+      [data-anim="on"] -- set by script after mount -- is what lifts that same
+      element into the fixed dock. With no JS, a failed hydration, or reduced
+      motion, this is a readable transcript in the body of the page rather than
+      a floating widget nobody can open.
+   2. Nothing is display: none while animating. Hidden beats are opacity and
+      transform, so the text stays in the accessibility tree throughout.
+   3. No coordinate here is a scroll position. The timeline owns the beats;
+      this file only says how big things are and where the dock sits.
+-------------------------------------------------------------------------------- */
+
+.narrative {
+  position: relative;
+  --nr-lit: 0;
+}
+
+/* --- the in-flow form: what a crawler and a no-JS reader get ---------------- */
+
+.narrative:not([data-anim="on"]) {
+  padding-block: var(--space-16);
+}
+
+.narrative:not([data-anim="on"]) .nr-dock {
+  width: min(100%, 44rem);
+  margin-inline: auto;
+}
+
+.narrative:not([data-anim="on"]) .nr-launcher,
+.narrative:not([data-anim="on"]) .nr-close {
+  display: none;
+}
+
+/* In the flow it is a block of prose, not a widget: it takes the width it is
+   given and grows to its content, so nothing is behind an internal scrollbar
+   for the reader who is getting this version precisely because they cannot or
+   do not want to drive the animated one. */
+.narrative:not([data-anim="on"]) .nr-panel {
+  width: 100%;
+  max-height: none;
+  overflow: visible;
+}
+
+.narrative:not([data-anim="on"]) .nr-hint {
+  display: none;
+}
+
+/* --- the docked form ------------------------------------------------------- */
+
+.narrative[data-anim="on"] {
+  /* Out of the flow entirely: the middle of the page goes back to the prose,
+     which is the reason this moved. */
+  height: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.narrative[data-anim="on"] .nr-dock {
+  position: fixed;
+  right: var(--gutter-inline);
+  bottom: var(--gutter-inline);
+  /* Under the sticky header, over the page. */
+  z-index: 30;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+@media (min-width: 48rem) {
+  .narrative[data-anim="on"] .nr-dock {
+    right: var(--gutter-inline-wide);
+    bottom: var(--gutter-inline-wide);
+  }
+}
+
+.nr-launcher {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-lg);
+  padding: 0 var(--space-4) 0 var(--space-3);
+  border: var(--border-width-hairline) solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: var(--transition-colors);
+}
+
+.nr-launcher:hover {
+  background: var(--color-raised);
+  color: var(--color-text);
+  border-color: var(--color-text-subtle);
+}
+
+.nr-launcher:active {
+  transform: translateY(1px);
+}
+
+/* The mark's core lights once the machine is attached. --nr-lit is driven by
+   the timeline, so it is the transcript reaching its end that turns it on --
+   not a loop, and not a timer. */
+.nr-launcher .husk-core {
+  filter: drop-shadow(0 0 calc(var(--nr-lit) * 6px) var(--color-accent-fill));
+}
+
+.nr-panel {
+  width: min(22rem, calc(100vw - 2 * var(--gutter-inline)));
+  border: var(--border-width-hairline) solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+
+/* Docked, the panel is the scroll container: a fixed box with a taller track
+   inside it. The track's overflow is the timeline's length, and the stage
+   sticks to the top of it so the content stays put while the reader scrubs.
+   `overscroll-behavior: contain` keeps the page still once the panel hits
+   either end -- without it the story finishes and the page lurches. */
+/* The height is written by script from the stage's measured height -- sticky
+   only pins an element that fits its scrollport, and the stage's height
+   depends on the content and the font. This is the value before that lands,
+   and the ceiling if the stage turns out taller than the window allows. */
+.narrative[data-anim="on"] .nr-panel {
+  height: min(36rem, calc(100vh - 9rem));
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.narrative[data-anim="on"] .nr-panel:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* The scrub length lives in .nr-spacer, not in padding here: a sticky child is
+   constrained to its parent's content box, and padding is not content, so the
+   stage had nowhere to stick through. */
+.narrative[data-anim="on"] .nr-spacer {
+  /* About a page and a half of wheel -- long enough to read the beats, short
+     enough that nobody feels trapped in a 22rem box. */
+  height: 34rem;
+}
+
+.narrative:not([data-anim="on"]) .nr-spacer {
+  display: none;
+}
+
+.narrative[data-anim="on"] .nr-stage {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+}
+
+.narrative[data-anim="on"] .nr-panel {
+  box-shadow: var(--shadow-lg);
+  transform-origin: 100% 100%;
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+  pointer-events: none;
+  transition:
+    opacity var(--duration-3) var(--ease-exit),
+    transform var(--duration-3) var(--ease-exit);
+}
+
+.narrative[data-anim="on"] .nr-dock[data-open="true"] .nr-panel {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+  transition:
+    opacity var(--duration-4) var(--ease-enter),
+    transform var(--duration-4) var(--ease-enter);
+}
+
+/* Says what to do, once. It goes the moment it is obeyed, because a hint that
+   outlives its instruction is furniture. */
+.nr-hint {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-text-accent);
+  opacity: 0;
+  transition: opacity var(--duration-3) var(--ease-exit);
+}
+
+.narrative[data-anim="on"] .nr-dock[data-open="true"][data-moved="false"] .nr-hint {
+  opacity: 1;
+}
+
+.nr-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border-bottom: var(--border-width-hairline) solid var(--color-border);
+  background: var(--color-raised);
+}
+
+.nr-title {
+  /* Shrinks first. The hint and the close button are fixed-width, so without
+     this the title wraps to two lines and the head grows a row. */
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-mono);
+  color: var(--color-text-subtle);
+}
+
+.nr-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height-md);
+  height: var(--control-height-md);
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  transition: var(--transition-colors);
+}
+
+.nr-close:hover {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.nr-body {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.nr-sent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.nr-who {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-subtle);
+}
+
+.nr-cmd {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-code);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.nr-gained {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+}
+
+.nr-tools {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nr-tool {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.nr-tool-name {
+  flex: 0 0 auto;
+  min-width: 9ch;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-accent);
+}
+
+.nr-tool-what {
+  flex: 1 1 14ch;
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
+.nr-out {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--leading-code);
+  overflow-x: auto;
+}
+
+.nr-line {
+  white-space: pre;
+  color: var(--color-text-muted);
+}
+
+.nr-line-prompt {
+  color: var(--color-text);
+}
+
+.nr-attached {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.nr-attached-dot {
+  flex: 0 0 auto;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-success);
+}
+
+.nr-composer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-lg);
+  padding: 0 var(--space-4);
+  border-top: var(--border-width-hairline) solid var(--color-border);
+  background: var(--color-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  overflow: hidden;
+}
+
+.nr-typed {
+  white-space: pre;
+}
+
+.nr-caret {
+  flex: 0 0 auto;
+  width: 0.55ch;
+  height: 1.15em;
+  background: var(--color-accent-fill);
+}
+
+/* ---- the states the timeline animates FROM. Script-gated, never shipped. --- */
+
+.narrative[data-anim="on"] .nr-sent,
+.narrative[data-anim="on"] .nr-gained,
+.narrative[data-anim="on"] .nr-tool,
+.narrative[data-anim="on"] .nr-line,
+.narrative[data-anim="on"] .nr-attached {
+  opacity: 0;
+}
+
+/* -----------------------------------------------------------------------------
+   The scroll cue.
+
+   One line and one chevron. It is an anchor, so it works clicked as well as
+   read, and it takes itself off the page the moment the reader scrolls -- a
+   cue still pointing down after you have gone is furniture.
+
+   The chevron's nudge is a hover response to a pointer the reader is moving,
+   not an idle loop. Nothing here animates on its own.
+-------------------------------------------------------------------------------- */
+
+.scroll-cue {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-10);
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-2);
+  margin-inline-start: calc(-1 * var(--space-2));
+  border-radius: var(--radius-sm);
+  color: var(--color-text-subtle);
+  font-size: var(--font-size-sm);
+  text-decoration: none;
+  opacity: 1;
+  transition:
+    opacity var(--duration-3) var(--ease-exit),
+    color var(--duration-1) var(--ease-move);
+}
+
+.scroll-cue:hover {
+  color: var(--color-text);
+}
+
+.scroll-cue[data-gone="true"] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.scroll-cue-chevron {
+  transition: transform var(--duration-2) var(--ease-move);
+}
+
+.scroll-cue:hover .scroll-cue-chevron {
+  transform: translateY(2px);
 }
 
 @media (max-width: 39.99rem) {
@@ -1096,8 +1963,13 @@ table.data tbody tr:hover {
 .core-readout {
   display: grid;
   gap: var(--space-1);
+  margin-top: var(--space-6);
   padding: var(--space-3) var(--space-4);
   background: var(--color-surface);
+  /* It used to sit inside a .frame, which owned the border. The orbit replaced
+     that wrapper, so the panel carries its own now. */
+  border: var(--border-width-hairline) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
 }
@@ -1116,19 +1988,6 @@ table.data tbody tr:hover {
 .core-readout dd {
   margin: 0;
   color: var(--color-text);
-}
-
-.core-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-  margin-top: var(--space-3);
-}
-
-.core-controls .btn {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-  padding-inline: var(--space-3);
 }
 
 .core-hint {
@@ -1429,37 +2288,6 @@ table.data tbody tr:hover {
 }
 
 /* -- hero object and onboarding steps ---------------------------------------- */
-
-/* The hero is two columns again once there is room for both. Below 72rem the
-   grid collapses (see the grid12 rule above) and the object sits under the
-   copy, where it is still worth having and no longer competing for width with
-   a 19.2px mono command. */
-/* 8/4, not the 7/5 the base rule gives. The copy column carries a 19.2px mono
-   install command; the object is a square that looks right at any size. Giving
-   the object the extra column is how the command ended up truncated at 1152 in
-   the first place. */
-
-
-
-
-/* aspect-ratio, not min-height. HuskCore's canvas is height: 100%, and 100% of
-   a parent whose height is only a minimum resolves against a height the canvas
-   itself is supposed to determine -- so it collapsed and drew the object at a
-   fraction of the space. A definite box is what `.core-stage` gives it in the
-   Providers section, and the same thing is what it needs here. */
-.hero-object {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  max-height: 26rem;
-  margin-inline: auto;
-}
-
-@media (max-width: 79.99rem) {
-  .hero-object {
-    max-height: 18rem;
-  }
-}
 
 .steps {
   list-style: none;

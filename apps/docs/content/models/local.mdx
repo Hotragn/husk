@@ -41,9 +41,12 @@ Husk refuses that combination before the first token rather than letting you
 find out several minutes into a run:
 
 ```
-error ollama/gemma3 cannot call tools, and this husk declares 7
-hint:  pull a tools-capable model (`ollama pull qwen2.5:7b`), or set tools: [] for a chat-only husk
+error ollama/gemma3 cannot call tools, and this husk declares 10
+hint:  run with --debug for the trace, or --approve readonly to see what it wanted to do
 ```
+
+The hint is the one every failed run gets. The fix is a model that can call tools
+(`ollama pull qwen2.5:7b`), or `tools: []` for a chat-only husk.
 
 Check before you pull — the model's page on ollama.com lists a **tools** badge,
 and `husk models` shows the same thing for anything already on disk.
@@ -83,7 +86,7 @@ model: ollama/qwen2.5:7b
 ```
 
 ```yaml title="husk.yaml"
-model: local        # first available Ollama or LM Studio model
+model: local        # an Ollama or LM Studio model; husk run tries LM Studio first
 ```
 
 ```json title="~/.husk/config.json"
@@ -91,8 +94,9 @@ model: local        # first available Ollama or LM Studio model
 ```
 
 The canonical aliases `gemma`, `llama` and `qwen` point at `ollama/gemma3`,
-`ollama/llama3.2` and `ollama/qwen2.5-coder`. They only resolve if you have pulled that
-exact tag — and `gemma` is chat-only, per the warning above.
+`ollama/llama3.2` and `ollama/qwen2.5-coder`. A bare `ollama pull llama3.2` is listed as
+`llama3.2:latest`, which `llama` finds. A model pulled under another tag, such as
+`qwen2.5-coder:7b`, needs its full id. And `gemma` is chat-only, per the warning above.
 
 ### A remote Ollama
 
@@ -272,25 +276,24 @@ Below about 7B, treat tool calling as unreliable rather than merely imprecise.
 ## Mixing local and hosted
 
 The most useful configuration is not "local only" — it is a good hosted model with a
-local floor, so a rate limit or a spend cap does not stop a run. `husk doctor` suggests
-exactly this when every configured provider bills:
+local floor, so a rate limit or a spend cap does not stop a run. When every configured
+provider bills, the router says so in the hint on its `No provider can serve` error, as
+when a run over the API asks for `local` and only paid providers answer:
 
 ```text
 Every configured provider bills per token. `ollama pull qwen2.5:7b` adds a free local
 fallback so a rate limit or a spend cap does not stop a run.
 ```
 
+`husk doctor` does not show it: it lists each provider's own fix.
+
 ```yaml title="husk.yaml"
 model: sonnet
 fallbackModels: [flash, qwen]
 ```
 
-<NotYet>
-`fallbackModels` is only honoured on the control-plane path
-(`POST /v1/husks/:name/run`, which builds a real `ModelRouter`). `husk run` pins one
-model up front and never falls back. See
-[the note on the router page](/models#cost).
-</NotYet>
+`husk run` and a run over the API both fall back through `fallbackModels`, in order. See
+[the router page](/models#fallback).
 
 ## Cost
 

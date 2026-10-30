@@ -14,9 +14,9 @@ import { backoffMs, openManagedSocket } from '../api/sockets';
 import type { ManagedSocket } from '../api/sockets';
 import { EVENT_TOPICS, isWireEvent } from '../api/wire';
 import type { HealthReport, HuskWireEvent } from '../api/wire';
+import { ownerSession, readViewerToken, storeViewerToken } from './viewerToken';
 
 const BASE_URL_KEY = 'husk.console.baseUrl';
-const TOKEN_KEY = 'husk.console.token';
 const MAX_EVENTS = 200;
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
@@ -63,10 +63,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   // Same origin by default: in production `@husk-ai/server` serves this bundle
   // itself, and in development `vite.config.ts` proxies `/v1` and `/health`
   // through to it. Either way there is no cross-origin request to arrange.
-  const [baseUrl, setBaseUrl] = useState(() => readStored(BASE_URL_KEY, window.location.origin));
-  const [token, setToken] = useState(() => readStored(TOKEN_KEY, ''));
+  const [initialToken] = useState(readViewerToken);
+  const [baseUrl, setBaseUrl] = useState(() => initialToken.fromLink || initialToken.token ? window.location.origin : readStored(BASE_URL_KEY, window.location.origin));
+  const [token, setToken] = useState(initialToken.token);
 
-  const api = useMemo(() => new HuskApi({ baseUrl, token }), [baseUrl, token]);
+  // A link under remote access's public URL also carries the owner session its passkey page added.
+  const api = useMemo(() => new HuskApi({ baseUrl, token, owner: ownerSession() }), [baseUrl, token]);
 
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [health, setHealth] = useState<HealthReport | null>(null);
@@ -165,6 +167,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   // -- event firehose -------------------------------------------------------
 
   useEffect(() => {
+    if (status !== 'connected' || health?.mode === 'starter') return;
     let socket: ManagedSocket | null = null;
 
     socket = openManagedSocket(api.socketUrl('/v1/events'), {
@@ -193,7 +196,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     });
 
     return () => socket?.close();
-  }, [api, invalidate]);
+  }, [api, invalidate, status, health?.mode]);
 
   const configure = useCallback((next: { baseUrl?: string; token?: string }) => {
     if (next.baseUrl !== undefined) {
@@ -202,7 +205,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       setBaseUrl(trimmed);
     }
     if (next.token !== undefined) {
-      writeStored(TOKEN_KEY, next.token.trim());
+      storeViewerToken(next.token.trim());
       setToken(next.token.trim());
     }
   }, []);

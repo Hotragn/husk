@@ -4,8 +4,21 @@ import Link from "next/link";
 import { CommandBlock } from "@/components/CodeBlock";
 import { REPO_URL } from "@/lib/content";
 
+const TITLE = "Not found";
+const DESCRIPTION =
+  "There is no page at that address. The link was wrong, or the page moved and nothing forwarded it.";
+
+/**
+ * `robots: noindex` keeps this out of search, but a 404 still gets pasted into
+ * a chat window, and the unfurl there was inheriting the homepage's card --
+ * a share that promised the product and delivered a dead link. Its own title
+ * and description, quoting the two sentences the page itself opens with.
+ */
 export const metadata: Metadata = {
-  title: "Not found",
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: { title: TITLE, description: DESCRIPTION },
+  twitter: { title: TITLE, description: DESCRIPTION },
   robots: { index: false, follow: true },
 };
 

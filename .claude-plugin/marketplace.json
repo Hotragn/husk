@@ -1,0 +1,15 @@
+{
+  "name": "husk",
+  "owner": {
+    "name": "Husk",
+    "url": "https://github.com/Hotragn/husk"
+  },
+  "description": "Husk's Claude Code plugin: a computer of your own, with a handoff for logins.",
+  "plugins": [
+    {
+      "name": "husk",
+      "source": "./plugins/husk",
+      "description": "Give Claude Code its own computer: a shell, files and a real browser, with a handoff for logins."
+    }
+  ]
+}

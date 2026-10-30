@@ -220,6 +220,11 @@ This is consistent with what `husk doctor` says — *"guarded working directory 
 
 ### Deny list scope
 
+> **Superseded.** Since [#257](https://github.com/Hotragn/husk/pull/257), a husk's
+> `guardrails.denyCommands` and `allowCommands` are written onto its computer, and every
+> provider checks each command against them, `husk exec` included. A computer made before
+> then keeps the lists it was made with. What follows is how 0.1.0 behaved.
+
 `husk exec` enforces the **runtime built-ins** in `packages/runtime/src/deny.ts` (`sudo`, `rm -rf /`, `mkfs`, `dd of=/dev/sd*`, fork bomb, `shutdown`, piping a remote script into a shell, writes to `/etc/passwd|shadow|sudoers|hosts`). It does **not** enforce the per-husk `guardrails.denyCommands` from `sprout.yaml`, which live in the agent layer (`packages/agent/src/guard.ts`) and are bypassed when you skip the agent:
 
 ```
@@ -410,9 +415,8 @@ hint:  let the run finish, remove them by name, or pass --force if you are sure
 husk *do* share one computer, by design, via the `husk:<name>` binding — that is
 what lets a conversation keep its files across tool calls. There is no
 refcounting, so the sharing is cooperative rather than enforced. For two agents
-that should not share a filesystem, give them different husk names or pass an
-explicit `--computer`. Worth revisiting if per-run isolation ever becomes the
-expected default.
+that should not share a filesystem, give them different husk names. Worth
+revisiting if per-run isolation ever becomes the expected default.
 
 The fabrication findings in sections 2 and 3 stand unchanged, and are the more
 important result.

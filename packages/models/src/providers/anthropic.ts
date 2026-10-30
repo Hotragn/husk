@@ -122,10 +122,8 @@ export class AnthropicProvider implements ModelProvider {
       if (req.toolChoice) body['tool_choice'] = toAnthropicToolChoice(req.toolChoice);
     }
 
-    if (req.responseFormat?.type === 'json' && !req.tools?.length) {
-      // Anthropic has no JSON mode; the documented technique is an assistant prefill.
-      messages.push({ role: 'assistant', content: [{ type: 'text', text: '{' }] });
-    }
+    const prefill = jsonPrefill(req);
+    if (prefill) messages.push({ role: 'assistant', content: [{ type: 'text', text: prefill }] });
 
     return body;
   }
@@ -160,13 +158,16 @@ export class AnthropicProvider implements ModelProvider {
       throw networkError(this.ctx(model), err);
     }
 
-    let text = '';
+    let text = jsonPrefill(req);
     let thinking = '';
+    const signatures: string[] = [];
     const toolCalls: ToolCallPart[] = [];
     for (const block of data.content ?? []) {
       if (block['type'] === 'text') text += String(block['text'] ?? '');
-      else if (block['type'] === 'thinking') thinking += String(block['thinking'] ?? '');
-      else if (block['type'] === 'tool_use') {
+      else if (block['type'] === 'thinking') {
+        thinking += String(block['thinking'] ?? '');
+        signatures.push(String(block['signature'] ?? ''));
+      } else if (block['type'] === 'tool_use') {
         toolCalls.push({
           type: 'tool_call',
           id: String(block['id'] ?? ''),
@@ -187,6 +188,8 @@ export class AnthropicProvider implements ModelProvider {
       raw: data,
     };
     if (thinking) response.thinking = thinking;
+    const signature = loneSignature(signatures);
+    if (signature) response.thinkingSignature = signature;
     return response;
   }
 
@@ -204,8 +207,11 @@ export class AnthropicProvider implements ModelProvider {
 
     const calls = new ToolCallAccumulator();
     const emitted: ToolCallPart[] = [];
-    let text = '';
+    // The reply goes on after a JSON prefill, so the brace is the stream's first text.
+    let text = jsonPrefill(req);
+    if (text) yield { type: 'text_delta', text };
     let thinking = '';
+    const signatures: string[] = [];
     let finish: FinishReason = 'stop';
     let raw: Record<string, number> = {};
 
@@ -226,6 +232,8 @@ export class AnthropicProvider implements ModelProvider {
           const block = event['content_block'] ?? {};
           if (block.type === 'tool_use') {
             calls.push(Number(event['index'] ?? 0), { id: String(block.id), name: String(block.name) });
+          } else if (block.type === 'thinking') {
+            signatures.push('');
           }
           continue;
         }
@@ -238,6 +246,8 @@ export class AnthropicProvider implements ModelProvider {
           } else if (delta.type === 'thinking_delta' && delta.thinking) {
             thinking += delta.thinking;
             yield { type: 'thinking_delta', text: delta.thinking };
+          } else if (delta.type === 'signature_delta' && signatures.length) {
+            signatures[signatures.length - 1] += String(delta.signature ?? '');
           } else if (delta.type === 'input_json_delta') {
             const ready = calls.push(index, { argsFragment: String(delta.partial_json ?? '') });
             if (ready) {
@@ -282,6 +292,8 @@ export class AnthropicProvider implements ModelProvider {
       latencyMs: Date.now() - started,
     };
     if (thinking) response.thinking = thinking;
+    const signature = loneSignature(signatures);
+    if (signature) response.thinkingSignature = signature;
     yield { type: 'done', response };
   }
 
@@ -298,6 +310,23 @@ export class AnthropicProvider implements ModelProvider {
     usage.costUsd = costOf(info, usage);
     return usage;
   }
+}
+
+/**
+ * Anthropic has no JSON mode; the documented technique is an assistant prefill
+ * of `{`. Its reply goes on after it, so the brace is put back at the start.
+ */
+function jsonPrefill(req: ChatRequest): string {
+  return req.responseFormat?.type === 'json' && !req.tools?.length ? '{' : '';
+}
+
+/**
+ * A thinking block's signature, which must go back verbatim with it on the next
+ * turn. One signature covers one block, and the reply's thinking is kept as one
+ * text, so only a reply with a single block can be echoed back whole.
+ */
+function loneSignature(signatures: string[]): string | undefined {
+  return signatures.length === 1 && signatures[0] ? signatures[0] : undefined;
 }
 
 function systemText(req: ChatRequest): string {

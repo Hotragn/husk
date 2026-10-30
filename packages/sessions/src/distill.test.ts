@@ -144,6 +144,21 @@ describe('observedTools', () => {
     expect(tools.needsComputer).toBe(false);
   });
 
+  it("reads a chat's MCP tools by their own names: one that used Husk's needs the computer", () => {
+    const tools = observedTools(t([], { meta: { tools: ['mcp__husk__shell', 'mcp__husk__browser_goto', 'mcp__husk__read_file'] } }));
+    expect(tools.suggested).toEqual(['computer', 'files', 'browser']);
+    expect(tools.needsComputer).toBe(true);
+  });
+
+  it("gives a chat that drove Husk's browser the browser, and the computer it runs in", () => {
+    const tools = observedTools(t([], { meta: { tools: ['mcp__husk__browser_goto', 'mcp__husk__browser_click'] } }));
+    expect(tools.suggested).toEqual(['browser']);
+    expect(tools.needsComputer).toBe(true);
+    const spec = toSpec({ ...distillHeuristic(RUNBOOK), suggestedTools: ['browser'], needsComputer: false });
+    expect(spec.tools).toEqual(['browser']);
+    expect(spec.computer.enabled).toBe(true);
+  });
+
   it('includes tools that only a sidechain revealed', () => {
     const tools = observedTools(t([], { meta: { tools: ['Bash'], sidechainTools: ['WebSearch'] } }));
     expect(tools.suggested).toEqual(['computer', 'web']);
@@ -192,6 +207,41 @@ describe('distillHeuristic', () => {
     );
     expect(agentText(secretive)).not.toContain('bob@example.com');
     expect(agentText(secretive)).not.toContain('C:\\Users\\bob');
+  });
+
+  it('does not leak a title secret into the generated name', () => {
+    const key = `sk-ant-api03-${'A'.repeat(40)}`;
+    const agent = distillHeuristic(
+      t(
+        [
+          { role: 'user', content: 'You are a helper. Remember the deploy key I pasted.' },
+          { role: 'assistant', content: 'Noted, I will keep it safe.' },
+        ],
+        { title: `Use key ${key}` },
+      ),
+    );
+    expect(agent.name).not.toContain('sk-ant');
+    expect(agent.name).not.toContain('aaa');
+    expect(agentText(agent)).not.toContain(key);
+  });
+
+  it('never claims no tools while the spec lists them', () => {
+    const agent = distillHeuristic(
+      t([
+        { role: 'user', content: 'You are a helper. Explain closures simply.' },
+        { role: 'assistant', content: 'A closure is a function that remembers its scope.' },
+      ]),
+    );
+    const spec = toSpec(agent);
+    // normaliseTools always emits at least the files toolkit; the notes must
+    // agree with the spec the user is looking at.
+    expect(spec.tools.length).toBeGreaterThan(0);
+    for (const note of agent.notes) {
+      expect(note).not.toMatch(/configured without tools/);
+      if (/No tool use observed/.test(note)) {
+        expect(note).toContain(spec.tools[0] as string);
+      }
+    }
   });
 
   it('picks up the model the transcript ran on', () => {
@@ -334,6 +384,26 @@ describe('distillWithModel', () => {
     const agent = await distillWithModel(RUNBOOK, stubModel(['not json at all']));
     expect(agent.notes.join(' ')).toMatch(/fell back to heuristics/);
     expect(agent.persona).toMatch(/Always run the full test suite/i);
+    expect(agent.notes.join(' ')).not.toMatch(/no model was used/i);
+    expect(agent.notes.join(' ')).toMatch(/Model distillation attempted/);
+  });
+
+  it('stops a repeatedly failing extractor before sending the entire transcript', async () => {
+    const model = stubModel(['not JSON']);
+    const long = t(Array.from({ length: 20 }, (_, i) => ({ role: 'user', content: `Always verify result ${i}. `.repeat(30) })));
+    const agent = await distillWithModel(long, model, { windowTokens: 100, overlap: 0 });
+    expect(model.calls).toHaveLength(2);
+    expect(agent.notes.join(' ')).toMatch(/skipped 18 of 20 slices/);
+    expect(agent.notes.join(' ')).toMatch(/fell back to heuristics/);
+    expect(agent.notes.join(' ')).not.toMatch(/no model was used/i);
+  });
+
+  it('resets the failure streak after a usable slice', async () => {
+    const model = stubModel(['bad', candidate, 'bad', candidate, merged]);
+    const long = t(Array.from({ length: 4 }, (_, i) => ({ role: 'user', content: `Always verify result ${i}. `.repeat(30) })));
+    const agent = await distillWithModel(long, model, { windowTokens: 100, overlap: 0 });
+    expect(model.calls).toHaveLength(5);
+    expect(agent.notes.join(' ')).not.toMatch(/skipped/);
   });
 
   it('falls back rather than throwing when the model errors', async () => {

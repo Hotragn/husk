@@ -93,6 +93,12 @@ export function redactText(
   if (o.secrets) {
     const before = text;
     text = redactSecrets(text);
+    // core's redact keeps up to 6 characters of a matched secret so an operator
+    // reading a log can tell two keys apart. Everything that leaves THIS package
+    // is an artifact -- a persona file, a name, a slug, a filename -- and there a
+    // kept prefix is just a smaller leak: `sk-ant...[redacted]` slugged into a
+    // bot name as `sk-antredacted`. Strip it here, not in core.
+    text = text.replace(/[A-Za-z0-9._~+/-]{1,6}\.\.\.\[redacted\]/g, '[redacted]');
     // core's redact() does not count, so infer from the marker it leaves behind.
     if (text !== before) {
       counts.secret =

@@ -36,6 +36,35 @@ describe('computerSpecFor', () => {
     expect(cspec.labels).toBeUndefined();
     expect(cspec.user).toBeUndefined();
   });
+
+  it('reads ${NAME} in computer.env where Husk runs, and refuses one that is not set', () => {
+    const spec = parseSpec({
+      name: 'ci',
+      computer: { env: { GITHUB_TOKEN: '${GITHUB_TOKEN}', URL: 'https://${HOST}/x', PS1: '$${debian_chroot}' } },
+    });
+    expect(computerSpecFor(spec, { GITHUB_TOKEN: 'ghp_x', HOST: 'example.com' }).env).toEqual({
+      GITHUB_TOKEN: 'ghp_x',
+      URL: 'https://example.com/x',
+      PS1: '${debian_chroot}',
+    });
+    // The placeholder stays in the spec itself, for whatever writes it back to disk.
+    expect(spec.computer.env.GITHUB_TOKEN).toBe('${GITHUB_TOKEN}');
+    expect(() => computerSpecFor(spec, { HOST: 'example.com' })).toThrow(/computer\.env\.GITHUB_TOKEN uses \$\{GITHUB_TOKEN\}, which is not set/);
+    expect(() => computerSpecFor(spec, { GITHUB_TOKEN: '', HOST: 'example.com' })).toThrow(/which is empty/);
+  });
+
+  it('hands the guardrails lists to the computer as labels, keeping its own', () => {
+    const spec = parseSpec({
+      name: 'ops',
+      guardrails: { allowCommands: ['^sudo apt-get install'], denyCommands: ['terraform\\s+apply'] },
+      computer: { labels: { team: 'infra' } },
+    });
+    expect(computerSpecFor(spec).labels).toEqual({
+      team: 'infra',
+      'husk.allowCommands': '["^sudo apt-get install"]',
+      'husk.denyCommands': '["terraform\\\\s+apply"]',
+    });
+  });
 });
 
 describe('Agent: the spec it asks the computer source for', () => {

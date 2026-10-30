@@ -6,7 +6,7 @@
  * only exists after JavaScript runs, cannot log in, and cannot click. This can.
  */
 
-export { CdpConnection, ComputerDriverTransport, createTarget, waitResultOf } from './cdp.js';
+export { CdpConnection, ComputerDriverTransport, createTarget, waitResultOf, withCallSignal } from './cdp.js';
 export type {
   CdpOptions,
   CdpParams,
@@ -14,7 +14,11 @@ export type {
   ComputerTransportOptions,
   DriverRequest,
   DriverResult,
+  ActionStep,
   DriverStep,
+  HostCall,
+  ScreencastEvent,
+  ScreenFrame,
   SendStep,
   SkipIf,
   WaitResult,
@@ -23,27 +27,32 @@ export type {
 
 export { DRIVER_PATH, DRIVER_SOURCE } from './driver.js';
 
-export { Page, backendNodeIdOf, flattenAxTree, keyDescriptor } from './page.js';
-export type { AxNodeLike, GotoResult, ScreenshotOptions, SnapshotNode } from './page.js';
+export { Page, backendNodeIdOf, compactAxTree, describeHappened, describeWaited, flattenAxTree, happenedOf, keyDescriptor, waitExpression } from './page.js';
+export type { ActionOutcome, AxNodeLike, ClickOptions, ElementTarget, GotoResult, Happened, PageAction, ScreenshotOptions, ScriptOutcome, SnapshotNode, WaitTarget, Waited } from './page.js';
 
 export {
   CACHE_ROOT,
+  DOWNLOADS_DIR,
   CHROME_FOR_TESTING_MANIFEST,
   PLAYWRIGHT_CHROMIUM_REVISION,
   downloadPlanFor,
   findInstalledChromium,
+  inspectBrowserCapability,
   normaliseArch,
   parseMissingLibs,
   pickChromeForTestingAsset,
   provisionChromium,
 } from './provision.js';
-export type { BrowserArch, DownloadPlan, ProvisionOptions, ProvisionResult } from './provision.js';
+export type { BrowserArch, BrowserCapability, DownloadPlan, ProvisionOptions, ProvisionResult } from './provision.js';
 
 export {
   BrowserSession,
   browserFor,
+  browserSessionFor,
   closeAllBrowsers,
   closeBrowserFor,
+  livePageFor,
+  markUsedFor,
   warnIfDebugPortIsExposed,
 } from './session.js';
 export type { SessionOptions } from './session.js';

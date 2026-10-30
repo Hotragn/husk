@@ -72,3 +72,32 @@ describe('Budget', () => {
     expect(pricingOf(null)).toBeUndefined();
   });
 });
+
+describe('pausing for a person', () => {
+  it('keeps the clock stopped until the last of two overlapping pauses ends', () => {
+    let t = 0;
+    const b = new Budget(limits, { now: () => t });
+    t = 1000;
+    b.pause(); // first handoff
+    t = 2000;
+    b.pause(); // a second handoff in the same turn
+    t = 5000;
+    b.resume(); // the first person finishes; the second is still at it
+    expect(b.paused).toBe(true);
+    expect(b.elapsedMs).toBe(1000);
+    t = 9000;
+    b.resume();
+    expect(b.paused).toBe(false);
+    expect(b.elapsedMs).toBe(1000);
+    t = 9500;
+    expect(b.elapsedMs).toBe(1500);
+  });
+
+  it('ignores a resume with nothing paused', () => {
+    let t = 0;
+    const b = new Budget(limits, { now: () => t });
+    b.resume();
+    t = 100;
+    expect(b.elapsedMs).toBe(100);
+  });
+});

@@ -12,8 +12,11 @@ import { DOCS_URL, REPO_URL } from "@/lib/content";
  * `DOCS_URL` reads NEXT_PUBLIC_DOCS_URL and falls back to the repository
  * README, so this file needs no edit when the docs move to a real domain.
  */
+/* `prefetch: false` on the manifesto for the same reason lib/previews.ts gives:
+   Newsreader is 113K, that route is the only one that sets it, and the default
+   prefetch was pulling both faces onto every page that renders this header. */
 const NAV = [
-  { href: "/manifesto", label: "Manifesto" },
+  { href: "/manifesto", label: "Manifesto", prefetch: false },
   { href: "/pricing", label: "Pricing" },
 ];
 
@@ -36,6 +39,7 @@ export function SiteHeader() {
               key={item.href}
               href={item.href}
               className="nav-link"
+              prefetch={item.prefetch}
               aria-current={pathname === item.href ? "page" : undefined}
             >
               {item.label}

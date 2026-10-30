@@ -12,6 +12,8 @@ import type { ContentPart, ModelMessage } from '@husk-ai/core';
 export interface TrimOptions {
   /** Turns of raw history kept verbatim at the tail. */
   windowTurns: number;
+  /** Messages after the system prompt kept as they are, never trimmed: a husk's examples. */
+  pinned?: number;
   /** Ask the summariser for a précis of the middle. Falls back to a marker. */
   summarise?: boolean;
   summariser?: (messages: ModelMessage[]) => Promise<string | null>;
@@ -36,17 +38,28 @@ function isTurnStart(m: ModelMessage): boolean {
   return !m.content.every((p) => p.type === 'tool_result');
 }
 
-/** Split into turns: each turn opens at a user message and owns everything after it. */
+/** Tool results, whichever role carries them. */
+function isToolResults(m: ModelMessage | undefined): boolean {
+  return m !== undefined && typeof m.content !== 'string' && m.content.length > 0 && m.content.every((p) => p.type === 'tool_result');
+}
+
+/**
+ * Split into turns. A turn opens at a user message, or at the model's next step
+ * once its tools have answered, and owns everything after it: a chat's turn is a
+ * message and its answer, and a run's every tool step is a turn of its own, so a
+ * long run is trimmed as a long chat is. A call and its results share a turn.
+ */
 function toTurns(messages: ModelMessage[]): ModelMessage[][] {
   const turns: ModelMessage[][] = [];
   let current: ModelMessage[] = [];
-  for (const m of messages) {
-    if (isTurnStart(m) && current.length) {
+  messages.forEach((m, i) => {
+    const opens = isTurnStart(m) || (m.role === 'assistant' && isToolResults(messages[i - 1]));
+    if (opens && current.length) {
       turns.push(current);
       current = [];
     }
     current.push(m);
-  }
+  });
   if (current.length) turns.push(current);
   return turns;
 }
@@ -100,6 +113,7 @@ export async function trimHistory(messages: ModelMessage[], opts: TrimOptions): 
 
   let headEnd = 0;
   while (headEnd < messages.length && messages[headEnd]!.role === 'system') headEnd += 1;
+  headEnd = Math.min(messages.length, headEnd + Math.max(0, opts.pinned ?? 0));
   const head = messages.slice(0, headEnd);
   const body = messages.slice(headEnd);
 
@@ -117,10 +131,11 @@ export async function trimHistory(messages: ModelMessage[], opts: TrimOptions): 
   const firstTurn = firstUserIdx === -1 ? [] : turns[firstUserIdx]!;
   // Only the user's opening message survives from the first turn: it is the
   // anchor that tells the model what it was asked to do, and keeping just it
-  // cannot orphan a tool result.
+  // cannot orphan a tool result. The rest of that turn goes with the middle,
+  // so an earlier trim's summary, which lands there, is summarised in turn.
   const anchor = firstTurn.length ? [firstTurn[0]!] : [];
 
-  const middle = turns.slice(anchorEnd, tailStart).flat();
+  const middle = [...firstTurn.slice(1), ...turns.slice(anchorEnd, tailStart).flat()];
   const tail = turns.slice(tailStart).flat();
 
   let summary: string | null = null;
@@ -132,14 +147,18 @@ export async function trimHistory(messages: ModelMessage[], opts: TrimOptions): 
     }
   }
 
-  const marker: ModelMessage = {
-    role: 'assistant',
-    content: summary
-      ? `[husk: ${middle.length} earlier messages summarised]\n${summary}`
-      : `[husk: ${middle.length} earlier messages elided to stay inside the context window]`,
-  };
+  const marker = summary
+    ? `[husk: ${middle.length} earlier messages summarised]\n${summary}`
+    : `[husk: ${middle.length} earlier messages elided to stay inside the context window]`;
+  // The marker is the model's, and joins a step of its own that comes next:
+  // two assistant messages in a row are refused by some chat templates.
+  const [next, ...rest] = tail;
+  const joined: ModelMessage[] =
+    next?.role === 'assistant'
+      ? [{ ...next, content: [{ type: 'text', text: marker }, ...parts(next)] }, ...rest]
+      : [{ role: 'assistant', content: marker }, ...tail];
 
-  const out = pruneOrphans([...head, ...preamble, ...anchor, marker, ...tail]);
+  const out = pruneOrphans([...head, ...preamble, ...anchor, ...joined]);
   return { messages: out, elided: middle.length, summarised: Boolean(summary) };
 }
 

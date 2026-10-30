@@ -1,6 +1,7 @@
 import { HUSK_VERSION } from '@husk-ai/core';
+import type { RunEvent } from '@husk-ai/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildTestApp, fakeAgentFactory, sampleSpec } from './testing.js';
+import { buildTestApp, fakeAgentFactory, fakeModelProvider, sampleSpec } from './testing.js';
 import type { TestApp } from './testing.js';
 
 let harness: TestApp;
@@ -21,7 +22,27 @@ describe('health and doctor', () => {
     expect(res.json().uptimeSec).toBeTypeOf('number');
   });
 
-  it('reports the honest state of the machine at /v1/doctor', async () => {
+  // Doctor probes the real machine, which is the point of this test. On Windows
+  // that includes wsl.exe, synchronously, with 8s and 15s timeouts, so a slow or
+  // broken WSL takes seconds; the budget covers that rather than letting WSL fail it.
+  // #121: the control plane's doctor took the first model Ollama listed.
+  it('selects the preferred model, not the first one listed', { timeout: 30_000 }, async () => {
+    await harness.cleanup();
+    const local = (name: string, parameterCount: number) => ({
+      id: `ollama/${name}`, provider: 'ollama', name, displayName: name, contextWindow: 32_768,
+      maxOutputTokens: 4096, supportsTools: true, supportsVision: false, supportsStreaming: true, free: true, parameterCount,
+    });
+    harness = await buildTestApp({
+      modelProviders: [{
+        ...fakeModelProvider, id: 'ollama', displayName: 'Ollama',
+        listModels: async () => [local('qwen2.5:1.5b', 1.5e9), local('qwen2.5:7b', 7.6e9)],
+      }],
+    });
+    const report = (await harness.app.inject({ method: 'GET', url: '/v1/doctor' })).json();
+    expect(report.selection.model).toBe('ollama/qwen2.5:7b');
+  });
+
+  it('reports the honest state of the machine at /v1/doctor', { timeout: 30_000 }, async () => {
     const res = await harness.app.inject({ method: 'GET', url: '/v1/doctor' });
     expect(res.statusCode).toBe(200);
     const body = res.json();
@@ -178,6 +199,62 @@ describe('computers', () => {
     const removed = await harness.app.inject({ method: 'DELETE', url: `/v1/computers/${id}` });
     expect(removed.statusCode).toBe(204);
     expect((await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}` })).statusCode).toBe(404);
+  });
+
+  it("deletes a chat's computer only with the id typed back as confirm", async () => {
+    const created = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/computers',
+      payload: { provider: 'local', labels: { 'husk.via': 'mcp' } },
+    });
+    const id = created.json().id as string;
+    const del = (query: string) => harness.app.inject({ method: 'DELETE', url: `/v1/computers/${id}${query}` });
+
+    expect((await del('')).statusCode).toBe(422);
+    expect((await del('?confirm=cmp_other')).statusCode).toBe(422);
+    expect((await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}` })).statusCode).toBe(200);
+    expect((await del(`?confirm=${id}`)).statusCode).toBe(204);
+    expect((await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}` })).statusCode).toBe(404);
+    // A plain delete, like `husk rm`, leaves what the chat keeps for its next computer.
+    expect(harness.manager.erased.has(id)).toBe(false);
+  });
+
+  it('erases a computer, files and browser logins, only with the id typed back as confirm', async () => {
+    const created = await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: { provider: 'local' } });
+    const id = created.json().id as string;
+    const del = (query: string) => harness.app.inject({ method: 'DELETE', url: `/v1/computers/${id}${query}` });
+
+    expect((await del('?erase=true')).statusCode).toBe(422);
+    expect(harness.manager.erased.size).toBe(0);
+    expect((await del(`?erase=true&confirm=${id}`)).statusCode).toBe(204);
+    expect(harness.manager.erased).toEqual(new Set([id]));
+  });
+
+  it('reports disk use without running anything in the computer', async () => {
+    const created = await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: { provider: 'local' } });
+    const id = created.json().id as string;
+    const disk = await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}/disk` });
+    expect(disk.statusCode).toBe(200);
+    expect(typeof disk.json().bytes).toBe('number');
+    expect((await harness.app.inject({ method: 'GET', url: '/v1/computers/cmp_missing/disk' })).statusCode).toBe(404);
+  });
+
+  it('reports stats honestly: disk for a local computer, and no invented CPU or memory', async () => {
+    const created = await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: { provider: 'local' } });
+    const id = created.json().id as string;
+    const stats = (await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}/stats` })).json();
+    expect(typeof stats.diskBytes).toBe('number');
+    expect(stats.cpuPercent).toBeNull();
+    expect(stats.memoryBytes).toBeNull();
+    expect(stats.notes.join(' ')).toMatch(/not available for local/);
+    expect((await harness.app.inject({ method: 'GET', url: '/v1/computers/cmp_missing/stats' })).statusCode).toBe(404);
+  });
+
+  it('shows no thumbnail, and launches nothing, when no browser is open', async () => {
+    const created = await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: { provider: 'local' } });
+    const thumb = await harness.app.inject({ method: 'GET', url: `/v1/computers/${created.json().id}/thumbnail` });
+    expect(thumb.statusCode).toBe(404);
+    expect(thumb.json().error.code).toBe('E_BROWSER_NOT_FOUND');
   });
 
   it('stops and starts', async () => {
@@ -436,6 +513,40 @@ describe('running a husk', () => {
       await inflight;
       const listed = await slow.app.inject({ method: 'GET', url: '/v1/runs' });
       expect(listed.json().runs[0].status).toBe('error');
+    } finally {
+      release();
+      await slow.cleanup();
+    }
+  });
+
+  it('shows on the overview which computer a run is on, its step and its tool', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((r) => {
+      release = r;
+    });
+    const progress: RunEvent[] = [
+      { type: 'computer_ready', computerId: 'cmp_busy', provider: 'docker' },
+      { type: 'step_start', step: 3 },
+      { type: 'tool_start', call: { type: 'tool_call', id: 'c1', name: 'shell', args: {} } },
+      // Two calls in one turn run concurrently; the first to finish must not hide the other.
+      { type: 'tool_start', call: { type: 'tool_call', id: 'c2', name: 'browser_goto', args: {} } },
+      { type: 'tool_end', call: { type: 'tool_call', id: 'c2', name: 'browser_goto', args: {} }, output: '', isError: false, durationMs: 1 },
+    ];
+    const slow = await buildTestApp({ agent: fakeAgentFactory({ progress, hold }) });
+    try {
+      await slow.app.inject({ method: 'POST', url: '/v1/husks', payload: { spec: sampleSpec() } });
+      const inflight = slow.app.inject({ method: 'POST', url: '/v1/husks/triage/run', payload: { input: 'hi' } });
+      let overview = (await slow.app.inject({ method: 'GET', url: '/v1/overview' })).json();
+      for (let i = 0; i < 300 && overview.activeRuns[0]?.tool !== 'shell'; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        overview = (await slow.app.inject({ method: 'GET', url: '/v1/overview' })).json();
+      }
+      expect(overview.activeRuns[0]).toMatchObject({ husk: 'triage', computerId: 'cmp_busy', step: 3, tool: 'shell' });
+      expect(overview).toHaveProperty('computers');
+      expect(overview).toHaveProperty('handoffs');
+      release();
+      await inflight;
+      expect((await slow.app.inject({ method: 'GET', url: '/v1/overview' })).json().activeRuns).toEqual([]);
     } finally {
       release();
       await slow.cleanup();

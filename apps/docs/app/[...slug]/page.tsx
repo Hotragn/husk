@@ -5,6 +5,7 @@ import { SidebarNav } from '@/components/SidebarNav';
 import { Toc } from '@/components/Toc';
 import { allDocs, docBySlug, nav, neighbours, toc } from '@/lib/content';
 import { Mdx } from '@/lib/mdx';
+import { SITE_NAME } from '@/lib/site';
 
 /**
  * Every documentation page.
@@ -28,9 +29,34 @@ export async function generateMetadata({
   const { slug } = await params;
   const doc = docBySlug(slug);
   if (!doc) return {};
+
+  /**
+   * `canonical` and the `og:` pair reuse the frontmatter already written for
+   * every page rather than generating a second description. `doc.href` is the
+   * route with no trailing slash, resolved against `metadataBase` in the
+   * layout, so the canonical is absolute without this file knowing the host.
+   */
+  const { title, description } = doc.frontmatter;
   return {
-    title: doc.frontmatter.title,
-    description: doc.frontmatter.description,
+    title,
+    description,
+    alternates: { canonical: doc.href },
+    /* One image, two jobs: `/preview/<slug>` is the same card the hover
+       previews on the landing page show. */
+    openGraph: {
+      type: 'article',
+      siteName: SITE_NAME,
+      url: doc.href,
+      title,
+      description,
+      images: [`/preview${doc.href}`],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+      images: [`/preview${doc.href}`],
+    },
   };
 }
 

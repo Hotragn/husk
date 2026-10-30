@@ -1,7 +1,7 @@
 import type { MetadataRoute } from 'next';
 
 import { allDocs } from '@/lib/content';
-import { SITE_URL } from '@/lib/site';
+import { SITE_URL } from '@/lib/site-url';
 
 /**
  * Every page, derived from the MDX on disk rather than listed here.

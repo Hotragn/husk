@@ -59,6 +59,23 @@ describe('redactText', () => {
   });
 });
 
+describe('redactText strict prefix stripping', () => {
+  it('keeps no prefix of a secret, so slugs and filenames cannot leak the family', () => {
+    // core keeps 6 chars for operator logs; artifacts from this package must
+    // not. `sk-ant...[redacted]` slugged into `sk-antredacted`.
+    const key = `sk-ant-api03-${'A'.repeat(40)}`;
+    const { text } = redactText(`title: use key ${key} here`);
+    expect(text).not.toContain('sk-ant');
+    expect(text).not.toContain('...');
+    expect(text).toBe('title: use key [redacted] here');
+  });
+
+  it('still keeps the header name, which is not the secret', () => {
+    const { text } = redactText(`Authorization: Bearer ${'Z'.repeat(40)}`);
+    expect(text).toContain('Authorization: Bearer [redacted]');
+  });
+});
+
 describe('redactTranscript', () => {
   const transcript: Transcript = {
     id: 't',

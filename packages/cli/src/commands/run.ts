@@ -1,11 +1,12 @@
 import { existsSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
-import { HuskError, formatDuration, paths } from '@husk-ai/core';
-import type { ApprovalMode, ChatRequest, ChatResponse, HuskSpec, StreamEvent } from '@husk-ai/core';
+import { HuskError, formatDuration, loadConfig, paths } from '@husk-ai/core';
+import type { ApprovalMode, ChatRequest, ChatResponse, HuskSpec, RunResult, StreamEvent } from '@husk-ai/core';
 import type { AgentRunEvent, ApprovalRequest, RouterLike } from '@husk-ai/agent';
 import { UsageError, parse, parseChoice, parseCount,
   parseAmount, required } from '../args.js';
 import { manager } from '../lib/computers.js';
+import { orientBriefly } from '../lib/first-run.js';
 import { resolveModel } from '../lib/models.js';
 import { confirm, interactive, readPipedStdin } from '../lib/prompt.js';
 import { loadSpec } from '../lib/yaml.js';
@@ -37,6 +38,7 @@ export async function run(argv: string[]): Promise<number> {
     'run',
   );
   ui.configure(values);
+  orientBriefly('the agent gets a computer on its first tool call; `husk ps` shows it');
 
   const ref = required(positionals, 0, 'husk.yaml|name', 'run');
   const spec = await locateSpec(ref);
@@ -53,6 +55,9 @@ export async function run(argv: string[]): Promise<number> {
     parseChoice(values.approve as string | undefined, APPROVAL_MODES, '--approve', 'run') ??
     spec.guardrails.approvalMode;
 
+  if (spec.engine.type !== 'builtin' && approvalMode !== 'auto') {
+    throw new UsageError(`the ${spec.engine.type} engine runs Husk's tools without asking; --approve ${approvalMode} needs the builtin engine`, 'run');
+  }
   if (approvalMode === 'ask' && !interactive()) {
     throw new UsageError('--approve ask needs a terminal to ask on; use auto or readonly in a script', 'run');
   }
@@ -64,6 +69,39 @@ export async function run(argv: string[]): Promise<number> {
   const maxSteps = parseCount(values['max-steps'] as string | undefined, '--max-steps', 'run') ?? spec.limits.maxSteps;
   const maxCostUsd =
     parseAmount(values['max-cost'] as string | undefined, '--max-cost', 'run') ?? spec.limits.maxCostUsd;
+  const vars = parseVars(values.var as string[] | undefined);
+  // This machine's settings: its model aliases, and the router's per-call ceiling.
+  const config = loadConfig();
+
+  // The person's own Claude Code or Codex runs it, on its own login and model: nothing of Husk's to resolve.
+  if (spec.engine.type !== 'builtin') {
+    const engine = spec.engine.type;
+    if (values['max-steps'] !== undefined) ui.warn(`--max-steps does not apply to the ${engine} engine; --max-cost and limits.timeoutSec do`);
+    const ran = values['no-computer'] === true ? { ...spec, computer: { ...spec.computer, enabled: false } } : spec;
+    const tools = ran.computer.enabled && ran.tools.length > 0;
+    if (!values.json) {
+      ui.note(
+        ui.fields([
+          ['husk', `${ui.bold(spec.name)} ${ui.dim(spec.description || '')}`],
+          ['engine', spec.engine.resume ? `${engine} ${ui.dim(`continuing chat ${spec.engine.resume}`)}` : engine],
+          ['tools', tools ? "Husk's, on its computer" : ui.dim('none')],
+        ]),
+      );
+      ui.note('');
+    }
+    const { CliAgent } = await import('@husk-ai/agent');
+    const started = Date.now();
+    const result = await new CliAgent({ spec: ran }).run({
+      input: prompt,
+      ...(values.model ? { model: values.model as string } : {}),
+      maxCostUsd,
+      timeoutSec: spec.limits.timeoutSec,
+      signal: interruptSignal(),
+      vars,
+      onEvent: values.json ? () => {} : renderer(),
+    });
+    return finish(result, spec, { started, json: values.json === true, wantsComputer: tools, who: engine });
+  }
 
   // Resolve up front so an unreachable model fails before anything is created,
   // and so the header can name what will actually run.
@@ -78,7 +116,7 @@ export async function run(argv: string[]): Promise<number> {
   let lastErr: unknown;
   for (const candidate of chain) {
     try {
-      resolved = await resolveModel(candidate);
+      resolved = await resolveModel(candidate, config.modelAliases, Math.min(maxCostUsd, config.maxCostUsd));
       if (candidate !== requested) downgradedFrom = requested;
       break;
     } catch (err) {
@@ -96,7 +134,7 @@ export async function run(argv: string[]): Promise<number> {
   // The router also emits a warning on every downgrade, so a quietly weaker
   // answer is impossible.
   const { ModelRouter } = await import('@husk-ai/models');
-  const modelRouter = new ModelRouter({ maxCostUsd });
+  const modelRouter = new ModelRouter({ maxCostUsd: Math.min(maxCostUsd, config.maxCostUsd), aliases: config.modelAliases });
   const fallbacks = spec.fallbackModels;
   const router: RouterLike = {
     chat: (req: ChatRequest): Promise<ChatResponse> => modelRouter.chat({ ...req, fallbacks }),
@@ -143,22 +181,37 @@ export async function run(argv: string[]): Promise<number> {
     timeoutSec: spec.limits.timeoutSec,
     approvalMode,
     signal: interruptSignal(),
-    vars: parseVars(values.var as string[] | undefined),
+    vars,
     onApproval: askOperator,
     onEvent: render,
   });
+  return finish(result, spec, { started, json: values.json === true, wantsComputer, who: resolved.info.id, quiet: 'small local models often do this with tools attached — try a larger model, or --approve readonly to see its plan' });
+}
 
-  if (values.json) {
+/** What a finished run says, and the exit code it ends with. */
+function finish(
+  result: RunResult,
+  spec: HuskSpec,
+  opts: { started: number; json: boolean; wantsComputer: boolean; who: string; quiet?: string },
+): number {
+  const { started, wantsComputer } = opts;
+  if (opts.json) {
     ui.json(result);
   } else {
     // A run that produced nothing looks identical to a run that is still going.
     // Saying so beats leaving someone staring at an empty terminal wondering
     // whether husk swallowed the answer.
     if (!result.text.trim() && result.stopReason === 'complete') {
-      ui.warn(`${resolved.info.id} finished without saying anything and without calling a tool`);
-      ui.hint('small local models often do this with tools attached — try a larger model, or --approve readonly to see its plan');
+      ui.warn(`${opts.who} finished without saying anything and without calling a tool`);
+      if (opts.quiet) ui.hint(opts.quiet);
     }
-    ui.print();
+    // Piped, stdout carries the answer alone, as `--json`'s `text` has it: each
+    // step's text went to stderr as it came.
+    if (!ui.options().stdoutTty) {
+      if (result.text.trim()) ui.print(result.text.replace(/\n+$/, ''));
+    } else {
+      ui.print();
+    }
     ui.note(
       ui.dim(
         `${result.steps} step${result.steps === 1 ? '' : 's'} · ${formatDuration(Date.now() - started)} · ` +
@@ -176,6 +229,8 @@ export async function run(argv: string[]): Promise<number> {
   }
 
   if (result.stopReason === 'error') {
+    // Under --json the result above is stdout's one document, and its `error` says why.
+    if (opts.json) return EXIT_ERROR;
     throw new HuskError('E_TOOL_ERROR', result.error?.message ?? 'the run failed', {
       hint: 'run with --debug for the trace, or --approve readonly to see what it wanted to do',
     });
@@ -216,7 +271,10 @@ function parseVars(pairs: string[] | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const p of pairs ?? []) {
     const i = p.indexOf('=');
-    if (i > 0) out[p.slice(0, i)] = p.slice(i + 1);
+    const name = i > 0 ? p.slice(0, i) : '';
+    // A placeholder is `{{word}}`: a name with any other character could never fill one.
+    if (!/^\w+$/.test(name)) throw new UsageError(`--var takes name=value, the name letters, digits and _ only: ${p}`, 'run');
+    out[name] = p.slice(i + 1);
   }
   return out;
 }
@@ -243,17 +301,19 @@ async function askOperator(req: ApprovalRequest): Promise<boolean> {
 /**
  * Turn run events into something readable.
  *
- * Model text goes to stdout because it is the answer; everything else -- steps,
- * tool calls, warnings -- goes to stderr, so `husk run ... > answer.txt`
- * captures the answer and nothing else.
+ * On a terminal the model's text streams to stdout; everything else -- steps,
+ * tool calls, warnings -- goes to stderr. Piped, the text streams to stderr too,
+ * and `finish` writes the answer alone to stdout, so `husk run ... > answer.txt`
+ * captures the answer and nothing else, not the narration before a tool call.
  */
 function renderer(): (event: AgentRunEvent) => void {
   let streaming = false;
   let toolStreaming = false;
+  const text = ui.options().stdoutTty ? process.stdout : process.stderr;
 
   const endText = () => {
     if (streaming) {
-      process.stdout.write('\n');
+      text.write('\n');
       streaming = false;
     }
   };
@@ -275,7 +335,7 @@ function renderer(): (event: AgentRunEvent) => void {
       case 'text_delta':
         endToolStream();
         streaming = true;
-        process.stdout.write(event.text);
+        text.write(event.text);
         break;
 
       case 'thinking_delta':
@@ -291,7 +351,7 @@ function renderer(): (event: AgentRunEvent) => void {
       case 'tool_delta':
         endText();
         toolStreaming = true;
-        process.stderr.write(ui.dim(event.text.replace(/\n(?!$)/g, '\n  ')));
+        ui.relay(ui.dim(event.text.replace(/\n(?!$)/g, '\n  ')));
         break;
 
       case 'tool_end': {

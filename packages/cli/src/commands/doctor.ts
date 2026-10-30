@@ -1,11 +1,12 @@
 import { existsSync } from 'node:fs';
-import { ENV_KEYS, HUSK_VERSION, huskHome } from '@husk-ai/core';
+import { ENV_KEYS, HUSK_VERSION, huskHome, loadConfig } from '@husk-ai/core';
 import type { ModelInfo, ModelProvider } from '@husk-ai/core';
 import { parse } from '../args.js';
 import * as ui from '../ui.js';
 import { EXIT_OK } from '../exit.js';
 import { paths } from '@husk-ai/core';
-import { findOrphanedWorkspaces } from '@husk-ai/runtime';
+import { findOrphanedWorkspaces, leftOutOfAuto } from '@husk-ai/runtime';
+import { compareModelPreference } from '@husk-ai/models';
 
 /**
  * The command people run when they are confused, so it must never be confusing.
@@ -53,10 +54,17 @@ export interface DoctorReport {
     provider: string | null;
     providerReason: string;
     isolated: boolean | null;
+    isolationKind: 'kernel' | 'machine' | 'guardrails' | null;
     model: string | null;
     modelReason: string;
   };
   warnings: string[];
+}
+
+/** What ~/.husk/config.json makes `auto` mean: a provider, and a model. */
+export interface AutoConfig {
+  provider?: string;
+  model?: string;
 }
 
 /**
@@ -121,6 +129,8 @@ export interface DoctorProbes {
    * describing the broken state, so the warning never printed once.
    */
   windowsDegradation(): Promise<'wsl-broken' | 'wsl-absent' | null>;
+  /** ~/.husk/config.json's say over `auto`. Throws on a file that cannot be read. */
+  autoConfig?(): AutoConfig;
 }
 
 /** The real thing. Imports stay dynamic so `husk --help` does not pay for them. */
@@ -139,7 +149,17 @@ export const liveProbes: DoctorProbes = {
     const { detectShell } = await import('@husk-ai/runtime');
     return detectShell().degradation ?? null;
   },
+  autoConfig() {
+    const c = loadConfig();
+    return { ...(c.provider && c.provider !== 'auto' ? { provider: c.provider } : {}), ...(c.modelAliases.auto ? { model: c.modelAliases.auto } : {}) };
+  },
 };
+
+/** Below `engines`' floor of 20.10: 20.9 is, 21.0 is not. */
+export function belowNodeFloor(version: string): boolean {
+  const [major = 0, minor = 0] = version.split('.').map(Number);
+  return major < 20 || (major === 20 && minor < 10);
+}
 
 export async function collect(force = false, probes: DoctorProbes = liveProbes): Promise<DoctorReport> {
   const firstRun = !existsSync(huskHome());
@@ -148,12 +168,27 @@ export async function collect(force = false, probes: DoctorProbes = liveProbes):
     collectModels(probes),
   ]);
 
-  const chosen = providers.find((p) => p.available);
-  const chosenModel = models.find((m) => m.available && m.models.length > 0);
-
   const warnings: string[] = [];
 
-  if (!chosen) {
+  // What `auto` would pick, as the manager and the router pick it: what
+  // ~/.husk/config.json names first, and otherwise never a paid provider
+  // unless opted in.
+  let auto: AutoConfig = {};
+  try {
+    auto = probes.autoConfig?.() ?? {};
+  } catch (err) {
+    warnings.push(`${(err as Error).message}. Every command that reads it will fail until it is fixed.`);
+  }
+  const named = auto.provider ? providers.find((p) => p.name === auto.provider) : undefined;
+  const chosen = auto.provider ? (named?.available ? named : undefined) : providers.find((p) => p.available && !leftOutOfAuto(p.name));
+  const chosenModel = models.find((m) => m.available && m.models.length > 0);
+
+  if (auto.provider && !chosen) {
+    warnings.push(
+      `~/.husk/config.json sets ${auto.provider} for auto, and it is not usable${named?.reason ? `: ${named.reason}` : ''}. ` +
+        'Nothing gets a computer until it is, or until that setting changes.',
+    );
+  } else if (!chosen) {
     warnings.push('No computer provider is usable. That should be impossible — the local provider is always available.');
   } else if (chosen.isolated === false) {
     warnings.push(
@@ -166,6 +201,12 @@ export async function collect(force = false, probes: DoctorProbes = liveProbes):
     warnings.push('Docker is installed but its daemon is not running, so husk is falling back to weaker isolation.');
   }
 
+  // A model named for auto is the one `husk run` asks for; its provider must answer.
+  const autoModelRow = auto.model?.includes('/') ? models.find((m) => m.id === auto.model!.split('/')[0]) : undefined;
+  if (autoModelRow && !autoModelRow.available) {
+    warnings.push(`~/.husk/config.json sets ${auto.model} for auto, and ${autoModelRow.displayName} is not reachable${autoModelRow.reason ? `: ${autoModelRow.reason}` : ''}.`);
+  }
+
   if (!chosenModel) {
     warnings.push(
       // Named explicitly because the largest group of users never needs a model:
@@ -175,8 +216,7 @@ export async function collect(force = false, probes: DoctorProbes = liveProbes):
     );
   }
 
-  const major = Number(process.versions.node.split('.')[0] ?? 0);
-  if (major < 20) warnings.push(`Node ${process.versions.node} is below the supported floor of 20.10.`);
+  if (belowNodeFloor(process.versions.node)) warnings.push(`Node ${process.versions.node} is below the supported floor of 20.10.`);
 
   // One root cause with two faces. Docker Desktop runs its engine inside
   // WSL2, so a host whose WSL is down loses the isolated provider and the
@@ -219,14 +259,21 @@ export async function collect(force = false, probes: DoctorProbes = liveProbes):
     models,
     selection: {
       provider: chosen?.name ?? null,
-      providerReason: chosen
-        ? `highest-priority available provider (${chosen.priority})`
-        : 'nothing available',
+      providerReason: auto.provider
+        ? chosen
+          ? 'set for auto in ~/.husk/config.json'
+          : `~/.husk/config.json sets ${auto.provider}, which is not usable`
+        : chosen
+          ? `highest-priority available provider (${chosen.priority})`
+          : 'nothing available',
       isolated: chosen?.isolated ?? null,
-      model: chosenModel ? (chosenModel.models[0] ?? null) : null,
-      modelReason: chosenModel
-        ? `first reachable model on ${chosenModel.displayName}`
-        : 'no provider has credentials or is listening',
+      isolationKind: chosen?.isolationKind ?? null,
+      model: auto.model ?? (chosenModel ? (chosenModel.models[0] ?? null) : null),
+      modelReason: auto.model
+        ? 'set for auto in ~/.husk/config.json'
+        : chosenModel
+          ? `preferred available model on ${chosenModel.displayName} (capabilities, catalog quality, and local size tier)`
+          : 'no provider has credentials or is listening',
     },
     warnings,
   };
@@ -296,7 +343,7 @@ async function collectModels(probes: DoctorProbes): Promise<ModelRow[]> {
       hint,
       envKey: declared.envKey,
       implemented: true,
-      models: models.map((m) => m.id),
+      models: models.sort(compareModelPreference).map((m) => m.id),
     });
   }
 
@@ -364,15 +411,8 @@ export async function run(argv: string[]): Promise<number> {
   ui.print(ui.heading('SELECTION') + ui.dim('  what husk would use right now'));
   ui.print(
     ui.fields([
-      ['computer', report.selection.provider ? `${report.selection.provider}  ${ui.dim(report.selection.providerReason)}` : ui.red('none')],
-      [
-        'isolation',
-        report.selection.isolated === null
-          ? ui.dim('unknown')
-          : report.selection.isolated
-            ? ui.green('kernel-level')
-            : ui.yellow('guardrails only'),
-      ],
+      ['computer', report.selection.provider ? `${report.selection.provider}  ${ui.dim(report.selection.providerReason)}` : `${ui.red('none')}  ${ui.dim(report.selection.providerReason)}`],
+      ['isolation', ui.isolation(report.selection.isolationKind ?? undefined, report.selection.isolated)],
       ['model', report.selection.model ? `${report.selection.model}  ${ui.dim(report.selection.modelReason)}` : ui.yellow('none — computers still work')],
     ]),
   );
@@ -384,7 +424,7 @@ export async function run(argv: string[]): Promise<number> {
     ui.print();
   }
 
-  ui.print(ui.dim('husk sends nothing anywhere except the model provider you configure. There is no telemetry.'));
+  ui.print(ui.dim('Husk has no product telemetry. Tasks can contact configured providers and requested websites.'));
 
   // Doctor reports; it does not fail. A script asking "is docker up?" should read
   // the JSON, not infer it from an exit code that also means "husk crashed".

@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { closeBrowserFor } from '@husk-ai/browser';
 import type { Computer } from '@husk-ai/core';
+import type { ToolContent } from './tools.js';
 import { DockerProvider, imagePlan } from '@husk-ai/runtime';
 import { afterAll, describe, expect, it } from 'vitest';
 import { callBrowserTool } from './browser-tools.js';
@@ -61,4 +62,44 @@ describe.skipIf(!dockerAnswers)('browser_goto, on a real docker computer', () =>
     // `full` image failed at exactly this point.
     expect(body).toContain('Example Domain');
   }, 900_000);
+});
+
+/**
+ * `browser_status` exists to answer "will the next call cost me 111 MB?".
+ * On a container provider the honest answer is "no, it will fail" -- the root
+ * filesystem is read-only and the default image has nothing to download with
+ * -- and the tool used to promise the download anyway (#122).
+ */
+describe('browser_status checks capabilities instead of guessing from the provider', () => {
+  const textOf = (r: { content: ToolContent[] }): string =>
+    r.content.map((c) => (c.type === 'text' ? c.text : '')).join('');
+
+  function fakeComputer(provider: string, missing: string[] = []): Computer {
+    return {
+      id: 'cmp_fake',
+      info: { id: 'cmp_fake', provider, state: 'running', workdir: '/work' },
+      exec: async ({ cmd }: { cmd: string }) => ({
+        exitCode: 0,
+        stdout: cmd === 'uname -m' ? 'x86_64' : cmd.includes('HUSK_BROWSER_PREFLIGHT') ? JSON.stringify({ system: 'Linux', missing }) : '',
+        stderr: '', truncated: false, timedOut: false,
+      }),
+      readTextFile: async () => '',
+      listDir: async () => [],
+    } as unknown as Computer;
+  }
+
+  it('names missing runtime dependencies without promising a download', async () => {
+    const r = await callBrowserTool(fakeComputer('docker', ['libnss3.so']), 'browser_status', {}, 4000);
+    const out = textOf(r);
+    expect(out).toContain('read-only');
+    expect(out).toContain('libnss3.so');
+    expect(out).toContain('no download was attempted');
+  });
+
+  it('offers a download only after prerequisites pass', async () => {
+    const r = await callBrowserTool(fakeComputer('local'), 'browser_status', {}, 4000);
+    const out = textOf(r);
+    expect(out).toContain('111 MB');
+    expect(out).not.toContain('read-only');
+  });
 });

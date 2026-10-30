@@ -59,14 +59,19 @@ to a download page they do not need.
 ```text
 ✗ docker   isolated
     the docker socket refused this user
-    fix: add yourself to the docker group (`sudo usermod -aG docker $USER`), then log back in
+    fix: check Docker socket permissions for this user; on Linux, check docker group membership, then log back in
 ```
+
+On Linux, add yourself to the `docker` group:
 
 ```bash
 sudo usermod -aG docker "$USER"
 # log out and back in — `newgrp docker` works for the current shell only
 husk doctor
 ```
+
+On Windows the fix line reads "start Docker Desktop and check `docker info` from the
+same Windows account that runs your MCP client; check its Docker access permissions".
 
 Husk never escalates — that is a design rule, not a missing feature. Any other
 permission problem it hits surfaces the same way, naming the path:
@@ -96,7 +101,7 @@ yourself rather than under `sudo`.
 ```text
 ✓ local    not isolated
     via Windows host shell (no WSL) -- commands are NOT Linux
-    guarded working directory -- and with no WSL, commands run in the Windows shell, not Linux
+    guarded working directory -- with no WSL, commands run in the Windows shell, not Linux
     fix: run `wsl --install` for a real Linux shell, or start Docker for actual isolation
 ```
 
@@ -117,7 +122,18 @@ fix, and the better one — you get real isolation as well as real Linux.
 Being listed is not the same as working. A distro can be registered and still fail with
 `Catastrophic failure` or `Wsl/Service/E_UNEXPECTED` while `wsl.exe` **exits 0**, so
 Husk trusts an echoed marker rather than the exit code and skips any distro that cannot
-echo it.
+echo it. When none can, `husk doctor` says so:
+
+```text
+✓ local    not isolated
+    via Windows host shell -- WSL is installed but not responding; commands are NOT Linux
+    guarded working directory -- WSL is installed but not answering, so commands run in the Windows shell, not Linux
+    fix: run `wsl --shutdown` and re-run `husk doctor`; if WSL stays down, Docker Desktop is down with it -- both run on WSL2
+```
+
+Its WARNINGS add "WSL is installed but not answering, so the local provider is running
+commands in the Windows shell — this is not a Linux computer", and say Docker is
+unavailable for the same reason when it is.
 
 Check by hand:
 
@@ -143,15 +159,19 @@ Windows host shell -- WSL stopped responding (<reason>); commands are NOT Linux
 ```
 
 WSL can die underneath a long-running process. Rather than failing every subsequent
-`husk up`, Husk downgrades to the host shell and says so once. Fix WSL, then restart the
-Husk process — the shell detection is cached for the life of the process.
+`husk up`, Husk downgrades to the host shell and says so once. Fix WSL and there is
+nothing to restart: a minute after a downgrade Husk looks for it again, and a command
+that fails to start in WSL makes it look again at once. Only a machine with no WSL at
+all is remembered for the life of the process.
 
 ### `/work` is not where the agent thinks it is
 
 On WSL, Husk bind-mounts the workspace onto `/work` inside a per-exec user and mount
 namespace (`unshare -mr`). That needs an empty `/work` directory to mount onto, which
-it creates once, as root, in the distro. If that fails, the workdir falls back to the
-translated Windows path and Husk reports the real one rather than a fictional `/work`.
+it creates once, as root, in the distro. If that fails, the workdir is the computer's own
+directory inside the distro, `~/.husk/workspaces/<id>/root` in the distro's home, and
+Husk reports that rather than a fictional `/work`. A translated Windows path such as
+`/mnt/c/…` appears only when the workspace could not be made inside the distro either.
 
 `husk ps` shows the actual `workdir`. Trust it over the docs.
 
@@ -166,19 +186,26 @@ error no model provider is reachable
 hint:  set ANTHROPIC_API_KEY or OPENAI_API_KEY, or run `ollama serve` for a free local model
 ```
 
-Nothing is configured. `husk models --all` shows every provider and why each one is
-out:
+Nothing is configured. `husk models` then shows every provider and why each one is out:
 
 <Terminal>
-{`$ husk models --all
-…
-not shown: anthropic (ANTHROPIC_API_KEY is not set), openai (OPENAI_API_KEY is not set),
-google (GOOGLE_API_KEY is not set), groq (GROQ_API_KEY is not set), … , lmstudio
-(http://127.0.0.1:1234/v1 is not listening) — use --all
+{`$ husk models
+no models reachable
 
-The free path: install Ollama, run \`ollama pull llama3.2\`, and try again.
+  ✗ anthropic ANTHROPIC_API_KEY is not set
+      fix: Set ANTHROPIC_API_KEY for Claude, or run \`ollama pull qwen2.5:7b\` for a free local model that can call tools.
+  ✗ openai OPENAI_API_KEY is not set
+      fix: Set OPENAI_API_KEY, or run \`ollama pull qwen2.5:7b\` for a free local model that can call tools.
+  …
+  ✗ ollama no Ollama server at http://127.0.0.1:11434
+      fix: Install Ollama from ollama.com, then run \`ollama pull qwen2.5:7b\` for a free local model that can call tools.
+
+The free path: install Ollama, run \`ollama pull qwen2.5:7b\`, and try again.
 Computers work with no model at all — \`husk up\` needs nothing.`}
 </Terminal>
+
+With `--all`, the providers that only lack a key list their models instead, marked
+`offline`, and the reasons are not printed.
 
 The cheapest real path is Ollama. The cheapest hosted paths are `GOOGLE_API_KEY` from
 aistudio.google.com and `GROQ_API_KEY` from console.groq.com, both of which have free
@@ -206,7 +233,7 @@ cold.
 ```text
 ✗ ollama
     no Ollama server at http://127.0.0.1:11434
-    fix: Install Ollama from ollama.com, then run `ollama pull gemma3` for a free local model.
+    fix: Install Ollama from ollama.com, then run `ollama pull qwen2.5:7b` for a free local model that can call tools.
 ```
 
 ```bash
@@ -221,7 +248,7 @@ If Ollama is on another machine or port, `export OLLAMA_HOST=http://host:11434`.
 ```text
 ✗ ollama
     Ollama is running but has no models pulled
-    fix: Run `ollama pull gemma3` — about 3 GB, and then Husk works with no API key at all.
+    fix: Run `ollama pull qwen2.5:7b` -- about 4.7 GB, and then Husk works with no API key at all.
 ```
 
 Husk lists what is actually on disk, never a catalogue you would have to download
@@ -269,19 +296,18 @@ newline or a shell-quoting problem in the export.
 
 ### `returned 429`
 
+```text
+error Groq (llama-3.3-70b-versatile) returned 429: …
+hint:  Groq is rate limiting. Husk will back off and fall back; pass `--model free` or set `model: free` in husk.yaml to avoid it.
+```
+
 Rate limiting. Husk backs off and falls back to the next candidate, so you only see the
 error when every candidate is exhausted. Adding a free local model gives the fallback
 somewhere to go:
 
 ```bash
-ollama pull gemma3
+ollama pull qwen2.5:7b
 ```
-
-<Note>
-The 429 hint suggests `husk config set model free`. There is no `husk config` command.
-Use `--model free`, `model:` in the `husk.yaml`, or `"model": "free"` in
-`~/.husk/config.json`.
-</Note>
 
 ---
 
@@ -318,14 +344,16 @@ hint:  running now: console-demo, docsbox
 
 The hint lists what is running. `husk ps --all` includes stopped machines.
 
-### `"box" matches 3 computers`
+### `"cmp_5" matches 3 computers`
 
 ```text
-error "box" matches 3 computers
-hint:  use the id — `husk ps` shows them
+error "cmp_5" matches 3 computers
+hint:  use the full id: cmp_5j8svxeqer9p, cmp_5k2wq7d1xh3m, cmp_5r9tz0bn4c8e
 ```
 
-Names are not unique. Use the `cmp_…` id.
+The start of an id matches every computer whose id starts with it. Names are unique —
+`husk up` on a name in use brings that computer up rather than making a second — so
+this is a prefix that is too short. Use a full id from the hint.
 
 ### `path is outside the machine's writable area`
 
@@ -334,8 +362,8 @@ error path is outside the machine's writable area: /etc/passwd
 hint:  this computer exposes /work and /tmp; use a path under one of them
 ```
 
-The path jail, working as intended. It covers the filesystem API — `husk cp`,
-`read_file`, `write_file` — and not shell commands. See
+The path jail of the `local` and `ssh` providers, working as intended. It covers the
+filesystem API — `husk cp`, `read_file`, `write_file` — and not shell commands. See
 [Isolation](/security/isolation#the-path-jail).
 
 ### `refused: privilege escalation`
@@ -353,15 +381,16 @@ guardrails:
     - '^sudo apt-get install'
 ```
 
-`allowCommands` beats both your deny list and the built-in one. [The full
+`allowCommands` beats both your deny list and the built-in one, where it matches: a
+command chained after `sudo apt-get install …` is still checked on its own. [The full
 list](/security/isolation#the-command-deny-list).
 
 ### Containers are never destroyed
 
-`reap()` is implemented by `local`, `ssh` and `fly`, and **not** by the shared container
-base class, so `idleTimeoutSec` has no effect on Docker and Podman machines. They stay
-up until `husk rm` or an engine restart. [Lifetimes](/computers/lifetimes) and a cron
-workaround in [Self-hosting](/guides/self-hosting#the-reaper).
+Docker and Podman support idle cleanup. Check that the owning process has a running
+reaper, that `idleTimeoutSec` is set, and that ongoing activity is not refreshing the
+deadline. A one-shot CLI process cannot keep running cleanup after it exits. Use
+`husk rm` to explicitly remove a computer.
 
 ### `vim` and `top` do not work in `husk shell`
 
@@ -397,12 +426,12 @@ passphrase must be in an agent already. The diagnostics name the specific failur
 | `<host> refused the connection` | check `sshd` is running on the port you gave |
 | `<host> presented a different host key than last time` | if you rebuilt the box, remove its line from `~/.ssh/known_hosts`; otherwise stop and investigate |
 
-### `FLY_API_TOKEN is not set` / `no app is configured`
+### `no fly token is set` / `no app is configured`
 
 ```text
 ✗ fly
-    FLY_API_TOKEN is not set
-    fix: run `fly auth token` and export it as FLY_API_TOKEN (fly machines are metered, not free)
+    no fly token is set: HUSK_FLY_TOKEN, or FLY_API_TOKEN
+    fix: make a token for the computers' app alone with `fly tokens create deploy --app <app>`, and export it as HUSK_FLY_TOKEN (fly machines are metered, not free)
 ```
 
 ```text
@@ -475,10 +504,9 @@ can stream for minutes.
              "hint": "see docs/API.md for the endpoints this server serves" } }
 ```
 
-If you are using `@husk-ai/sdk`, this is expected for twelve of its twenty methods — the
-SDK and the server disagree about a dozen paths in 0.1.0. See
-[SDK](/reference/sdk#what-does-not-work) for the list and the workaround.
-[HTTP API](/reference/api) is the routes that exist.
+Use matching versions of `@husk-ai/sdk` and the server, and check the base URL against
+the [HTTP API](/reference/api). The desktop starter viewer serves workspace routes;
+computer, bot, and event routes require the full `husk serve` control plane.
 
 ---
 
@@ -517,7 +545,8 @@ hint:  husk --help
 
 ### `refusing to destroy N computers without confirmation on a non-interactive stdin`
 
-Add `--yes`. Same for `husk init` in a script.
+Add `--yes`. `husk init` needs nothing in a script: with no terminal it writes the
+defaults, and `--yes` only silences the note that says so.
 
 ### `--approve ask needs a terminal to ask on`
 

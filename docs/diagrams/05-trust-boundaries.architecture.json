@@ -52,7 +52,7 @@
       "id": "pathjail",
       "type": "security",
       "label": "path jail",
-      "sublabel": "realpath, rejects escapes",
+      "sublabel": "local file tools only",
       "row": 0,
       "col": 2,
       "size": [
@@ -286,7 +286,7 @@
       "dot": "emerald",
       "title": "Holds in every mode, including local",
       "items": [
-        "Path jail, command deny list, env scrub, output caps, process-tree kill",
+        "Command deny list, env scrub, output caps, process-tree kill",
         "redact() on every tool result; audited() on every MCP call"
       ]
     },
@@ -303,6 +303,8 @@
       "dot": "amber",
       "title": "The honest limits",
       "items": [
+        "The path jail is a local-only control, and confines the file tools, not the shell",
+        "On docker/podman/fly the container is the boundary: read_file /etc/passwd returns the container's copy",
         "mode: egress is enforced at the tool layer, not by a firewall — a raw socket is not stopped",
         "An empty allow-list permits nothing; approval with no approver wired denies, not allows"
       ]

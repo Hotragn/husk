@@ -20,7 +20,10 @@ import type {
 } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
-import type { AgentFactory, AgentLike, ManagerLike, RouterLike, ServerRunOptions } from './deps.js';
+import type { JobsLink } from './jobs.js';
+import type { AdapterFactory, AgentFactory, ToolRunner, AgentLike, ManagerLike, RouterLike, ServerRunOptions } from './deps.js';
+import type { Remote } from './remote/oauth.js';
+import type { RemoteMcp } from './remote/routes.js';
 import { Store } from './store.js';
 
 /**
@@ -151,6 +154,8 @@ export class FakeComputer implements Computer {
 
 export class FakeManager implements ManagerLike {
   readonly computers = new Map<string, FakeComputer>();
+  /** Computers destroyed with `erase`. */
+  readonly erased = new Set<string>();
   reaperStarted = false;
   private seq = 0;
 
@@ -185,9 +190,10 @@ export class FakeManager implements ManagerLike {
     return [...this.computers.values()].map((c) => c.info);
   }
 
-  async destroy(id: string): Promise<boolean> {
+  async destroy(id: string, opts: { erase?: boolean } = {}): Promise<boolean> {
     const c = this.computers.get(id);
     if (!c) return false;
+    if (opts.erase) this.erased.add(id);
     await c.destroy();
     this.computers.delete(id);
     return true;
@@ -267,8 +273,14 @@ export interface FakeAgentScript {
   fail?: Error;
   /** Ask for approval on this tool call before finishing. */
   approvalFor?: { id: string; name: string; args: Record<string, unknown> };
+  /** Hand off to a person before finishing, as the hand_off tool does. */
+  handoffFor?: { reason: string; computerId?: string };
+  /** Call a computer tool on this computer before finishing, through `admitTool` as the loop does. */
+  toolOn?: { computerId: string; name: string };
   /** Block until this resolves, so a test can cancel mid-run. */
   hold?: Promise<void>;
+  /** Emitted before `hold`, so a test can look at a run mid-flight. */
+  progress?: RunEvent[];
 }
 
 export function fakeAgentFactory(script: FakeAgentScript = {}): AgentFactory {
@@ -287,6 +299,14 @@ export function fakeAgentFactory(script: FakeAgentScript = {}): AgentFactory {
 
     const body = async function* (opts: ServerRunOptions): AsyncGenerator<RunEvent> {
       yield { type: 'run_start', runId: 'agent_own_id', husk: 'fake', model: opts.model ?? 'auto' };
+      if (script.handoffFor && opts.onHandoff) {
+        const never = new AbortController().signal;
+        const { reason, computerId } = script.handoffFor;
+        await opts.onHandoff(
+          { runId: 'agent_own_id', huskId: 'fake', reason, ...(computerId ? { computerId } : {}) },
+          opts.signal ?? never,
+        );
+      }
       if (script.approvalFor && opts.onApproval) {
         const approved = await opts.onApproval({
           runId: 'agent_own_id',
@@ -301,6 +321,16 @@ export function fakeAgentFactory(script: FakeAgentScript = {}): AgentFactory {
           ? { type: 'tool_start', call: { type: 'tool_call', ...script.approvalFor } }
           : { type: 'tool_denied', call: { type: 'tool_call', ...script.approvalFor }, reason: 'denied' };
       }
+      if (script.toolOn) {
+        const never = new AbortController().signal;
+        yield { type: 'computer_ready', computerId: script.toolOn.computerId, provider: 'local' };
+        const call = { type: 'tool_call' as const, id: 'call_1', name: script.toolOn.name, args: {} };
+        const admitted = opts.admitTool ? await opts.admitTool(call, opts.signal ?? never, script.toolOn.computerId) : undefined;
+        if (admitted && !('refused' in admitted)) admitted.done();
+        const output = admitted && 'refused' in admitted ? admitted.refused : 'ran';
+        yield { type: 'tool_end', call, output, isError: output !== 'ran', durationMs: 1 };
+      }
+      for (const e of script.progress ?? []) yield e;
       if (script.hold) await script.hold;
       if (opts.signal?.aborted) throw new Error('aborted');
       if (script.fail) throw script.fail;
@@ -343,6 +373,16 @@ export async function buildTestApp(
     agent?: AgentFactory;
     triggers?: boolean;
     approvalTimeoutMs?: number;
+    createAdapter?: AdapterFactory;
+    modelProviders?: ModelProvider[];
+    runTool?: ToolRunner;
+    chatAppsHome?: string;
+    holdsFile?: string;
+    /** Be the Husk chats start: no trigger of its own, the job host's link instead (jobs.ts). */
+    jobs?: (store: Store) => JobsLink;
+    /** Remote access on, started (remote/oauth.ts), and what serves its `/mcp`. */
+    remote?: Remote;
+    remoteMcp?: RemoteMcp;
   } = {},
 ): Promise<TestApp> {
   const { store, root, cleanup } = await tempStore();
@@ -353,7 +393,7 @@ export async function buildTestApp(
     manager: overrides.manager ?? manager,
     router: overrides.router ?? router,
     store,
-    modelProviders: [fakeModelProvider],
+    modelProviders: overrides.modelProviders ?? [fakeModelProvider],
     agentFactory: overrides.agent ?? fakeAgentFactory(),
     logger: createLogger({ level: 'silent' }),
     config: {
@@ -366,6 +406,13 @@ export async function buildTestApp(
       consoleDir: join(root, 'no-console'),
     },
     ...(overrides.approvalTimeoutMs !== undefined ? { approvalTimeoutMs: overrides.approvalTimeoutMs } : {}),
+    ...(overrides.createAdapter ? { createAdapter: overrides.createAdapter } : {}),
+    ...(overrides.runTool ? { runTool: overrides.runTool } : {}),
+    ...(overrides.chatAppsHome ? { chatAppsHome: overrides.chatAppsHome } : {}),
+    ...(overrides.holdsFile ? { holdsFile: overrides.holdsFile } : {}),
+    ...(overrides.jobs ? { jobs: overrides.jobs(store) } : {}),
+    ...(overrides.remote ? { remote: overrides.remote } : {}),
+    ...(overrides.remoteMcp ? { remoteMcp: overrides.remoteMcp } : {}),
   });
 
   return {

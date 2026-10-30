@@ -64,7 +64,9 @@ export class DockerProvider extends OciProvider {
           isolated: true,
         isolationKind: 'kernel',
           reason: 'the docker socket refused this user',
-          hint: 'add yourself to the docker group (`sudo usermod -aG docker $USER`), then log back in',
+          hint: process.platform === 'win32'
+            ? 'start Docker Desktop and check `docker info` from the same Windows account that runs your MCP client; check its Docker access permissions'
+            : 'check Docker socket permissions for this user; on Linux, check docker group membership, then log back in',
         };
       }
       return {

@@ -5,9 +5,10 @@ description: Run husk serve on a box you own — the token, binding past loopbac
 order: 1
 ---
 
-`husk serve` is a single Node process that exposes the control plane, mounts every
-`http`, `webhook` and `cron` trigger your husks declare, and serves the console at `/`.
-This guide puts it on a machine you own and keeps it there.
+`husk serve` is a single Node process that exposes the control plane, runs every trigger
+your husks declare (`http`, `webhook`, `cron`, and the Discord, Slack and Telegram bots),
+and serves the console at `/`. This guide puts it on a machine you own and keeps it
+there.
 
 **What you will have at the end:** a control plane reachable over TLS at a hostname you
 control, protected by a bearer token, restarted automatically on reboot, with its state
@@ -58,13 +59,24 @@ printf 'HUSK_TOKEN=%s\n' "$(cat /etc/husk/token)" > /etc/husk/husk.env
 chmod 600 /etc/husk/husk.env
 ```
 
-Every request outside `/health` then needs the token:
+Every API request, everything under `/v1`, then needs the token:
 
 ```bash
 curl -s -H "Authorization: Bearer $(cat /etc/husk/token)" localhost:7377/v1/doctor | jq .selection
 ```
 
-Comparison is constant-time. `/health` stays open so a load balancer can probe it.
+Comparison is constant-time. A few things answer without it:
+
+- `/health`, so a load balancer can probe it;
+- the console's page and its assets, which hold no data: every call the page makes
+  carries the token;
+- `OPTIONS` requests, and a `GET` for a path that does not exist, which gets its 404;
+- `/v1/a/*`, where a chat adapter checks the platform's own signature, as Slack's Events
+  API does;
+- a signed request to a webhook trigger under `/v1/w`, which the webhook checks against
+  its `secret`. A sender that cannot add an `Authorization: Bearer` header, such as
+  GitHub, gets in that way. A webhook with no `secret` takes the token, and refuses a
+  signed request with a 403.
 
 <Note>
 Browsers cannot set headers on `EventSource` or `WebSocket`. For those two transports
@@ -104,6 +116,12 @@ Keep Husk on loopback and let the proxy own TLS:
 husk serve --host 127.0.0.1 --port 7377
 ```
 
+Through the proxy, Husk is an API: the SDK, `curl` and anything else that sends no
+`Origin` header work. The console does not. Husk refuses a request from any web page
+whose origin is not a loopback address, its defence against a page driving it, so a
+console opened at `https://husk.example.com` cannot start a run or open a terminal. Open
+the console through an SSH tunnel instead, as above.
+
 ## Step 4: A reverse proxy that does not break the streams
 
 Two things go wrong with a naive proxy config: SSE gets buffered, and WebSocket
@@ -126,7 +144,9 @@ server {
     proxy_pass http://127.0.0.1:7377;
 
     proxy_http_version 1.1;
-    proxy_set_header Host              $host;
+    # On a loopback bind Husk answers only loopback names, its defence against
+    # DNS rebinding, so the proxy passes one rather than the client's.
+    proxy_set_header Host              127.0.0.1:7377;
     proxy_set_header X-Real-IP         $remote_addr;
     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
@@ -148,6 +168,7 @@ Caddy needs almost none of that:
 ```caddyfile title="Caddyfile"
 husk.example.com {
   reverse_proxy 127.0.0.1:7377 {
+    header_up Host {upstream_hostport}   # a loopback name, which Husk answers
     flush_interval -1        # never buffer; required for SSE
     transport http {
       read_timeout 1h
@@ -250,9 +271,11 @@ On `SIGTERM` or `SIGINT`, once and only once however many signals arrive, Husk:
 
 1. stops the trigger host and the cron scheduler,
 2. stops the computer reaper,
-3. aborts every in-flight run — so no container is left spinning,
-4. closes the HTTP server,
-5. drains the store's write queue.
+3. keeps the computers you have taken over in `holds.json`, so the next start holds them
+   again,
+4. aborts every in-flight run — so no container is left spinning,
+5. closes the HTTP server,
+6. drains the store's write queue.
 
 `TimeoutStopSec=30` gives it room. A run cancelled this way ends with
 `stopReason: 'aborted'` and is still readable at `GET /v1/runs/:id`.
@@ -264,7 +287,7 @@ T=$(cat /etc/husk/token)
 H="Authorization: Bearer $T"
 
 curl -s https://husk.example.com/health
-# {"ok":true,"version":"0.1.0","uptimeSec":41}
+# {"ok":true,"version":"0.2.0","protocol":1,"uptimeSec":41}
 
 curl -s -H "$H" https://husk.example.com/v1/doctor | jq '.selection, .warnings'
 
@@ -295,15 +318,27 @@ Everything is under `HUSK_HOME`, mode `0700`:
   config.json      settings, model aliases
   husks/           registered husk.yaml files    ← back this up
   computers/       machine metadata, bindings.json
-  workspaces/      the local provider's filesystems
+  workspaces/      the local provider's filesystems, and saved workspaces
   runs/            summaries and events.ndjson   ← may contain secrets
   transcripts/     imported chats                ← may contain secrets
+  daemon.json      this server's address and token, while it runs
+  holds.json       the computers you have taken over
   data/  cache/
 ```
 
-`husks/` is the part with your work in it. `runs/` and `transcripts/` hold unredacted
-tool output and raw conversations — see [Secrets](/security/secrets#redaction) — so back
-them up accordingly or prune them.
+`husks/` is the part with your work in it, along with any saved workspaces, the sources
+and results a chat keeps, under `workspaces/`. `runs/` holds tool output that redaction
+screens only by pattern, and `transcripts/` raw conversations — see
+[Secrets](/security/secrets#redaction) — so back them up accordingly or prune them.
+
+### The machine's shared Husk
+
+`husk serve` is also the Husk every chat on this machine goes through. It writes
+`daemon.json`, owner-only, with its address and token, and removes it on a clean stop.
+A chat app's Husk that shares this `HUSK_HOME` finds it there and runs the chat's
+computer tools in it, so the console shows that chat too. It stops a chat's computer
+after ten idle minutes, never one you hold, and the computer's files stay for its next
+call.
 
 ### Limits
 
@@ -319,32 +354,23 @@ them up accordingly or prune them.
 
 `maxComputers` is the hard cap on live machines; a ninth returns `E_QUOTA` with 429.
 `maxCostUsd` is the router's per-call ceiling, independent of each husk's own
-`limits.maxCostUsd`.
+`limits.maxCostUsd`. `provider` and `model` say what `auto` means on this machine: a
+computer or a model asked for as `auto`, or not asked for at all, gets them. These five
+are all the file takes. A key it does not know, a value of the wrong type, or a file that
+is not JSON stops Husk with the setting's name, rather than run on a default you did not
+ask for.
 
 ### The reaper
 
 `husk serve` starts a sweep every 60 seconds that destroys machines past their
 `idleTimeoutSec` or `maxLifetimeSec`.
 
-<Warning>
-`reap()` is implemented by `local`, `ssh` and `fly`, and **not** by the shared container
-base class. Docker and Podman containers are never reaped, whatever `idleTimeoutSec`
-says. On a long-lived server this leaks containers. Until it is fixed, a cron entry is
-the workaround:
-
-```bash title="/usr/local/bin/husk-reap-containers"
-#!/bin/sh
-# Destroy husk-created containers that have been running for over two hours.
-# Every one carries a `husk.provider` label, set by the runtime at create time.
-docker ps -q --filter label=husk.provider=docker | while read -r id; do
-  started=$(docker inspect -f '{{.State.StartedAt}}' "$id")
-  age=$(( $(date +%s) - $(date -d "$started" +%s) ))
-  [ "$age" -gt 7200 ] && docker rm -f "$id"
-done
-```
-
+Every provider implements the reaper, and only a running server sweeps: `husk serve`
+here, or the shared Husk a chat starts on a desktop. On Docker and Podman, a chat's
+computer, and a bot's with `computer.persist: true`, keeps its `/work` and browser
+logins when it is destroyed, for its next one. A bot's without it loses both. Keep `husk serve` running for scheduled cleanup, set the relevant
+lifetime limits, and use `husk rm` when you need to remove a computer immediately.
 [Lifetimes](/computers/lifetimes) has the detail.
-</Warning>
 
 ### Upgrades
 
@@ -374,8 +400,10 @@ In-flight runs are aborted, not resumed.
 ## What this does not give you
 
 There is no multi-tenancy. One `husk serve` is one user's control plane: one token, one
-`HUSK_HOME`, one set of husks. There are no accounts, no per-user quotas and no
-authorization beyond "has the token or does not".
+`HUSK_HOME`, one set of husks. There are no accounts and no per-user quotas. Beyond the
+token, the only credentials are the short-lived links a chat hands out, each of which
+opens one handoff or one computer's view and lapses after ten minutes unused, and, with
+[remote access](/guides/remote-access), the apps its one owner signs in.
 
 If several people need this, give each of them their own process, their own
 `HUSK_HOME`, their own port and their own token.

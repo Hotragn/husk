@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -96,17 +96,17 @@ interface Result {
   stderr: string;
 }
 
-function husk(args: string[], opts: { cwd?: string; input?: string } = {}): Result {
+function husk(args: string[], opts: { cwd?: string; input?: string; env?: Record<string, string> } = {}): Result {
   const r = spawnSync(process.execPath, [BIN, ...args], {
     encoding: 'utf8',
     cwd: opts.cwd ?? home,
     input: opts.input ?? '',
-    env: { ...process.env, HUSK_HOME: home, NO_COLOR: '1', FORCE_COLOR: '' },
+    env: { ...process.env, HUSK_HOME: home, NO_COLOR: '1', FORCE_COLOR: '', ...opts.env },
   });
   return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
-describe.skipIf(!built)('the binary', () => {
+describe.skipIf(!built)('the binary', { timeout: 30_000 }, () => {
   it('carries a shebang so it can be exec\'d directly', () => {
     expect(readFileSync(BIN, 'utf8').split('\n')[0]).toBe('#!/usr/bin/env node');
   });
@@ -121,13 +121,23 @@ describe.skipIf(!built)('the binary', () => {
     // Budgeted in CI so a dependency cannot silently regress it. Generous
     // against the ~95ms measured locally, because CI machines are slower --
     // it is a regression gate, not a benchmark.
-    const t = Date.now();
-    execFileSync(process.execPath, [BIN, '--help'], { stdio: 'ignore' });
-    expect(Date.now() - t).toBeLessThan(1500);
+    //
+    // Best of three, because one wall-clock spawn inside a parallel suite
+    // measures the machine as much as the binary: this failed at 1591ms and
+    // 1600ms during a full `npm test` while passing every time it was run on
+    // its own. A real regression is slow in all three runs; scheduler
+    // contention is not, and a gate that fires on load is one people learn to
+    // ignore.
+    const runs = [0, 0, 0].map(() => {
+      const t = Date.now();
+      execFileSync(process.execPath, [BIN, '--help'], { stdio: 'ignore' });
+      return Date.now() - t;
+    });
+    expect(Math.min(...runs), `startup times: ${runs.join('ms, ')}ms`).toBeLessThan(1500);
   });
 });
 
-describe.skipIf(!built)('help and version', () => {
+describe.skipIf(!built)('help and version', { timeout: 30_000 }, () => {
   it('prints an overview for no arguments and exits 0', () => {
     const r = husk([]);
     expect(r.status).toBe(0);
@@ -160,7 +170,7 @@ describe.skipIf(!built)('help and version', () => {
   });
 });
 
-describe.skipIf(!built)('exit codes', () => {
+describe.skipIf(!built)('exit codes', { timeout: 30_000 }, () => {
   it('exits 2 on an unknown command, and suggests the right one', () => {
     const r = husk(['docter']);
     expect(r.status).toBe(2);
@@ -205,7 +215,7 @@ describe.skipIf(!built)('exit codes', () => {
   });
 });
 
-describe.skipIf(!built)('--json purity', () => {
+describe.skipIf(!built)('--json purity', { timeout: 30_000 }, () => {
   it('puts nothing but JSON on stdout for ps', () => {
     const r = husk(['ps', '--json']);
     expect(r.status).toBe(0);
@@ -220,7 +230,8 @@ describe.skipIf(!built)('--json purity', () => {
   });
 
   it('keeps stdout parseable even when the command fails', () => {
-    const r = husk(['validate', 'missing.yaml', '--json']);
+    // `validate` answers a missing file in its own `{ valid: false }` shape (below); this one throws.
+    const r = husk(['run', 'no-such-husk', 'hello', '--json']);
     expect(r.status).toBe(1);
     expect(JSON.parse(r.stdout)).toHaveProperty('error.code');
   });
@@ -246,7 +257,8 @@ describe.skipIf(!built)('--json purity', () => {
  */
 const integration = process.env.HUSK_INTEGRATION === '1';
 
-describe.skipIf(!built || !integration)('doctor, against this machine', () => {
+// A first doctor on a fresh machine probes every provider, which takes seconds.
+describe.skipIf(!built || !integration)('doctor, against this machine', { timeout: 120_000 }, () => {
   it('always exits 0, because it reports rather than fails', () => {
     expect(husk(['doctor']).status).toBe(0);
   });
@@ -275,7 +287,7 @@ describe.skipIf(!built || !integration)('doctor, against this machine', () => {
  * `local` provider, which the build contract guarantees is always available, so
  * it works on a laptop with no Docker and no API key.
  */
-describe.skipIf(!built)('the free path, end to end', () => {
+describe.skipIf(!built)('the free path, end to end', { timeout: 60_000 }, () => {
   const name = 'vitest-smoke';
 
   it('creates, execs, lists, refuses an unconfirmed rm, then removes', (ctx) => {
@@ -322,10 +334,10 @@ describe.skipIf(!built)('the free path, end to end', () => {
     }
 
     expect(husk(['ps', '--json']).stdout).not.toContain(name);
-  }, 60_000);
+  });
 });
 
-describe.skipIf(!built)('init and validate round trip', () => {
+describe.skipIf(!built)('init and validate round trip', { timeout: 30_000 }, () => {
   it('scaffolds a file that its own validator accepts', () => {
     const dir = mkdtempSync(join(tmpdir(), 'husk-init-'));
     try {
@@ -352,5 +364,79 @@ describe.skipIf(!built)('init and validate round trip', () => {
     } finally {
       removeDir(dir);
     }
+  });
+});
+
+describe.skipIf(!built)("a husk on the person's own Claude Code", { timeout: 30_000 }, () => {
+  it('runs with husk run, and says why --approve ask cannot apply', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'husk-cli-engine-'));
+    try {
+      // A stand-in for `claude -p`: answers with what it was asked.
+      writeFileSync(
+        join(dir, 'claude.mjs'),
+        `let input = '';
+process.stdin.on('data', (d) => (input += d)).on('end', () => {
+  for (const line of [
+    { type: 'system', subtype: 'init', mcp_servers: [] },
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Asked: ' + input }] } },
+    { type: 'result', subtype: 'success', is_error: false, result: 'Asked: ' + input, usage: { input_tokens: 1, output_tokens: 2 } },
+  ]) console.log(JSON.stringify(line));
+});`,
+      );
+      writeFileSync(join(dir, 'husk.yaml'), 'name: asker\ntools: []\nengine:\n  type: claude-code\n');
+      const env = { HUSK_CLAUDE_CLI: join(dir, 'claude.mjs') };
+      const ran = husk(['run', 'husk.yaml', 'Is it up?', '--json'], { cwd: dir, env });
+      expect(ran.status, ran.stderr).toBe(0);
+      expect(JSON.parse(ran.stdout)).toMatchObject({ text: 'Asked: Is it up?', stopReason: 'complete' });
+      const asked = husk(['run', 'husk.yaml', 'Is it up?', '--approve', 'ask'], { cwd: dir, env });
+      expect(asked.status).not.toBe(0);
+      expect(asked.stderr).toContain('without asking');
+    } finally {
+      removeDir(dir);
+    }
+  });
+
+  it('puts the answer alone on a piped stdout, one JSON document under --json, and refuses a bad --var', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'husk-cli-engine-'));
+    try {
+      // A stand-in that narrates, then answers; or fails when asked to.
+      writeFileSync(
+        join(dir, 'claude.mjs'),
+        `let input = '';
+process.stdin.on('data', (d) => (input += d)).on('end', () => {
+  const failed = input.includes('fail');
+  for (const line of [
+    { type: 'system', subtype: 'init', mcp_servers: [] },
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Let me look.' }] } },
+    { type: 'assistant', message: { id: 'm2', content: [{ type: 'text', text: 'It is up.' }] } },
+    failed
+      ? { type: 'result', subtype: 'error_during_execution', is_error: true, result: 'it broke', usage: { input_tokens: 1, output_tokens: 2 } }
+      : { type: 'result', subtype: 'success', is_error: false, result: 'It is up.', usage: { input_tokens: 1, output_tokens: 2 } },
+  ]) console.log(JSON.stringify(line));
+});`,
+      );
+      writeFileSync(join(dir, 'husk.yaml'), 'name: asker\ntools: []\nengine:\n  type: claude-code\n');
+      const env = { HUSK_CLAUDE_CLI: join(dir, 'claude.mjs') };
+
+      const piped = husk(['run', 'husk.yaml', 'Is it up?'], { cwd: dir, env });
+      expect(piped.status, piped.stderr).toBe(0);
+      expect(piped.stdout).toBe('It is up.\n');
+
+      const failed = husk(['run', 'husk.yaml', 'please fail', '--json'], { cwd: dir, env });
+      expect(failed.status).toBe(1);
+      expect(JSON.parse(failed.stdout)).toMatchObject({ stopReason: 'error' });
+
+      const bad = husk(['run', 'husk.yaml', 'Is it up?', '--var', 'my-name=x'], { cwd: dir, env });
+      expect(bad.status).toBe(2);
+      expect(bad.stderr).toContain('--var takes name=value');
+    } finally {
+      removeDir(dir);
+    }
+  });
+
+  it('answers `validate --json` on a missing file in the same shape as an invalid one', () => {
+    const r = husk(['validate', 'nope.yaml', '--json']);
+    expect(r.status).toBe(1);
+    expect(JSON.parse(r.stdout)).toMatchObject({ valid: false, issues: [expect.stringContaining('no husk.yaml')] });
   });
 });

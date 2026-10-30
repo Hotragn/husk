@@ -22,6 +22,7 @@ import { useResource } from '../state/useResource';
 import { toDisplayError } from '../api/client';
 import type { DisplayError } from '../api/client';
 import type { DirEntry } from '../api/wire';
+import { saveDownload } from '../api/workspaces';
 import {
   Badge,
   Button,
@@ -71,7 +72,7 @@ export function FilesPanel({
   const [pathDraft, setPathDraft] = useState('/work');
   const [open, setOpen] = useState<OpenFile | null>(null);
   const [fileError, setFileError] = useState<DisplayError | null>(null);
-  const [busy, setBusy] = useState<'reading' | 'saving' | 'deleting' | 'uploading' | null>(null);
+  const [busy, setBusy] = useState<'reading' | 'saving' | 'deleting' | 'uploading' | 'downloading' | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const uploadRef = useRef<HTMLInputElement | null>(null);
 
@@ -129,6 +130,21 @@ export function FilesPanel({
       setBusy(null);
     }
   }, [api, activeId, dir, open]);
+
+  const download = useCallback(async (entry: DirEntry) => {
+    if (!activeId) return;
+    setBusy('downloading');
+    setFileError(null);
+    try {
+      const bytes = await api.readFileBytes(activeId, entry.path);
+      saveDownload(new Blob([bytes.slice().buffer as ArrayBuffer], { type: 'application/octet-stream' }), entry.name);
+      setNotice(`Download started: ${entry.name}.`);
+    } catch (err) {
+      setFileError(toDisplayError(err));
+    } finally {
+      setBusy(null);
+    }
+  }, [api, activeId]);
 
   const remove = useCallback(
     async (entry: DirEntry) => {
@@ -332,6 +348,7 @@ export function FilesPanel({
                       <td className="mono tnum">{entry.type === 'dir' ? '—' : formatBytes(entry.size)}</td>
                       <td className="mono tnum">{formatWhen(entry.modifiedAt)}</td>
                       <td className="actions">
+                        {entry.type !== 'dir' ? <Button size="sm" onClick={() => void download(entry)} disabled={busy !== null} aria-label={`Download ${entry.path}`}>Download</Button> : null}
                         <Button
                           size="sm"
                           variant="danger"

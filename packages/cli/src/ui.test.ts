@@ -5,6 +5,9 @@ let out: string[];
 let err: string[];
 
 beforeEach(() => {
+  // Each case controls its terminal environment. CI may export NO_COLOR,
+  // FORCE_COLOR, or TERM=dumb, which must not change another case's premise.
+  for (const key of ['NO_COLOR', 'HUSK_NO_COLOR', 'FORCE_COLOR', 'TERM']) vi.stubEnv(key, undefined);
   out = [];
   err = [];
   vi.spyOn(process.stdout, 'write').mockImplementation((c: unknown) => {
@@ -69,6 +72,14 @@ describe('the stdout contract', () => {
 describe('colour', () => {
   it('is off when NO_COLOR is set, whatever the caller asked for', () => {
     vi.stubEnv('NO_COLOR', '1');
+    vi.stubEnv('FORCE_COLOR', '1');
+    ui.configure({ color: true });
+    expect(ui.red('x')).toBe('x');
+  });
+
+  it('is off when HUSK_NO_COLOR is set even if CI forces colour', () => {
+    vi.stubEnv('HUSK_NO_COLOR', '1');
+    vi.stubEnv('FORCE_COLOR', '1');
     ui.configure({ color: true });
     expect(ui.red('x')).toBe('x');
   });
@@ -95,6 +106,27 @@ describe('colour', () => {
     vi.stubEnv('FORCE_COLOR', '1');
     ui.configure({ color: false });
     expect(ui.red('x')).toBe('x');
+  });
+
+  it('follows each stream: none on a piped stdout while a terminal stderr keeps it', () => {
+    const was = { out: process.stdout.isTTY, err: process.stderr.isTTY };
+    Object.defineProperty(process.stdout, 'isTTY', { value: undefined, configurable: true });
+    Object.defineProperty(process.stderr, 'isTTY', { value: true, configurable: true });
+    try {
+      ui.configure({});
+      ui.print(ui.red('answer'));
+      ui.note(ui.red('status'));
+      expect(stdout()).toBe('answer\n');
+      expect(stderr()).toContain('31m');
+      // Asked for, it stays on a pipe too.
+      out.length = 0;
+      ui.configure({ color: true });
+      ui.print(ui.red('answer'));
+      expect(stdout()).toContain('31m');
+    } finally {
+      Object.defineProperty(process.stdout, 'isTTY', { value: was.out, configurable: true });
+      Object.defineProperty(process.stderr, 'isTTY', { value: was.err, configurable: true });
+    }
   });
 });
 

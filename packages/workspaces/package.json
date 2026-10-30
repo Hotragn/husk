@@ -1,0 +1,20 @@
+{
+  "name": "@husk-ai/workspaces",
+  "version": "0.2.0",
+  "description": "Durable local task workspaces and public source capture for Husk.",
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/Hotragn/husk.git", "directory": "packages/workspaces" },
+  "engines": { "node": ">=20.10" },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": { "@husk-ai/core": "0.2.0", "fflate": "^0.8.2", "proper-lockfile": "^4.1.2" },
+  "devDependencies": { "@types/proper-lockfile": "^4.1.4" }
+}

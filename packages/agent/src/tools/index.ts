@@ -5,6 +5,7 @@ import { browserTools } from './browse.js';
 import { realBrowserTools } from './browser.js';
 import { computerTools } from './computer.js';
 import { fileTools } from './files.js';
+import { handoffTools } from './handoff.js';
 import { httpTools } from './http.js';
 import { makeWebSearch, searchBackend, webTools } from './web.js';
 
@@ -12,6 +13,7 @@ export * from './browse.js';
 export * from './browser.js';
 export * from './computer.js';
 export * from './files.js';
+export * from './handoff.js';
 export * from './http.js';
 export * from './web.js';
 
@@ -51,7 +53,7 @@ export function resolveTools(names: string[], opts: ResolveToolsOptions): Tool[]
   const hasComputer = opts.hasComputer ?? true;
 
   const catalogue = new Map<string, AgentTool>();
-  for (const t of [...computerTools, ...browserTools, ...realBrowserTools, ...fileTools, ...webTools, ...httpTools])
+  for (const t of [...computerTools, ...browserTools, ...realBrowserTools, ...fileTools, ...webTools, ...httpTools, ...handoffTools])
     catalogue.set(t.name, t);
 
   const search = searchBackend(env);

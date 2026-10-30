@@ -24,7 +24,7 @@ import {
 } from './prompts.js';
 import type { Candidate } from './prompts.js';
 import type { ChatLike } from './chat.js';
-import { redactDistilled } from './redactor.js';
+import { redactDistilled, redactText } from './redactor.js';
 import {
   containsHarnessArtifact,
   isScaffoldingOnly,
@@ -108,8 +108,13 @@ export const DIRECTIVES: DirectivePattern[] = [
 const TOOL_BUNDLES: Array<{ bundle: string; re: RegExp }> = [
   { bundle: 'computer', re: /^(bash|powershell|shell|sh|zsh|terminal|cmd|exec|execute|run|command|bashoutput|killshell|killbash|computer|container)/i },
   { bundle: 'files', re: /^(read|write|edit|multiedit|str_replace|create_file|notebook(read|edit)?|glob|grep|ls|listdir|list_files|search_files|file)/i },
+  // Husk's own browser, driven by ref: a bot that used it needs it, not a page fetch.
+  { bundle: 'browser', re: /^browser_/i },
   { bundle: 'web', re: /^(webfetch|websearch|web_search|browse|browser|fetch|navigate|http|curl|url|search)/i },
 ];
+
+/** A tool's own name: `mcp__husk__browser_goto` is `browser_goto`, a computer's browser, not a tool of its own. */
+const bare = (name: string): string => name.replace(/^mcp__.+?__/, '');
 
 /** Orchestration plumbing. Real in the transcript, meaningless in a husk.yaml. */
 const IGNORED_TOOLS = /^(task|todowrite|todoread|exitplanmode|enterplanmode|sendmessage|taskoutput|taskstop|toolsearch|skill|monitor|askuserquestion|thinking)$/i;
@@ -406,13 +411,13 @@ export function observedTools(transcript: Transcript): ObservedTools {
   const bundles = new Set<string>();
   const passthrough = new Set<string>();
   for (const name of raw) {
-    if (IGNORED_TOOLS.test(name)) continue;
-    const hit = TOOL_BUNDLES.find((b) => b.re.test(name));
+    if (IGNORED_TOOLS.test(bare(name))) continue;
+    const hit = TOOL_BUNDLES.find((b) => b.re.test(bare(name)));
     if (hit) bundles.add(hit.bundle);
     else passthrough.add(name);
   }
 
-  const order = ['computer', 'files', 'web'];
+  const order = ['computer', 'files', 'web', 'browser'];
   const suggested = [
     ...order.filter((b) => bundles.has(b)),
     ...[...passthrough].sort().slice(0, 10),
@@ -421,7 +426,8 @@ export function observedTools(transcript: Transcript): ObservedTools {
     raw: [...raw].sort(),
     bundles: [...bundles],
     suggested,
-    needsComputer: bundles.has('computer'),
+    // The browser runs inside the computer.
+    needsComputer: bundles.has('computer') || bundles.has('browser'),
   };
 }
 
@@ -503,7 +509,10 @@ export function distillHeuristic(transcript: Transcript, opts: HeuristicOptions 
     ? `${identityRule.text.replace(/^\s*(so|ok|okay)[,\s]+/i, '').trim()}`
     : `You are an assistant distilled from a real working session about ${subject}.`;
 
-  const name = slug(transcript.title ?? `${transcript.source}-bot`, 48) || 'husk-bot';
+  // Scrub before slugging: a slug is derived text, and a credential in the
+  // title would otherwise survive into the bot's name and filename.
+  const name =
+    slug(transcript.title ? redactText(transcript.title).text : `${transcript.source}-bot`, 48) || 'husk-bot';
   const description = clampText(
     transcript.title ?? `Distilled from a ${transcript.source} transcript with ${messages.length} messages.`,
     240,
@@ -517,7 +526,10 @@ export function distillHeuristic(transcript: Transcript, opts: HeuristicOptions 
   if (!rules.length) notes.push('No recurring standing instructions found. The persona is topic-only.');
   if (!knowledge.length) notes.push('No durable user-supplied facts found worth carrying as knowledge.');
   if (!examples.length) notes.push('No uncorrected user/assistant exchange was clean enough to use as an example.');
-  if (!tools.suggested.length) notes.push('No tool use observed; the bot is configured without tools.');
+  // Mirror normaliseTools: an empty observation list becomes `tools: [files]`
+  // in the spec, so the note must say that rather than claim no tools.
+  if (!tools.suggested.length && !tools.needsComputer)
+    notes.push('No tool use observed; the husk is configured with the default files toolkit.');
   if (tools.raw.some((t) => IGNORED_TOOLS.test(t)))
     notes.push('Orchestration tools (Task, TodoWrite, ...) were observed but are not portable to a husk.');
   notes.push('Heuristic distillation: no model was used. Review the persona before shipping.');
@@ -579,6 +591,8 @@ export interface ModelDistillOptions extends HeuristicOptions {
   /** Messages of context repeated at each window boundary. */
   overlap?: number;
   concurrency?: number;
+  /** Stop scheduling extraction after this many consecutive failed slices. Default 2. */
+  maxConsecutiveFailures?: number;
   signal?: AbortSignal;
 }
 
@@ -666,7 +680,7 @@ function mergeLocally(candidates: Candidate[], fallback: DistilledAgent, tools: 
   const named = candidates.find((c) => c.name.trim().length > 0);
   return {
     ...fallback,
-    ...(named ? { name: slug(named.name, 48) } : {}),
+    ...(named ? { name: slug(redactText(named.name).text, 48) } : {}),
     persona: buildPersona(fallback.persona.split('\n')[0] ?? '', rules, tools),
     knowledge: knowledge.length ? knowledge : fallback.knowledge,
     examples: examples.length ? examples : fallback.examples,
@@ -685,6 +699,9 @@ export async function distillWithModel(
   opts: ModelDistillOptions = {},
 ): Promise<DistilledAgent> {
   const heuristic = distillHeuristic(transcript, { ...opts, redact: false });
+  // The heuristic builder is also used when no model is ever called. Once we
+  // enter this path that claim is no longer true, even if every call fails.
+  heuristic.notes = heuristic.notes.filter((note) => !note.startsWith('Heuristic distillation:'));
   const tools = observedTools(transcript);
   const model = opts.model ?? 'auto';
   const notes: string[] = [];
@@ -692,8 +709,17 @@ export async function distillWithModel(
   const windows = windowMessages(transcript.messages, opts.windowTokens ?? 12_000, opts.overlap ?? 2);
   const meta = { source: transcript.source, ...(transcript.title ? { title: transcript.title } : {}) };
 
-  const results = await mapLimit(windows, opts.concurrency ?? 3, async (win, index) => {
+  const failureLimit = Math.max(1, opts.maxConsecutiveFailures ?? 2);
+  let failures = 0;
+  let skipped = 0;
+  let attempted = 0;
+  const results = await mapLimit(windows, opts.concurrency ?? 1, async (win, index) => {
     if (!win.length) return undefined;
+    if (failures >= failureLimit || opts.signal?.aborted) {
+      skipped++;
+      return undefined;
+    }
+    attempted++;
     try {
       const res = await router.chat({
         model,
@@ -705,15 +731,21 @@ export async function distillWithModel(
       });
       const parsed = CandidateSchema.safeParse(JSON.parse(stripFence(res.text)));
       if (!parsed.success) {
+        failures++;
         notes.push(`Slice ${index + 1}/${windows.length}: model JSON did not validate.`);
         return undefined;
       }
+      failures = 0;
       return parsed.data;
     } catch {
+      failures++;
       notes.push(`Slice ${index + 1}/${windows.length}: extraction failed.`);
       return undefined;
     }
   });
+
+  if (skipped) notes.push(`Stopped extraction after repeated failures or cancellation; skipped ${skipped} of ${windows.length} slices.`);
+  notes.push(`Model distillation attempted ${attempted} of ${windows.length} slices with ${model}.`);
 
   const candidates = results.filter((c): c is Candidate => c !== undefined);
   if (!candidates.length) {
@@ -740,7 +772,7 @@ export async function distillWithModel(
     if (!parsed.success) throw new Error('merge did not validate');
     const m = parsed.data;
     merged = {
-      name: slug(m.name || heuristic.name, 48),
+      name: slug(redactText(m.name || heuristic.name).text, 48),
       description: clampText(m.description || heuristic.description, 240).text,
       persona: m.persona.trim() || buildPersona(heuristic.persona.split('\n')[0] ?? '', unionRules(candidates), tools),
       knowledge: m.knowledge.filter((k) => isUsableKnowledge(k.title, k.content)).slice(0, 8),
@@ -780,7 +812,7 @@ export interface ToSpecOverrides extends Partial<HuskSpecInput> {
 }
 
 /** The bundles `@husk-ai/agent` can actually resolve. Anything else is a typo. */
-const KNOWN_BUNDLES = new Set(['computer', 'files', 'web', 'http']);
+const KNOWN_BUNDLES = new Set(['computer', 'files', 'web', 'http', 'browser']);
 
 const FALLBACK_PERSONA = 'You are a careful, concise assistant.';
 
@@ -804,7 +836,7 @@ export function normaliseTools(suggested: string[], needsComputer: boolean): str
       out.add(lower);
       continue;
     }
-    const hit = TOOL_BUNDLES.find((b) => b.re.test(name));
+    const hit = TOOL_BUNDLES.find((b) => b.re.test(bare(name)));
     if (hit) out.add(hit.bundle);
   }
   if (needsComputer) out.add('computer');
@@ -827,6 +859,7 @@ export function normaliseTools(suggested: string[], needsComputer: boolean): str
 export function toSpec(agent: DistilledAgent, overrides: ToSpecOverrides = {}): HuskSpec {
   const { transcript, ...rest } = overrides;
   const name = normaliseName(agent.name);
+  const tools = normaliseTools(agent.suggestedTools, agent.needsComputer);
 
   const base: HuskSpecInput = {
     apiVersion: 'husk/v1',
@@ -841,8 +874,9 @@ export function toSpec(agent: DistilledAgent, overrides: ToSpecOverrides = {}): 
       ...(k.source ? { source: k.source } : {}),
     })),
     examples: agent.examples,
-    tools: normaliseTools(agent.suggestedTools, agent.needsComputer),
-    computer: { enabled: agent.needsComputer },
+    tools,
+    // A model may name the browser without saying it needs a computer; it runs in one.
+    computer: { enabled: agent.needsComputer || tools.includes('browser') },
     metadata: {
       distilledConfidence: agent.confidence,
       distillerNotes: agent.notes,

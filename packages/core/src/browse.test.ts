@@ -7,7 +7,7 @@ import type { Computer, ExecRequest, ExecResult } from './types/computer.js';
  * the fetch itself is exercised for real against a live computer in the
  * runtime's integration checks.
  */
-function fakeComputer(opts: { stdout?: string; exitCode?: number; hasPython?: boolean } = {}): Computer & {
+function fakeComputer(opts: { stdout?: string; exitCode?: number; hasPython?: boolean; pages?: Record<string, string> } = {}): Computer & {
   execs: ExecRequest[];
   written: Map<string, string>;
 } {
@@ -34,7 +34,10 @@ function fakeComputer(opts: { stdout?: string; exitCode?: number; hasPython?: bo
       if (text.includes('command -v python3')) {
         return result(opts.hasPython === false ? 'no' : 'yes');
       }
-      return { ...result(opts.stdout ?? '{}'), exitCode: opts.exitCode ?? 0 };
+      // The fetcher's URL is its first argument: a page per URL, for redirects.
+      const url = Array.isArray(req.cmd) ? req.cmd[2] : undefined;
+      const answer = (url && opts.pages?.[url]) ?? opts.stdout ?? '{}';
+      return { ...result(answer), exitCode: opts.exitCode ?? 0 };
     },
     async writeFile(path: string, content: string | Uint8Array) {
       written.set(path, typeof content === 'string' ? content : Buffer.from(content).toString('utf8'));
@@ -113,11 +116,13 @@ describe('browseInComputer', () => {
   });
 
   it('falls back to curl when the computer has no python3', async () => {
-    const body = 'hello <b>world</b>\nHUSK_META 200 text/html https://example.com/';
+    const body = 'hello <b>world</b>\nHUSK_META\t200\ttext/html; charset=utf-8\thttps://example.com/\t';
     const c = fakeComputer({ hasPython: false, stdout: body });
     const p = await browseInComputer(c, { url: 'https://example.com' });
     expect(p.via).toBe('curl');
     expect(p.status).toBe(200);
+    // A content type with a space in it used to lose the status and the URL.
+    expect(p.contentType).toBe('text/html; charset=utf-8');
     expect(p.text).toContain('hello');
     expect(p.text).not.toContain('<b>');
   });
@@ -127,5 +132,44 @@ describe('browseInComputer', () => {
     await expect(
       browseInComputer(c, { url: 'https://example.com' }, { mode: 'none' }),
     ).rejects.toThrowError(/refuses example\.com/);
+  });
+});
+
+describe('browseInComputer following redirects', () => {
+  const redirect = (from: string, to: string, status = 302) => JSON.stringify({ url: from, status, location: to, text: '', links: [], bytes: 0 });
+  const fetched = (c: { execs: ExecRequest[] }) => c.execs.filter((e) => Array.isArray(e.cmd) && e.cmd[0] === 'python3').map((e) => (e.cmd as string[])[2]);
+
+  it('follows one to an allowed host, and says where it ended up', async () => {
+    const c = fakeComputer({
+      pages: {
+        'https://example.com/': redirect('https://example.com/', 'https://www.example.com/'),
+        'https://www.example.com/': page.replace('"https://example.com/"', '"https://www.example.com/"'),
+      },
+    });
+    const p = await browseInComputer(c, { url: 'https://example.com' });
+    expect(p).toMatchObject({ status: 200, title: 'Example Domain', url: 'https://www.example.com/', requestedUrl: 'https://example.com/' });
+    expect(fetched(c)).toEqual(['https://example.com/', 'https://www.example.com/']);
+  });
+
+  it('refuses a hop to the metadata endpoint before anything is sent there', async () => {
+    const c = fakeComputer({ pages: { 'https://example.com/': redirect('https://example.com/', 'http://169.254.169.254/latest/meta-data/') } });
+    await expect(browseInComputer(c, { url: 'https://example.com' })).rejects.toThrowError(/refuses 169\.254\.169\.254/);
+    expect(fetched(c)).toEqual(['https://example.com/']);
+  });
+
+  it('resolves a relative Location against the page that sent it', async () => {
+    const c = fakeComputer({ pages: { 'https://example.com/a/b': redirect('https://example.com/a/b', '../next'), 'https://example.com/next': page } });
+    await browseInComputer(c, { url: 'https://example.com/a/b' });
+    expect(fetched(c)).toEqual(['https://example.com/a/b', 'https://example.com/next']);
+  });
+
+  it('stops a redirect loop', async () => {
+    const c = fakeComputer({ pages: { 'https://example.com/': redirect('https://example.com/', 'https://example.com/') } });
+    await expect(browseInComputer(c, { url: 'https://example.com' })).rejects.toThrowError(/redirected more than 10 times/);
+  });
+
+  it('returns the redirect itself when asked not to follow', async () => {
+    const c = fakeComputer({ pages: { 'https://example.com/': redirect('https://example.com/', 'http://169.254.169.254/') } });
+    expect((await browseInComputer(c, { url: 'https://example.com', follow: false })).status).toBe(302);
   });
 });

@@ -5,6 +5,7 @@ import {
   isHostAllowed,
   isInternalHost,
   isLoopbackHost,
+  networkEnforcement,
   urlHost,
 } from './net.js';
 
@@ -119,6 +120,28 @@ describe('isHostAllowed', () => {
   });
 });
 
+describe('networkEnforcement', () => {
+  it('has nothing to say when there is no policy, or the provider enforces it', () => {
+    expect(networkEnforcement('local', undefined)).toBeUndefined();
+    expect(networkEnforcement('docker', { mode: 'none' })).toBeUndefined();
+    expect(networkEnforcement('podman', { mode: 'none' })).toBeUndefined();
+    expect(networkEnforcement('local', { mode: 'full' })).toBeUndefined();
+  });
+
+  it('says "none" holds only for Husk\'s tools and the browser where the kernel does not stop processes', () => {
+    for (const provider of ['local', 'ssh', 'fly']) {
+      expect(networkEnforcement(provider, { mode: 'none' })).toMatch(new RegExp(`not enforced on ${provider}.*a process in the computer can still reach the network`));
+    }
+  });
+
+  it('says no provider firewalls egress or a deny list for processes', () => {
+    for (const provider of ['docker', 'podman', 'local', 'ssh', 'fly']) {
+      expect(networkEnforcement(provider, { mode: 'egress', allow: ['pypi.org'] })).toMatch(/no provider firewalls it yet/);
+      expect(networkEnforcement(provider, { mode: 'full', deny: ['example.com'] })).toMatch(/deny list/);
+    }
+  });
+});
+
 describe('urlHost', () => {
   it('extracts the hostname', () => {
     expect(urlHost('https://api.example.com/x?y=1')).toBe('api.example.com');
@@ -223,5 +246,27 @@ describe('loopback is provider-dependent', () => {
       expect(err.hint).toMatch(/loopback is the host machine/);
       expect(err.details?.loopback).toBe(true);
     }
+  });
+});
+
+describe('IPv6 at the internal-address floor', () => {
+  it('refuses the metadata endpoint however IPv6 spells it', () => {
+    for (const h of ['[::ffff:169.254.169.254]', '[::ffff:a9fe:a9fe]', '[64:ff9b::a9fe:a9fe]']) {
+      expect(isHostAllowed(h, { mode: 'full' }, { loopbackIsOwn: true }), h).toBe(false);
+    }
+  });
+
+  it('treats IPv4 loopback inside IPv6, and the unspecified address, as loopback', () => {
+    for (const h of ['[::ffff:7f00:1]', '[::ffff:127.0.0.1]', '[::]', '[::1]']) {
+      expect(isLoopbackHost(h), h).toBe(true);
+      expect(isHostAllowed(h, undefined), h).toBe(false);
+      expect(isHostAllowed(h, undefined, { loopbackIsOwn: true }), h).toBe(true);
+    }
+  });
+
+  it('refuses private, unique-local and link-local ranges, and lets public IPv6 through', () => {
+    for (const h of ['[::ffff:10.0.0.1]', '[fd12:3456::1]', '[fe80::1]', '[febf::1]']) expect(isInternalHost(h), h).toBe(true);
+    expect(isHostAllowed('[2606:4700::1111]', { mode: 'full' })).toBe(true);
+    expect(isInternalHost('[2606:4700::1111]')).toBe(false);
   });
 });

@@ -27,6 +27,7 @@ name: my-bot
 | `description` | string | ≤ 280 chars | `""` |
 | `model` | string | — | `auto` |
 | `fallbackModels` | string[] | — | `[]` |
+| `engine` | object | see below | `{ type: builtin }` |
 | `temperature` | number | 0–2 | — |
 | `persona` | string | — | `""` |
 | `knowledge` | object[] | see below | `[]` |
@@ -39,6 +40,17 @@ name: my-bot
 | `triggers` | array | discriminated on `type` | `[{ type: cli }]` |
 | `metadata` | record | any values | `{}` |
 | `origin` | object | see below | — |
+
+### `engine`
+
+| Path | Type | Constraint | Default |
+| --- | --- | --- | --- |
+| `engine.type` | enum | `builtin` \| `claude-code` \| `codex` | `builtin` |
+| `engine.resume` | string | `^[A-Za-z0-9-]{8,80}$`, a Claude Code session id; needs `claude-code` | — |
+
+On `claude-code` or `codex` the file is refused when `guardrails.approvalMode` is not
+`auto`, or when it sets `denyCommands`, `allowCommands`, a network `allow` or `deny`
+list, or `computer.image`. See [husk.yaml](/chat-to-bot/husk-yaml#engine).
 
 ### `knowledge[]`
 
@@ -78,36 +90,34 @@ the block exists.
 | `computer.provider` | string | not validated against the provider list | best available |
 | `computer.flavor` | enum | `base` \| `python` \| `node` \| `full` | `base` |
 | `computer.image` | string | overrides `flavor` | — |
-| `computer.cpus` | number | > 0, ≤ 64 | provider default (2) |
-| `computer.memoryMb` | integer | > 0, ≤ 131072 | provider default (2048) |
-| `computer.diskMb` | integer | > 0 | provider default (2048) |
+| `computer.cpus` | number | > 0, ≤ 64; no limit on `local` and `ssh` | `2` on Docker and Podman, `1` on Fly |
+| `computer.memoryMb` | integer | > 0, ≤ 131072; Fly rounds up to a multiple of 256 | `2048` on Docker and Podman, `1024` on Fly |
+| `computer.diskMb` | integer | > 0; Docker and Podman, a `/work` that is not persisted | `2048` |
 | `computer.idleTimeoutSec` | integer | ≥ 0; `0` disables | `900` |
 | `computer.maxLifetimeSec` | integer | ≥ 0; `0` disables | `0` |
-| `computer.packages` | string[] | — | `[]` |
+| `computer.packages` | string[] | one word each; refused on `ssh` and `fly` | `[]` |
 | `computer.setup` | string | — | — |
-| `computer.env` | record of string | — | `{}` |
+| `computer.env` | record of string | `${NAME}` is read from Husk's environment | `{}` |
 | `computer.workdir` | string | — | `/work` |
-| `computer.persist` | boolean | — | `false` |
+| `computer.persist` | boolean | Docker and Podman: `/work` is a volume | `false` |
 | `computer.network.mode` | enum | `none` \| `egress` \| `full` | `egress` |
 | `computer.network.allow` | string[] | one leading `*.` wildcard supported | — |
 | `computer.network.deny` | string[] | applied even in `full` | — |
+| `computer.network.strict` | boolean | refuses a provider that cannot hold every process to the policy | — |
 | `computer.mounts[].source` | string | host path | **required** |
 | `computer.mounts[].target` | string | path in the machine | **required** |
 | `computer.mounts[].readonly` | boolean | — | `true` |
+| `computer.user` | string | Docker and Podman; `root` is accepted | `1000:1000` |
+| `computer.labels` | record of string | `husk.ssh`, `husk.ssh.key`, `husk.fly.app`, `husk.fly.region`, `husk.fly.ports` | — |
 
 <Note>
-`ComputerSpec` — the runtime-level type used by `husk up` and
-`POST /v1/computers` — also has `name`, `user` and `labels`. `ComputerConfigSchema`
-does not, so **none of those three can be set from a `husk.yaml`**. The machine's name
-is always the husk's `name`, the user is always the provider default (`1000:1000` on
-containers), and labels are not settable from the file. That also means the `ssh` and
-`fly` per-husk label overrides — `husk.ssh`, `husk.fly.app` — are reachable only
-through the API, not through the spec.
-
-The full list of `computer.*` keys the agent forwards to the runtime is: `provider`,
-`image`, `flavor`, `cpus`, `memoryMb`, `diskMb`, `idleTimeoutSec`, `maxLifetimeSec`,
-`network`, `env`, `mounts`, `workdir`, `persist`, `setup`, `packages`. `enabled` is
-consumed by the agent itself.
+`ComputerSpec`, the runtime type behind `husk up` and `POST /v1/computers`, also has a
+`name`. A `husk.yaml` cannot set it: the machine is named after the husk, with a suffix
+when that name is taken. Every other `computer.*` key is forwarded to the runtime, `user`
+and `labels` included, except `enabled`, which the agent consumes itself. On the way,
+`${NAME}` in `env` is expanded, and `guardrails`' command lists become the labels
+`husk.allowCommands` and `husk.denyCommands`. See
+[computer.labels](/chat-to-bot/husk-yaml#computerlabels).
 </Note>
 
 ## `limits`
@@ -134,8 +144,9 @@ Every ceiling is checked before the next model call, not after. See
 | `guardrails.refuse` | string[] | free text | `[]` |
 | `guardrails.redactSecrets` | boolean | — | `true` |
 
-`allowCommands` is checked first and beats both `denyCommands` and the built-in deny
-list. See [Isolation](/security/isolation#the-command-deny-list) and
+`allowCommands` beats both `denyCommands` and the built-in deny list, where an entry
+matches: a command chained after an allowed one is checked on its own. See
+[Isolation](/security/isolation#the-command-deny-list) and
 [Approvals](/security/approvals).
 
 ## `memory`
@@ -155,7 +166,7 @@ current run's message array. Husk ships no SQLite driver at all.
 
 ## `triggers[]`
 
-A discriminated union on `type`. Seven variants; three are mounted by the server.
+A discriminated union on `type`. Seven variants; `husk serve` mounts all but `cli`.
 
 | `type` | Field | Type | Default |
 | --- | --- | --- | --- |
@@ -172,7 +183,8 @@ A discriminated union on `type`. Seven variants; three are mounted by the server
 | `telegram` | `allowlist` | string[] | `[]` |
 | `cli` | — | — | — |
 
-`discord`, `slack` and `telegram` parse and validate and are never mounted. See
+`discord`, `slack` and `telegram` each start a chat adapter once its bot token is set,
+and are not started while `channels` or `allowlist` is empty. See
 [Triggers](/chat-to-bot/triggers#what-is-actually-mounted). `http`'s `auth` field is
 stored and never checked.
 
@@ -183,14 +195,16 @@ Bundle names expand; individual tool names are also accepted.
 | Bundle | Expands to |
 | --- | --- |
 | `computer` | `shell`, `expose_port`, `computer_info` |
+| `browser` | `browse`, `browser_goto`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_screenshot` |
 | `files` | `read_file`, `write_file`, `edit_file`, `list_dir`, `search_files`, `move`, `delete` |
 | `web` | `fetch_url`, plus `web_search` when `TAVILY_API_KEY` or `BRAVE_API_KEY` is set |
 | `http` | `http_request` |
 
 A tool that cannot work is skipped rather than registered-and-broken. Tools needing a
 machine are dropped when `computer.enabled` is `false`, and `http_request` is opt-in —
-naming the `http` bundle counts as naming it. An unknown tool name is dropped silently
-(at debug log level).
+naming the `http` bundle counts as naming it. `hand_off` is opt-in and in no bundle: see
+[husk.yaml](/chat-to-bot/husk-yaml#tools). An unknown tool name is dropped silently (at
+debug log level).
 
 ## One annotated file
 
@@ -207,7 +221,7 @@ description: Reads failing CI logs and says what broke, in one paragraph.
 
 # An alias or a provider/model id. `auto`, `free` and `local` are strategies.
 model: sonnet
-# Only honoured on the control-plane path; `husk run` pins one model.
+# Tried in order when the model before is unavailable, by `husk run` and the API alike.
 fallbackModels: [flash, gemma]
 temperature: 0.2              # omit to use the provider's default
 
@@ -244,11 +258,11 @@ computer:
   cpus: 2
   memoryMb: 2048
   diskMb: 2048
-  idleTimeoutSec: 600         # destroy after 10 min with no exec; 0 disables
+  idleTimeoutSec: 600         # destroyed by the reaper after 10 idle minutes; 0 disables
   maxLifetimeSec: 0           # hard ceiling regardless of activity; 0 disables
   workdir: /work
-  persist: false              # true keeps the filesystem across restarts
-  packages: [pnpm]            # installed on first boot by the flavor's manager
+  persist: false              # true: /work is a volume on Docker and Podman
+  packages: [pnpm]            # installed when the computer is made; ssh and fly refuse
   setup: mkdir -p /work/out   # one shell snippet, once, after creation
   env:
     GITHUB_TOKEN: ${GITHUB_TOKEN}   # explicit values survive the env scrub
@@ -263,7 +277,7 @@ computer:
 
 limits:
   maxSteps: 20                # 1-500
-  maxCostUsd: 0.25            # 0 means "local models only"
+  maxCostUsd: 0.25            # 0 admits only models priced at zero
   maxTokens: 200000
   timeoutSec: 240             # wall clock for the whole run
   execTimeoutSec: 120         # per exec inside the machine
@@ -314,8 +328,8 @@ Every problem at once, each as `path: message`:
 ```text
 error husk.yaml is not a valid husk
   ✗ name: name must be lowercase alphanumeric with dashes
-  ✗ limits.maxSteps: Number must be less than or equal to 500
-  ✗ triggers.0.schedule: Required
+  ✗ limits.maxSteps: Too big: expected number to be <=500
+  ✗ triggers.0.schedule: Invalid input: expected string, received undefined
 hint:  `husk init --force` regenerates a valid file, or see `husk help init`
 ```
 

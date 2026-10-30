@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CoreStatic } from "@/components/CoreStatic";
+import { ProviderOrbit } from "@/components/ProviderOrbit";
 import type { CoreColors } from "@/components/HuskCore";
 import { EXPOSURE, SEPARATION } from "@/lib/husk-geometry";
 import { PROVIDERS, type Provider } from "@/lib/content";
@@ -193,7 +194,7 @@ export function IsolationViewer() {
 
   return (
     <section aria-label="Isolation by provider">
-      <div className="frame">
+      <ProviderOrbit providers={PROVIDERS} activeId={provider.id} onSelect={choose}>
         <div
           ref={stage}
           className="core-stage"
@@ -223,47 +224,41 @@ export function IsolationViewer() {
             <CoreStatic shell={provider.shell} />
           )}
         </div>
+      </ProviderOrbit>
 
-        {/* The readout is the actual claim. The object above restates it; the
-            information never lives in the picture alone. */}
-        <dl className="core-readout" aria-live="polite">
-          <div className="core-readout-row">
-            <dt className="core-readout-label">provider</dt>
-            <dd>{provider.id}</dd>
-          </div>
-          <div className="core-readout-row">
-            <dt className="core-readout-label">isolation</dt>
-            <dd className={`iso iso-${provider.isolationKind}`}>
-              <span className="iso-glyph" aria-hidden="true">
-                {provider.isolationKind === "kernel"
-                  ? "[#]"
-                  : provider.isolationKind === "none"
-                    ? "[!]"
-                    : "[?]"}
-              </span>
-              <span className="iso-word">{provider.isolation}</span>
-            </dd>
-          </div>
-        </dl>
-      </div>
-
-      <div
-        className="core-controls"
-        role="group"
-        aria-label="Choose a computer provider"
-      >
-        {PROVIDERS.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            className="btn btn-secondary"
-            aria-pressed={p.id === provider.id}
-            onClick={() => choose(p.id)}
-          >
-            {p.id}
-          </button>
-        ))}
-      </div>
+      {/* The readout is the actual claim. The object restates it; the
+          information never lives in the picture alone. Four rows, not two --
+          the orbit replaced a row of buttons whose labels were the only place
+          cost and "when it wins" appeared outside the table, and dropping them
+          would have made the picture the only source for two of the five
+          columns. Every value is the same string the table above renders. */}
+      <dl className="core-readout" aria-live="polite">
+        <div className="core-readout-row">
+          <dt className="core-readout-label">provider</dt>
+          <dd>{provider.id}</dd>
+        </div>
+        <div className="core-readout-row">
+          <dt className="core-readout-label">isolation</dt>
+          <dd className={`iso iso-${provider.isolationKind}`}>
+            <span className="iso-glyph" aria-hidden="true">
+              {provider.isolationKind === "kernel"
+                ? "[#]"
+                : provider.isolationKind === "none"
+                  ? "[!]"
+                  : "[?]"}
+            </span>
+            <span className="iso-word">{provider.isolation}</span>
+          </dd>
+        </div>
+        <div className="core-readout-row">
+          <dt className="core-readout-label">cost</dt>
+          <dd>{provider.cost}</dd>
+        </div>
+        <div className="core-readout-row">
+          <dt className="core-readout-label">when it wins</dt>
+          <dd>{provider.when}</dd>
+        </div>
+      </dl>
 
       <p className="core-hint">
         {provider.mechanism}.{" "}

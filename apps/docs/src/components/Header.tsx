@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { nav } from '@/lib/content';
-import { REPO_URL } from '@/lib/site';
+import { REPO_URL, WEB_URL } from '@/lib/site';
 import { HuskLockup } from './Icons';
 import { MobileNav } from './MobileNav';
 import { Search } from './Search';
@@ -35,6 +35,12 @@ export function Header() {
           <Link className="header-link" href="/troubleshooting">
             Troubleshooting
           </Link>
+          {/* The way back out. These are two deployments, so it is an anchor
+              rather than a Link -- next/link would prefetch a route that does
+              not exist in this app. */}
+          <a className="header-link header-link-cross" href={WEB_URL}>
+            Husk home
+          </a>
         </nav>
 
         <div className="header-spacer" />

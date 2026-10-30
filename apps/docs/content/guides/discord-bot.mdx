@@ -1,7 +1,7 @@
 ---
 title: "Chat transcript to Discord bot"
 navTitle: Discord bot
-description: A conversation you already had, distilled into a husk.yaml, served by husk serve, and fronted by a Discord bot — with the 40 lines of glue the server does not ship yet.
+description: A conversation you already had, distilled into a husk.yaml, served by husk serve, and answering in your Discord channel.
 order: 3
 ---
 
@@ -9,26 +9,15 @@ order: 3
 `husk.yaml` distilled from a real conversation you already had.
 
 **What you will learn:** how `husk import` and `husk distill` turn a chat into a spec,
-how the control plane runs it, and how `@husk-ai/adapters` connects the two.
+how the control plane runs it, and how its `discord` trigger connects it to your server.
 
 **Prerequisites**
 
 - [ ] Husk installed (`npm install -g @husk-ai/cli`) and `husk doctor` showing a reachable
       model.
-- [ ] A transcript worth distilling — a Claude Code session, a ChatGPT export, a Cursor
-      chat, or a markdown file.
+- [ ] A transcript worth distilling — a Claude Code or Codex session, a ChatGPT export,
+      a Cursor chat, or a markdown file.
 - [ ] A Discord server you can add a bot to.
-
-<Warning>
-The `discord` trigger type validates, saves, and does nothing. `TriggerHost.sync()` has
-branches for `http`, `webhook` and `cron` only, so a husk declaring
-`triggers: [{ type: discord }]` mounts nothing and appears nowhere in
-`GET /v1/triggers`.
-
-The Discord *adapter* is complete and tested — a raw gateway client with resume,
-heartbeat tracking, rate limiting and idempotency. It is simply not wired into
-`@husk-ai/server`. Step 5 is the glue that connects them, and it is about 40 lines.
-</Warning>
 
 ---
 
@@ -38,13 +27,16 @@ heartbeat tracking, rate limiting and idempotency. It is simply not wired into
 husk import
 ```
 
-With no path, Husk searches four places and lists what it found:
+With no path, Husk searches the places chat apps keep their history and lists what it
+found. When it finds nothing, it says where it looked:
 
 ```text
 husk looked in:
   ~/.claude/projects   Claude Code sessions
-  ~/Downloads          ChatGPT and Gemini exports
-  ~/.cursor            Cursor chat history
+  ~/.codex/sessions    Codex sessions
+  ~/Downloads          ChatGPT exports, and ~/Documents
+  ~/.gemini/tmp        Gemini CLI chats
+  Cursor's state.vscdb Cursor chat history
   ./                   markdown and jsonl
 ```
 
@@ -155,7 +147,7 @@ metadata:
     - Heuristic distillation: no model was used. Review the persona before shipping.
 ```
 
-Three things to fix before this goes anywhere near a channel.
+Four things to fix before this goes anywhere near a channel.
 
 **The name.** The distiller slugs the transcript's title, and transcript titles are
 usually a file path. Rename it — this is the URL segment and the CLI handle.
@@ -164,6 +156,10 @@ usually a file path. Rename it — this is the URL segment and the CLI handle.
 fast. The defaults (24 steps, $0.50, 300 s) are sized for an agent with a computer.
 
 **The persona's last line.** Discord is not a terminal. Tell it so.
+
+**Anything the bot needs to know.** A chat trigger passes the message and nothing else,
+so a `{{name}}` placeholder in the persona is never filled in Discord. Write the product
+name into the file.
 
 ```yaml title="support-bot.yaml (edited)"
 apiVersion: husk/v1
@@ -176,7 +172,7 @@ fallbackModels: [flash]
 temperature: 0.3
 
 persona: |-
-  You answer billing questions for {{product}} in a Discord channel.
+  You answer billing questions for Acme in a Discord channel.
 
   - Check the customer's plan before quoting a limit.
   - Never promise a refund; tell them to open a ticket in #billing.
@@ -222,7 +218,7 @@ husk validate support-bot.yaml
 ## Step 4: Test it before Discord sees it
 
 ```bash
-husk run support-bot.yaml "what's the API rate limit on the starter plan?" --var product=Acme
+husk run support-bot.yaml "what's the API rate limit on the starter plan?"
 ```
 
 Iterate on the persona here, where the feedback loop is two seconds and nobody is
@@ -236,12 +232,14 @@ curl -s localhost:7377/v1/husks \
   --data-binary "$(jq -Rs '{yaml: .}' < support-bot.yaml)"
 ```
 
-Confirm it runs over HTTP — this is the exact call the adapter will make:
+Confirm it runs on the server. The adapter does not call this route: inside `husk serve`
+it runs the husk in the same process, with the message as the input and nothing else.
+This is the same run, over HTTP:
 
 ```bash
 curl -s localhost:7377/v1/husks/support-bot/run \
   -H 'content-type: application/json' \
-  -d '{"input":"what is the rate limit?","vars":{"product":"Acme"}}' | jq -r .text
+  -d '{"input":"what is the rate limit?"}' | jq -r .text
 ```
 
 <Terminal title="the real response shape">
@@ -252,9 +250,12 @@ curl -s localhost:7377/v1/husks/support-bot/run \
   "steps": 1,
   "usage": { "inputTokens": 388, "outputTokens": 2, "costUsd": 0 },
   "durationMs": 7721,
-  "stopReason": "complete"
+  "stopReason": "complete",
+  "trace": [ … ]
 }`}
 </Terminal>
+
+`trace` holds every model response the run got. A run that fails also carries `error`.
 
 ## Step 5: The Discord application
 
@@ -281,87 +282,35 @@ a privileged intent is not enabled -- turn on MESSAGE CONTENT INTENT in the Deve
 Get the channel id you want it to answer in: enable **Settings → Advanced → Developer
 Mode** in Discord, then right-click the channel → **Copy Channel ID**.
 
-## Step 6: The glue
+## Step 6: Turn on the trigger
 
-`@husk-ai/adapters` needs an `AdapterContext` — a logger, an abort signal, an environment,
-and a `run(input, opts)` function. The server does not supply one, so here it is.
+Add a `discord` trigger to the husk:
 
-```bash
-mkdir husk-discord && cd husk-discord
-npm init -y && npm pkg set type=module
-npm install @husk-ai/adapters @husk-ai/core
+```yaml title="support-bot.yaml"
+triggers:
+  - type: discord
+    channels: ['1234567890123456789']   # the channel id from step 5
+    mentionOnly: true
 ```
 
-```js title="bot.mjs"
-import { DiscordAdapter } from '@husk-ai/adapters';
-import { createLogger } from '@husk-ai/core';
-
-const HUSK_URL = process.env.HUSK_URL ?? 'http://127.0.0.1:7377';
-const HUSK_NAME = process.env.HUSK_NAME ?? 'support-bot';
-const HUSK_TOKEN = process.env.HUSK_TOKEN;
-
-const controller = new AbortController();
-const log = createLogger({ scope: 'discord' });
-
-/** Ask the control plane to run the husk, and return the text it produced. */
-async function runHusk(input, opts) {
-  const res = await fetch(`${HUSK_URL}/v1/husks/${HUSK_NAME}/run`, {
-    method: 'POST',
-    signal: opts.signal,
-    headers: {
-      'content-type': 'application/json',
-      // A retried Discord delivery must not run the agent twice.
-      'idempotency-key': `discord:${opts.channelId}:${opts.userId}:${Date.now()}`,
-      ...(HUSK_TOKEN ? { authorization: `Bearer ${HUSK_TOKEN}` } : {}),
-    },
-    body: JSON.stringify({ input, vars: { product: 'Acme' } }),
-  });
-
-  const body = await res.json();
-  if (!res.ok) throw new Error(body?.error?.message ?? `control plane returned ${res.status}`);
-  if (body.stopReason !== 'complete') {
-    log.warn(`run ended as ${body.stopReason}`);
-  }
-  return body.text || '(the agent produced no text)';
-}
-
-const adapter = new DiscordAdapter({
-  // Empty means every channel the bot can see.
-  channels: process.env.DISCORD_CHANNELS?.split(',').filter(Boolean) ?? [],
-  mentionOnly: true,
-  rateLimit: { messages: 5, perMs: 60_000 },
-});
-
-await adapter.start({
-  husk: HUSK_NAME,
-  log,
-  signal: controller.signal,
-  env: process.env,
-  run: runHusk,
-});
-
-log.info(`fronting ${HUSK_NAME} at ${HUSK_URL}`);
-
-for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.once(sig, () => {
-    controller.abort();
-    void adapter.stop().then(() => process.exit(0));
-  });
-}
-```
+Then start the control plane with the token in its environment:
 
 ```bash
 export DISCORD_BOT_TOKEN='…'
-export DISCORD_CHANNELS='1234567890123456789'
-node bot.mjs
+husk serve
 ```
 
-Mention the bot in that channel and it answers.
+```bash
+curl -s localhost:7377/v1/triggers -H "authorization: Bearer $HUSK_TOKEN" | jq '.triggers'
+```
+
+The `discord` entry should read `DISCORD_BOT_TOKEN is set`. If it reads
+`idle -- DISCORD_BOT_TOKEN is not set`, the variable did not reach the `husk serve`
+process. Mention the bot in that channel and it answers.
 
 ### What the adapter does for you
 
-None of this is in the 40 lines above, and all of it is behaviour you would otherwise
-have to write:
+All of this is behaviour you would otherwise have to write:
 
 | | |
 | --- | --- |
@@ -369,7 +318,7 @@ have to write:
 | Fatal closes | 4004, 4010–4014 are never retried. Reconnecting on a bad token just burns the rate limit |
 | Idempotency | A gateway that redelivers on reconnect does not run the agent twice |
 | Rate limiting | Per user, 5 messages a minute by default. Over it, the bot replies `Rate limited. Try again in 42s.` |
-| Filtering | Skips bots, skips itself, honours the channel allowlist, and with `mentionOnly` answers only mentions, replies and DMs |
+| Filtering | Skips bots, skips itself, answers only in the channels you list, and with `mentionOnly` only mentions and replies to its own messages |
 | Mention stripping | The bot's own `<@id>` is removed before the text reaches the agent |
 | Typing indicator | Kept alive for the whole run, stopped when the answer lands |
 | Chunking | Answers are split at Discord's 2,000-character limit |
@@ -383,51 +332,29 @@ info  discord adapter idle -- DISCORD_BOT_TOKEN is not set
 
 ### Keeping it up
 
-Two processes, two units. `husk serve` from
-[Self-hosting](/guides/self-hosting#step-5-the-systemd-unit), and:
-
-```ini title="/etc/systemd/system/husk-discord.service"
-[Unit]
-Description=Husk Discord bot
-After=husk.service
-Requires=husk.service
-
-[Service]
-Type=simple
-User=husk
-WorkingDirectory=/home/husk/husk-discord
-EnvironmentFile=/etc/husk/discord.env
-ExecStart=/usr/bin/node bot.mjs
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
+The bot runs inside `husk serve`, so keeping `husk serve` up keeps the bot up. Use the
+unit from [Self-hosting](/guides/self-hosting#step-5-the-systemd-unit) and put
+`DISCORD_BOT_TOKEN` in its `EnvironmentFile`.
 
 ## Slack and Telegram
 
-The same shape. `createAdapter(kind, options)` builds any of the four, and they all take
-the same `AdapterContext`:
+The same shape: a trigger in the husk and a token in the server's environment. A
+`slack` trigger needs `channels`, as `discord` does, and a `telegram` trigger an
+`allowlist` of usernames, user ids or chat ids (any case, `@` optional). Without one the
+trigger is not started, since it would answer anyone, and `GET /v1/triggers` says what to
+set.
 
-```js
-import { createAdapter } from '@husk-ai/adapters';
-const adapter = createAdapter('telegram', { });   // reads TELEGRAM_BOT_TOKEN
-```
-
-| Adapter | Token variable | Transport |
+| Trigger | Token variable | Transport |
 | --- | --- | --- |
 | `discord` | `DISCORD_BOT_TOKEN` | Gateway WebSocket |
-| `slack` | `SLACK_BOT_TOKEN` | Socket Mode, or a signature-verified Events API endpoint |
+| `slack` | `SLACK_BOT_TOKEN`, plus `SLACK_APP_TOKEN` | Socket Mode |
+| `slack` | `SLACK_BOT_TOKEN`, plus `SLACK_SIGNING_SECRET` | Events API at `POST /v1/a/<husk>/slack/events` |
 | `telegram` | `TELEGRAM_BOT_TOKEN` | Long polling |
-| `webhook` | — | An inbound HTTP route |
 
-<Warning>
-Slack's Events API mode and the whole `webhook` adapter need `ctx.mountHttp` — a way to
-register an inbound route. Nothing outside the test harness implements it, so those two
-paths need you to supply your own HTTP server as well. Slack Socket Mode and Telegram
-long polling are outbound-only and work with the context above.
-</Warning>
+Socket Mode and long polling are outbound only, so they work from a laptop. The Events
+API needs Slack to reach `husk serve` over HTTPS. With both Slack secrets set, the Events
+API is used and Socket Mode never connects. `GET /v1/triggers` says which one Slack
+listens on, or that it is idle for want of either.
 
 ## Troubleshooting
 
@@ -435,16 +362,21 @@ long polling are outbound-only and work with the context above.
 `content` is empty and `shouldHandle` returns `empty content`. Turn it on in the
 portal, then restart the bot.
 
-**It answers in DMs and not in the channel.** `mentionOnly` defaults to `true`, and a
-DM always counts as a mention. Mention the bot, reply to one of its messages, or set
-`mentionOnly: false`.
+**It ignores messages in the channel.** `mentionOnly` defaults to `true`. Mention the
+bot, reply to one of its messages, or set `mentionOnly: false`.
 
-**It answers in the wrong channels.** Set `channels` to the ids you want. An empty
-array means every channel it can see.
+**It does not answer DMs.** A DM has a channel of its own, and the bot answers only in
+the channels you list.
 
-**`Something went wrong: …`** is the adapter relaying an exception from `run()`.
-`cannot reach the husk control plane` means `husk serve` is not up; a 401 means
-`HUSK_TOKEN` is set on the server and not on the bot.
+**It never starts.** A `discord` trigger needs `channels`. With none, it would answer
+anywhere the bot can see, so `husk serve` does not start it, and `GET /v1/triggers`
+reads `not started -- set channels (channel ids)`.
+
+**`Something went wrong: …`** is the adapter relaying an error the run threw, such as
+`no husk named support-bot` after the husk was deleted. The adapter runs the husk inside
+`husk serve`, so no network or token stands between them. A run that fails without
+writing anything answers `(the agent produced no text)`; its error is in
+`GET /v1/runs?husk=support-bot`.
 
 **Answers are truncated at three sentences and you did not ask for that.** You did —
 it is in the persona. Discord bots are better short, but the file is where the decision
@@ -454,4 +386,5 @@ lives.
 
 - [Triggers](/chat-to-bot/triggers) — what the server does mount, and how.
 - [The distiller](/chat-to-bot/distiller) — what it extracts and how it decides.
-- [Self-hosting](/guides/self-hosting) — putting both processes on a box you own.
+- [Self-hosting](/guides/self-hosting) — putting `husk serve`, and the bot with it, on a
+  box you own.

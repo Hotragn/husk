@@ -170,7 +170,7 @@ specific.
     on both sides.
 11. **Do not use `favicon.svg` anywhere except a favicon.** It ships its own
     background tile and it is a different, coarser drawing.
-12. **Do not add a tagline inside the lockup.** "Empty by design" is copy, not
+12. **Do not add a tagline inside the lockup.** "Your AI chat gets a computer" is copy, not
     a logo element. It goes in the paragraph below.
 
 ---

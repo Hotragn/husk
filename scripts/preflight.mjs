@@ -49,7 +49,7 @@ const warn = (m) => {
 };
 
 /** The order packages must be published in: a dependency before its dependents. */
-const ORDER = ['core', 'runtime', 'models', 'browser', 'sessions', 'agent', 'adapters', 'mcp', 'server', 'sdk', 'cli'];
+const ORDER = ['core', 'runtime', 'models', 'browser', 'sessions', 'agent', 'adapters', 'workspaces', 'console-assets', 'server', 'mcp', 'sdk', 'cli'];
 
 async function readPkg(dir) {
   return JSON.parse(await readFile(join(root, 'packages', dir, 'package.json'), 'utf8'));

@@ -1,7 +1,17 @@
-import { readdir, stat } from 'node:fs/promises';
+import { open, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { TranscriptSource } from '@husk-ai/core';
+import {
+  ChatGPTImporter,
+  ClaudeCodeImporter,
+  CursorImporter,
+  GeminiImporter,
+  codexSessions,
+  parseClaudeJsonl,
+  parseCodexRollout,
+  parseMarkdownChat,
+} from '@husk-ai/sessions';
 
 /**
  * Find transcripts without being told where they are.
@@ -27,20 +37,51 @@ interface Root {
   source: TranscriptSource;
   match: RegExp;
   depth: number;
+  /** Read a prefix and require it to look like a chat, not just carry the extension. */
+  sniff?: boolean;
+}
+
+/** Enough of a file to see whether a conversation starts -- a chat that does
+ * not begin in the first 32 KB is not what discovery is for. */
+const SNIFF_BYTES = 32 * 1024;
+
+async function sniffsAsChat(path: string): Promise<boolean> {
+  let fh;
+  try {
+    fh = await open(path, 'r');
+    const buf = Buffer.alloc(SNIFF_BYTES);
+    const { bytesRead } = await fh.read(buf, 0, SNIFF_BYTES, 0);
+    if (bytesRead === 0) return false;
+    // Two messages minimum: one role marker can be a coincidence in prose.
+    return (parseMarkdownChat(buf.subarray(0, bytesRead).toString('utf8'))?.messages.length ?? 0) >= 2;
+  } catch {
+    return false;
+  } finally {
+    await fh?.close();
+  }
 }
 
 function roots(cwd: string): Root[] {
   const home = homedir();
   return [
-    // Claude Code keeps one JSONL per session under a per-project directory.
-    { dir: join(home, '.claude', 'projects'), source: 'claude-code', match: /\.jsonl$/i, depth: 2 },
+    // Claude Code keeps one JSONL per session under a per-project directory, in
+    // each config directory its importer reads (CLAUDE_CONFIG_DIR's, when set).
+    ...new ClaudeCodeImporter().defaultLocations().map((dir): Root => ({ dir, source: 'claude-code', match: /\.jsonl$/i, depth: 2 })),
     { dir: join(home, '.claude'), source: 'claude-code', match: /\.jsonl$/i, depth: 1 },
-    // A ChatGPT export lands in Downloads as conversations.json.
-    { dir: join(home, 'Downloads'), source: 'chatgpt', match: /^conversations.*\.json$/i, depth: 1 },
+    // Codex keeps one rollout per session, by date: sessions/YYYY/MM/DD.
+    { dir: codexSessions(), source: 'codex', match: /^rollout-.*\.jsonl$/i, depth: 3 },
+    // Cursor keeps every chat in one SQLite file; importing it asks which one.
+    { dir: new CursorImporter().defaultLocations()[0] ?? join(home, '.cursor'), source: 'cursor', match: /^state\.vscdb$/i, depth: 0 },
+    // A ChatGPT export is conversations.json, in Downloads or Documents.
+    ...new ChatGPTImporter().defaultLocations().map((dir): Root => ({ dir, source: 'chatgpt', match: /^conversations.*\.json$/i, depth: 1 })),
+    // Gemini CLI saves a chat as checkpoint-<tag>.json, one directory per project.
+    ...new GeminiImporter().defaultLocations().map((dir): Root => ({ dir, source: 'gemini', match: /^checkpoint-.*\.json$/i, depth: 1 })),
     { dir: join(home, 'Downloads'), source: 'universal', match: /chat.*\.json$/i, depth: 1 },
     { dir: join(home, '.cursor'), source: 'cursor', match: /\.(json|jsonl)$/i, depth: 2 },
-    // Anything the user is standing next to.
-    { dir: cwd, source: 'markdown', match: /\.(md|markdown)$/i, depth: 1 },
+    // Anything the user is standing next to. Markdown is content-sniffed: a
+    // repo's CHANGELOG is not a pasted chat, and offering it as one made
+    // discovery useless exactly where people try it first.
+    { dir: cwd, source: 'markdown', match: /\.(md|markdown)$/i, depth: 1, sniff: true },
     { dir: cwd, source: 'universal', match: /\.(jsonl)$/i, depth: 1 },
   ];
 }
@@ -66,7 +107,8 @@ async function walk(dir: string, root: Root, depth: number, out: Map<string, Can
 
   let entries;
   try {
-    entries = await readdir(dir, { withFileTypes: true });
+    // Newest first where names are dates (Codex's YYYY/MM/DD), so the file cap keeps the recent ones.
+    entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) => b.name.localeCompare(a.name));
   } catch {
     // A root that does not exist is the normal case, not an error worth showing.
     return;
@@ -88,11 +130,12 @@ async function walk(dir: string, root: Root, depth: number, out: Map<string, Can
     if (!st || st.size === 0) continue;
     // A multi-hundred-megabyte JSON is not a chat someone meant to import.
     if (st.size > 64 * 1024 * 1024) continue;
+    if (root.sniff && !(await sniffsAsChat(full))) continue;
 
     out.set(full, {
       path: full,
       source: root.source,
-      title: prettyTitle(full, root.source),
+      title: await prettyTitle(full, root.source),
       sizeBytes: st.size,
       modifiedAt: st.mtime.toISOString(),
     });
@@ -102,16 +145,48 @@ async function walk(dir: string, root: Root, depth: number, out: Map<string, Can
 /**
  * A readable label.
  *
- * Claude Code names its files after a session uuid, which tells a human nothing,
- * so the project directory above it is used instead -- that is the name they
- * would recognise.
+ * Claude Code names its files after a session uuid, which tells a human nothing.
+ * Its encoded parent name cannot be decoded without confusing literal dashes
+ * with separators, so prefer the exact cwd from the bounded transcript prefix.
+ * The raw parent name is a truthful fallback when cwd is unavailable.
  */
-function prettyTitle(path: string, source: TranscriptSource): string {
+export async function prettyTitle(path: string, source: TranscriptSource): Promise<string> {
   const file = basename(path);
   if (source === 'claude-code') {
     const parent = basename(join(path, '..'));
-    const project = parent.replace(/^-+/, '').replace(/-/g, '/');
+    let project = parent;
+    try {
+      const fh = await open(path, 'r');
+      try {
+        const buf = Buffer.alloc(SNIFF_BYTES);
+        const { bytesRead } = await fh.read(buf, 0, SNIFF_BYTES, 0);
+        const parsed = parseClaudeJsonl(buf.subarray(0, bytesRead).toString('utf8'), path);
+        const cwd = parsed?.transcript.meta?.cwd;
+        if (typeof cwd === 'string' && cwd.length > 0) project = cwd;
+      } finally {
+        await fh.close();
+      }
+    } catch {
+      // Discovery still returns a useful, truthful label if the file changes
+      // or becomes unreadable between readdir and this bounded prefix read.
+    }
     return project && project !== '.claude' ? `${project}  ${file.slice(0, 8)}` : file;
   }
+  if (source === 'codex') {
+    // A rollout's name is a time and a uuid; what the person first asked says more.
+    try {
+      const fh = await open(path, 'r');
+      try {
+        const buf = Buffer.alloc(SNIFF_BYTES);
+        const { bytesRead } = await fh.read(buf, 0, SNIFF_BYTES, 0);
+        return parseCodexRollout(buf.subarray(0, bytesRead).toString('utf8'), path)[0]?.title ?? file;
+      } finally {
+        await fh.close();
+      }
+    } catch {
+      return file;
+    }
+  }
+  if (source === 'cursor' && file.endsWith('.vscdb')) return 'Every Cursor chat (pick one when importing)';
   return file;
 }

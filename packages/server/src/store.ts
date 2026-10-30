@@ -13,6 +13,8 @@ export interface HuskSummary {
   displayName: string;
   description: string;
   model: string;
+  /** What runs it: `builtin`, or the person's own `claude-code` or `codex`. */
+  engine: string;
   version: string;
   tools: string[];
   triggers: string[];
@@ -91,15 +93,33 @@ class WriteQueue {
   }
 }
 
-async function writeAtomic(file: string, data: string | Uint8Array): Promise<void> {
+export async function writeAtomic(file: string, data: string | Uint8Array): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
   try {
     await writeFile(tmp, data);
-    await rename(tmp, file);
+    await replace(tmp, file);
   } catch (err) {
     await rm(tmp, { force: true }).catch(() => undefined);
     throw err;
+  }
+}
+
+/**
+ * Windows will not replace a file while anything has it open -- the console
+ * reading the list of husks, the virus scanner looking at what was just
+ * written -- and says EPERM, EACCES or EBUSY until it lets go. Try again for a
+ * couple of seconds, as graceful-fs does. Anywhere else those errors are real.
+ */
+async function replace(tmp: string, file: string): Promise<void> {
+  for (let wait = 10; ; wait *= 2) {
+    try {
+      return await rename(tmp, file);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (process.platform !== 'win32' || wait > 1280 || !(code === 'EPERM' || code === 'EACCES' || code === 'EBUSY')) throw err;
+      await new Promise((r) => setTimeout(r, wait));
+    }
   }
 }
 
@@ -231,6 +251,7 @@ export class Store {
       displayName: spec.displayName ?? spec.name,
       description: spec.description,
       model: spec.model,
+      engine: spec.engine.type,
       version: spec.version,
       tools: spec.tools,
       triggers: spec.triggers.map((t) => t.type),

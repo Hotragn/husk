@@ -89,6 +89,8 @@ export interface ChatResponse {
   model: string;
   text: string;
   thinking?: string;
+  /** Anthropic's signature over `thinking`, sent back with it on the next turn; set when the reply had one thinking block. */
+  thinkingSignature?: string;
   toolCalls: ToolCallPart[];
   finishReason: FinishReason;
   usage: Usage;
@@ -136,6 +138,8 @@ export interface ModelInfo {
   supportsVision: boolean;
   supportsStreaming: boolean;
   supportsThinking?: boolean;
+  /** Parameter count reported by a local provider; not a quality benchmark. */
+  parameterCount?: number;
   /**
    * USD per million tokens. Absent or zero for local models.
    *

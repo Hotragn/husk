@@ -92,9 +92,42 @@ brochure.
 | Page entrance, once per load | `--duration-6` 560ms, `--duration-8` 760ms for the headline | `--ease-enter` | This page has finished arriving |
 | Section head entering the viewport | `--duration-6` 620ms | `--ease-enter` | You have reached a new part |
 | Streamed model output | `--duration-7` 700ms | `--ease-linear` | Tokens arriving, one per frame, matching real arrival |
+| Scroll-scrubbed sequence | none — scroll position *is* the clock | `--ease-linear` | This is a diagram you are dragging, not a film you are watching |
+| Object tracking the pointer | none — continuous, bounded | — | This object is responding to you specifically |
 
 Exits are always faster than entrances. `ease-in-out` is not in the token set
 and must not be reintroduced: it is symmetric, and interface motion is not.
+
+### Scroll as a clock
+
+A scroll-scrubbed sequence is not an animation in the sense the bans below are
+about, and the distinction is worth stating before the list rather than as an
+exception inside it.
+
+An animation on a timer asserts a duration. A sequence bound to scroll position
+asserts nothing: the reader sets the clock, it runs backwards as readily as
+forwards, it stops where they stop, and a reader who does not care is past it
+at whatever speed they scroll. That is a diagram being dragged, not a film
+being played, and the difference is why the typewriter ban below survives
+intact while the homepage types a command into a composer.
+
+Permitted only when all four hold:
+
+- **Scroll position is the only input.** No timer, no autoplay, no "finish the
+  sequence once it has started". If the reader stops, it stops.
+- **It is reversible.** Scrolling up un-types, un-fires and un-assembles. A
+  sequence that only plays forwards is a film with a scroll-shaped remote.
+- **The content underneath is real and readable without it.** Every string the
+  sequence animates ships in the document, visible, at first paint. The state
+  it animates *from* is added by script after mount, so a crawler, a reader
+  with JS off and a failed hydration all get the content rather than a stack of
+  `opacity: 0`. This is the same non-negotiable as the reveal below.
+- **`prefers-reduced-motion` removes the sequence, not shortens it**, and does
+  not download the library that would have run it.
+
+One per page. The homepage's is the chat that gets a computer, between the hero
+and "Husk does three things" — it is the animated form of what those two sections
+already say in prose, which is why it has no heading of its own.
 
 ### Where motion is banned
 
@@ -127,26 +160,81 @@ and must not be reintroduced: it is symmetric, and interface motion is not.
    - **Heads only.** Never on the prose, the tables, the terminals or the code.
 
 2. **Entrance animations on anything below the first screen, other than the
-   above.** A hero may introduce itself once per load. The rest of the page has
-   already been introduced by the hero.
-3. **Parallax.** Of any depth, on anything.
-4. **Anything that loops.** No pulsing dots, no breathing glows, no shimmering
-   gradients, no drifting background shapes, no animated mesh. A looping
-   animation is a permanent low-grade demand on attention with no information in
-   it. The single exception is an indeterminate spinner, which must appear only
-   after 400ms of actual waiting and must disappear the instant it can be
-   replaced by a real number.
+   above and the one named here.** A hero may introduce itself once per load.
+   The rest of the page has already been introduced by the hero.
+
+   The named exception is the `husk.yaml` frame, which lies back and rotates up
+   as the reader scrolls into it. It is licensed under *Scroll as a clock*
+   above rather than as an entrance: it is scrubbed, it reverses, and the file
+   is fully rendered and selectable at every angle including the first. The
+   reason it is allowed at all is that this section is the one place the page
+   hands over the artefact — the argument everywhere else is "we show you real
+   output", and this is the output. One per page, and this is it.
+
+   A code block is still banned from the *reveal* in item 1, and that has not
+   changed: fading a code block in on a timer makes the reader wait to read.
+   Tilting one they are already dragging does not.
+
+3. **Scroll-driven parallax.** Of any depth, on anything. Layers travelling at
+   different speeds behind text is depth faked at the expense of the thing the
+   reader is trying to read, and it is the single most common way a page
+   announces that its motion was chosen before its content.
+
+   What this no longer bans is an object tracking the pointer: the hero's mark
+   leans about six degrees towards the cursor and settles when it stops. That
+   is not parallax — there are no layers, nothing behind it moves, no text is
+   displaced, and the input is a pointer the reader is moving deliberately,
+   which is a hover state with more axes. Bounded, on one object, never on
+   anything containing copy. It does not exist on touch, where there is no
+   pointer to track.
+
+4. **Anything that loops, unless the loop is the information.** No pulsing
+   dots, no breathing glows, no shimmering gradients, no animated mesh. A
+   looping animation is a permanent low-grade demand on attention with no
+   information in it, and that sentence is still the test.
+
+   Two things pass it, and they are the whole list:
+
+   - **An indeterminate spinner**, which must appear only after 400ms of actual
+     waiting and must disappear the instant it can be replaced by a real number.
+   - **The provider orbit's outer ring**, and this one is the marginal case.
+     It is decorative: a dashed circle turning once every 140 seconds, carrying
+     nothing. It is here because the alternative was drifting the provider
+     nodes themselves, and a click target that moves is a click target you
+     miss. If anything in this section is ever cut for failing its own test,
+     cut this first.
+
+   Note what is *not* on the list. The hero's kernel does not pulse and does
+   not breathe, and no caret blinks: an earlier draft of this clause permitted
+   a blinking terminal caret in the hero object, the caret was cut with the
+   glyph it sat in, and a permission for something nothing does is how a rule
+   file starts drifting from the code. Nothing on either site idles.
+
 5. **Number count-ups.** A number that spins from 0 to its value is unreadable
    for the duration of the animation and is usually decorating a metric nobody
    asked for.
-6. **Typewriter effects on marketing copy.** Streaming model output can animate
-   because it is genuinely arriving over time. A headline that types itself is
-   lying about latency.
+
+6. **Time-driven typewriter effects on marketing copy.** Streaming model output
+   can animate because it is genuinely arriving over time. A headline that
+   types itself is lying about latency.
+
+   That argument is unrefuted and unchanged; what it turns on is the clock.
+   A string typing itself on a timer claims a duration it does not have. A
+   string typing itself under a scrub claims nothing — it un-types when the
+   reader scrolls back, which no latency ever does. The homepage types the
+   install command into a chat composer under *Scroll as a clock* above, and
+   the same string sits in the setup section further down, whole, static and
+   copyable.
+
+   Nothing types itself on a timer. Not a headline, not a lead, not a command.
+
 7. **Auto-advancing carousels, tickers, and marquees.** Movement the user did
    not cause and cannot stop.
+
 8. **Hover animations that move layout.** Scale, translate and shadow on hover
    are fine; anything that changes an element's box and reflows a neighbour is
    not.
+
 9. **Page transitions.** Navigation should feel like it already happened.
 
 ### `prefers-reduced-motion`
@@ -399,7 +487,17 @@ carries zero information, and it makes the reader's first thought "another one o
 these" instead of "what does this do". It also actively fights our palette, which
 is warm gold against cold teal for a reason.
 *Instead:* a flat `--color-bg`. If the hero needs depth, give it a real object —
-a terminal frame in `--color-sunken` showing real `husk doctor` output.
+a terminal frame in `--color-sunken` showing real `husk doctor` output, or the
+mark itself with a light on it.
+
+*What this does not ban:* light coming off a lit object. The hero's core is
+emissive and throws a small additive halo the width of the mark. The pattern
+above is a gradient behind the content, unattached to anything, sized in
+hundreds of pixels of blur; a highlight on the thing the scene is actually
+lighting is the opposite — it is what makes the object read as an object. The
+test is whether removing it changes what the reader can tell about the
+subject. Remove the wash and you lose nothing. Remove the core's glow and the
+core stops being lit, which is half of "a split husk with a **lit** core".
 
 ### 2. Floating 3D spheres, orbs, meshes, and wireframe globes
 
@@ -411,6 +509,36 @@ performance. A rotating sphere on an infrastructure product says "we could not
 think of anything true to show".
 *Instead:* show the artefact. A `husk.yaml`. A provider table. A terminal. Husk
 produces genuinely photogenic text output; use it.
+
+*Amended:* the ban is the reason, not the technology. "It depicts nothing" is
+the whole of the case, and it is still the test every 3D object on either site
+has to pass. Two do:
+
+- **The hero object** is the headline beside it. "Your AI chat gets a computer."
+  is two things and a connection, so the object is a chat
+  panel with an exchange in it, a machine below and behind, and a cable
+  carrying one pulse into the machine's port, which lights when it arrives. A
+  reader who looks at it and then reads the headline should find the headline
+  already familiar. It does not rotate on its own and there is nothing
+  iridescent about it.
+
+  Three earlier versions of that object failed this test and are worth naming,
+  because each failed differently: a lathed husk (a flat blob head-on — a
+  surface with no wall has no inside to show), the mark extruded (solid and
+  legible, but the mark is already in the header, the footer and the chat
+  launcher, and a fourth copy depicts the brand rather than the product), and a
+  ribbed seed pod (a good object, and still a seed rather than a computer).
+  "It depicts nothing" is the test; "it depicts *us*" does not pass it either.
+- **The isolation viewer** depicts `Availability.isolated` for the provider the
+  reader picked — plates closed on a kernel boundary, standing off it when
+  there is not one. That reading is in the readout underneath in words, in the
+  table above it in a row, and in the shape. Never the shape alone.
+
+The costs the pattern names are real and are still owed: both objects are
+`ssr:false` behind an IntersectionObserver, both degrade to an SVG built from
+the same tables, and the hero's canvas is *unmounted* when it leaves the
+viewport so the page never holds two WebGL contexts. A rotating sphere would
+still fail this section. It fails on "depicts nothing", not on being 3D.
 
 ### 3. The empty "trusted by" wall
 
@@ -482,6 +610,13 @@ skeletons specifically implies progress that is not being measured.
 computer is indicated by the word "running" and a solid `--color-success` dot,
 not a pulsing one.
 
+*Amended, narrowly:* §3 item 4 now permits three loops and names them — a
+spinner, a terminal caret, and the provider orbit's outer ring. The first two
+carry the same information ("waiting"). The third is decoration and is
+labelled as such there, including which one to cut first. Nothing else on
+either site idles, and the list is closed: if a fourth loop is ever proposed,
+it is this section it has to get past, not §3.
+
 ### 9. The vanity metrics strip
 
 *What it is:* "10,000+ developers · 99.99% uptime · 50ms cold starts" across a
@@ -540,6 +675,9 @@ Before any Husk surface ships:
 - [ ] Every one of the nine interaction states exists for every control.
 - [ ] Empty, filtered-empty, loading, and error are four different screens.
 - [ ] Every error names a next action.
-- [ ] Nothing on the page moves unless the user moved it.
+- [ ] Nothing on the page moves unless the user moved it, the hero's one
+      entrance aside, and nothing loops except the three §3 item 4 names.
+- [ ] Every scroll-scrubbed sequence reverses, and its content is readable with
+      JS off. Check the served HTML, not the hydrated page.
 - [ ] Read §8 top to bottom against the page. Zero hits.
 - [ ] The word "sandbox" does not appear without a provider next to it.
