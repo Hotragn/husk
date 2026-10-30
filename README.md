@@ -207,20 +207,43 @@ the dead ends you backed out of are left out. The distiller runs with no API key
 and the model-backed mode falls back to that free path rather than failing. Secrets are
 stripped before the file is written, not after.
 
-What comes out is YAML you can read and diff:
+What comes out is YAML you can read and diff. This is `husk distill --no-model` on a short
+Claude Code session about a red build:
 
 ```yaml
+# Distilled by husk from ci-triage.jsonl (claude-code).
+# 11 messages · confidence 0.33 · heuristic
+# No durable user-supplied facts found worth carrying as knowledge.
+# Heuristic distillation: no model was used. Review the persona before shipping.
+# Review the persona before you serve this. Distillation is a draft, not an oracle.
+
+apiVersion: husk/v1
 name: triage
+displayName: triage
+description: "Act as the CI triager for this monorepo. CI on main is red again: find the faili"
+
 model: sonnet
-persona: |
-  You triage CI failures for a TypeScript monorepo.
-  Always read the failing job log before guessing.
-tools: [computer, files]
-computer:
-  flavor: node
-  network: { mode: egress, allow: ['github.com', '*.github.com', '*.githubusercontent.com'] }
-limits: { maxSteps: 24, maxCostUsd: 0.25 }
+
+persona: |-
+  Act as the CI triager for this monorepo.
+
+  How you work:
+  - Always read the failing job log before guessing, and never re-run a job without saying why.
+  - Keep it short next time: the failing job, the first error, the likely commit, and the fix.
+
+  You have a Linux computer. Run commands to check things rather than guessing,
+  and show the command you ran when the result matters.
+
+tools:
+  - computer
+  - files
+
+# … then the two exchanges it kept as examples, and where it came from
 ```
+
+The model is the one the chat used, the rules are the person's own words, and the tools
+are the ones it called. The computer's flavor, network policy and limits stay at their
+defaults until you set them.
 
 `husk distill` prints its confidence and everything it could not work out, so a thin
 transcript announces itself instead of producing a plausible-looking persona nobody
