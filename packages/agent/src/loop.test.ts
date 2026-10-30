@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createLogger } from '@husk-ai/core';
 import type { ModelMessage, ToolCallPart, ToolResultPart } from '@husk-ai/core';
 import { describe, expect, it, vi } from 'vitest';
@@ -806,5 +809,36 @@ describe('Agent: a person sharing the computer', () => {
     const result = await agent.run({ input: 'go', admitTool });
     expect(admitTool).not.toHaveBeenCalled();
     expect(toolResults(result.messages)[0]).toMatchObject({ content: 'echo:y', isError: false });
+  });
+});
+
+describe('Agent: notes between runs', () => {
+  it('gives a husk that keeps notes the memory tool, and the next run finds what this one saved', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'husk-loop-notes-'));
+    vi.stubEnv('HUSK_HOME', home);
+    try {
+      const spec = specFor({ tools: [], memory: { enabled: true } as never });
+      const save = toolCall('c1', 'memory', { command: 'create', path: '/memories/prefs.md', file_text: 'Reply in French.' });
+      const first = new FakeRouter([{ toolCalls: [save] }, { text: 'Noted.' }]);
+      const saved = await new Agent({ spec, router: first, logger: silent }).run({ input: 'Always reply in French.' });
+      expect(toolResults(saved.messages)[0]).toMatchObject({ content: 'Saved prefs.md.', isError: false });
+      expect(first.requests[0]!.system).toContain('You have no notes yet.');
+
+      const second = new FakeRouter([{ text: 'Bonjour.' }]);
+      await new Agent({ spec, router: second, logger: silent }).run({ input: 'Hi' });
+      expect(second.requests[0]!.tools?.map((t) => t.name)).toContain('memory');
+      expect(second.requests[0]!.system).toContain('Your notes right now: prefs.md.');
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps no notes, and says why, for a husk that asks for sqlite', async () => {
+    const router = new FakeRouter([{ text: 'ok' }]);
+    const agent = new Agent({ spec: specFor({ tools: [], memory: { enabled: true, backend: 'sqlite' } as never }), router, logger: silent });
+    const events = await collect(agent, { input: 'hi' });
+    expect(events).toContainEqual({ type: 'warning', message: expect.stringContaining('sqlite is not built yet') });
+    expect(router.requests[0]!.tools ?? []).toEqual([]);
   });
 });

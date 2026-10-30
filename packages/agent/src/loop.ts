@@ -5,8 +5,13 @@ import {
   estimateTokens,
   expandEnvRefs,
   id,
+  keepsNotes,
   mapLimit,
+  memoryTool,
   messageText,
+  notesDir,
+  notesInstructions,
+  notesWarning,
   redact,
   renderPersona,
 } from '@husk-ai/core';
@@ -67,14 +72,16 @@ export class Agent {
     this.log = opts.logger ?? createLogger({ scope: `agent:${opts.spec.name}` });
     this.computerKey = opts.computerKey ?? opts.spec.name;
     this.summaryModel = opts.summaryModel;
-    this.tools =
-      opts.tools ??
-      resolveTools(opts.spec.tools, {
+    this.tools = opts.tools ?? [
+      ...resolveTools(opts.spec.tools, {
         spec: opts.spec,
         hasComputer: opts.spec.computer.enabled && Boolean(opts.computers),
         env: opts.env,
         logger: this.log,
-      });
+      }),
+      // Notes between runs come with the setting (memory.backend: file), not with the tool list.
+      ...(keepsNotes(opts.spec) ? [memoryTool(notesDir(opts.spec.name)) as unknown as Tool] : []),
+    ];
   }
 
   /** Every tool this agent will offer the model. */
@@ -147,7 +154,10 @@ class Run {
     this.toolsByName = new Map(tools.map((t) => [t.name, t]));
     this.model = opts.model ?? spec.model;
     this.approvalMode = opts.approvalMode ?? spec.guardrails.approvalMode;
-    this.system = renderPersona(spec, opts.vars ?? {});
+    const persona = renderPersona(spec, opts.vars ?? {});
+    // Told about its notes only when it can reach them: tools passed in by a caller may leave the tool out.
+    this.system =
+      keepsNotes(spec) && this.toolsByName.has('memory') ? [persona, notesInstructions(notesDir(spec.name))].filter(Boolean).join('\n\n') : persona;
     this.budget = new Budget({
       maxSteps: opts.maxSteps ?? spec.limits.maxSteps,
       maxCostUsd: opts.maxCostUsd ?? spec.limits.maxCostUsd,
@@ -214,6 +224,8 @@ class Run {
     this.armTimer(this.budget.limits.timeoutMs);
 
     this.emit({ type: 'run_start', runId: this.runId, husk: this.spec.name, model: this.model });
+    const unkept = notesWarning(this.spec);
+    if (unkept) this.emit({ type: 'warning', message: unkept });
 
     // A husk that needs tools cannot run on a model that has none.
     //

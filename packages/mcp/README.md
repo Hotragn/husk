@@ -44,6 +44,10 @@ connection, so an app on either one works unchanged.
 
 The `computer` profile (the default) lists these 26 tools plus eight workspace tools; apps that render the computer card also get its two app-only tools, and apps that give up on a long call get `job_wait`. `--profile starter` lists the workspace tools only.
 
+A bot on the `claude-code` or `codex` engine that keeps notes between runs (`memory.enabled`
+with `backend: file`) also gets `memory`, its notes; a bot with no computer gets `memory`
+and nothing else. Husk sets this up when it starts the bot. A chat never gets it.
+
 While a handoff is open every other computer tool but `computer_info` refuses, so the
 model cannot type into the page you are signing in on. Clients that support MCP form elicitation (Claude Code,
 Cursor, VS Code) ask "I'm done" in the chat; others get a link to relay, and the model
