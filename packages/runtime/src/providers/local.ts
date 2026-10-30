@@ -30,6 +30,7 @@ import {
   type JailMap,
   OutputBuffer,
   assertInJail,
+  commandRulesOf,
   evaluateCommand,
   normaliseGuestPath,
   rewriteGuestPaths,
@@ -483,11 +484,7 @@ class LocalComputer implements Computer {
     hostCwd: string;
   } {
     this.assertLive();
-    const labels = this.info.spec.labels ?? {};
-    const decision = evaluateCommand(req.cmd, {
-      deny: splitList(labels['husk.denyCommands']),
-      allow: splitList(labels['husk.allowCommands']),
-    });
+    const decision = evaluateCommand(req.cmd, commandRulesOf(this.info.spec.labels));
     if (!decision.allowed) {
       throw new HuskError('E_EXEC_DENIED', `refused: ${decision.reason}`, {
         hint: 'add a pattern to guardrails.allowCommands in husk.yaml if this is intentional',
@@ -1067,11 +1064,6 @@ function distrosInUse(infos: ComputerInfo[]): string[] {
     if (shell?.startsWith('wsl:')) names.add(shell.slice(4));
   }
   return [...names];
-}
-
-function splitList(v: string | undefined): string[] | undefined {
-  if (!v) return undefined;
-  return v.split('\u0000').filter(Boolean);
 }
 
 function jailFor(workspaceRoot: string): JailMap {

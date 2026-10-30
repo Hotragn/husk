@@ -25,6 +25,18 @@ it can; the console's Connect page does the same.
 
 Every file setup edits is backed up first, and only Husk's own `husk` entry changes.
 
+Chat apps on the web run in someone else's data centre, so they reach Husk through
+remote access (`husk serve --remote`) at `https://<public name>/mcp`, signed in by the
+owner. Each adds Husk by hand; the setup is in the remote access guide
+(`apps/docs/content/guides/remote-access.mdx`). None has been observed live yet: that is
+J6-d, and it needs the owner's accounts.
+
+| App | How it gets Husk, official | Sign-in |
+| --- | --- | --- |
+| claude.ai | **Customize**, **Connectors**, **+ Add**, **Add custom connector**, then the URL. The Free plan has one custom connector. | OAuth with dynamic registration, back to `https://claude.ai/api/mcp/auth_callback` |
+| ChatGPT | [chatgpt.com/plugins](https://chatgpt.com/plugins), the plus button, **Add custom MCP server**, then the URL and OAuth | OAuth with dynamic registration, back to `https://chatgpt.com/connector_platform_oauth_redirect` when the server returns `iss` (RFC 9207), as Husk's does |
+| Perplexity on the web | **Plugins** (or **Customize**, **Connectors**), **Add custom**, **Connector**, **Add MCP connector**, **Remote**, then the URL. Pro, Max and Enterprise. | OAuth with dynamic registration, back to `https://www.perplexity.ai/rest/connections/oauth_callback` |
+
 Husk speaks both protocol eras on one stdio connection, through the MCP SDK's
 `serveStdio`:
 - **2025-11-25 and before.** The app opens with `initialize` and is served as before.
@@ -281,6 +293,27 @@ How Husk uses this:
 - **Prompts**: not documented.
 - **`list_changed`**: no, as far as the docs show; they say to select **Refresh** after
   changing tools. https://developers.openai.com/plugins/deploy/connect-chatgpt
+
+## Perplexity on the web
+
+- **Remote servers**, official: added from **Plugins**, **Add custom**, **Connector**,
+  **Add MCP connector**, **Remote**, with a name and an https URL, on Pro, Max and
+  Enterprise. In an Enterprise organisation, members can add one only if the admin
+  allows it. https://www.perplexity.ai/help-center/en/articles/13915507-adding-custom-remote-connectors
+- **Transport**, official: Streamable HTTP or SSE, chosen when the connector is added.
+- **Sign-in**, official: none, an API key, or OAuth 2.0. A client id and secret are typed
+  by hand only when the server has no dynamic registration. Endpoints come from
+  `/.well-known/oauth-authorization-server`. The return address is
+  `https://www.perplexity.ai/rest/connections/oauth_callback`
+  (`https://enterprise.perplexity.ai/…` on the Enterprise domain). Husk's sign-in page
+  knows both.
+- **Community**: a forum report says Perplexity's dynamic registration expects a client
+  secret, which Husk's public-client registration does not return. Check it live (J6-d)
+  before relying on Perplexity.
+  https://community.perplexity.ai/t/custom-mcp-connector-fails-with-did-not-return-a-client-secret-for-rfc-7591-compliant-public-client-registrations/5172
+- **Timeouts, MCP Apps, elicitation, prompts, `list_changed`**: not documented. New tools
+  appear after **Disconnect** and **Connect**.
+  https://www.perplexity.ai/help-center/en/articles/2026091802-troubleshooting-connectors
 
 ## The protocol itself
 

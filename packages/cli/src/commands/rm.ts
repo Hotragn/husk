@@ -9,9 +9,10 @@ import { EXIT_OK } from '../exit.js';
 const BUSY_WINDOW_MS = 60_000;
 
 /**
- * Destroy a computer and its filesystem, except what a chat's or a bot's
- * computer keeps for its next one on docker and podman: for those `rm` means
- * "stop for now", and the console's Delete is what erases (Computer.destroy).
+ * Destroy a computer and its filesystem, except what a chat's computer, or a
+ * bot's with `persist: true`, keeps for its next one on docker and podman: for
+ * those `rm` means "stop for now", and `--erase`, like the console's Delete,
+ * takes that too (Computer.destroy).
  *
  * The safe path is easy and the dangerous path is deliberate: a single machine
  * is confirmed, `--all` is confirmed with the count spelled out, and a
@@ -21,12 +22,17 @@ const BUSY_WINDOW_MS = 60_000;
 export async function run(argv: string[]): Promise<number> {
   const { values, positionals } = parse(
     argv,
-    { all: { type: 'boolean', default: false }, force: { type: 'boolean', short: 'f', default: false } },
+    {
+      all: { type: 'boolean', default: false },
+      force: { type: 'boolean', short: 'f', default: false },
+      erase: { type: 'boolean', default: false },
+    },
     'rm',
   );
   ui.configure(values);
 
   const assumeYes = values.yes === true || values.force === true;
+  const erase = values.erase === true;
   const mgr = manager();
 
   if (values.all) {
@@ -42,7 +48,11 @@ export async function run(argv: string[]): Promise<number> {
           'rm',
         );
       }
-      ui.note(`about to destroy ${ui.bold(String(live.length))} computers and everything in them (a chat’s or bot’s keeps its files on docker and podman):`);
+      ui.note(
+        erase
+          ? `about to erase ${ui.bold(String(live.length))} computers and everything in them, the files and browser logins chats and bots keep included:`
+          : `about to destroy ${ui.bold(String(live.length))} computers and everything in them (a chat’s or bot’s keeps its files on docker and podman; --erase takes those too):`,
+      );
       for (const c of live) ui.note(`  ${ui.dim('-')} ${c.name} ${ui.dim(c.id)}`);
       if (!(await confirm('destroy all of them?'))) {
         ui.note(ui.dim('cancelled'));
@@ -63,7 +73,7 @@ export async function run(argv: string[]): Promise<number> {
     }
 
     const spin = ui.spinner(`destroying ${live.length} computers`);
-    const n = await mgr.destroyAll().finally(() => spin.stop());
+    const n = await mgr.destroyAll({ erase }).finally(() => spin.stop());
     if (values.json) ui.json({ destroyed: n });
     else ui.print(`${ui.green('✓')} destroyed ${n} computer${n === 1 ? '' : 's'}`);
     return EXIT_OK;
@@ -74,8 +84,14 @@ export async function run(argv: string[]): Promise<number> {
 
   const computer = await resolve(ref);
   const { name, id, workdir } = computer.info;
-  // A chat's or a bot's computer on docker or podman keeps its files for its next one.
-  const keeps = (computer.info.provider === 'docker' || computer.info.provider === 'podman') && Boolean(computer.info.spec.labels?.['husk.key']);
+  // A keyed computer whose /work is a volume on docker or podman keeps its files for its
+  // next one, unless erased: every chat's, and a bot's with `persist: true`. A bot's
+  // without it has a tmpfs /work, browser profile included, which goes with it.
+  const keeps =
+    !erase &&
+    (computer.info.provider === 'docker' || computer.info.provider === 'podman') &&
+    Boolean(computer.info.spec.labels?.['husk.key']) &&
+    computer.info.spec.persist === true;
 
   if (!assumeYes) {
     if (!interactive()) {
@@ -83,8 +99,8 @@ export async function run(argv: string[]): Promise<number> {
     }
     ui.note(
       keeps
-        ? `${ui.bold(name)} ${ui.dim(id)} will be removed, but its files in ${workdir} and its browser logins stay for its next computer. The console’s Delete erases them.`
-        : `${ui.bold(name)} ${ui.dim(id)} and everything in ${workdir} will be deleted. This cannot be undone.`,
+        ? `${ui.bold(name)} ${ui.dim(id)} will be removed, but its files in ${workdir} and its browser logins stay for its next computer. \`husk rm --erase\` erases them.`
+        : `${ui.bold(name)} ${ui.dim(id)} and everything in ${workdir}${erase ? ', its browser logins included,' : ''} will be deleted. This cannot be undone.`,
     );
     if (!(await confirm(`destroy ${name}?`))) {
       ui.note(ui.dim('cancelled'));
@@ -94,7 +110,9 @@ export async function run(argv: string[]): Promise<number> {
 
   const spin = ui.spinner(`destroying ${name}`);
   try {
-    await computer.destroy();
+    // Through the manager, as the console's Delete goes: it closes the
+    // computer's browser first and forgets the chat's binding to it.
+    await mgr.destroy(id, { erase });
   } catch (err) {
     spin.stop();
     throw new HuskError('E_COMPUTER_FAILED', `could not destroy ${name}: ${(err as Error).message}`, {
@@ -105,7 +123,7 @@ export async function run(argv: string[]): Promise<number> {
   spin.stop();
 
   if (values.json) ui.json({ destroyed: [{ id, name }] });
-  else ui.print(`${ui.green('✓')} destroyed ${ui.bold(name)}${keeps ? ui.dim(' (its files stay for its next computer)') : ''}`);
+  else ui.print(`${ui.green('✓')} ${erase ? 'erased' : 'destroyed'} ${ui.bold(name)}${keeps ? ui.dim(' (its files stay for its next computer)') : ''}`);
 
   return EXIT_OK;
 }

@@ -19,6 +19,14 @@ export function safeCompareHex(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb);
 }
 
+/** Where senders put a webhook's signature, in the order Husk reads them: its own, GitHub's, the common one. */
+export const SIGNATURE_HEADERS = ['x-husk-signature', 'x-hub-signature-256', 'x-signature-256'] as const;
+
+/** Whether a request says it is signed. Saying so is not being so: the route checks. */
+export function claimsSignature(headers: Record<string, unknown>): boolean {
+  return SIGNATURE_HEADERS.some((name) => headers[name] !== undefined);
+}
+
 export function hmacHex(secret: string, payload: string | Buffer, algorithm = 'sha256'): string {
   return createHmac(algorithm, secret).update(payload).digest('hex');
 }

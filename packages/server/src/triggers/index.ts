@@ -1,13 +1,14 @@
 import type { Adapter, InboundHttpHandler } from '@husk-ai/adapters';
+import { expandEnvRefs } from '@husk-ai/core';
 import type { HuskSpec, Trigger } from '@husk-ai/core';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ctxOf } from '../context.js';
 import type { ServerContext } from '../context.js';
 import { SseStream, pipeSse } from '../sse.js';
 import { CronBindings } from './cron.js';
-import { extractInput, headerString, mountKey, wantsStream } from './http.js';
+import { extractInput, headerString, inputFromBody, mountKey, wantsStream } from './http.js';
 import type { HttpMount } from './http.js';
-import { verifyHmacSignature } from './webhook.js';
+import { SIGNATURE_HEADERS, claimsSignature, verifyHmacSignature } from './webhook.js';
 
 type ChatTrigger = Extract<Trigger, { type: 'discord' | 'slack' | 'telegram' }>;
 
@@ -89,7 +90,13 @@ export class TriggerHost {
         } else if (trigger.type === 'webhook') {
           const key = mountKey(spec.name, trigger.path);
           const entry: { husk: string; secret?: string } = { husk: spec.name };
-          if (trigger.secret) entry.secret = trigger.secret;
+          try {
+            if (trigger.secret) entry.secret = expandEnvRefs(trigger.secret, process.env, `husk ${spec.name}'s webhook secret`);
+          } catch (err) {
+            // Not mounted at all: mounted unsigned, anyone could start this husk.
+            this.ctx.deps.log.error(`${(err as Error).message}; its webhook at /v1/w${key} is not mounted`);
+            continue;
+          }
           this.webhookMounts.set(key, entry);
           mounted.push({
             husk: spec.name,
@@ -175,7 +182,15 @@ export class TriggerHost {
 
       const env = process.env;
       const tokenEnv = TOKEN_ENV[trigger.type];
-      const detail = env[tokenEnv] ? `${tokenEnv} is set` : `idle -- ${tokenEnv} is not set`;
+      let detail = env[tokenEnv] ? `${tokenEnv} is set` : `idle -- ${tokenEnv} is not set`;
+      // Slack hears nothing without a second secret, and its events API wins when both are set (slack.ts).
+      if (trigger.type === 'slack' && env[tokenEnv]) {
+        detail = env.SLACK_SIGNING_SECRET
+          ? `${tokenEnv} is set; events api at /v1/a/${husk}/slack/events`
+          : env.SLACK_APP_TOKEN
+            ? `${tokenEnv} is set; socket mode`
+            : 'idle -- set SLACK_APP_TOKEN for socket mode, or SLACK_SIGNING_SECRET for the events api';
+      }
       mounted.push({ husk, type: trigger.type, at: trigger.type, detail });
       if (this.adapters.has(key)) continue;
 
@@ -288,10 +303,7 @@ export class TriggerHost {
         const check = verifyHmacSignature({
           secret: mount.secret,
           rawBody: req.rawBody ?? Buffer.alloc(0),
-          signature:
-            headerString(req, 'x-husk-signature') ??
-            headerString(req, 'x-hub-signature-256') ??
-            headerString(req, 'x-signature-256'),
+          signature: SIGNATURE_HEADERS.map((name) => headerString(req, name)).find((s) => s !== undefined),
         });
         if (!check.ok) {
           return reply.code(403).send({
@@ -302,9 +314,19 @@ export class TriggerHost {
             },
           });
         }
+      } else if (claimsSignature(req.headers)) {
+        // A signed request reaches this route without the server's token (app.ts), and
+        // with no secret here to check it against, it would run for anyone who signs anything.
+        return reply.code(403).send({
+          error: {
+            code: 'E_EXEC_DENIED',
+            message: 'webhook rejected: this webhook has no secret to check a signature against',
+            hint: 'set `secret` on the trigger to the one the sender signs with, or call it with the server token and no signature',
+          },
+        });
       }
 
-      const input = extractInput(req);
+      const input = mount.secret ? inputFromBody(req.body) : extractInput(req);
       if (!input) return this.noInput(reply);
       return this.runFor(mount.husk, input, reply);
     });

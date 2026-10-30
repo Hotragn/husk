@@ -1,7 +1,7 @@
 import { slug } from '@husk-ai/core';
 import { ensureRunning } from '@husk-ai/runtime';
 import type { ComputerSpec } from '@husk-ai/core';
-import { parse, parseChoice, parseCount, parseMemory } from '../args.js';
+import { parse, parseChoice, parseCount, parseEnvPairs, parseMemory } from '../args.js';
 import { manager } from '../lib/computers.js';
 import { orient } from '../lib/first-run.js';
 import * as ui from '../ui.js';
@@ -34,6 +34,8 @@ export async function run(argv: string[]): Promise<number> {
     'up',
   );
   ui.configure(values);
+  // Before the header, as exec and run check theirs: `--env FOO` was dropped without a word.
+  const env = parseEnvPairs(values.env as string[] | undefined, 'up');
 
   const name = positionals[0] ? slug(positionals[0]) : `box-${Math.random().toString(36).slice(2, 7)}`;
   const mgr = manager();
@@ -42,10 +44,14 @@ export async function run(argv: string[]): Promise<number> {
   // read before a machine exists, not once it already does.
   const requested = (values.provider as string | undefined) ?? 'auto';
   const status = await mgr.status();
-  const picked = requested === 'auto' ? status.find((s) => s.available) : status.find((s) => s.name === requested);
+  // What `auto` picks, asked of the manager that will pick it: the provider
+  // ~/.husk/config.json names, and never Fly unasked.
+  const pickedName = requested === 'auto' ? await mgr.resolveProvider('auto').then((p) => String(p.name), () => undefined) : requested;
+  const picked = status.find((s) => s.name === pickedName);
   orient({
     provider: picked ? String(picked.name) : requested,
     isolated: picked?.isolated ?? null,
+    ...(picked?.isolationKind ? { isolationKind: picked.isolationKind } : {}),
     detail: picked?.version,
     hint: `husk exec ${name} -- uname -sr`,
   });
@@ -73,7 +79,7 @@ export async function run(argv: string[]): Promise<number> {
     ...(values['idle-timeout']
       ? { idleTimeoutSec: parseCount(values['idle-timeout'] as string, '--idle-timeout', 'up') }
       : {}),
-    ...(parseEnv(values.env as string[] | undefined) ? { env: parseEnv(values.env as string[] | undefined) } : {}),
+    ...(env ? { env } : {}),
   };
 
   // `up` on a name that exists brings that computer up rather than making a
@@ -107,9 +113,9 @@ export async function run(argv: string[]): Promise<number> {
       ['provider', `${info.provider}${availability?.version ? ui.dim(`  (${availability.version})`) : ''}`],
       [
         'isolation',
-        availability?.isolated
-          ? ui.green('kernel-level')
-          : ui.yellow('guardrails only — not a sandbox'),
+        availability?.isolationKind === 'guardrails' || availability?.isolated === false
+          ? ui.yellow('guardrails only — not a sandbox')
+          : ui.isolation(availability?.isolationKind, availability?.isolated),
       ],
       ['image', info.imageFallback ? `${info.image} ${ui.yellow('(fallback)')}` : ui.dim(info.image)],
       ['workdir', info.workdir],
@@ -144,14 +150,4 @@ export async function run(argv: string[]): Promise<number> {
   ui.print(`  ${ui.gray('$')} husk rm ${info.name}`);
 
   return EXIT_OK;
-}
-
-function parseEnv(pairs: string[] | undefined): Record<string, string> | undefined {
-  if (!pairs?.length) return undefined;
-  const out: Record<string, string> = {};
-  for (const p of pairs) {
-    const i = p.indexOf('=');
-    if (i > 0) out[p.slice(0, i)] = p.slice(i + 1);
-  }
-  return out;
 }

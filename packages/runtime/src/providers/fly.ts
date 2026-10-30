@@ -14,7 +14,7 @@ import type {
   ProviderName,
   WriteFileOptions,
 } from '@husk-ai/core';
-import { GUEST_ROOT, evaluateCommand, normaliseGuestPath, shellQuote } from '../policy.js';
+import { GUEST_ROOT, commandRulesOf, evaluateCommand, normaliseGuestPath, shellQuote } from '../policy.js';
 import { forgetInfo, loadInfos, persistInfo, reapExpired } from '../registry.js';
 import { EXEC_TAG, REAP_SCRIPT, STOP_UNCONFIRMED, newExecTag, timerMs } from '../reap.js';
 import { parseLsLong } from './oci-common.js';
@@ -103,7 +103,8 @@ function mapState(state: string | undefined): ComputerInfo['state'] {
 export function resolveFlyConfig(opts: FlyOptions = {}, spec?: ComputerSpec): Partial<FlyConfig> {
   const env = opts.env ?? process.env;
   return {
-    token: opts.token ?? env.FLY_API_TOKEN ?? env.FLY_ACCESS_TOKEN ?? '',
+    // HUSK_FLY_TOKEN first: a Husk that itself runs on Fly keeps the computers' app token in a secret of its own name.
+    token: opts.token ?? env.HUSK_FLY_TOKEN ?? env.FLY_API_TOKEN ?? env.FLY_ACCESS_TOKEN ?? '',
     app: opts.app ?? spec?.labels?.['husk.fly.app'] ?? env.HUSK_FLY_APP ?? env.FLY_APP_NAME ?? '',
     region: opts.region ?? spec?.labels?.['husk.fly.region'] ?? env.HUSK_FLY_REGION ?? env.FLY_REGION,
     baseUrl: opts.baseUrl ?? env.HUSK_FLY_API ?? FLY_API,
@@ -136,7 +137,8 @@ export async function flyRequest<T>(
     res = await cfg.fetch(url, {
       method,
       headers: {
-        Authorization: `Bearer ${cfg.token}`,
+        // `fly tokens create` prints `FlyV1 fm2_…`, scheme included, as flyctl sends it; an older token is a bearer.
+        Authorization: cfg.token.startsWith('FlyV1 ') ? cfg.token : `Bearer ${cfg.token}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
@@ -161,13 +163,21 @@ export async function flyRequest<T>(
   }
 }
 
+/**
+ * Where to get a token, and which: one that reaches the computers' app alone.
+ * `fly auth token` prints the person's own, which reaches every app they can.
+ */
+export function flyTokenHint(app?: string): string {
+  return `make a token for the computers' app alone with \`fly tokens create deploy --app ${app || '<app>'}\`, and export it as HUSK_FLY_TOKEN`;
+}
+
 export function flyError(status: number, body: string, app: string, method: string, path: string): HuskError {
   const detail = extractMessage(body);
   const base = { status, body: clampText(body, 2000).text, method, path };
 
   if (status === 401 || status === 403) {
     return new HuskError('E_NO_CREDENTIALS', `fly rejected the token (${status})${detail ? `: ${detail}` : ''}`, {
-      hint: 'run `fly auth token` and export it as FLY_API_TOKEN',
+      hint: flyTokenHint(app),
       details: base,
     });
   }
@@ -329,11 +339,7 @@ class FlyComputer implements Computer {
     this.assertLive();
     const started = Date.now();
 
-    const labels = this.info.spec.labels ?? {};
-    const decision = evaluateCommand(req.cmd, {
-      deny: splitList(labels['husk.denyCommands']),
-      allow: splitList(labels['husk.allowCommands']),
-    });
+    const decision = evaluateCommand(req.cmd, commandRulesOf(this.info.spec.labels));
     if (!decision.allowed) {
       throw new HuskError('E_EXEC_DENIED', `refused: ${decision.reason}`, {
         hint: 'add a pattern to guardrails.allowCommands in husk.yaml if this is intentional',
@@ -370,10 +376,12 @@ class FlyComputer implements Computer {
         this.cfg,
         'POST',
         this.path('/exec'),
-        { command: ['/bin/sh', '-c', wrapped], timeout: timeoutSec > 0 ? timeoutSec : 0 },
-        // A little slack over the remote timeout, so the remote one wins and we
-        // learn the exit code instead of guessing at a dead socket.
-        timerMs(timeoutSec > 0 ? timeoutSec + 15 : 3600) as number,
+        { command: ['/bin/sh', '-c', wrapped], timeout: timeoutSec > 0 ? timeoutSec + 15 : 0 },
+        // Husk's own deadline decides, as on the other providers: past it the request is
+        // dropped and the command reaped below, so a timeout is always `timedOut`. What
+        // the machine answers when its own timeout fires is not documented, so that one
+        // comes later, only to end a command whose reap was lost.
+        timerMs(timeoutSec > 0 ? timeoutSec : 3600) as number,
         req.signal,
       );
     } catch (err) {
@@ -596,11 +604,6 @@ class FlyComputer implements Computer {
   }
 }
 
-function splitList(v: string | undefined): string[] | undefined {
-  if (!v) return undefined;
-  return v.split('\u0000').filter(Boolean);
-}
-
 // ---------------------------------------------------------------------------
 // The provider
 // ---------------------------------------------------------------------------
@@ -620,8 +623,8 @@ export class FlyProvider implements ComputerProvider {
   private config(spec?: ComputerSpec): FlyConfig {
     const c = resolveFlyConfig(this.opts, spec);
     if (!c.token) {
-      throw new HuskError('E_NO_CREDENTIALS', 'FLY_API_TOKEN is not set', {
-        hint: 'run `fly auth token` and export it as FLY_API_TOKEN',
+      throw new HuskError('E_NO_CREDENTIALS', 'no fly token is set: HUSK_FLY_TOKEN, or FLY_API_TOKEN', {
+        hint: flyTokenHint(c.app),
       });
     }
     if (!c.app) {
@@ -644,8 +647,8 @@ export class FlyProvider implements ComputerProvider {
         available: false,
         isolated: true,
         isolationKind: 'kernel',
-        reason: 'FLY_API_TOKEN is not set',
-        hint: 'run `fly auth token` and export it as FLY_API_TOKEN (fly machines are metered, not free)',
+        reason: 'no fly token is set: HUSK_FLY_TOKEN, or FLY_API_TOKEN',
+        hint: `${flyTokenHint(c.app)} (fly machines are metered, not free)`,
       };
     }
     if (!c.app) {
@@ -687,6 +690,12 @@ export class FlyProvider implements ComputerProvider {
   }
 
   async create(spec: ComputerSpec): Promise<Computer> {
+    // Said, not dropped, and before a machine bills: Fly runs an image from a registry, and Husk builds none there.
+    if (spec.packages?.length) {
+      throw new HuskError('E_SPEC_INVALID', 'fly computers do not install packages', {
+        hint: 'use a computer.image that has them, or docker or podman, which build them into the computer',
+      });
+    }
     const cfg = this.config(spec);
     const id = newId('cmp');
     const workdir = spec.workdir ?? GUEST_ROOT;

@@ -383,4 +383,17 @@ describe('geminiSchema', () => {
     });
     expect(pruned).toEqual({ type: 'array', items: { type: 'object', properties: { a: { type: 'string' } } } });
   });
+
+  it('keeps a parameter whose name is a keyword, pruning only its schema', () => {
+    const pruned = geminiSchema({
+      type: 'object',
+      properties: { default: { type: 'string', default: 'x' }, const: { type: 'string' }, examples: { type: 'array' } },
+      required: ['default'],
+    });
+    expect(pruned).toEqual({
+      type: 'object',
+      properties: { default: { type: 'string' }, const: { type: 'string' }, examples: { type: 'array' } },
+      required: ['default'],
+    });
+  });
 });

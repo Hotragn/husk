@@ -13,19 +13,16 @@ husk run husk.yaml "list the files" --json | jq -r .text
 | Flag | What it does |
 | --- | --- |
 | `--model <m>` | Override the spec's model |
-| `--max-steps <n>` | Lower the step ceiling for this run |
-| `--max-cost <usd>` | Lower the cost ceiling for this run |
+| `--max-steps <n>` | The step ceiling for this run, in place of `limits.maxSteps`, higher or lower |
+| `--max-cost <usd>` | The cost ceiling for this run, in place of `limits.maxCostUsd`, higher or lower |
 | `--approve <mode>` | `auto`, `ask`, `readonly`. Default: from the spec |
 | `--no-computer` | Run without giving the agent a machine |
-| `--var k=v` | Fill a `{{k}}` placeholder in the persona. Repeatable |
+| `--var k=v` | Fill a `{{k}}` placeholder in the persona. Repeatable. `k` is letters, digits and `_`, and anything else is refused |
 | `--json` | Print the run result instead of streaming |
 
-<Note>
-`--max-cost` and `--var` are accepted by the parser but missing from `husk help run`.
-</Note>
-
-Ctrl-C stops the run cleanly between steps and leaves the machine alone. Nothing is
-destroyed — you interrupted the agent, not the filesystem you were about to inspect.
+Ctrl-C stops the run at once, the model call or command in flight included, and ends it
+`aborted`, a reply cut short too. It leaves the machine alone. Nothing is destroyed — you
+interrupted the agent, not the filesystem you were about to inspect.
 
 A bot whose computer you take over, from the console or the desktop app, pauses: a call
 it was running stops part-way, its next one waits until you press Give back, and the run
@@ -80,8 +77,10 @@ reached the step ceiling of 24
 ```
 
 When the router has no pricing for the chosen model, the estimate falls back to the
-worst call seen so far in this run — zero on the first call. A model with no catalog
-entry therefore gets one free call before the budget can see it.
+worst call seen so far in this run. But a call's cost is worked out from the same
+catalog, so a model with no catalog price, such as one a gateway lists that the catalog
+does not, is counted at `$0` every time: the cost ceiling never stops it, though the
+token ceiling still does.
 
 ### Abort propagates all the way down
 
@@ -106,7 +105,7 @@ Clamp first, to `limits.maxOutputBytes` (default 256 KiB), keeping head and tail
 `redact()`, unless `guardrails.redactSecrets` is false. Clamping first means redaction
 runs over bounded input.
 
-An agent that `cat`s a `.env` sees the file. The model sees `sk-ant…[redacted]`.
+An agent that `cat`s a `.env` sees the file. The model sees `sk-ant...[redacted]`.
 
 ### The loop breaker
 
@@ -115,7 +114,7 @@ its arguments with object keys sorted, so argument ordering does not hide a repe
 
 | Count | What happens |
 | --- | --- |
-| 3 | A warning, and a system nudge appended after the tool results |
+| 3 | A warning, and a nudge appended after the tool results, as a user message |
 | 5 | The run stops |
 
 The nudge is explicit rather than vague:
@@ -166,8 +165,8 @@ husk serve --port 8080
 
 | Flag | Default |
 | --- | --- |
-| `--port <n>` | `7377` |
-| `--host <h>` | `127.0.0.1` |
+| `--port <n>` | `HUSK_PORT`, or `7377` |
+| `--host <h>` | `HUSK_HOST`, or `127.0.0.1` |
 
 `husk serve` starts the control plane, mounts every trigger the registered husks declare,
 and starts the reaper on a 60-second interval.
@@ -185,6 +184,7 @@ starting the control plane on 127.0.0.1:7377...
 info  [husk] husk serve listening on http://127.0.0.1:7377
 info  [husk] no HUSK_TOKEN set -- loopback connections only
 ✓ control plane on http://127.0.0.1:7377
+  console  http://127.0.0.1:7377/
   health   http://127.0.0.1:7377/health
   doctor   http://127.0.0.1:7377/v1/doctor
   clients  new HuskClient({ baseUrl: "http://127.0.0.1:7377" })  // @husk-ai/sdk

@@ -1,0 +1,24 @@
+# Husk's control plane serving remote access (apps/docs/content/guides/remote-access.mdx).
+# Deploy from this folder: `fly deploy`. Replace the three names first.
+app = "my-husk"
+primary_region = "ord"
+
+[env]
+  # This app's public name: the passkey's and every token's, so it must not change.
+  HUSK_PUBLIC_URL = "https://my-husk.fly.dev"
+  # The app Husk's computers are Fly machines in. Not this one: their published ports live at its name.
+  HUSK_FLY_APP = "my-husk-computers"
+  # The token that manages that app is the HUSK_FLY_TOKEN secret, never here.
+
+[mounts]
+  # Husk's state: the owner's passkey, the apps signed in, the signing key.
+  source = "husk_data"
+  destination = "/root/.husk"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # One machine, always on: sign-ins in flight live in its memory, and a chat app gives up on a cold start.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1

@@ -44,7 +44,7 @@ export async function run(argv: string[]): Promise<number> {
   if (ask) {
     const s = session();
     try {
-      ui.note(ui.dim('Four questions. Enter accepts the default.'));
+      ui.note(ui.dim('Six questions. Enter accepts the default.'));
       ui.note('');
       name = slugName(await s.ask('name', suggested));
       description = await s.ask('one-line description', 'A husk.');

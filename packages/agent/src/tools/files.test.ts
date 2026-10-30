@@ -2,7 +2,7 @@ import { HuskError, createLogger } from '@husk-ai/core';
 import { describe, expect, it } from 'vitest';
 import { FakeComputer, specFor } from '../test-support.js';
 import type { AgentTool, AgentToolContext } from '../types.js';
-import { edit_file, globToRegExp, list_dir, read_file, remove, search_files, write_file } from './files.js';
+import { edit_file, globToRegExp, list_dir, move, read_file, remove, search_files, write_file } from './files.js';
 
 function contextFor(computer: FakeComputer): AgentToolContext {
   return {
@@ -22,6 +22,17 @@ function contextFor(computer: FakeComputer): AgentToolContext {
 
 async function call<O>(tool: AgentTool, input: Record<string, unknown>, computer: FakeComputer): Promise<O> {
   return (await tool.handler(input, contextFor(computer))) as O;
+}
+
+/** A computer whose filesystem calls are jailed to /work and /tmp, as `local` and `ssh` jail theirs. */
+function jailed(opts: ConstructorParameters<typeof FakeComputer>[0] = {}): FakeComputer {
+  const c = new FakeComputer(opts);
+  const stat = c.stat.bind(c);
+  c.stat = async (path: string) => {
+    if (!/^\/(work|tmp)(\/|$)/.test(path)) throw new HuskError('E_FS_DENIED', `path is outside the machine's writable area: ${path}`);
+    return stat(path);
+  };
+  return c;
 }
 
 describe('edit_file', () => {
@@ -167,6 +178,12 @@ describe('search_files', () => {
     expect(out.hits).toEqual([]);
   });
 
+  it('checks its root through the jail before ripgrep runs in a shell', async () => {
+    const c = jailed({ files, exec: (req) => (String(req.cmd).includes('command -v rg') ? { stdout: 'yes\n' } : { stdout: '' }) });
+    await expect(call(search_files, { pattern: 'root', path: '/etc' }, c)).rejects.toMatchObject({ code: 'E_FS_DENIED' });
+    expect(c.execs.map((e) => String(e.cmd)).filter((cmd) => cmd.startsWith('rg '))).toEqual([]);
+  });
+
   it('falls back to a bounded walk when ripgrep is missing', async () => {
     const c = new FakeComputer({ files, exec: () => ({ stdout: 'no\n' }) });
     const out = await call<{ engine: string; hits: Array<{ path: string }> }>(search_files, { pattern: 'needle' }, c);
@@ -214,6 +231,20 @@ describe('delete', () => {
   it('says so when there is nothing there', async () => {
     const c = new FakeComputer();
     await expect(call(remove, { path: '/work/ghost' }, c)).rejects.toThrow(/nothing to delete/);
+  });
+});
+
+describe('move', () => {
+  it('holds the destination to the jail before mv runs in a shell', async () => {
+    const c = jailed({ files: { '/work/a.txt': 'a' } });
+    await expect(call(move, { from: '/work/a.txt', to: '/home/me/.bashrc' }, c)).rejects.toMatchObject({ code: 'E_FS_DENIED' });
+    expect(c.execs).toEqual([]);
+  });
+
+  it('moves within the workspace', async () => {
+    const c = jailed({ files: { '/work/a.txt': 'a' } });
+    expect(await call(move, { from: '/work/a.txt', to: '/work/sub/b.txt' }, c)).toEqual({ from: '/work/a.txt', to: '/work/sub/b.txt' });
+    expect(String(c.execs[0]?.cmd)).toContain('mv -- /work/a.txt /work/sub/b.txt');
   });
 });
 

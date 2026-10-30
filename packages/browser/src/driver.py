@@ -960,7 +960,7 @@ def ref_documents(conn, session_id):
     """Which frame and document each ref handed out on this connection came from: ref -> (frame id or None, loader id)."""
     known = conn.__dict__.setdefault('ref_documents', {}).setdefault(session_id, {})
     # ponytail: forgotten wholesale past a bound, so a long session's map stays small; a
-    # forgotten ref is checked against the host's own record, or not at all.
+    # forgotten ref is checked against the host's own record, or refused for a fresh snapshot.
     if len(known) > 200000:
         known.clear()
     return known
@@ -1088,6 +1088,11 @@ def locate(conn, session_id, step, deadline, unique=False):
     backend = int(m.group(2))
     known = ref_documents(conn, session_id).get(ref) or (None, None)
     expected = known[1] or step.get('document')
+    # Where the page's document can be read, a snapshot of it recorded its refs,
+    # here or on the host. One nobody recorded is from before a restart, or made
+    # up: refused, never resolved blind to whatever has that id now.
+    if not expected and current_document(conn, session_id, deadline):
+        raise DriverError(ACTION, '%s is from a snapshot this browser has no record of; take a fresh snapshot and use its refs' % ref)
     if not m.group(1):
         if expected:
             now = current_document(conn, session_id, deadline)
@@ -1525,9 +1530,10 @@ def act_screenshot(conn, sid, step, deadline):
 #
 # The script reaches the page through `page`, whose calls come back here as
 # JSON lines and run as the same actions `browser_run` uses; every goto is
-# checked by the host's network policy first. That is all the check covers:
-# clicks, submits, redirects and page scripts are not checked, and the script,
-# like `shell`, can open 127.0.0.1's CDP port itself. The computer is the
+# checked by the host's network policy first, and every document a click, a
+# submit, a redirect or a page script loads is paused and checked here, on the
+# connection that holds the page's interception. But the script, like `shell`,
+# can open 127.0.0.1's CDP port itself and go round this. The computer is the
 # boundary. Names follow the Playwright-style page API credited in
 # THIRD_PARTY_NOTICES.md, where they fit.
 
@@ -1668,12 +1674,14 @@ def script_call(conn, sid, op, args, deadline):
     """One `page.*` call from a script: its value, or a DriverError the script sees as PageError."""
     # Events from before this call are not this call's.
     conn.events = []
+    # Nor is a dialog answer: `dialog: "accept"` belongs to the click that
+    # passed it, and a confirm that a later call meets is dismissed.
+    conn.dialog_answer = args.get('dialog') if op == 'click' else None
     timeout = min(600.0, max(0.0, float(args.get('timeout', 15) or 0)))
     if op == 'goto':
         url = BRIDGE.host_call(conn, 'checkUrl', {'url': str(args.get('url', ''))}, deadline)
         return act_goto(conn, sid, {'url': url, 'loadTimeoutMs': timeout * 1000}, deadline)
     if op == 'click':
-        conn.dialog_answer = args.get('dialog')
         return act_click(conn, sid, args, deadline)
     if op == 'fill':
         return act_fill(conn, sid, args, deadline)

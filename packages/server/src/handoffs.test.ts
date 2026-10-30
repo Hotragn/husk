@@ -127,11 +127,15 @@ describe('handoff over HTTP', () => {
     const runner = harness.app.husk.runner;
     const events = runner.stream(sampleSpec(), { input: 'go' }, new AbortController().signal)[Symbol.asyncIterator]();
     let e = await events.next();
+    const runId = e.done || e.value.type !== 'run_start' ? undefined : e.value.runId;
     while (!e.done && e.value.type !== 'handoff_required') e = await events.next();
     expect(e.done ? undefined : e.value.type).toBe('handoff_required');
     // The event arrived with the handoff still open: nobody has answered yet.
     const open = runner.handoffs.list();
     expect(open).toHaveLength(1);
+    // The run's own id, the one run_start and /v1/runs give, and the handoff to answer.
+    expect(e.value).toMatchObject({ handoffId: open[0]!.handoffId, request: { runId } });
+    expect(runId).toMatch(/^run_/);
     runner.handoffs.complete(open[0]!.handoffId);
     let last: string | undefined;
     for (let r = await events.next(); !r.done; r = await events.next()) last = r.value.type;

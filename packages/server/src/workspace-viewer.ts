@@ -106,12 +106,13 @@ export async function startWorkspaceViewer(options: WorkspaceViewerOptions = {})
  * stays out of requests, logs and Referer headers; the console moves it to
  * session storage and strips it from the address bar.
  */
-export function handoffLink(origin: string, handoffId: string, token: string): string {
-  return `${origin}/#handoff=${encodeURIComponent(handoffId)}&token=${encodeURIComponent(token)}`;
+/** `page`: where the link opens; `/oauth/link` under remote access's public URL, which asks for the owner's passkey first. */
+export function handoffLink(origin: string, handoffId: string, token: string, page = '/'): string {
+  return `${origin}${page}#handoff=${encodeURIComponent(handoffId)}&token=${encodeURIComponent(token)}`;
 }
 
-export function computerLink(origin: string, computerId: string, token: string): string {
-  return `${origin}/#computer=${encodeURIComponent(computerId)}&token=${encodeURIComponent(token)}`;
+export function computerLink(origin: string, computerId: string, token: string, page = '/'): string {
+  return `${origin}${page}#computer=${encodeURIComponent(computerId)}&token=${encodeURIComponent(token)}`;
 }
 
 export { HandoffRegistry, PERSON_RUN, heldText, refusalText, takenText } from './handoffs.js';

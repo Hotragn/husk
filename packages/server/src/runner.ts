@@ -1,6 +1,7 @@
 import { HuskError, isHuskError } from '@husk-ai/core';
 import type {
   ApprovalRequest,
+  ChatRequest,
   Computer,
   HandoffRequest,
   ComputerSpec,
@@ -15,7 +16,7 @@ import { admitCall, givenBack } from './control.js';
 import type { PendingApproval } from './approvals.js';
 import { HandoffRegistry, PERSON_RUN } from './handoffs.js';
 import type { PendingHandoff } from './handoffs.js';
-import type { ComputerSourceLike, ManagerLike, ResolvedDeps, ServerRunOptions } from './deps.js';
+import type { ComputerSourceLike, ManagerLike, ResolvedDeps, RouterLike, ServerRunOptions } from './deps.js';
 import { EventBus } from './events.js';
 import { huskError } from './errors.js';
 import type { RunSummary } from './store.js';
@@ -60,6 +61,21 @@ export interface RunRequestBody {
  */
 function pinnedSource(computer: Computer): ComputerSourceLike {
   return { ensure: async () => computer };
+}
+
+/**
+ * The router a husk's run calls, with its `fallbackModels` on every request,
+ * as `husk run` gives them; a server run used to drop them. `getModelInfo`
+ * stays, for the budget to price a call before making it.
+ */
+function withFallbacks(router: RouterLike, fallbacks: string[]): RouterLike {
+  if (!fallbacks.length) return router;
+  const r = router as RouterLike & { getModelInfo?: (model: string) => Promise<unknown> };
+  return {
+    chat: (req) => r.chat({ ...req, fallbacks } as ChatRequest),
+    stream: (req) => r.stream({ ...req, fallbacks } as ChatRequest),
+    ...(r.getModelInfo ? { getModelInfo: (model: string) => r.getModelInfo!(model) } : {}),
+  } as RouterLike;
 }
 
 /**
@@ -178,8 +194,8 @@ export class Runner {
     const approvalMode = body.approvalMode ?? spec.guardrails.approvalMode;
     const opts: ServerRunOptions = {
       input: body.input,
-      maxSteps: body.maxSteps ?? spec.limits.maxSteps,
-      // The server's ceiling wins over the husk's: a husk file is user data.
+      // A caller may lower the husk's own limits for one run, never raise them.
+      maxSteps: Math.min(body.maxSteps ?? spec.limits.maxSteps, spec.limits.maxSteps),
       maxCostUsd: Math.min(body.maxCostUsd ?? spec.limits.maxCostUsd, spec.limits.maxCostUsd),
       maxTokens: spec.limits.maxTokens,
       timeoutSec: spec.limits.timeoutSec,
@@ -198,7 +214,8 @@ export class Runner {
       return await this.handoffs.request(
         { runId, husk: spec.name, reason: request.reason, ...(computerId ? { computerId } : {}), signal: runSignal },
         (pending: PendingHandoff) => {
-          onEvent({ type: 'handoff_required', request });
+          // The run's id, not the agent's own, as on run_start: one id is true in the stream, the store and a cancel.
+          onEvent({ type: 'handoff_required', handoffId: pending.handoffId, request: { ...request, runId } });
           this.bus.emit('runs', 'handoff_required', pending);
         },
       );
@@ -229,7 +246,7 @@ export class Runner {
           args: request.args ?? {},
         };
         return this.approvals.request({ runId, husk: spec.name, call, signal }, (pending: PendingApproval) => {
-          onEvent({ type: 'approval_required', approvalId: pending.approvalId, request });
+          onEvent({ type: 'approval_required', approvalId: pending.approvalId, request: { ...request, runId } });
           this.bus.emit('runs', 'approval_required', pending);
         });
       };
@@ -300,7 +317,7 @@ export class Runner {
     try {
       const agent = await this.deps.agentFactory({
         spec,
-        router: this.deps.router,
+        router: withFallbacks(this.deps.router, spec.fallbackModels),
         computers: await this.computerSource(body),
       });
       const opts = this.buildOptions(spec, body, runId, abort.signal, (e) =>
@@ -369,7 +386,7 @@ export class Runner {
     try {
       const agent = await this.deps.agentFactory({
         spec,
-        router: this.deps.router,
+        router: withFallbacks(this.deps.router, spec.fallbackModels),
         computers: await this.computerSource(body),
       });
       // Approvals and handoffs pause the agent inside a tool call, so the event

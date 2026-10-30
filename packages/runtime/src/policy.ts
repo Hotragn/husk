@@ -1,6 +1,6 @@
-import { realpath } from 'node:fs/promises';
+import { readlink, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, posix, resolve, sep } from 'node:path';
-import { HuskError, completeCharEnd } from '@husk-ai/core';
+import { HuskError, completeCharEnd, matchesOutside } from '@husk-ai/core';
 import { DEFAULT_DENY, type CommandRule } from './deny.js';
 
 /**
@@ -93,7 +93,7 @@ export function toGuestPath(hostPath: string, map: JailMap): string {
  * Checks the nearest existing ancestor rather than the leaf, so it works for a
  * path that is about to be created.
  */
-export async function assertInJail(hostPath: string, map: JailMap): Promise<void> {
+export async function assertInJail(hostPath: string, map: JailMap, hops = 0): Promise<void> {
   const roots: string[] = [];
   let rootMissing = true;
   for (const r of [map.root, map.tmp]) {
@@ -119,11 +119,14 @@ export async function assertInJail(hostPath: string, map: JailMap): Promise<void
 
   let probe = resolve(hostPath);
   let real: string | undefined;
+  /** What `realpath` could not resolve, the leaf first: missing, or a link to something missing. */
+  const unresolved: string[] = [];
   for (let i = 0; i < 64; i++) {
     try {
       real = await realpath(probe);
       break;
     } catch {
+      unresolved.push(probe);
       const parent = dirname(probe);
       if (parent === probe) break;
       probe = parent;
@@ -137,6 +140,22 @@ export async function assertInJail(hostPath: string, map: JailMap): Promise<void
       hint: 'husk refuses to follow links that leave the machine',
       details: { resolved: real },
     });
+  }
+
+  // A link whose target does not exist yet fails `realpath` like a missing
+  // file, so the walk above judged it by its parent. Writing through it creates
+  // the target, wherever it points: its target is held to the jail as well.
+  for (const p of unresolved) {
+    // Not a link, or one this host cannot read: judged by its parent, as before.
+    const target = await readlink(p).catch(() => undefined);
+    if (target === undefined) continue;
+    if (hops >= 8) {
+      throw new HuskError('E_FS_DENIED', 'path goes through too many symlinks', { hint: 'husk follows at most eight links in a row' });
+    }
+    // On Windows, a target like `/work/real.txt` was made inside WSL, where it
+    // names the guest path. Anywhere else an absolute target is this machine's own.
+    const next = sep === '\\' && target.startsWith('/') ? toHostPath(target, map) : resolve(dirname(p), target);
+    await assertInJail(next, map, hops + 1);
   }
 }
 
@@ -223,8 +242,15 @@ function guestPrefixAt(script: string, i: number): string | null {
  *  - A token that would escape the jail (`/work/../../etc/passwd`) is passed
  *    through unchanged. `/work` does not exist in this mode, so it fails
  *    harmlessly instead of being "helpfully" repointed at the host.
+ *
+ * `toPath` is the mapping: ssh passes its own, since the box it runs on has no
+ * `/work` either and its paths are POSIX whatever this machine is.
  */
-export function rewriteGuestPaths(script: string, map: JailMap): string {
+export function rewriteGuestPaths(
+  script: string,
+  map: JailMap,
+  toPath: (guestPath: string, map: JailMap) => string = toHostPath,
+): string {
   let out = '';
   let state: QuoteState = 'normal';
   let prev: string | undefined;
@@ -306,7 +332,7 @@ export function rewriteGuestPaths(script: string, map: JailMap): string {
 
       let host: string | null = null;
       try {
-        host = toHostPath(token, map);
+        host = toPath(token, map);
       } catch {
         // Escapes the jail or names neither guest root: leave it for the shell,
         // where the missing /work makes it fail on its own.
@@ -433,44 +459,46 @@ export interface PolicyDecision {
  * Decide whether a command may run.
  *
  * `allow` wins over `deny`: an explicit allow-list entry is the user telling us
- * they know better about their own machine, and they do.
+ * they know better about their own machine, and they do. It wins where it
+ * matches, not over the whole line (`matchesOutside`), so an allowed command
+ * does not carry a refused one chained after it.
  */
 export function evaluateCommand(
   cmd: string | string[],
   opts: { deny?: string[]; allow?: string[]; extraRules?: CommandRule[] } = {},
 ): PolicyDecision {
   const text = Array.isArray(cmd) ? cmd.join(' ') : cmd;
-
-  for (const a of opts.allow ?? []) {
-    try {
-      if (new RegExp(a).test(text)) return { allowed: true };
-    } catch {
-      if (text.includes(a)) return { allowed: true };
-    }
-  }
+  const allow = opts.allow ?? [];
 
   for (const d of opts.deny ?? []) {
-    try {
-      if (new RegExp(d).test(text)) {
-        return { allowed: false, reason: 'matched a deny rule from this husk', rule: d };
-      }
-    } catch {
-      if (text.includes(d)) return { allowed: false, reason: 'matched a deny rule from this husk', rule: d };
-    }
+    if (matchesOutside(d, text, allow)) return { allowed: false, reason: 'matched a deny rule from this husk', rule: d };
   }
 
   for (const rule of [...DEFAULT_DENY, ...(opts.extraRules ?? [])]) {
-    if (rule.pattern.test(text)) {
-      return { allowed: false, reason: rule.reason, rule: String(rule.pattern) };
-    }
+    if (matchesOutside(rule.pattern, text, allow)) return { allowed: false, reason: rule.reason, rule: String(rule.pattern) };
   }
 
   return { allowed: true };
 }
 
-/** A computer's own command rules, from its labels: the husk's allow and deny lists, NUL-separated, as every provider reads them. */
+/**
+ * A computer's own command rules, from its labels: the husk's allow and deny
+ * lists, as every provider reads them. `computerSpecFor` writes each as a JSON
+ * array, because Docker gets every label as an argument, where a NUL cannot
+ * go, and a pattern may hold any other character. A label that is not a JSON
+ * array is one pattern.
+ */
 export function commandRulesOf(labels: Record<string, string> | undefined): { deny?: string[]; allow?: string[] } {
-  const list = (v: string | undefined): string[] | undefined => (v ? v.split('\u0000').filter(Boolean) : undefined);
+  const list = (v: string | undefined): string[] | undefined => {
+    if (!v) return undefined;
+    try {
+      const parsed: unknown = JSON.parse(v);
+      if (Array.isArray(parsed)) return parsed.filter((p): p is string => typeof p === 'string' && p !== '');
+    } catch {
+      // Not JSON: written by hand, as one pattern.
+    }
+    return [v];
+  };
   const deny = list(labels?.['husk.denyCommands']);
   const allow = list(labels?.['husk.allowCommands']);
   return { ...(deny ? { deny } : {}), ...(allow ? { allow } : {}) };

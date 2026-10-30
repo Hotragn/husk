@@ -8,11 +8,13 @@ import { findOrphanedWorkspaces, leftOutOfAuto } from '@husk-ai/runtime';
 /**
  * `GET /v1/doctor`.
  *
- * The wire shape is identical to what `husk doctor --json` prints and to
- * `DoctorReport` in `@husk-ai/sdk`. It diverged once -- the server answered
- * `selected` while the SDK read `selection` -- which meant the console rendered
- * an empty selection against a server that was reporting one correctly. One
- * shape, three consumers, no translation layer.
+ * The wire shape is `DoctorReport` in `@husk-ai/sdk`, the same fields `husk
+ * doctor --json` prints. It diverged once -- the server answered `selected`
+ * while the SDK read `selection` -- which meant the console rendered an empty
+ * selection against a server that was reporting one correctly. The values are
+ * the server's own: its warnings, at most twelve models a provider, and a
+ * selection that does not read `~/.husk/config.json` (start/doctor.mdx says how
+ * they differ from the CLI's).
  */
 export interface DoctorProvider {
   name: string;

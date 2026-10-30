@@ -1,6 +1,6 @@
 import { computerSpecFor } from '@husk-ai/agent';
 import { parseSpec } from '@husk-ai/core';
-import { resolveFlyConfig, resolveSshSettings } from '@husk-ai/runtime';
+import { commandRulesOf, evaluateCommand, resolveFlyConfig, resolveSshSettings } from '@husk-ai/runtime';
 import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { renderSpec } from './yaml.js';
@@ -66,6 +66,36 @@ computer:
       host: 'build-box',
       port: 2222,
     });
+  });
+
+  it('guardrails: an allow entry lifts a built-in refusal where the provider checks, and a deny entry holds there', () => {
+    const spec = specFromYaml(`
+apiVersion: husk/v1
+name: ops
+guardrails:
+  allowCommands: ['^sudo apt-get install']
+  denyCommands: ['terraform\\s+apply']
+`);
+    const rules = commandRulesOf(computerSpecFor(spec).labels);
+
+    expect(evaluateCommand('sudo apt-get install -y jq').allowed).toBe(false);
+    expect(evaluateCommand('sudo apt-get install -y jq', rules).allowed).toBe(true);
+    expect(evaluateCommand('sudo reboot', rules).allowed).toBe(false);
+    expect(evaluateCommand('terraform apply -auto-approve', rules).allowed).toBe(false);
+  });
+
+  it('${NAME} in computer.env survives the writer as written, and is read only for the computer', () => {
+    const spec = specFromYaml(`
+apiVersion: husk/v1
+name: ci
+computer:
+  env:
+    GITHUB_TOKEN: \${GITHUB_TOKEN}
+`);
+    const reparsed = parseSpec(parseYaml(renderSpec(spec)) as unknown);
+
+    expect(reparsed.computer.env).toEqual({ GITHUB_TOKEN: '${GITHUB_TOKEN}' });
+    expect(computerSpecFor(reparsed, { GITHUB_TOKEN: 'ghp_x' }).env).toEqual({ GITHUB_TOKEN: 'ghp_x' });
   });
 
   it('fly: labels."husk.fly.app" and ."husk.fly.region" become the fly config', () => {

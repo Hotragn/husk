@@ -197,7 +197,18 @@ describe('parseClaudeJsonl', () => {
     const { transcript } = parseClaudeJsonl(JSONL)!;
     const first = transcript.messages.find((m) => m.content === 'Understood. Checking the suite now.');
     expect(first?.meta?.thinkingBlocks).toBe(1);
+    expect(transcript.meta?.thinkingBlocks).toBe(1);
     expect(transcript.messages.some((m) => m.content.includes('internal'))).toBe(false);
+  });
+
+  it('counts a thinking block on a line of its own, as Claude Code writes them', () => {
+    const lines = [
+      userLine('u1', null, 'What broke?'),
+      assistantLine('a1', 'u1', [{ type: 'thinking', thinking: 'internal', signature: 'sig' }]),
+      assistantLine('a2', 'a1', [{ type: 'text', text: 'The build.' }]),
+    ];
+    const { transcript } = parseClaudeJsonl(lines.map((l) => JSON.stringify(l)).join('\n'))!;
+    expect(transcript.meta?.thinkingBlocks).toBe(1);
   });
 
   it('renders image parts as a placeholder instead of choking', () => {

@@ -248,6 +248,8 @@ function stringifyToolResult(content: unknown): string {
 interface ScaffoldTally {
   stripped: number;
   dropped: number;
+  /** Thinking blocks, dropped from the text. Claude Code writes each on its own line, so most come with no text to count them on. */
+  thinking: number;
 }
 
 /**
@@ -322,6 +324,7 @@ function emit(node: Node, toolNames: Map<string, string>, tally: ScaffoldTally):
       case 'redacted_thinking': {
         // Reasoning is not the answer, and its signature is provider-internal.
         thinkingBlocks++;
+        tally.thinking++;
         break;
       }
       case 'image': {
@@ -417,7 +420,7 @@ export function parseClaudeJsonl(content: string, origin?: string): ParsedClaude
   const { chain } = reconstructThread(mainNodes);
 
   const messages: TranscriptMessage[] = [];
-  const tally: ScaffoldTally = { stripped: 0, dropped: 0 };
+  const tally: ScaffoldTally = { stripped: 0, dropped: 0, thinking: 0 };
   for (const node of chain) messages.push(...emit(node, toolNames, tally));
 
   const chainMessageNodes = chain.filter((n) => MESSAGE_TYPES.has(n.type)).length;
@@ -447,6 +450,7 @@ export function parseClaudeJsonl(content: string, origin?: string): ParsedClaude
       ...(topModel ? { model: topModel } : {}),
       tools: [...mainThreadTools].sort(),
       ...(sidechainTools.size ? { sidechainTools: [...sidechainTools].sort() } : {}),
+      ...(tally.thinking ? { thinkingBlocks: tally.thinking } : {}),
     },
   };
 

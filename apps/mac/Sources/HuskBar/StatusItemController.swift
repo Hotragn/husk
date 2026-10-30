@@ -48,6 +48,11 @@ final class StatusItemController: NSObject {
         } else {
             menu.addItem(disabled("No computers yet"))
         }
+        if problem == nil, let remote = overview?.remote {
+            menu.addItem(.separator())
+            menu.addItem(disabled(remote.line))
+            if let warning = remote.warning { menu.addItem(disabled(warning)) }
+        }
         menu.addItem(.separator())
         menu.addItem(action("Open Husk console", #selector(doOpen)))
         menu.addItem(action("Quit Husk Bar", #selector(doQuit), key: "q"))

@@ -1,3 +1,4 @@
+import { HuskError } from '@husk-ai/core';
 import type { Flavor } from '@husk-ai/core';
 
 /**
@@ -90,8 +91,27 @@ export function resolveImage(spec: { image?: string; flavor?: Flavor }): ImagePl
   return plan;
 }
 
+/**
+ * A package as a package manager takes it: apt's `name=1.2`, pip's
+ * `name[extra]>=1,<2`, npm's `@scope/name@^1`. One word, with no quote, `$`,
+ * backtick or backslash: nothing a shell or a Dockerfile reads as more.
+ */
+const PACKAGE = /^[A-Za-z0-9@][\w@.+\-/:=~<>^,![\]]*$/;
+
+/**
+ * The shell that installs `packages` on a flavor's image, as root.
+ *
+ * The names are checked, not quoted: quoted inside `PKGS="..."` they reached
+ * the package manager with their quotes on, and a `$(...)` in one ran. `set -f`
+ * keeps a pip extra such as `name[socks]` from matching a file.
+ */
 export function installScript(flavor: Flavor | undefined, packages: string[]): string {
   if (!packages.length) return '';
-  const pkgs = packages.map((p) => `'${p.replace(/'/g, `'\\''`)}'`).join(' ');
-  return `PKGS="${pkgs.replace(/"/g, '\\"')}"; ${imagePlan(flavor ?? 'base').installCmd}`;
+  const bad = packages.find((p) => !PACKAGE.test(p));
+  if (bad !== undefined) {
+    throw new HuskError('E_SPEC_INVALID', `not a package: ${JSON.stringify(bad)}`, {
+      hint: 'a package is a name, with a version if you like: curl, requests==2.32, @scope/tool@1',
+    });
+  }
+  return `set -f; PKGS="${packages.join(' ')}"; ${imagePlan(flavor ?? 'base').installCmd}`;
 }

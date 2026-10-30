@@ -1,5 +1,5 @@
 import { HuskError } from '@husk-ai/core';
-import { compareModelPreference } from '@husk-ai/models';
+import { compareModelPreference, priceOf, resolveAlias } from '@husk-ai/models';
 import type { ChatRequest, ChatResponse, ModelInfo, ModelProvider, StreamEvent } from '@husk-ai/core';
 
 /**
@@ -26,8 +26,15 @@ export interface ResolvedModel {
  * Accepts a fully-qualified `provider/model`, a bare model name, or one of the
  * aliases from the build contract. When it fails, the error lists what *is*
  * reachable -- "no model available" on its own sends people to the docs.
+ *
+ * `maxCostUsd` is the run's ceiling. At $0, `auto`, `free` and `local` pick only a
+ * model that costs nothing, as the router's aliases do: a priced one would be
+ * stopped before its first call.
  */
-export async function resolveModel(ref: string): Promise<ResolvedModel> {
+export async function resolveModel(asked: string, overrides: Record<string, string> = {}, maxCostUsd?: number): Promise<ResolvedModel> {
+  // A modelAliases entry from ~/.husk/config.json, followed as the router follows it.
+  const override = overrides[asked] ? resolveAlias(asked, overrides) : undefined;
+  const ref = !override ? asked : override.kind === 'dynamic' ? override.strategy : override.id;
   const providers = await buildProviders();
   const reachable: Array<{ provider: ModelProvider; models: ModelInfo[] }> = [];
   const rejected: string[] = [];
@@ -50,7 +57,10 @@ export async function resolveModel(ref: string): Promise<ResolvedModel> {
 
   const wanted = ALIASES[ref] ?? [ref];
 
-  for (const candidate of wanted) {
+  // Ollama lists `llama3.2:latest`, and `llama3.2` is that model: the `llama`,
+  // `qwen` and `gemma` aliases name it so, and never matched.
+  const plain = (s: string) => s.replace(/:latest$/, '');
+  for (const candidate of wanted.map(plain)) {
     const [maybeProvider, ...restParts] = candidate.split('/');
     const bare = restParts.join('/');
 
@@ -58,19 +68,28 @@ export async function resolveModel(ref: string): Promise<ResolvedModel> {
       if (bare && provider.id !== maybeProvider) continue;
       const target = bare || candidate;
       const hit =
-        models.find((m) => m.id === candidate) ??
-        models.find((m) => m.name === target) ??
-        models.find((m) => m.id.endsWith(`/${target}`));
+        models.find((m) => plain(m.id) === candidate) ??
+        models.find((m) => plain(m.name) === target) ??
+        models.find((m) => plain(m.id).endsWith(`/${target}`));
       if (hit) return { provider, info: hit };
     }
   }
 
-  if (ref === 'auto' || ref === 'free' || ref === 'local') {
+  const dynamic = ref === 'auto' || ref === 'free' || ref === 'local';
+  if (dynamic) {
+    // A free tier is still priced in the catalog, so `free` alone would pick it.
+    const costsNothing = (m: ModelInfo) => priceOf(m).input === 0 && priceOf(m).output === 0;
     const preferred = ref === 'local' ? reachable.filter((r) => r.provider.id === 'ollama' || r.provider.id === 'lmstudio') : reachable;
     for (const { provider, models } of preferred) {
-      const free = ref === 'free' ? models.find((m) => m.free) : undefined;
-      const chosen = ref === 'free' ? free : models[0];
+      const pool = maxCostUsd === 0 ? models.filter(costsNothing) : models;
+      const chosen = ref === 'free' ? (pool.find((m) => m.free) ?? (maxCostUsd === 0 ? pool[0] : undefined)) : pool[0];
       if (chosen) return { provider, info: chosen };
+    }
+    if (maxCostUsd === 0) {
+      throw new HuskError('E_BUDGET_EXCEEDED', `no reachable ${ref} model costs nothing, and the ceiling is $0`, {
+        hint: 'Raise maxCostUsd, or run `ollama pull qwen2.5:7b` for a model that costs nothing.',
+        details: { maxCostUsd, rejected },
+      });
     }
   }
 

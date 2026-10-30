@@ -3,7 +3,7 @@
 One model surface over every provider Husk speaks to, with routing, fallback and cost
 accounting. No vendor SDKs — the whole package depends on `@husk-ai/core` and `fetch`.
 
-Eleven providers, three wire formats:
+Eleven providers, four wire formats:
 
 | format | providers |
 | --- | --- |
@@ -12,12 +12,13 @@ Eleven providers, three wire formats:
 | OpenAI `chat/completions` | `openai`, `groq`, `openrouter`, `together`, `deepseek`, `mistral`, `cerebras`, `lmstudio` |
 | Ollama `/api/chat` (NDJSON) | `ollama` |
 
-The eight OpenAI-compatible gateways are **configuration**, not code: a base URL, an
+The seven OpenAI-compatible gateways are **configuration**, not code: a base URL, an
 environment variable, a catalog slice and whatever single quirk that gateway has, in
-`src/providers/compatible.ts`. One streaming parser serves all of them. Gemini gets
-its own file because it is genuinely a different format — `contents` not `messages`,
-`model` not `assistant`, function results keyed by name rather than call id, and an
-OpenAPI schema subset that 400s on half of JSON Schema draft-07.
+`src/providers/compatible.ts`. OpenAI itself has `src/providers/openai.ts`, for the
+parameter names its reasoning models want. One streaming parser serves all eight.
+Gemini gets its own file because it is genuinely a different format — `contents` not
+`messages`, `model` not `assistant`, function results keyed by name rather than call id,
+and an OpenAPI schema subset that 400s on half of JSON Schema draft-07.
 
 ## Example
 
@@ -88,4 +89,6 @@ late. `husk models --json` prints the flag. This file is a budgeting aid, not a
 billing source.
 
 Free tiers are marked `free: true`: Groq, Cerebras, Gemini Flash, every OpenRouter
-model whose id ends in `:free`, and everything local.
+model whose id ends in `:free`, and everything local. Groq, Cerebras and Gemini Flash
+keep their paid price as well, so a budget ceiling still counts them; a model the catalog
+does not know has no price and counts as `$0`.

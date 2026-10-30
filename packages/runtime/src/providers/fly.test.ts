@@ -80,7 +80,7 @@ describe('FlyProvider.isAvailable', () => {
     const a = await new FlyProvider({ fetch: fn, env: {} }).isAvailable();
     expect(a.available).toBe(false);
     expect(a.reason).toMatch(/FLY_API_TOKEN/);
-    expect(a.hint).toMatch(/fly auth token/);
+    expect(a.hint).toMatch(/fly tokens create deploy --app/);
     // No token means no request: probing must not leak an unauthenticated call.
     expect(calls).toHaveLength(0);
   });
@@ -105,12 +105,24 @@ describe('FlyProvider.isAvailable', () => {
     expect(calls[0]?.headers.Authorization).toBe('Bearer fo1_secret');
   });
 
+  it('takes HUSK_FLY_TOKEN before FLY_API_TOKEN, as a Husk running on Fly keeps it', async () => {
+    const { fn, calls } = fakeFetch([{ body: { name: 'husk-test', organization: { slug: 'acme' } } }]);
+    await new FlyProvider({ fetch: fn, env: { ...ENV, HUSK_FLY_TOKEN: 'fo1_computers' } }).isAvailable();
+    expect(calls[0]?.headers.Authorization).toBe('Bearer fo1_computers');
+  });
+
+  it('sends a token from `fly tokens create` with the scheme it was printed with', async () => {
+    const { fn, calls } = fakeFetch([{ body: { name: 'husk-test', organization: { slug: 'acme' } } }]);
+    await new FlyProvider({ fetch: fn, env: { ...ENV, HUSK_FLY_TOKEN: 'FlyV1 fm2_deploy' } }).isAvailable();
+    expect(calls[0]?.headers.Authorization).toBe('FlyV1 fm2_deploy');
+  });
+
   it('turns a 401 into "the token is wrong", not "fly is down"', async () => {
     const { fn } = fakeFetch([{ status: 401, body: { error: 'unauthorized' } }]);
     const a = await new FlyProvider({ fetch: fn, env: ENV }).isAvailable();
     expect(a.available).toBe(false);
     expect(a.reason).toMatch(/rejected the token/);
-    expect(a.hint).toMatch(/fly auth token/);
+    expect(a.hint).toMatch(/fly tokens create deploy --app/);
   });
 
   it('turns a 404 into "that app does not exist"', async () => {
@@ -303,7 +315,8 @@ describe('exec', () => {
 
     expect(calls[0]?.url).toBe(`${FLY_API}/apps/husk-test/machines/m1/exec`);
     const body = calls[0]?.body as { command: string[]; timeout: number };
-    expect(body.timeout).toBe(30);
+    // The machine's own timeout is the backstop, after husk's.
+    expect(body.timeout).toBe(45);
     expect(body.command[0]).toBe('/bin/sh');
     expect(body.command[1]).toBe('-c');
     // shellQuote leaves a path that needs no quoting alone.
@@ -357,6 +370,25 @@ describe('exec', () => {
     expect(tag).toBeDefined();
     expect(sent[1]?.command[2]).toContain(`set -- ${tag}`);
     expect(r.stderr).not.toContain(STOP_UNCONFIRMED);
+  });
+
+  it('times a command out at its own deadline, reaped, whatever the machine would answer', async () => {
+    const { computer } = await machine([{ body: {} }]);
+    const sent: Array<{ command: string[] }> = [];
+    // The exec request outlives its deadline; the reap that follows answers at once.
+    (computer as unknown as { cfg: { fetch: unknown } }).cfg.fetch = (async (_url: string, init: RequestInit = {}) => {
+      sent.push(JSON.parse(String(init.body)) as { command: string[] });
+      if (sent.length === 1) {
+        return await new Promise((_resolve, reject) =>
+          init.signal?.addEventListener('abort', () => reject(Object.assign(new Error('timed out'), { name: 'TimeoutError' }))),
+        );
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({ exit_code: 0 }) } as Response;
+    }) as unknown as typeof globalThis.fetch;
+    const r = await computer.exec({ cmd: 'sleep 300', timeoutSec: 1 });
+    expect(r).toMatchObject({ exitCode: 124, timedOut: true });
+    const tag = /HUSK_EXEC=([0-9a-f]{16})/.exec(sent[0]?.command[2] ?? '')?.[1];
+    expect(sent[1]?.command[2]).toContain(`set -- ${tag}`);
   });
 
   it('runs nothing when it was stopped before it started', async () => {

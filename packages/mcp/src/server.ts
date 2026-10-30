@@ -11,7 +11,7 @@ import {
 import type { CallToolResult, ClientCapabilities, Implementation, InputRequiredResult, ServerContext, Tool } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import type { StdioServerHandle } from '@modelcontextprotocol/server/stdio';
-import { HUSK_VERSION, IDENTITY_LABELS, chatClient, chatLabel, createLogger, networkEnforcement, platformName, quiet, redact } from '@husk-ai/core';
+import { HUSK_VERSION, IDENTITY_LABELS, chatClient, chatLabel, createLogger, loadConfig, networkEnforcement, platformName, quiet, redact } from '@husk-ai/core';
 import type { IdentitySource } from '@husk-ai/core';
 import type { Computer, ComputerInfo, ComputerSpec, Logger } from '@husk-ai/core';
 import { ComputerManager, ensureRunning } from '@husk-ai/runtime';
@@ -28,7 +28,7 @@ import type { WorkspaceProfile } from '@husk-ai/server/workspace-viewer';
 import { PROMPTS, getPrompt } from './prompts.js';
 import { HANDED_BACK, HANDOFF_TOOLS, HANDOFF_TOOL_NAMES, MAX_REASON, heldText, relayText } from './handoff-tools.js';
 import { WORKSPACE_TOOLS, WORKSPACE_TOOL_NAMES, WORKSPACE_INSTRUCTIONS, WorkspaceTools } from './workspace-tools.js';
-import { DANGEROUS_TOOLS, approvalText, digestOf, summarize } from './approvals.js';
+import { DANGEROUS_TOOLS, MAX_SHOWN, approvalText, digestOf, exactly, summarize, tooBigText } from './approvals.js';
 import type { RemoteApp } from '@husk-ai/server';
 
 export interface HuskMcpOptions {
@@ -63,8 +63,19 @@ export interface HuskMcpOptions {
    * no computer a chat on this machine made, nor they its. `approve` is the
    * owner's word on a call that changes things (approvals.ts).
    */
-  remote?: { owner: string; platform: string; approve?: RemoteApp['approve']; /** The public URL, for the links its person opens. */ origin?: string };
+  remote?: {
+    owner: string;
+    platform: string;
+    approve?: RemoteApp['approve'];
+    /** The public URL, for the links its person opens. */
+    origin?: string;
+    /** The app, whose sign-out ends the links it was given. */
+    client?: string;
+  };
 }
+
+/** Where a remote chat's links open: the owner's passkey first, since the chat holds the link too. */
+const REMOTE_LINK_PAGE = '/oauth/link';
 
 /**
  * Husk as an MCP server.
@@ -134,6 +145,12 @@ export const JOB_WAIT_TOOL: ToolDef = {
  */
 function envelopeOf(ctx: ServerContext): Record<string, unknown> {
   return (ctx.mcpReq.envelope ?? {}) as Record<string, unknown>;
+}
+
+/** This machine's computer settings, from ~/.husk/config.json: the quota, and what `auto` means. */
+function machineSettings(): { maxComputers: number; provider: string } {
+  const { maxComputers, provider } = loadConfig();
+  return { maxComputers, provider };
 }
 
 /** A call that outlasted its app's wait, still running or not yet collected. */
@@ -232,7 +249,7 @@ export class HuskMcpServer {
   private readonly remote: HuskMcpOptions['remote'];
 
   constructor(opts: HuskMcpOptions = {}) {
-    this.manager = opts.manager ?? new ComputerManager();
+    this.manager = opts.manager ?? new ComputerManager(machineSettings());
     this.namedSession = opts.sessionKey !== undefined || process.env.HUSK_SESSION !== undefined;
     this.sessionKey = opts.sessionKey ?? process.env.HUSK_SESSION ?? `mcp-${randomUUID()}`;
     // Claude Code runs one server process per session and says which, in
@@ -357,9 +374,13 @@ export class HuskMcpServer {
       // Taken from a link, not handed off by the model: only the person's Give back ends it.
       return { isError: true, content: [{ type: 'text', text: refusalText(held) }] };
     }
-    // Remotely, a call that changes things waits for the owner's word, every time.
+    // Remotely, a call that changes things waits for the owner's word, every
+    // time, on a page that shows all of it; one too big to show never runs.
     if (this.remote?.approve && DANGEROUS_TOOLS.has(name)) {
-      const verdict = this.remote.approve(name, summarize(name, toolArgs), digestOf(name, computer.id, toolArgs));
+      // The computer first: an app may have several, and the approval is for this one.
+      const detail = `computer: ${computer.id}\n${exactly(toolArgs)}`;
+      if (detail.length > MAX_SHOWN) return { isError: true, content: [{ type: 'text', text: tooBigText(name, detail.length) }] };
+      const verdict = this.remote.approve({ tool: name, summary: summarize(name, toolArgs), detail, digest: digestOf(name, computer.id, toolArgs) });
       if (!verdict.ok) return { content: [{ type: 'text', text: approvalText(name, verdict, computer.id) }], ...(verdict.state === 'denied' ? { isError: true } : {}) };
     }
 
@@ -784,7 +805,8 @@ export class HuskMcpServer {
     let remote: { handoffId: string; token: string } | undefined;
     if (daemon && computer) {
       try {
-        remote = await daemon.openHandoff(computer.id, reason, computer.info.spec.labels?.[IDENTITY_LABELS.chat]);
+        // A remote chat's person opens it under the public URL, which takes only links minted for its app.
+        remote = await daemon.openHandoff(computer.id, reason, computer.info.spec.labels?.[IDENTITY_LABELS.chat], this.remote?.client);
       } catch (err) {
         if (err instanceof RunLocally) this.localComputers.add(computer.id);
         this.log.warn(`handing off in this process: ${(err as Error).message}`);
@@ -814,7 +836,7 @@ export class HuskMcpServer {
       this.handoffLinks.delete(handoffId);
     });
     const link = remote
-      ? handoffLink(origin, remote.handoffId, remote.token)
+      ? handoffLink(origin, remote.handoffId, remote.token, this.remote ? REMOTE_LINK_PAGE : '/')
       : handoffLink(origin, handoffId, this.tokens.mint(computer ? `computer:${computer.id}` : `handoff:${handoffId}`));
     this.handoffLinks.set(handoffId, link);
 
@@ -941,12 +963,13 @@ export class HuskMcpServer {
     const daemon = this.localComputers.has(computerId) ? undefined : await this.shared();
     if (daemon) {
       try {
-        const token = await daemon.linkToken(computerId);
+        const token = await daemon.linkToken(computerId, this.remote?.client);
         const held = this.handoffs.list().find((h) => h.computerId === computerId);
         const remoteId = held ? this.remoteHandoffs.get(held.handoffId) : undefined;
-        // A remote chat's person is wherever they are: the link is under the public URL.
+        // A remote chat's person is wherever they are: the link is under the public URL, behind their passkey.
         const base = this.remote?.origin ?? daemon.url;
-        return remoteId ? handoffLink(base, remoteId, token) : computerLink(base, computerId, token);
+        const page = this.remote ? REMOTE_LINK_PAGE : '/';
+        return remoteId ? handoffLink(base, remoteId, token, page) : computerLink(base, computerId, token, page);
       } catch (err) {
         // The shared Husk has no such computer: this process's viewer can still open it.
         if (!(err instanceof RunLocally)) throw err;
@@ -1133,9 +1156,10 @@ export class HuskMcpServer {
       getProfile: () => this.profile,
       getCapabilities: async () => {
         const providers = await this.manager.status();
-        const selected = this.spec.provider
-          ? providers.find((p) => p.name === this.spec.provider && p.available)
-          : providers.find((p) => p.available);
+        // What `auto` would give it, asked of the manager: what ~/.husk/config.json
+        // names, and never Fly unasked, which bills per machine.
+        const name = this.spec.provider ?? (await this.manager.resolveProvider('auto').then((p) => p.name, () => undefined));
+        const selected = providers.find((p) => p.name === name && p.available);
         this.confirmedProvider = selected?.name;
         return { providers, selected: selected ?? null };
       },

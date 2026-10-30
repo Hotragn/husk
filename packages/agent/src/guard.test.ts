@@ -21,6 +21,12 @@ describe('evaluateCommand', () => {
     expect(evaluateCommand('git push --force origin main', rules).allowed).toBe(false);
   });
 
+  it('does not let an allowed command carry a denied one chained after it', () => {
+    const rules = { allowCommands: ['^git push --force origin scratch'], denyCommands: ['push\\s+--force'] };
+    expect(evaluateCommand('git push --force origin scratch', rules).allowed).toBe(true);
+    expect(evaluateCommand('git push --force origin scratch && git push --force origin main', rules).allowed).toBe(false);
+  });
+
   it('falls back to a substring test when the pattern is not a valid regex', () => {
     const rules = { allowCommands: [], denyCommands: ['curl http://a(b'] };
     expect(evaluateCommand('curl http://a(b', rules).allowed).toBe(false);

@@ -402,6 +402,82 @@ describe('pullable', () => {
   });
 });
 
+/** A provider whose engine only builds: records each argv and each Dockerfile it is handed. */
+class Builder extends OciProvider {
+  readonly name: ProviderName = 'docker';
+  readonly description = 'builder';
+  readonly priority = 0;
+  readonly argvs: string[][] = [];
+  readonly dockerfiles: string[] = [];
+
+  constructor(
+    private readonly built = new Set<string>(),
+    private readonly fails = '',
+  ) {
+    super(docker);
+  }
+
+  async isAvailable(): Promise<Availability> {
+    return { available: true, isolated: true, isolationKind: 'kernel' };
+  }
+
+  protected override cli(args: string[]) {
+    this.argvs.push(args);
+    const tag = args[args.indexOf('-t') + 1] as string;
+    const settled =
+      args[0] === 'image'
+        ? this.built.has(args[2] as string)
+          ? Promise.resolve({ stdout: '', stderr: '' })
+          : Promise.reject(new Error('no such image'))
+        : this.fails
+          ? Promise.reject(Object.assign(new Error('build failed'), { stderr: this.fails }))
+          : Promise.resolve({ stdout: '', stderr: '' }).then((r) => (this.built.add(tag), r));
+    settled.catch(() => undefined);
+    return Object.assign(settled, { child: { stdin: { end: (text: string) => void this.dockerfiles.push(text) } } }) as unknown as ReturnType<OciProvider['cli']>;
+  }
+
+  bake(image: string, spec: ComputerSpec) {
+    return this.withPackages(image, spec);
+  }
+}
+
+describe('packages, built into an image of the computer’s own', () => {
+  it('builds them FROM the computer’s image, as root, with nothing for context', async () => {
+    const b = new Builder();
+    const tag = await b.bake('debian:bookworm-slim', { packages: ['jq', 'curl'] });
+    expect(tag).toMatch(/^husk-packages:[0-9a-f]{16}$/);
+    expect(b.argvs[1]?.slice(0, 6)).toEqual(['build', '--quiet', '-t', tag, '-f', '-']);
+    expect(b.dockerfiles).toEqual([
+      'FROM debian:bookworm-slim\nUSER root\nRUN set -f; PKGS="curl jq"; apt-get update -qq && apt-get install -y --no-install-recommends $PKGS\n',
+    ]);
+  });
+
+  it('builds a list once, whatever its order, and leaves a computer with none alone', async () => {
+    const b = new Builder();
+    const first = await b.bake('debian:bookworm-slim', { packages: ['jq', 'curl'] });
+    expect(await b.bake('debian:bookworm-slim', { packages: ['curl', 'jq', 'jq'] })).toBe(first);
+    expect(b.dockerfiles).toHaveLength(1);
+    expect(await b.bake('debian:bookworm-slim', {})).toBe('debian:bookworm-slim');
+    expect(await b.bake('python:3.12-slim', { flavor: 'python', packages: ['requests[socks]>=2.32,<3'] })).not.toBe(first);
+  });
+
+  it('refuses a name a shell or a Dockerfile would read as more, before anything runs', async () => {
+    for (const bad of ['jq; rm -rf /', '$(id)', '`id`', 'a b', "it's", 'jq\nRUN id']) {
+      const b = new Builder();
+      await expect(b.bake('debian:bookworm-slim', { packages: [bad] })).rejects.toMatchObject({ code: 'E_SPEC_INVALID' });
+      expect(b.argvs).toEqual([]);
+    }
+  });
+
+  it('says what the build said when it fails, and makes no computer', async () => {
+    const b = new Builder(new Set(), 'Reading package lists...\nE: Unable to locate package nosuchpkg');
+    await expect(b.bake('debian:bookworm-slim', { packages: ['nosuchpkg'] })).rejects.toMatchObject({
+      code: 'E_COMPUTER_FAILED',
+      message: expect.stringContaining('Unable to locate package nosuchpkg'),
+    });
+  });
+});
+
 describe('parseStatsLine', () => {
   it('reads CPU and memory from docker stats output', async () => {
     const { parseStatsLine } = await import('./oci-common.js');

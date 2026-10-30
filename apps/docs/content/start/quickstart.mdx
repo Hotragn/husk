@@ -4,8 +4,10 @@ description: Sixty seconds to a running Linux computer. No account, no API key, 
 order: 2
 ---
 
-This needs Node 20.10 or newer and nothing else. Docker, an API key and an account all
-make Husk better; none of them make it work.
+This is the command-line route. It needs Node 20.10 or newer and nothing else. Docker,
+an API key and an account all make Husk better; none of them make it work. In Claude
+Desktop with no terminal, start with [a workspace](/start/workspaces) instead; neither
+route needs the other.
 
 You are going to do four things: find out what your machine can do, create a computer,
 drive it, and throw it away. If step one tells you something is missing, keep going —
@@ -24,7 +26,7 @@ npx -y @husk-ai/cli doctor
 ```
 
 On a Windows laptop with Docker installed but not running, Ollama up, and no API keys,
-that prints:
+that prints this, with nine of the eleven model rows left out:
 
 <Terminal title="husk doctor">
 {`husk 0.2.0  node 24.14.0 · win32-arm64
@@ -39,25 +41,26 @@ COMPUTERS
       Kernel-level isolation via Podman, rootless and daemonless
       the podman CLI is not on PATH
       fix: install Podman Desktop or \`winget install RedHat.Podman\`, then \`podman machine init\`
-  ✗ ssh      isolated
+  ✗ ssh      isolated from this machine
       A Linux box you already own, reached over ssh. Free if the box is.
       no remote host is configured
       fix: export HUSK_SSH_TARGET=user@host (an Oracle Cloud Always Free ARM instance costs nothing)
   ✗ fly      isolated
       A Fly.io microVM per computer. Real isolation, metered by the second.
-      FLY_API_TOKEN is not set
-      fix: run \`fly auth token\` and export it as FLY_API_TOKEN (fly machines are metered, not free)
+      no fly token is set: HUSK_FLY_TOKEN, or FLY_API_TOKEN
+      fix: make a token for the computers' app alone with \`fly tokens create deploy --app <app>\`, and export it as HUSK_FLY_TOKEN (fly machines are metered, not free)
   ✓ local    not isolated
       A guarded working directory on this machine. Free, always available, not isolated.
       via WSL2 (Ubuntu)
       guarded working directory -- process guardrails, not a sandbox
+      fix: start Docker for kernel-level isolation
 
 MODELS
   ✓ ollama
-      ollama/qwen2.5:1.5b, ollama/qwen2.5:7b, ollama/llama3.2:latest
+      ollama/qwen2.5:7b, ollama/llama3.2:latest, ollama/qwen2.5:1.5b
   ✗ anthropic
       ANTHROPIC_API_KEY is not set
-      fix: Set ANTHROPIC_API_KEY for Claude, or run \`ollama pull gemma3\` for a free local model.
+      fix: Set ANTHROPIC_API_KEY for Claude, or run \`ollama pull qwen2.5:7b\` for a free local model that can call tools.
 
 SELECTION  what husk would use right now
   computer   local  highest-priority available provider (10)
@@ -86,8 +89,8 @@ npx -y @husk-ai/cli up scratch
 
   provider   local — WSL2 (Ubuntu)
   isolation  none — guardrails, not a sandbox. A determined process can escape.
-  privacy    nothing leaves this machine except calls to a model provider you configure
-  state      C:\\Users\\me\\.husk (settings and records; husk rm each computer before deleting it, or the computers' files stay behind)
+  privacy    no product telemetry; tasks can contact configured providers and requested websites
+  state      C:\\Users\\me\\.husk (settings and records; \`husk rm\` each computer before deleting it, or the computers' files stay behind)
   next       husk exec scratch -- uname -sr
 
 creating scratch...
@@ -97,8 +100,9 @@ warn  [runtime] using the local provider: guarded working directory -- process g
   id         cmp_5j8svxeqer9p
   provider   local  (WSL2 (Ubuntu))
   isolation  guardrails only — not a sandbox
+  image      local:wsl
   workdir    /work
-  network    egress
+  network    full (internal addresses refused)
 
   Try it:
   $ husk exec scratch -- uname -sr
@@ -141,9 +145,9 @@ husk rm scratch --yes
 ```
 
 <Danger>
-`husk rm` destroys the machine and its filesystem. There is no undo and no snapshot
-taken on your behalf. Without `--yes` it asks first; with `--json` set it does not ask,
-because there is nobody at the terminal to answer.
+`husk rm scratch` destroys the machine and its filesystem. There is no undo and no
+snapshot taken on your behalf. Without `--yes` it asks first, and in a script it refuses rather
+than guess.
 </Danger>
 
 ## Then: a whole agent, for zero dollars
@@ -197,11 +201,13 @@ same file in one turn, and the read lost the race. A larger model sequences the 
 turns; a small one does not. [The agent loop](/chat-to-bot/running#the-loop) covers the
 concurrency rule.
 
-The run cost nothing, and the footer says `free` rather than `$0.0000`, because the
-router knows a local model has no price.
+The run cost nothing, and the footer says `free` rather than `$0.0000`: it does whenever
+the run's counted cost is zero, as a local model's is.
 
 ## Next
 
 - [Install](/start/install) — global install, the `npx` path, and what lands on disk.
 - [`husk doctor`](/start/doctor) — every line of that report.
 - [MCP](/mcp) — the one line that gives Claude Code the same machine.
+- [`husk setup`](/reference/cli#husk-setup) — connects every chat app on this machine at
+  once, and [`husk onboard`](/reference/cli#husk-onboard) walks the whole setup in five steps.
