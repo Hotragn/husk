@@ -68,6 +68,17 @@ describe('redact', () => {
     expect(out).toContain('done');
   });
 
+  it.each([
+    ['PGP armour', 'PGP PRIVATE KEY BLOCK'],
+    ['an encrypted PKCS#8 key', 'ENCRYPTED PRIVATE KEY'],
+    ['a DSA key', 'DSA PRIVATE KEY'],
+    ['an untyped PKCS#8 key', 'PRIVATE KEY'],
+  ])('leaves %s out too', (_label, kind) => {
+    const out = redact(`-----BEGIN ${kind}-----\n${body(64, 'Q')}\n-----END ${kind}-----`);
+    expect(out).not.toContain(body(64, 'Q'));
+    expect(out).toBe('[redacted private key]');
+  });
+
   it('keeps enough of a key to tell two of them apart', () => {
     // An operator debugging "which key did it use" needs the prefix; the point
     // is to make the secret unusable, not to make the log useless.

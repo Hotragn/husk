@@ -1,4 +1,6 @@
-import { DEFAULT_CONFIG, createLogger } from '@husk-ai/core';
+import { createAdapter } from '@husk-ai/adapters';
+import type { Adapter, SlackAdapterOptions, TelegramAdapterOptions } from '@husk-ai/adapters';
+import { DEFAULT_CONFIG, createLogger, loadConfig } from '@husk-ai/core';
 import type {
   Availability,
   ChatRequest,
@@ -21,6 +23,7 @@ import type {
 } from '@husk-ai/core';
 import { Store } from './store.js';
 import { huskError } from './errors.js';
+import type { RemoteMcp } from './remote/routes.js';
 
 /**
  * The computer surface the server actually uses.
@@ -35,7 +38,8 @@ export interface ManagerLike {
   create(spec?: ComputerSpec): Promise<Computer>;
   get(id: string): Promise<Computer | null>;
   list(): Promise<ComputerInfo[]>;
-  destroy(id: string): Promise<boolean>;
+  /** `erase`: what it keeps for its chat or bot goes too (Computer.destroy). */
+  destroy(id: string, opts?: { erase?: boolean }): Promise<boolean>;
   ensure?(key: string, spec?: ComputerSpec): Promise<Computer>;
   reap?(): Promise<string[]>;
   startReaper?(intervalMs?: number): void;
@@ -101,7 +105,8 @@ export const lazyAgentFactory: AgentFactory = async (init) => {
       cause: err,
     });
   }
-  const Ctor = mod['Agent'] as (new (init: AgentInit) => AgentLike) | undefined;
+  // The person's own Claude Code or Codex, or Husk's own loop.
+  const Ctor = mod[init.spec.engine.type === 'builtin' ? 'Agent' : 'CliAgent'] as (new (init: AgentInit) => AgentLike) | undefined;
   if (typeof Ctor !== 'function') {
     throw huskError('E_NOT_IMPLEMENTED', '@husk-ai/agent does not export an Agent class', {
       hint: 'expected `new Agent({ spec, router, computers, tools })` with run() and stream()',
@@ -137,7 +142,28 @@ export interface ServerDeps {
   config?: Partial<ServerConfig>;
   /** Injected for deterministic tests. */
   now?: () => number;
+  /** Builds the chat adapters behind discord, slack and telegram triggers. Injected in tests. */
+  createAdapter?: AdapterFactory;
+  /** Runs one chat tool on a computer: `@husk-ai/mcp`'s tools. Without it, the tool route answers 501. */
+  runTool?: ToolRunner;
+  /** Serves `/mcp` to a signed-in app when remote access is on: `@husk-ai/mcp`'s `createRemoteMcp`. */
+  remoteMcp?: RemoteMcp;
+  /** Whose chat apps the Connect page reads and edits. The real home unless a test says otherwise. */
+  chatAppsHome?: string;
+  /** Where holds outlive a restart: the machine's one Husk keeps them in ~/.husk/holds.json. */
+  holdsFile?: string;
 }
+
+/** The MCP result shape: content parts, and whether the tool failed. */
+export interface ToolRunResult {
+  content: Array<{ type: string; [k: string]: unknown }>;
+  isError?: boolean;
+}
+/** Runs one chat tool. `signal` aborts when the chat cancels the call or goes away; the tool stops its work. */
+export type ToolRunner = (computer: Computer, name: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<ToolRunResult>;
+
+
+export type AdapterFactory = (kind: string, options?: TelegramAdapterOptions & SlackAdapterOptions) => Adapter | undefined;
 
 export interface ResolvedDeps extends Required<Pick<ServerDeps, 'manager' | 'router' | 'store'>> {
   modelProviders: ModelProvider[];
@@ -146,6 +172,11 @@ export interface ResolvedDeps extends Required<Pick<ServerDeps, 'manager' | 'rou
   config: ServerConfig;
   now: () => number;
   startedAt: number;
+  createAdapter: AdapterFactory;
+  runTool?: ToolRunner;
+  remoteMcp?: RemoteMcp;
+  chatAppsHome?: string;
+  holdsFile?: string;
 }
 
 export function resolveConfig(partial: Partial<ServerConfig> = {}): ServerConfig {
@@ -155,7 +186,7 @@ export function resolveConfig(partial: Partial<ServerConfig> = {}): ServerConfig
     host: partial.host ?? env['HUSK_HOST'] ?? DEFAULT_CONFIG.host,
     port: Number.isFinite(port) ? port : DEFAULT_CONFIG.port,
     token: partial.token ?? (env['HUSK_TOKEN'] || undefined),
-    maxComputers: partial.maxComputers ?? DEFAULT_CONFIG.maxComputers,
+    maxComputers: partial.maxComputers ?? loadConfig().maxComputers,
     consoleDir: partial.consoleDir,
     corsOrigins: partial.corsOrigins ?? false,
     triggers: partial.triggers ?? true,
@@ -176,6 +207,11 @@ export function resolveDeps(deps: ServerDeps): ResolvedDeps {
     config: resolveConfig(deps.config),
     now: deps.now ?? Date.now,
     startedAt: (deps.now ?? Date.now)(),
+    createAdapter: deps.createAdapter ?? createAdapter,
+    ...(deps.runTool ? { runTool: deps.runTool } : {}),
+    ...(deps.remoteMcp ? { remoteMcp: deps.remoteMcp } : {}),
+    ...(deps.chatAppsHome ? { chatAppsHome: deps.chatAppsHome } : {}),
+    ...(deps.holdsFile ? { holdsFile: deps.holdsFile } : {}),
   };
 }
 

@@ -154,6 +154,15 @@ async function pickProvider(
 
   try {
     const resolved = await resolveModel(requested ?? 'auto');
+    // Small local models rarely return extraction JSON that validates, and a long
+    // transcript then costs minutes for the free result (#121). Say so first.
+    const params = resolved.info.parameterCount;
+    if (params && params < 3_000_000_000) {
+      ui.warn(
+        `${resolved.info.id} is a ${(params / 1e9).toFixed(1)}B model, which rarely produces valid extraction JSON -- ` +
+          'pass --no-model for the free path in seconds, or --model a larger one',
+      );
+    }
     return { provider: pinned(resolved), modelId: resolved.info.id, why: 'model-backed' };
   } catch (err) {
     const reason = (err as Error).message;

@@ -29,7 +29,7 @@ import type {
   Transcript,
   TranscriptSource,
   Usage,
-} from '@husk-ai/core';
+} from '@husk-ai/core/contracts';
 
 // -- health and capability ---------------------------------------------------
 
@@ -37,6 +37,8 @@ import type {
 export interface HealthReport {
   ok: boolean;
   version: string;
+  /** The wire version two Husks must share for one to use the other. */
+  protocol: number;
   uptimeSec: number;
 }
 
@@ -134,6 +136,8 @@ export interface HuskSummary {
   displayName: string;
   description: string;
   model: string;
+  /** What runs it: `builtin`, or the person's own `claude-code` or `codex`. */
+  engine: string;
   version: string;
   tools: string[];
   triggers: string[];
@@ -264,6 +268,8 @@ export interface ImportRequestBody {
   path?: string;
   content?: string;
   source?: TranscriptSource;
+  /** From a file of many chats, the id of the one to import, as its `choices` list it. */
+  pick?: string;
 }
 
 export interface ImportResponse {
@@ -276,12 +282,22 @@ export interface DistillRequestBody {
   /** Spend a model call on the distillation. Off by default: the heuristic is free. */
   useModel?: boolean;
   model?: string;
+  /** What the bot runs on. One not in the answer's `engines` gets the first of them. */
+  engine?: BotEngine;
 }
 
+/** What a bot made from a chat runs on: the person's Claude Code or Codex, or Husk's own engine. */
+export type BotEngine = 'claude-code' | 'codex' | 'builtin';
+
 export interface DistillResponse {
+  transcriptId: string;
   distilled: DistilledAgent;
   spec: HuskSpec;
   yaml: string;
+  /** What a bot from this chat can run on, best first. */
+  engines: BotEngine[];
+  /** Whether a `claude-code` bot goes on with this very chat rather than starting a new one. */
+  continues: boolean;
 }
 
 /** `POST /v1/sessions/distill/stream`. Progress frames, then exactly one `done`. */

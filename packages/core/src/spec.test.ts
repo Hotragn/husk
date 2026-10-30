@@ -1,20 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { defaultSpec, parseSpec, safeParseSpec, TriggerSchema } from './spec.js';
+import { defaultSpec, parseSpec } from './spec.js';
 
 describe('runtime trigger validation', () => {
-  it.each(['discord', 'slack', 'telegram'])('rejects the unwired %s trigger with an actionable error', (type) => {
-    expect(() => parseSpec({ name: 'bot', triggers: [{ type }] })).toThrow(/not wired into the Husk server/);
-    const result = safeParseSpec({ name: 'bot', triggers: [{ type }] });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.issues[0]).toContain('triggers.0.type');
-    // Standalone adapter consumers may still describe their own binding.
-    expect(TriggerSchema.safeParse({ type }).success).toBe(true);
-  });
-
   it('accepts every trigger the runtime mounts', () => {
     expect(() => parseSpec({ name: 'bot', triggers: [
       { type: 'cli' }, { type: 'http' }, { type: 'webhook', path: '/hook' },
       { type: 'cron', schedule: '0 * * * *', prompt: 'check' },
+      { type: 'discord' }, { type: 'slack' }, { type: 'telegram', allowlist: ['alice'] },
     ] })).not.toThrow();
   });
 });
@@ -54,5 +46,34 @@ describe('ComputerConfigSchema: user and labels', () => {
     const spec = defaultSpec('plain');
     expect(spec.computer).not.toHaveProperty('labels');
     expect(spec.computer).not.toHaveProperty('user');
+  });
+});
+
+describe("a husk run on the person's own CLI", () => {
+  const issues = (input: Record<string, unknown>): string[] => {
+    try {
+      parseSpec({ name: 'nightly', ...input });
+      return [];
+    } catch (err) {
+      return ((err as { details?: { issues?: string[] } }).details?.issues ?? []) as string[];
+    }
+  };
+
+  it('defaults to the builtin engine', () => {
+    expect(parseSpec({ name: 'nightly' }).engine).toEqual({ type: 'builtin' });
+  });
+
+  it('continues a Claude Code chat by its session id, and only Claude Code', () => {
+    const id = '4f1c2a9e-0b1d-4c3e-9a8f-1234567890ab';
+    expect(parseSpec({ name: 'nightly', engine: { type: 'claude-code', resume: id } }).engine.resume).toBe(id);
+    expect(issues({ engine: { type: 'codex', resume: id } })).toEqual([expect.stringContaining('engine.resume: resume continues a Claude Code chat')]);
+    expect(issues({ engine: { type: 'claude-code', resume: '../../etc' } })).toEqual([expect.stringContaining('engine.resume')]);
+  });
+
+  it('refuses, when the husk is saved, what a CLI engine cannot keep', () => {
+    expect(issues({ engine: { type: 'claude-code' }, guardrails: { approvalMode: 'ask' } })).toEqual([expect.stringContaining('without asking')]);
+    expect(issues({ engine: { type: 'codex' }, guardrails: { denyCommands: ['rm'] } })).toEqual([expect.stringContaining('denyCommands')]);
+    expect(issues({ engine: { type: 'codex' }, computer: { network: { mode: 'egress', allow: ['example.com'] } } })).toEqual([expect.stringContaining('allow or deny lists')]);
+    expect(issues({ guardrails: { approvalMode: 'ask', denyCommands: ['rm'] } })).toEqual([]);
   });
 });

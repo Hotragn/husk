@@ -71,11 +71,12 @@ function identical(source, copy) {
 }
 
 /* -----------------------------------------------------------------------------
-   The design system. `brand/tokens.css` is the source; each app ships a copy
-   because a Next app cannot import a stylesheet from outside its own tree.
+   The design system. `brand/tokens.css` is the source; each site ships a copy
+   because a Next app cannot import a stylesheet from outside its own tree. The
+   console is not a copy: it has its own tuning under the same token names,
+   checked for contrast by its own contrast.test.ts.
 -------------------------------------------------------------------------------- */
 for (const copy of [
-  'apps/console/src/styles/tokens.css',
   'apps/docs/src/styles/tokens.css',
   'apps/web/src/styles/tokens.css',
 ]) {
@@ -185,6 +186,27 @@ if (!SITES_ONLY) {
   // docs/API.md is the control-plane contract, not a website: the example
   // payload has to show the version the server actually returns.
   contains("docs/API.md", `"version": "${VERSION}"`, bump);
+  // The MCP registry's manifest names the release twice, the server and its npm
+  // package, and sat at 0.1.4 a release after the packages moved on.
+  {
+    const manifest = JSON.parse(read('server.json'));
+    const label = `server.json is on ${VERSION}, and so is its npm package`;
+    const stale = [manifest.version, ...(manifest.packages ?? []).map((p) => p.version)].filter((v) => v !== VERSION);
+    if (stale.length) failures.push({ label, hint: `found ${stale.join(', ')}; ${bump}` });
+    else passes.push(label);
+  }
+  contains('plugins/husk/.claude-plugin/plugin.json', `"version": "${VERSION}"`, bump);
+
+  // The CHANGELOG has one heading per release. A scripted merge once pasted the
+  // file's own head into an entry, a second [Unreleased] and all, and every
+  // check passed, since none read it.
+  {
+    const headings = [...read('CHANGELOG.md').matchAll(/^## \[([^\]]+)\]/gm)].map((m) => m[1]);
+    const twice = headings.filter((h, i) => headings.indexOf(h) !== i);
+    const label = 'CHANGELOG.md has each release heading once, [Unreleased] first';
+    if (twice.length || headings[0] !== 'Unreleased') failures.push({ label, hint: `found ${headings.join(', ')}; a heading is there twice or [Unreleased] is not first` });
+    else passes.push(label);
+  }
 
   /* ---------------------------------------------------------------------------
      Every internal pin, in every dependency group.
@@ -205,6 +227,38 @@ if (!SITES_ONLY) {
      `dependencies` alone would have missed all three. The group is part of what
      has to be checked, not part of what is trusted.
   --------------------------------------------------------------------------- */
+  /* ---------------------------------------------------------------------------
+     The tool counts. The README said "23 computer tools" and "thirteen
+     `browser_*`" for two releases after there were 26 and fifteen, because a
+     count in prose has nothing to be checked against. These are counted from
+     the definitions themselves, the way the model sees them.
+  --------------------------------------------------------------------------- */
+  const TOOLS = toolCounts();
+  const toolHint = (doc) => `the code defines ${TOOLS.computer} computer tools (${TOOLS.browser} browser_*) and ${TOOLS.workspace} workspace tools; update ${doc}`;
+  contains('README.md', `${words(TOOLS.workspace)} workspace tools plus ${TOOLS.computer} computer tools`, toolHint('README.md'));
+  contains('README.md', `${words(TOOLS.browser)}\n\`browser_*\` tools`, toolHint('README.md'));
+  contains('packages/mcp/README.md', `lists these ${TOOLS.computer} tools plus ${words(TOOLS.workspace)} workspace tools`, toolHint('packages/mcp/README.md'));
+  contains('packages/mcp/README.md', `${words(TOOLS.browser)} tools that drive a real Chromium`, toolHint('packages/mcp/README.md'));
+  contains('apps/desktop/README.md', `then ${TOOLS.computer + TOOLS.workspace} tools listed`, toolHint('apps/desktop/README.md'));
+
+  /* ---------------------------------------------------------------------------
+     The copy-paste setup lines. `@latest` meant 0.1.4 for a while, whose
+     `setup` was the old onboard and rejected every flag the line passed (F-21).
+     A range names the release the line documents, and each flag it uses must be
+     one setup parses.
+  --------------------------------------------------------------------------- */
+  const RANGE = `~${VERSION.split('.').slice(0, 2).join('.')}`;
+  const SETUP_LINE = `npx -y @husk-ai/cli@${RANGE} setup`;
+  const rangeHint = `the copy-paste setup line names @husk-ai/cli@${RANGE}, the release it documents`;
+  contains('README.md', SETUP_LINE, rangeHint);
+  contains('apps/console/src/panels/setupPrompt.ts', SETUP_LINE, rangeHint);
+  const setupSource = read('packages/cli/src/commands/setup.ts');
+  for (const flag of new Set([...read('README.md').matchAll(/@husk-ai\/cli@\S+ setup((?: --[a-z-]+(?: [a-z-]+)?)+)/g)].flatMap((m) => [...m[1].matchAll(/--([a-z-]+)/g)].map((f) => f[1])))) {
+    const label = `README's setup line uses --${flag}, which setup parses`;
+    if (setupSource.includes(`${flag}: { type:`) || setupSource.includes(`'${flag}': { type:`)) passes.push(label);
+    else failures.push({ label, hint: `packages/cli/src/commands/setup.ts has no --${flag}; fix the README's line` });
+  }
+
   const GROUPS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
   for (const dir of readdirSync(join(ROOT, 'packages'))) {
     const rel = `packages/${dir}/package.json`;
@@ -280,6 +334,35 @@ if (SITES_ONLY) {
     `HUSK_VERSION = '${VERSION}'`,
     `package.json is on ${VERSION}; the docs must not describe an older one`,
   );
+
+  contains(
+    'apps/web/src/lib/content.ts',
+    `BROWSER_TOOL_COUNT = ${toolCounts().browser};`,
+    'the site counts the browser tools packages/mcp/src/browser-tools.ts defines',
+  );
+}
+
+/**
+ * Tools as `packages/mcp` defines them, counted from source: this check runs
+ * without a build. Machine tools are the top-level entries of `tools.ts`, browser
+ * tools the `browser_*` names in `browser-tools.ts`, plus the two hand-off tools
+ * and `computer_open_ui`. The card's two app-only tools are not counted: only
+ * apps that render the card see them.
+ */
+function toolCounts() {
+  const names = (file, re) => new Set([...read(file).matchAll(re)].map((m) => m[1]));
+  const machine = names('packages/mcp/src/tools.ts', /^ {4}name: '([a-z_]+)',$/gm).size;
+  const browser = names('packages/mcp/src/browser-tools.ts', /name: '(browser_[a-z_]+)'/g).size;
+  const handoff = names('packages/mcp/src/handoff-tools.ts', /^ {4}name: '(hand_off[a-z_]*)',$/gm).size;
+  const openUi = read('packages/mcp/src/card.ts').includes("name: 'computer_open_ui'") ? 1 : 0;
+  const workspace = names('packages/mcp/src/workspace-tools.ts', /^\s*tool\('([a-z_]+)'/gm).size;
+  return { browser, workspace, computer: machine + browser + handoff + openUi };
+}
+
+/** Small counts as the prose writes them. */
+function words(n) {
+  const w = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
+  return w[n] ?? String(n);
 }
 
 /* ---------------------------------------------------------------------------- */

@@ -1,17 +1,20 @@
 import { existsSync } from 'node:fs';
 import { ENV_KEYS, HUSK_VERSION, mapLimit, paths } from '@husk-ai/core';
+import { compareModelPreference } from '@husk-ai/models';
 import type { FastifyInstance } from 'fastify';
 import { ctxOf } from '../context.js';
-import { findOrphanedWorkspaces } from '@husk-ai/runtime';
+import { findOrphanedWorkspaces, leftOutOfAuto } from '@husk-ai/runtime';
 
 /**
  * `GET /v1/doctor`.
  *
- * The wire shape is identical to what `husk doctor --json` prints and to
- * `DoctorReport` in `@husk-ai/sdk`. It diverged once -- the server answered
- * `selected` while the SDK read `selection` -- which meant the console rendered
- * an empty selection against a server that was reporting one correctly. One
- * shape, three consumers, no translation layer.
+ * The wire shape is `DoctorReport` in `@husk-ai/sdk`, the same fields `husk
+ * doctor --json` prints. It diverged once -- the server answered `selected`
+ * while the SDK read `selection` -- which meant the console rendered an empty
+ * selection against a server that was reporting one correctly. The values are
+ * the server's own: its warnings, at most twelve models a provider, and a
+ * selection that does not read `~/.husk/config.json` (start/doctor.mdx says how
+ * they differ from the CLI's).
  */
 export interface DoctorProvider {
   name: string;
@@ -111,7 +114,9 @@ export async function doctorRoutes(app: FastifyInstance): Promise<void> {
           if (a.available) {
             // Only ask a reachable provider for its catalogue; listing against a
             // dead endpoint turns doctor into a pile of timeouts.
-            base.models = (await p.listModels().catch(() => [])).map((m) => m.id).slice(0, 12);
+            // Best first, as `husk doctor` and the router order them, so the
+            // selection below is the model husk would actually use (#121).
+            base.models = (await p.listModels().catch(() => [])).sort(compareModelPreference).map((m) => m.id).slice(0, 12);
           }
           return base;
         } catch (err) {
@@ -137,7 +142,8 @@ export async function doctorRoutes(app: FastifyInstance): Promise<void> {
       return out;
     });
 
-    const firstProvider = providers.find((p) => p.available);
+    // What `auto` would pick: never a paid provider unless opted in.
+    const firstProvider = providers.find((p) => p.available && !leftOutOfAuto(p.name));
     const firstModelProvider = models.find((m) => m.available && m.models.length > 0) ?? models.find((m) => m.available);
     const firstModel = firstModelProvider?.models[0] ?? null;
 
@@ -190,7 +196,7 @@ export async function doctorRoutes(app: FastifyInstance): Promise<void> {
         isolated: firstProvider?.isolated ?? null,
         model: firstModel,
         modelReason: firstModel
-          ? `first reachable model on ${firstModelProvider?.displayName ?? 'the selected provider'}`
+          ? `preferred available model on ${firstModelProvider?.displayName ?? 'the selected provider'} (capabilities, catalog quality, and local size tier)`
           : 'no model provider is reachable',
       },
       warnings,

@@ -17,6 +17,18 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./daemon": {
+      "types": "./dist/daemon.d.ts",
+      "import": "./dist/daemon.js"
+    },
+    "./tools": {
+      "types": "./dist/tools.d.ts",
+      "import": "./dist/tools.js"
+    },
+    "./remote": {
+      "types": "./dist/remote.d.ts",
+      "import": "./dist/remote.js"
     }
   },
   "files": [
@@ -34,7 +46,7 @@
     "@husk-ai/runtime": "0.2.0",
     "@husk-ai/server": "0.2.0",
     "@husk-ai/workspaces": "0.2.0",
-    "@modelcontextprotocol/sdk": "^1.30.0"
+    "@modelcontextprotocol/server": "^2.4.0"
   },
   "bin": {
     "husk-mcp": "./dist/bin.js"
@@ -48,5 +60,9 @@
   ],
   "engines": {
     "node": ">=20.10"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
+    "jsdom": "^25.0.1"
   }
 }

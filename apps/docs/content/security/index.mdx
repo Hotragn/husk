@@ -46,7 +46,7 @@ husk doctor
       no remote host is configured
   ✗ fly      isolated
       A Fly.io microVM per computer. Real isolation, metered by the second.
-      FLY_API_TOKEN is not set
+      no fly token is set: HUSK_FLY_TOKEN, or FLY_API_TOKEN
   ✓ local    not isolated
       A guarded working directory on this machine. Free, always available, not isolated.
       via WSL2 (Ubuntu)
@@ -76,11 +76,11 @@ providers actually guarantees.
 | Control | Scope | Page |
 | --- | --- | --- |
 | Kernel isolation | `docker`, `podman`, `fly` | [Isolation](/security/isolation) |
-| Path jail | Filesystem **API** on every provider | [Isolation](/security/isolation#the-path-jail) |
+| Path jail | Filesystem **API** on `local` and `ssh`; on the others the container is the boundary | [Isolation](/security/isolation#the-path-jail) |
 | Command deny list | Every provider, every exec | [Isolation](/security/isolation#the-command-deny-list) |
-| Environment scrub | Every provider, every exec | [Secrets](/security/secrets) |
+| Environment scrub | `local`, every exec; the other providers never pass this machine's environment in | [Secrets](/security/secrets) |
 | Output redaction | Every tool result, before the model sees it | [Secrets](/security/secrets#redaction) |
-| Network policy | `fetch_url` and `http_request`; `none` also at the kernel on containers | [Network](/security/network) |
+| Network policy | Husk's own tools and the browser's page loads; `none` also at the kernel on Docker and Podman | [Network](/security/network) |
 | Internal-host floor | Every mode, including `full` | [Network](/security/network#the-floor) |
 | Approvals | `dangerous` tools | [Approvals](/security/approvals) |
 | Output caps | Every exec and every tool result | [Isolation](/security/isolation#output-caps) |
@@ -111,9 +111,9 @@ surprise that turns into a security incident.
 - **No product telemetry in the installed runtime.** Task requests can contact
   public sources, configured model or search providers, computer providers, and
   image registries. Tool results are shared with the connected AI host. The
-  hosted website and docs use Cloudflare Web Analytics.
-- **No credential storage.** Keys are read from the process environment. No command
-  writes one to `~/.husk`.
+  hosted website and docs use PostHog analytics.
+- **No credential storage.** Keys are read from the process environment, or from a
+  `~/.husk/.env` you write. No command writes one to `~/.husk`.
 - **No remote execution by default.** `husk serve` binds `127.0.0.1`, and it **refuses to
   start** on a non-loopback address without `HUSK_TOKEN`:
 
@@ -138,10 +138,10 @@ explains it.
 - The path jail covers the **filesystem API**, not shell commands. On `local`, a command
   run through `shell` or `husk exec` sees the whole filesystem your user can see.
   [Details](/security/isolation#what-the-path-jail-does-not-cover).
-- `network.mode: egress` is enforced in the **tools**, not by a firewall. `curl` run
-  through `shell` is not filtered. [Details](/security/network#where-each-mode-is-enforced).
-- The internal-host floor matches on the hostname string, so DNS rebinding and
-  alternative IP encodings pass. [Details](/security/network#what-the-floor-does-not-catch).
+- `network.mode: egress` is enforced in Husk's **tools** and the browser, not by a
+  firewall. `curl` run through `shell` is not filtered. [Details](/security/network#where-each-mode-is-enforced).
+- The internal-host floor reads the host as written, without resolving it, so DNS
+  rebinding passes. [Details](/security/network#what-the-floor-does-not-catch).
 - Redaction is a pattern list. A credential in a format it does not know reaches the
   model. [Details](/security/secrets#what-redaction-misses).
 - An HTTP trigger's `auth` field is stored and never checked.

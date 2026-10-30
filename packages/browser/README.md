@@ -17,15 +17,17 @@ govern.
 loopback, and the answer to that is not to widen the bind address — an
 unauthenticated CDP port is a remote-code-execution primitive. So husk does not
 connect to the browser from the host, and does not publish the port: it runs a
-small Python CDP client *in the computer* and reads one JSON object back off
-stdout. Nothing here calls `exposePort`, and `--remote-debugging-address` does
-not appear anywhere in this package.
+small Python CDP client *in the computer* and reads JSON back off its stdout.
+Nothing here calls `exposePort`, and `--remote-debugging-address` does not
+appear anywhere in this package.
 
-A round trip is one process start plus one websocket handshake — about 165 ms on
-the `local` provider on WSL2, of which roughly 145 ms is that provider's own
-cost of starting any process at all. Each `Page` method is one driver invocation
-wherever the CDP sequence allows it, which is the lever if that ever stops being
-fast enough.
+Where the provider can hold a process's stdin open (`Computer.spawn`: Docker,
+Podman, `local`), one driver lives as long as the browser and keeps one
+websocket to it, so a command costs its CDP round trips and nothing else, and
+the live screen is Chrome's own screencast pushed through it. Elsewhere each
+request is one process start plus one websocket handshake — about 165 ms on
+WSL2. Either way a request is a list of steps, and `Page.actions` (the
+`browser_run` tool) makes several whole page actions one request.
 
 ## Example
 
@@ -67,26 +69,48 @@ await browser.close();
   `chrome-linux/headless_shell` — a different directory *and* a different binary
   name. That mapping is the thing most likely to rot silently, so it is data
   with a unit test rather than an `if` in the install path.
-- **`driver.py`** — the CDP client, executed **inside the computer**. One
-  process per command: connect to Chromium on the machine's own loopback, run a
-  short list of steps, print one JSON object, exit. It needs nothing but
-  `python3`, which every flavour has.
-- **`cdp.ts`** — the transport. Runs `driver.py` through `Computer.exec` and
-  turns its JSON into results or a `HuskError`, keeping apart the failures that
-  need different fixes: the browser is not listening, it died holding your
-  command, the page never answered, Chromium refused the command, the driver
-  could not run at all.
+- **`driver.py`** — the CDP client, executed **inside the computer**, talking
+  to Chromium on the machine's own loopback. `--serve` keeps it running and
+  answers newline-delimited requests by id, and pushes screencast frames acked
+  no faster than the viewer's rate; without it, one request in, one answer out,
+  exit. It needs `python3`, and starting Chromium needs `curl` to poll its debug
+  port: the `python` and `full` flavours have both, and `base` has neither.
+- **`cdp.ts`** — the transport. Holds one `driver.py --serve` per browser, falls
+  back to one `Computer.exec` per request where it cannot, and turns the JSON
+  into results or a `HuskError`, keeping apart the failures that need different
+  fixes: the browser is not listening, it died holding your command, the page
+  never answered, Chromium refused the command, the driver could not run at all.
 - **`page.ts`** — `goto`, `snapshot`, `click`, `type`, `press`, `screenshot`,
-  `evaluate`, `content`, `text`, `waitForLoad`.
+  `evaluate`, `content`, `text`, `waitForLoad`, `actions` for several at once,
+  and `script` for a model's Python that decides as it goes. The script runs in
+  its own process inside the computer and is stopped at its limit (at most
+  600 s). The stop kills its process group, plus every process that still
+  carries its tag in the environment, which catches a grandchild that called
+  `setsid`; one that also scrubs its environment escapes, as a process
+  started from `shell` would. Printed output, `result` and the error are each
+  capped. Every `page.goto` it makes is checked by the host's network policy
+  before Chromium moves, and every document a click, a `fill(submit=True)`, a
+  redirect or a page script loads is paused and checked by the driver, as a
+  `browser_click`'s are: each `page.*` call runs as the driver's own action. A
+  click's `dialog: "accept"` holds for that click alone. But a script, like
+  `shell`, runs in the computer, where it can reach Chromium's raw CDP port on
+  127.0.0.1 itself and go round the driver. The computer, not the check, is
+  the boundary.
 - **`session.ts`** — one browser per computer, launched lazily and closed after
   five idle minutes, because a resident Chromium is a few hundred megabytes of
   RSS and a machine with four of them gets OOM-killed. The user-data-dir is
-  persisted, so a login survives the relaunch.
+  persisted, so a login survives the relaunch. A Chromium that dies is started
+  again: the call that finds it gone fails, saying so, and the next one gets a
+  new browser, after whatever was left of the old one is killed. A launch that
+  fails once Chromium is up kills that Chromium too, so none is left behind.
 
 ## Refs, not coordinates
 
-`snapshot()` flattens `Accessibility.getFullAXTree` into
-`{ ref, role, name, value }`. A `ref` of `e42` is Chromium's backend node id, so
+`snapshot()` turns `Accessibility.getFullAXTree` into a compact tree of
+`{ ref, role, name, value, depth }`, by the rules credited in
+`THIRD_PARTY_NOTICES.md`: blank text and empty containers
+go, a container with one child becomes that child, and groups, refs, order and
+frame boundaries stay. A `ref` of `e42` is Chromium's backend node id, so
 it identifies the same element across snapshots for as long as the element is in
 the document. There is deliberately no `click(x, y)`: a model that infers a
 pixel from a screenshot will eventually click the wrong thing, and the wrong
@@ -95,20 +119,107 @@ thing is sometimes "Delete account".
 Nodes with no DOM element get an `a`-prefixed ref, and `click` refuses those
 explicitly rather than resolving them to something nearby.
 
+A ref acts only on the document whose snapshot showed it. Once the page loads
+another, the same id can name a different element, so an earlier page's ref is
+refused, saying so, rather than resolved to whatever has its id now. The driver
+remembers which document each ref it handed out came from, and the host remembers
+too and says so with each action, for a driver that keeps nothing between requests.
+A role and a name are found afresh on the page as it is. `type` and `select` act
+on the field itself, never on `document.activeElement`, which inside a frame is
+the frame.
+
+## Frames
+
+A snapshot reads every frame on the page and puts its tree under its `<iframe>`.
+Chromium runs a cross-site frame in a process of its own, which the page's own
+session cannot see into, so the driver attaches to each such frame and reads it
+through its own session. That matters: consent banners, card fields and embedded
+sign-ins are routinely cross-origin.
+
+A frame's refs name the frame: `f2e7` is node 7 of frame 2. A frame in another
+process numbers its nodes afresh, so `e7` alone could be the page's node 7. A frame
+keeps its number for as long as the page is open, and its refs act only on the
+document the snapshot saw in it, so a frame that loads another page on its own takes
+its refs with it. Clicks go to the page at the element's place on it, through each
+`<iframe>` on the way, and an honest click checks each of those too. Typing goes to
+the frame's own process. A role and a name are looked for in the page's own frame;
+inside a frame, use its refs. A frame that cannot be read is listed at the end of
+the snapshot, by address.
+
+## Honest clicks
+
+A click is refused, saying why, before anything is pressed:
+
+- when its element is gone, disabled (a disabled form control, or `aria-disabled`),
+  hidden, or of no size;
+- when its element is still moving: two box readings 50 ms apart must agree to the
+  pixel, within half a second;
+- when something covers it: a hit test at the point the click would land must find the
+  element or something inside it, and the refusal names what is there instead;
+- when a role and name match more than one element, rather than taking the first.
+
+`force` skips these checks and presses at the element's centre, as clicks always did;
+a ref from an earlier page is refused even then, since that is about which element,
+not its state.
+`browser_click` says which happened: a checked click landed on its element, and a
+forced one was only dispatched. One path does every click: `browser_click`,
+`browser_run`, `page.click` in a script and the console's Browser page all use the
+driver's `click` action.
+
+## Dialogs, downloads and new tabs
+
+A dialog blocks its page, and every command on it, until it is answered, so the
+driver answers it at once and the action's result says so: an alert or a
+leave-this-page is accepted, and a confirm or a prompt is dismissed unless the action
+passes `dialog: "accept"`. A download goes to `/work/downloads`, beside the browser's
+own folder, so it stays with the computer; a click or a goto that starts one follows
+it to its end (at most 30 s) and says where it went, and a URL that is a file to
+download is a download, not a failed load. A tab a page opens, from `target="_blank"`
+or `window.open`, is said with its address; `browser_tabs` switches to it.
+
+## Fewer turns
+
+Every browser tool's result ends with where the page is: its address, its title,
+whether it has loaded, and how many tabs are open when there is more than one, so
+the tab a click opened is noticed. `browser_snapshot`, and `browser_run`'s snapshot,
+take a ref and list only what is under it: a form, a dialog, a list.
+`browser_click`, `browser_type` and `browser_run`'s click and fill take `waitFor`:
+text, a selector or part of the address, or `gone`. The driver watches for it from
+just before it acts, so a toast that comes and goes while the click settles is still
+seen. Not finding it is said rather than raised, because the action happened. A call
+on a computer the user holds opens with `E_COMPUTER_HELD (handoff)` or
+`E_COMPUTER_HELD (person)`.
+
 ## Network policy
 
-Every navigation goes through `assertUrlAllowed` from `@husk-ai/core`, with the
-same `loopbackIsOwn` rule `browseInComputer` uses: `docker`, `podman` and `fly`
-own their loopback, `local` and `ssh` do not. `mode: 'full'` still refuses
-`169.254.169.254`. A real browser — which will follow a redirect chain a
-prompt-injected page hands it — makes this matter more, not less.
+Every URL Husk opens — `goto`, a tab opened with `newTab`, the `goto` steps of `run`,
+and the `page.goto` calls of a script — goes through `assertUrlAllowed` from
+`@husk-ai/core`, with the same `loopbackIsOwn` rule `browseInComputer` uses: `docker`,
+`podman` and `fly` own their loopback, `local` and `ssh` do not. `mode: 'full'` still
+refuses `169.254.169.254`, in its IPv6 spellings too. A real browser — which will follow
+a redirect chain a prompt-injected page hands it — makes this matter more, not less.
 
-## Not sandboxed by itself
+So the policy also holds below the tool. The host sends it to the driver with every
+request, and the driver pauses every document request a page makes by itself (CDP's
+`Fetch` domain, documents only) and checks it with a line-for-line port of `net.ts`.
+`driver-policy.test.ts` holds the two to one table of answers. That covers a
+redirect's every hop, a link, a script that sends the page somewhere, a frame (a
+cross-site one through its own session), and a pop-up's first load: every new tab and
+every cross-site frame is held until it is guarded. A refused load is stopped before
+anything is sent, and the action's result says so. Not covered: subresources (images,
+scripts, a page's own `fetch` calls), which are not documents; names that resolve to
+an internal address, since names are not resolved; and the one-process-per-call
+fallback, which checks only while a call is running.
 
-Chromium runs with `--no-sandbox`. The computer *is* the sandbox; Chromium's own
-namespace sandbox cannot nest inside an unprivileged container, and on the
-`local` provider there is no kernel boundary to begin with. Run untrusted pages
-in a `docker` or `podman` computer.
+## Chromium's own sandbox
+
+In a `docker` or `podman` container, or on a `fly` machine, Chromium runs with
+`--no-sandbox`: its namespace sandbox cannot nest inside an unprivileged container, and
+the computer is the boundary. On `local`, in WSL and over `ssh` it keeps its sandbox,
+the only thing there between a hostile page and your account. Where that sandbox
+cannot run at all — no unprivileged user namespaces, or running as root — Chromium is
+started again without it and Husk says so. Run untrusted pages in a `docker` or
+`podman` computer.
 
 One caveat measured rather than assumed: on `local` under **WSL2**, Windows'
 loopback relay forwards a WSL `127.0.0.1` listener to the Windows host, so the

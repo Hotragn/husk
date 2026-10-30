@@ -25,7 +25,7 @@ so a script that checks the exit code still gets parseable output on both paths.
 
 ## The codes
 
-Twenty are declared in `@husk-ai/core`. The server declares five more.
+Twenty are declared in `@husk-ai/core`. The server declares nine more.
 
 Two of the twenty are **reserved**: `E_EXEC_TIMEOUT` and `E_STEP_LIMIT`, listed
 together in the exported `RESERVED_ERROR_CODES`. Husk never throws them, because both
@@ -43,11 +43,11 @@ for a gateway 504, and so removing one is a deliberate breaking change. Read
 | [`E_EXEC_TIMEOUT`](#e_exec_timeout) | 504 | *reserved — never thrown* |
 | [`E_EXEC_DENIED`](#e_exec_denied) | 403 | the command or network policy |
 | [`E_FS_DENIED`](#e_fs_denied) | 403 | the path jail, or a failed filesystem operation |
-| [`E_QUOTA`](#e_quota) | 429 | the machine limit, or provider rate limiting |
+| [`E_QUOTA`](#e_quota) | 429 | the machine limit, provider rate limiting, or a body too big (413) |
 | [`E_MODEL_UNAVAILABLE`](#e_model_unavailable) | 503 | no provider can serve the model asked for |
 | [`E_MODEL_ERROR`](#e_model_error) | 500 | the provider answered badly, or not at all |
 | [`E_NO_CREDENTIALS`](#e_no_credentials) | 401 | a missing or rejected key |
-| [`E_SPEC_INVALID`](#e_spec_invalid) | 422 | a `husk.yaml`, or a malformed request body |
+| [`E_SPEC_INVALID`](#e_spec_invalid) | 422 | a `husk.yaml`, a request that does not fit, or JSON that does not parse (400) |
 | [`E_IMPORT_FAILED`](#e_import_failed) | 500 | transcript import and distillation |
 | [`E_TOOL_ERROR`](#e_tool_error) | 500 | a tool that could not do what it was asked |
 | [`E_BUDGET_EXCEEDED`](#e_budget_exceeded) | 429 | the cost ceiling |
@@ -59,8 +59,12 @@ for a gateway 504, and so removing one is a deliberate breaking change. Read
 | `E_HUSK_NOT_FOUND` | 404 | server only |
 | `E_RUN_NOT_FOUND` | 404 | server only |
 | `E_APPROVAL_NOT_FOUND` | 404 | server only |
+| `E_HANDOFF_NOT_FOUND` | 404 | server only |
+| `E_BROWSER_NOT_FOUND` | 404 | server only |
 | `E_TRANSCRIPT_NOT_FOUND` | 404 | server only |
 | `E_ROUTE_NOT_FOUND` | 404 | server only |
+| `E_COMPUTER_HELD` | 409 | server only |
+| `E_COMPUTER_IN_CHAT` | 409 | server only |
 
 ---
 
@@ -146,17 +150,17 @@ hint:  add a pattern to guardrails.allowCommands in husk.yaml if this is intenti
 
 ```text
 error network policy refuses example.com
-hint:  add "example.com" to computer.network.allow in husk.yaml
+hint:  add it to computer.network.allow, or set computer.network.mode: full
 ```
 
 ```text
-error refused private address 169.254.169.254
-hint:  loopback, link-local and RFC1918 hosts must be named in computer.network.allow
+error network policy refuses 169.254.169.254
+hint:  link-local and RFC1918 hosts must be named in computer.network.allow
 ```
 
 ```text
-error refused file: URL
-hint:  only http and https are fetchable from a husk
+error refusing the file: scheme
+hint:  only http and https are fetched; file:// would read the host filesystem
 ```
 
 See [Isolation](/security/isolation#the-command-deny-list) and
@@ -194,18 +198,15 @@ hint:  destroy one with `husk rm <name>`, or raise maxComputers in ~/.husk/confi
 
 ```text
 error Groq (llama-3.3-70b-versatile) returned 429: rate limit exceeded
-hint:  Groq is rate limiting. Husk will back off and fall back; set a cheaper model …
+hint:  Groq is rate limiting. Husk will back off and fall back; pass `--model free` or set `model: free` in husk.yaml to avoid it.
 ```
 
 Only `running` and `creating` machines count toward the eight-machine quota. A model
 provider's 429 is retried with backoff and then falls back to the next candidate; you
 only see the error when every candidate is exhausted.
 
-<Note>
-The rate-limit hint suggests `husk config set model free`. There is no `husk config`
-command. Set the model with `--model free`, with `model:` in the `husk.yaml`, or with
-`"model": "free"` in `~/.husk/config.json`.
-</Note>
+Over HTTP, a request body over its route's cap is a **413** with this code, and the hint
+names the cap: 32 MB on the API, 64 KB on remote access's sign-in steps.
 
 ### `E_MODEL_UNAVAILABLE`
 
@@ -264,7 +265,8 @@ hint:  ANTHROPIC_API_KEY is missing or rejected. Re-check the value, or run `hus
 ```
 
 Over HTTP, also returned when `HUSK_TOKEN` is set and the request's bearer token is
-missing or wrong.
+missing or wrong, and, with a 403, for a request whose `Origin` is not this machine or,
+on a loopback bind with a token, whose `Host` is not a loopback name.
 
 Never retried — a 401 does not improve on a second attempt.
 
@@ -273,19 +275,23 @@ Never retried — a 401 does not improve on a second attempt.
 A `husk.yaml`, or a malformed request body. Every problem is listed at once.
 
 ```text
-error husk.yaml is not a valid husk
+error /home/me/bot/husk.yaml is not a valid husk
   ✗ name: name must be lowercase alphanumeric with dashes
-  ✗ limits.maxSteps: Number must be less than or equal to 500
+  ✗ limits.maxSteps: Too big: expected number to be <=500
 hint:  `husk init --force` regenerates a valid file, or see `husk help init`
 ```
 
 ```text
-error husk.yaml is not valid YAML: bad indentation of a mapping entry at line 4
+error /home/me/bot/husk.yaml is not valid YAML: All mapping items must start at the same column at line 4, column 1:
+hint:  check the indentation -- YAML wants spaces, never tabs
 ```
 
-Over HTTP: `missing required query parameter 'path'`, `run requires a non-empty 'input'`,
-`body must carry either 'spec' or 'yaml'`, and a strict-schema rejection of an unknown
-key on `POST /v1/computers`.
+`husk validate` names the file by its full path.
+
+Over HTTP: `` missing required query parameter `path` ``, `` run requires a non-empty `input` ``,
+`` body must carry either `spec` or `yaml` ``, and a strict-schema rejection of an unknown
+key on `POST /v1/computers`, all with 422. JSON that does not parse is a **400** with
+this code, since the parser answers before any route does.
 
 `details.issues` carries the list. `POST /v1/husks/validate` returns the same list with
 HTTP 200 rather than throwing.
@@ -425,30 +431,33 @@ Re-run with `--debug` for the stack and the `cause` chain before filing.
 ## Server-only codes
 
 Declared in `@husk-ai/server` rather than `@husk-ai/core`, because the API needs a distinct
-404 family and core only has `E_COMPUTER_NOT_FOUND`.
+404 family, core only has `E_COMPUTER_NOT_FOUND`, and a held computer needs a 409.
 
 | Code | Message | Hint |
 | --- | --- | --- |
-| `E_HUSK_NOT_FOUND` | `no husk with id <name>` | run `husk ls` to list husks |
-| `E_RUN_NOT_FOUND` | `no run with id <id>` | run `husk runs` to list recent runs |
+| `E_HUSK_NOT_FOUND` | `no husk with id <name>` | ``list them with `GET /v1/husks`, or look in ~/.husk/husks`` |
+| `E_RUN_NOT_FOUND` | `no run with id <id>` | `` list recent runs with `GET /v1/runs` `` |
 | `E_APPROVAL_NOT_FOUND` | `no approval with id <id>` | approvals expire 120s after they are raised |
-| `E_TRANSCRIPT_NOT_FOUND` | `no transcript with id <id>` | import it again with `husk import` |
+| `E_HANDOFF_NOT_FOUND` | `no handoff with id <id>` | ``list the ones waiting with `GET /v1/handoffs`; a handoff ends when its run does`` |
+| `E_BROWSER_NOT_FOUND` | `this computer has no browser open` | nothing to show until a run opens a page |
+| `E_TRANSCRIPT_NOT_FOUND` | `no transcript with id <id>` | `` import it again with `husk import` `` |
 | `E_ROUTE_NOT_FOUND` | `no route for GET /v1/x` | see docs/API.md for the endpoints this server serves |
+| `E_COMPUTER_HELD` | `the user took over this computer` | it takes no changes from programs until they give it back; try again then |
+| `E_COMPUTER_IN_CHAT` | `this computer runs in its chat’s own process, which the Husk console cannot reach` | ask the chat to call computer_open_ui, and take it over from that link |
+
+A link to a handoff that has closed gets `E_HANDOFF_NOT_FOUND` with
+`no open handoff with that link`. A trigger route with nothing mounted there is
+`E_HUSK_NOT_FOUND`, with the hint `GET /v1/triggers lists what is mounted`. A held
+computer's refusal names the hold: a person's take-over as above, or
+`the user has this computer right now: <reason>` for a handoff a run or a chat asked
+for. A program ending a person's take-over, such as a chat's `hand_off_done`, gets
+`the user took over this computer, and only they give it back`.
 
 <Note>
-Two of those hints name commands that do not do what they say. `husk ls` is an alias
-for `husk ps` and lists **computers**; there is no CLI command that lists husks. `husk
-runs` does not exist at all. Use `GET /v1/husks` and `GET /v1/runs` while the control
-plane is up.
+`@husk-ai/sdk` knows all nine server-only codes and round-trips them exactly. A code it
+has never heard of, from a newer server, is passed through as itself with
+`details.unrecognizedCode: true`, never mapped onto a familiar-looking one.
 </Note>
-
-<Warning>
-`@husk-ai/sdk` does not know the five server-only codes. Its `KNOWN_CODES` set is the
-twenty from core, so a 404 carrying `E_HUSK_NOT_FOUND` is reconstructed as
-`E_COMPUTER_NOT_FOUND` — the status-derived fallback for 404. The original is preserved
-in `details.serverCode`. Branch on that if you need to tell a missing husk from a
-missing computer.
-</Warning>
 
 ## Handling them
 

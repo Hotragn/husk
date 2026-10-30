@@ -1,8 +1,8 @@
-import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult, Tool } from '@modelcontextprotocol/server';
 import type { WorkspaceStore } from '@husk-ai/workspaces';
 
 const string = { type: 'string' };
-const tool = (name: string, description: string, properties: Record<string, object> = {}, required: string[] = []): Tool => ({
+const tool = (name: string, description: string, properties: NonNullable<Tool['inputSchema']['properties']> = {}, required: string[] = []): Tool => ({
   name, description, inputSchema: { type: 'object', properties, required, additionalProperties: false },
 });
 

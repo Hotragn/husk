@@ -27,6 +27,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js"
     }
   },
   "files": [
@@ -38,6 +42,6 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "zod": "^3.23.8"
+    "zod": "^4.6.7"
   }
 }

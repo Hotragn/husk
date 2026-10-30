@@ -116,8 +116,9 @@ sudo apt-get install -y git curl jq ripgrep fd-find python3-venv build-essential
 
 <Note>
 The `ssh` provider does **not** use flavors or images — there is no container. The
-remote box has whatever you installed on it, and `computer.flavor` and
-`computer.packages` are ignored. Install what your husks need, once, here.
+remote box has whatever you installed on it. `computer.flavor` is ignored, and a husk
+that lists `computer.packages` is refused, since installing on the box is yours to do.
+Install what your husks need, once, here.
 </Note>
 
 ## Step 3: Make the connection non-interactive
@@ -154,7 +155,7 @@ husk doctor
 {`COMPUTERS
   ✓ ssh      isolated from this machine
       A Linux box you already own, reached over ssh. Free if the box is.
-      via ssh · ubuntu@203.0.113.10 (Linux aarch64)
+      via ubuntu@203.0.113.10 (Linux aarch64)
       commands run as your user on that box -- isolated from this machine, not from itself`}
 </Terminal>
 
@@ -168,14 +169,19 @@ husk exec remote -- 'uname -sm; nproc; free -h | head -2'
 husk exec remote -- 'git clone https://github.com/org/repo /work/repo && ls /work/repo'
 ```
 
-Per-husk, the same two settings live in the spec's labels rather than the environment —
-but note that `husk.yaml` has [no `labels` field](/reference/husk-yaml#computer), so
-this is reachable only through `POST /v1/computers`:
+Per husk, the same two settings can live in the spec's
+[labels](/chat-to-bot/husk-yaml#computerlabels) instead of the environment, and a label
+wins over the variable:
 
-```json
-{ "provider": "ssh",
-  "labels": { "husk.ssh": "ubuntu@203.0.113.10", "husk.ssh.key": "/home/me/.ssh/husk_oracle" } }
+```yaml
+computer:
+  provider: ssh
+  labels:
+    husk.ssh: ubuntu@203.0.113.10
+    husk.ssh.key: /home/me/.ssh/husk_oracle
 ```
+
+`POST /v1/computers` takes the same `labels`.
 
 ### How it works, briefly
 
@@ -183,12 +189,14 @@ this is reachable only through `POST /v1/computers`:
   one handshake instead of forty. The socket outlives suspends and network changes; if
   it dies, every exec falls back to `ControlMaster=auto` and simply opens a new
   connection.
-- Workspaces live at `$HOME/.husk-work/<id>/`, with `work` and `tmp` subdirectories,
-  both `chmod 700`. `$HOME` is resolved on the remote rather than assumed.
+- Workspaces live at `$HOME/.husk-work/<id>/`, with `work` and `tmp` subdirectories.
+  `~/.husk-work` and each `<id>` are `chmod 700`. `$HOME` is resolved on the remote
+  rather than assumed, and a command's `/work` and `/tmp` are mapped onto these.
 - File transfers use `scp`.
-- The path jail is compiled into the remote command itself: `readlink -f` resolves the
-  target and the guard exits **77** if it lands outside the workspace. A local
-  `realpath` would cost a round trip per operation.
+- The path jail is compiled into the remote command itself: `readlink -m` resolves the
+  target and the guard exits **77** if it lands outside the workspace or cannot be
+  resolved. A local `realpath` would cost a round trip per operation. Oracle Linux and
+  Ubuntu both ship GNU `readlink`.
 
 ## Step 5: If you want to reach a port
 
@@ -262,8 +270,8 @@ OCI images), and the box's network position inside your VCN.
 <Warning>
 The instance metadata service at `169.254.169.254` is reachable from the box.
 [Husk's network floor](/security/network#the-floor) refuses it from `fetch_url` and
-`http_request` — but not from `curl` run through `shell`, because the shell is not
-filtered by the network policy on any provider.
+`http_request` — but not from `curl` run through `shell`, because no provider holds a
+shell to the network policy, except `network.mode: none` on Docker or Podman.
 
 If that matters, install Docker on the Oracle box and use the `docker` provider from
 there instead of pointing `ssh` at it directly. Two commands:
@@ -274,7 +282,11 @@ sudo usermod -aG docker ubuntu
 ```
 
 Then run Husk *on* the box rather than *at* it, and you get kernel isolation on free
-hardware.
+hardware. Kernel isolation is not a firewall, though: in `egress` and `full` a
+container's shell still reaches the metadata service through the box. Only
+`network.mode: none`, which gives the container no network at all, keeps it out. To keep
+the network and lose only that address, drop it for containers in the box's firewall
+(Docker's `DOCKER-USER` chain).
 </Warning>
 
 ## Next

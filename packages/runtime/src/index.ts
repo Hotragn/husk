@@ -9,3 +9,4 @@ export * from './providers/fly.js';
 export * from './policy.js';
 export * from './registry.js';
 export * from './images.js';
+export * from './reap.js';

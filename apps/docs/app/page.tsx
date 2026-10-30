@@ -162,21 +162,20 @@ hint:  add a pattern to guardrails.allowCommands in husk.yaml if this is intenti
           </p>
           <p>
             The current set of those, so you can find them quickly:{' '}
-            <LinkPreview {...preview('/mcp#transports')}>MCP is stdio only</LinkPreview>,{' '}
-            <LinkPreview {...preview('/computers/lifetimes')}>
-              the reaper does not sweep containers
+            <LinkPreview {...preview('/chat-to-bot/husk-yaml#memory')}>
+              memory.backend is checked and then ignored
             </LinkPreview>
             ,{' '}
-            <LinkPreview {...preview('/chat-to-bot/triggers')}>
-              Discord, Slack and Telegram triggers are not wired up
-            </LinkPreview>
-            ,{' '}
-            <LinkPreview {...preview('/models#fallback')}>
-              husk run ignores fallbackModels
+            <LinkPreview {...preview('/chat-to-bot/import#the-seven-importers')}>
+              four declared transcript sources have no importer
             </LinkPreview>
             , and{' '}
-            <LinkPreview {...preview('/reference/sdk')}>
-              the SDK targets a different API than the one the server serves
+            <LinkPreview {...preview('/start/install#the-npm-packages')}>
+              npm still has 0.1.4
+            </LinkPreview>
+            , so{' '}
+            <LinkPreview {...preview('/guides/remote-access#your-own-cloud-fly')}>
+              the Fly deploy cannot start yet
             </LinkPreview>
             .
           </p>

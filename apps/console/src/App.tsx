@@ -11,22 +11,33 @@ import { useCallback, useEffect, useState } from 'react';
 import { ConnectionProvider, useConnection } from './state/connection';
 import { ComputersProvider, useComputers } from './state/computers';
 import { useTheme } from './state/theme';
-import { Button, StatusDot } from './components/primitives';
+import { useResource } from './state/useResource';
+import type { RemoteStatus } from './api/wire';
+import { Button, Icon, StatusDot } from './components/primitives';
 import { ComputersPanel } from './panels/ComputersPanel';
 import { TerminalPanel } from './panels/TerminalPanel';
 import { FilesPanel } from './panels/FilesPanel';
 import { BrowserPanel } from './panels/BrowserPanel';
+import { HandoffsPanel, LinkedComputer, LinkedHandoff, useHandoffs } from './panels/HandoffsPanel';
+import { desktopView, linkedComputerId, linkedHandoffId } from './state/viewerToken';
+import { DesktopView } from './desktop/DesktopView';
 import { HusksPanel } from './panels/HusksPanel';
 import { DoctorPanel } from './panels/DoctorPanel';
 import { EventsPanel } from './panels/EventsPanel';
 import { DisconnectedScreen } from './panels/DisconnectedScreen';
 import { HomePanel } from './panels/HomePanel';
+import { OverviewPanel } from './panels/OverviewPanel';
+import { ChatPanel } from './panels/ChatPanel';
+import { ConnectPanel } from './panels/ConnectPanel';
 
-const PANELS = ['home', 'computers', 'terminal', 'files', 'browser', 'husks', 'doctor', 'events'] as const;
+const PANELS = ['home', 'connect', 'chat', 'handoffs', 'computers', 'terminal', 'files', 'browser', 'husks', 'doctor', 'events'] as const;
 type PanelId = (typeof PANELS)[number];
 
 const PANEL_LABELS: Record<PanelId, string> = {
   home: 'Home',
+  chat: 'Chat',
+  connect: 'Connect',
+  handoffs: 'Handoffs',
   computers: 'Computers',
   terminal: 'Terminal',
   files: 'Files',
@@ -42,29 +53,44 @@ function panelFromHash(): PanelId {
 }
 
 export default function App() {
-  return (
-    <ConnectionProvider>
-      <ConnectionShell />
-    </ConnectionProvider>
-  );
+  // The desktop app's own windows (a computer, the 3D row, the notch) share
+  // the connection and nothing else: no sidebar, no header.
+  const desk = desktopView();
+  if (desk) document.documentElement.dataset.view = desk.view;
+  return <ConnectionProvider>{desk ? <DesktopView view={desk} /> : <ConnectionShell />}</ConnectionProvider>;
 }
 
 function ConnectionShell() {
   const { health, status, token, error, retryNow } = useConnection();
   const { theme, toggle } = useTheme();
-  if (health && health.mode !== 'starter') return <ComputersProvider><Shell /></ComputersProvider>;
+  const handoffId = linkedHandoffId();
+  const computerId = handoffId ? null : linkedComputerId();
+  if (health && health.mode !== 'starter' && !handoffId && !computerId) return <ComputersProvider><Shell /></ComputersProvider>;
   return <>
     <a className="skip-link" href="#main">Skip to content</a>
     <div className="starter-app">
-      <header className="starter-header"><a className="starter-brand" href="#main">Husk <span>workspace</span></a><div className="btn-row"><StatusDot tone={status === 'connected' ? 'success' : status === 'disconnected' ? 'danger' : 'info'} label={status === 'connected' ? 'Connected' : status === 'disconnected' ? 'Disconnected' : 'Connecting'} /><Button onClick={toggle}>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</Button></div></header>
-      {status === 'disconnected' && !token ? <DisconnectedScreen /> : <main id="main" className="starter-main" tabIndex={-1}>{status === 'disconnected' ? <section className="workspace-welcome"><h1>Reconnect to your workspace</h1><p>{error?.message ?? 'Husk is not responding.'} Open the workspace again from your AI app to reconnect. Your saved files stay on this device.</p><Button onClick={retryNow}>Try again</Button></section> : health ? <HomePanel /> : <p role="status">Opening your workspace…</p>}</main>}
+      <header className="starter-header"><a className="starter-brand" href="#main"><img src="/favicon.svg" alt="" width="22" height="22" /> Husk</a><div className="btn-row"><StatusDot pill tone={status === 'connected' ? 'success' : status === 'disconnected' ? 'danger' : 'info'} label={status === 'connected' ? 'Connected' : status === 'disconnected' ? 'Disconnected' : 'Connecting'} /><ThemeToggle theme={theme} toggle={toggle} /></div></header>
+      {status === 'disconnected' && !token ? <DisconnectedScreen /> : <main id="main" className="starter-main" tabIndex={-1}>{status === 'disconnected' ? <section className="workspace-welcome"><h1>Reconnect to your workspace</h1><p>{error?.message ?? 'Husk is not responding.'} Open the workspace again from your AI app to reconnect. Your saved files stay on this device.</p><Button onClick={retryNow}>Try again</Button></section> : health ? (handoffId ? <LinkedHandoff handoffId={handoffId} /> : computerId ? <LinkedComputer /> : <HomePanel />) : <p role="status">Opening your workspace…</p>}</main>}
     </div>
   </>;
 }
 
+function ThemeToggle({ theme, toggle }: { theme: 'dark' | 'light'; toggle: () => void }) {
+  const next = theme === 'dark' ? 'light' : 'dark';
+  return (
+    <Button variant="ghost" className="btn-icon" onClick={toggle} aria-label={`Switch to ${next} theme`} title={`Switch to ${next} theme`}>
+      <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
+    </Button>
+  );
+}
+
 function Shell() {
-  const { status, health, baseUrl } = useConnection();
+  const { api, revision, status, health, baseUrl } = useConnection();
   const { list: rows } = useComputers();
+  // Remote access, whenever this Husk was started with it: on, or off and why.
+  const remote = useResource<RemoteStatus | null>((signal) => api.remoteStatus(signal), [api, revision], true, { refreshMs: 30_000 }).data;
+  // A computer the person took themselves is not waiting on them.
+  const waiting = useHandoffs().list.filter((h) => h.runId !== 'person');
   const { theme, toggle } = useTheme();
 
   const [panel, setPanel] = useState<PanelId>(() => panelFromHash());
@@ -95,10 +121,10 @@ function Shell() {
   const connTone = status === 'connected' ? 'success' : status === 'connecting' ? 'info' : 'danger';
   const connLabel =
     status === 'connected'
-      ? `connected · v${health?.version ?? '?'}`
+      ? `Connected · v${health?.version ?? '?'}`
       : status === 'connecting'
-        ? 'connecting'
-        : 'not connected';
+        ? 'Connecting'
+        : 'Not connected';
 
   return (
     <>
@@ -108,22 +134,20 @@ function Shell() {
 
       <div className="app">
         <div className="app-brand">
+          <img src="/favicon.svg" alt="" />
           <strong>Husk</strong>
-          <span>console</span>
         </div>
 
         <header className="app-header">
-          <span className="conn">
-            <StatusDot tone={connTone} label={connLabel} />
-            <code className="mono field-note">{baseUrl}</code>
+          <span className="conn" title={baseUrl}>
+            <StatusDot pill tone={connTone} label={connLabel} />
           </span>
-          <Button
-            onClick={toggle}
-            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
-            aria-pressed={theme === 'light'}
-          >
-            {theme === 'dark' ? 'Light theme' : 'Dark theme'}
-          </Button>
+          {remote ? (
+            <button type="button" className="conn conn-remote" title={remote.offReason ?? remote.publicUrl} onClick={() => go('connect')}>
+              <StatusDot pill tone={remote.on ? 'info' : 'warn'} label={remote.on ? 'Remote access on' : 'Remote access off'} />
+            </button>
+          ) : null}
+          <ThemeToggle theme={theme} toggle={toggle} />
         </header>
 
         <nav className="app-nav" aria-label="Console sections">
@@ -132,10 +156,11 @@ function Shell() {
               Workspace
             </p>
             <button type="button" className="nav-item" aria-current={panel === 'home' ? 'page' : undefined} onClick={() => go('home')}>Home</button>
+            <button type="button" className="nav-item" aria-current={panel === 'connect' ? 'page' : undefined} onClick={() => go('connect')}>Connect</button>
             <details className="nav-advanced" open={panel !== 'home' || undefined}>
               <summary>Advanced</summary>
             <ul className="nav-list" aria-label="Advanced console sections">
-              {PANELS.filter((id) => id !== 'home').map((id) => (
+              {PANELS.filter((id) => id !== 'home' && id !== 'chat' && id !== 'connect').map((id) => (
                 <li key={id}>
                   <button
                     type="button"
@@ -145,6 +170,9 @@ function Shell() {
                   >
                     <span>{PANEL_LABELS[id]}</span>
                     {id === 'computers' && rows.length > 0 ? <span className="count">{rows.length}</span> : null}
+                    {id === 'handoffs' && waiting.length > 0 ? (
+                      <span className="count count-alert" aria-label={`${waiting.length} waiting on you`}>{waiting.length}</span>
+                    ) : null}
                   </button>
                 </li>
               ))}
@@ -157,7 +185,24 @@ function Shell() {
           <DisconnectedScreen />
         ) : (
           <main id="main" className="app-main" tabIndex={-1}>
-            {panel === 'home' ? <HomePanel /> : null}
+            {panel === 'home' ? (
+              <OverviewPanel
+                onOpen={(target, id) => {
+                  setActiveComputer(id);
+                  go(target);
+                }}
+              />
+            ) : null}
+            {panel === 'connect' ? <ConnectPanel /> : null}
+            {panel === 'chat' ? (
+              <ChatPanel
+                computerId={activeComputer}
+                onOpen={(target, id) => {
+                  setActiveComputer(id);
+                  go(target);
+                }}
+              />
+            ) : null}
             {panel === 'computers' ? (
               <ComputersPanel activeId={activeComputer} onSelect={setActiveComputer} />
             ) : null}
@@ -166,6 +211,7 @@ function Shell() {
             ) : null}
             {panel === 'files' ? <FilesPanel activeId={activeComputer} onSelect={setActiveComputer} /> : null}
             {panel === 'browser' ? <BrowserPanel activeId={activeComputer} onSelect={setActiveComputer} /> : null}
+            {panel === 'handoffs' ? <HandoffsPanel /> : null}
             {panel === 'husks' ? <HusksPanel /> : null}
             {panel === 'doctor' ? <DoctorPanel /> : null}
             {panel === 'events' ? <EventsPanel /> : null}

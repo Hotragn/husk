@@ -5,23 +5,28 @@ description: A local-first runtime that hands an agent a disposable Linux comput
 order: 1
 ---
 
-Start with a [workspace](/start/workspaces): save public sources, ask your AI for a
-cited brief or comparison, and download the result. You can reopen it in a later
-chat without setting up a computer. The desktop starter profile exposes only
-workspace tools until you explicitly enable computer tools.
+Husk comes two ways, and neither needs the other:
 
-For advanced workflows, Husk also does two things.
+- **The desktop extension**, for Claude Desktop. Start with a
+  [workspace](/start/workspaces): save public sources, ask your AI for a cited brief or
+  comparison, and download the result. You can reopen it in a later chat without setting
+  up a computer. The extension exposes only workspace tools until you explicitly enable
+  computer tools.
+- **The npm packages**, for the `husk` CLI and for MCP clients such as Claude Code and
+  Cursor. The [Quickstart](/start/quickstart) has a computer running in about a minute.
+
+[Install](/start/install) covers both. For advanced workflows, Husk also does two things.
 
 **It gives an AI agent a computer.** A small, disposable Linux machine the agent can
-drive: a shell, a filesystem, ports, snapshots. On Docker or Podman that machine is a
-hardened container. On the `local` provider it is a guarded working directory on your own
+drive: a shell, a filesystem, ports. On Docker or Podman that machine is a hardened
+container. On the `local` provider it is a guarded working directory on your own
 machine, which is a different and weaker thing — [Providers](/computers/providers) says
 exactly how much weaker.
 
-**It turns a chat into a bot.** Point Husk at a Claude Code, ChatGPT, Cursor, Gemini or
-markdown transcript. It reconstructs the conversation as it actually ran, distils it into
-a `husk.yaml` you can read and diff, and then runs that file as an agent — from the CLI,
-over HTTP, on a cron schedule, or from a webhook.
+**It turns a chat into a bot.** Point Husk at a Claude Code, Codex, ChatGPT, Cursor,
+Gemini or markdown transcript. It reconstructs the conversation as it actually ran,
+distils it into a `husk.yaml` you can read and diff, and then runs that file as an
+agent — from the CLI, over HTTP, on a cron schedule, or from a webhook.
 
 The bridge between the two is MCP. One line puts a Linux machine inside Claude Code:
 
@@ -61,13 +66,9 @@ There is no second step, no account, and no config file.
 Dependencies run strictly downhill. `core` imports nothing else from the workspace, and
 nothing imports `cli`.
 
-<NotYet>
-`docs/ARCHITECTURE.md` describes `@husk-ai/mcp` as speaking "stdio + streamable HTTP".
-The package imports one transport, `StdioServerTransport`, and exposes one connect
-method, `connectStdio()`. There is a `get server()` accessor for embedding the raw
-protocol server in an HTTP framework you supply, but no HTTP server ships in the
-package. Treat MCP as stdio-only today.
-</NotYet>
+`@husk-ai/mcp` speaks stdio to the chat apps on this machine. Chat apps on the web, such
+as claude.ai and ChatGPT, reach it over streamable HTTP through `husk serve --remote`:
+see [Chat apps on the web](/guides/remote-access).
 
 ## Why it is shaped this way
 
@@ -109,7 +110,7 @@ narrow, complete interface and every translation lives inside the provider.
   a Windows machine without a C++ toolchain costs more users than SQLite saves. State is
   JSON files under `~/.husk`.
 - **No product telemetry.** The installed runtime has no analytics or crash reporter.
-  The documentation and marketing sites use Cloudflare Web Analytics.
+  The documentation and marketing sites use PostHog analytics.
 
 ## Where to go next
 

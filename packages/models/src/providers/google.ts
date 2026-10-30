@@ -406,6 +406,11 @@ function prune(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value;
   const out: Record<string, unknown> = {};
   for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    // `properties` maps names to schemas, and a parameter may be called `default` or `const`.
+    if (key === 'properties' && v !== null && typeof v === 'object' && !Array.isArray(v)) {
+      out[key] = Object.fromEntries(Object.entries(v).map(([name, schema]) => [name, prune(schema)]));
+      continue;
+    }
     if (key === 'const') {
       out['enum'] = [v];
       continue;

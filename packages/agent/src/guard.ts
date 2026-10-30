@@ -1,4 +1,4 @@
-import { HuskError } from '@husk-ai/core';
+import { HuskError, matchesOutside } from '@husk-ai/core';
 import type { Guardrails } from '@husk-ai/core';
 
 export interface CommandDecision {
@@ -7,31 +7,22 @@ export interface CommandDecision {
   rule?: string;
 }
 
-function test(pattern: string, text: string): boolean {
-  try {
-    return new RegExp(pattern).test(text);
-  } catch {
-    // A user who typed a literal rather than a regex still meant something.
-    return text.includes(pattern);
-  }
-}
-
 /**
  * Apply this husk's own command guardrails.
  *
  * `@husk-ai/runtime` owns the universal deny list (fork bombs, `mkfs`, `rm -rf /`)
- * and applies it inside every provider. This function only enforces the
- * per-husk rules from `husk.yaml`, which the runtime never sees.
+ * and applies it inside every provider, with these same lists, which
+ * `computerSpecFor` hands the computer when it is made. This check reads them
+ * from today's `husk.yaml`, so a deny entry added since holds on a computer
+ * made before it, too.
  *
  * `allow` beats `deny`: an explicit allow entry is the operator saying they know
- * better about their own machine, and they do.
+ * better about their own machine, and they do. It beats it where it matches,
+ * not over the whole line, as in the runtime.
  */
 export function evaluateCommand(cmd: string, guardrails: Pick<Guardrails, 'allowCommands' | 'denyCommands'>): CommandDecision {
-  for (const a of guardrails.allowCommands ?? []) {
-    if (test(a, cmd)) return { allowed: true };
-  }
   for (const d of guardrails.denyCommands ?? []) {
-    if (test(d, cmd)) {
+    if (matchesOutside(d, cmd, guardrails.allowCommands ?? [])) {
       return { allowed: false, reason: 'matched a deny rule from this husk', rule: d };
     }
   }

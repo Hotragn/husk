@@ -71,6 +71,9 @@ vi.mock('../api/client', async (importOriginal) => {
     doctor() {
       return Promise.resolve({ providers: [] });
     }
+    computerDisk() {
+      return Promise.resolve({ bytes: null });
+    }
     socketUrl(path: string) {
       return `ws://127.0.0.1:7377${path}`;
     }

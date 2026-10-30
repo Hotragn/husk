@@ -40,8 +40,9 @@ formatUsd(0.0546);        // "$0.0546"
 ```
 
 Totals are rounded to eight decimal places — sub-cent precision matters when a run makes
-forty calls. `formatUsd` prints `$0.00` for zero, six significant decimals below a cent,
-and four decimals above it.
+forty calls. `formatUsd` prints `$0.00` for zero, up to six decimal places below a cent,
+with trailing zeros dropped, and four decimal places from a cent up: `$0.0500`, not
+`$0.05`.
 
 ## Estimating before the call
 
@@ -73,7 +74,10 @@ There are three ceilings, and they are not the same one.
 | --- | --- | --- | --- |
 | `limits.maxCostUsd` | `0.5` | `husk.yaml` | The agent's `Budget`, before every model call |
 | `maxCostUsd` | `5` | `~/.husk/config.json` | `ModelRouter`, when candidates are chosen |
-| `--max-cost` | from the spec | the command line | The agent's `Budget` |
+| `--max-cost` | from the spec | the command line | The agent's `Budget`, in place of `limits.maxCostUsd` |
+
+On `husk run` the router's ceiling is the smaller of the run's own, `--max-cost` or
+`limits.maxCostUsd`, and `config.json`'s. Over the API it is `config.json`'s alone.
 
 ### In the agent loop
 
@@ -95,9 +99,11 @@ the next call would reach about 204813 tokens, over the 200000 ceiling
 The run ends with `stopReason: 'budget'`, `'step_limit'` or `'timeout'` — not with an
 error. Whatever the agent produced up to that point is still in the result.
 
-When the model's price is unknown — a local model, or a router that cannot introspect —
-the estimate falls back to **the most expensive call observed so far in this run**. That
-is `$0` on the first call and honest after that.
+When the model's price is unknown — a model the catalog does not list, or a router that
+cannot introspect — the estimate falls back to **the most expensive call observed so far
+in this run**. A call's cost comes from the same catalog, though, so for a model it does
+not price every call is `$0`, and this ceiling never stops it. A local model is priced,
+at zero.
 
 ### In the router
 
@@ -107,7 +113,7 @@ An **explicitly named** model is never quietly swapped for a cheaper one. If you
 for `opus` and `opus` is unaffordable, that is an error, not a downgrade:
 
 ```text
-error anthropic/claude-opus-5 would cost at least $0.0600 for this prompt, over the $0.05 limit
+error anthropic/claude-opus-5 would cost at least $0.0600 for this prompt, over the $0.0500 limit
 hint:  Raise maxCostUsd, shorten the prompt (~12000 tokens), or use a free model: `--model free`.
 ```
 
@@ -115,7 +121,7 @@ A **dynamic** alias — `auto`, `free`, `local` — filters instead. If every re
 is priced out, you get one error rather than a silent downgrade:
 
 ```text
-error no auto model can serve a ~12000 token prompt for under $0.05
+error no auto model can serve a ~12000 token prompt for under $0.0500
 hint:  Raise maxCostUsd, or use `--model ollama/qwen2.5:7b`.
 ```
 
@@ -130,13 +136,16 @@ maxCostUsd: Math.min(body.maxCostUsd ?? spec.limits.maxCostUsd, spec.limits.maxC
 A caller can lower the ceiling for one run and cannot raise it above what the
 `husk.yaml` declares.
 
-<Warning>
-`husk run --max-cost` is **not** validated. The value goes through a bare `Number()`, so
-`--max-cost abc` becomes `NaN`, every `projected > NaN` comparison is false, and the
-cost ceiling is silently disabled for that run. `--max-steps` and `--memory` are
-validated and reject a bad value with a usage error; `--max-cost` is the one that is
-not. Pass a number.
-</Warning>
+`husk run --max-cost` takes a number of US dollars, with or without a leading `$`.
+Anything else, a negative number included, is a usage error before the run starts:
+
+```text
+error --max-cost expects a non-negative number of US dollars (got "abc")
+hint:  husk help run
+```
+
+It replaces `limits.maxCostUsd` for that run, so on the command line it can raise the
+ceiling as well as lower it.
 
 ## Why local is zero
 
@@ -148,9 +157,12 @@ prints `free` rather than a dollar figure:
 3 steps · 1m07s · 4162 tokens · free
 ```
 
-`maxCostUsd: 0` in a `husk.yaml` therefore means "local models only, and fail rather
-than fall back to anything that bills". It is the strongest cost guarantee Husk offers,
-and it is one line.
+`maxCostUsd: 0` in a `husk.yaml` therefore admits only models priced at zero: Ollama and
+LM Studio, OpenRouter's `:free` models, and any model the catalog does not price at all,
+which can still bill you. It refuses Gemini Flash, Groq and Cerebras, whose free tiers the
+catalog marks free but still prices, so `auto`, `free` and `local` pick past them to a
+model priced at zero, or stop with `E_BUDGET_EXCEEDED` when none is reachable. It is the
+strongest cost guarantee Husk offers, and it is one line.
 
 ## Which prices are real
 
@@ -186,7 +198,7 @@ The router fills in `usage.costUsd` from the catalog whenever the provider did n
 report one, and warns when the actual cost lands above the ceiling the estimate cleared:
 
 ```text
-warn  anthropic/claude-sonnet-5 cost $0.6120, over the $0.5000 ceiling; the estimate was low
+warn  [models] anthropic/claude-sonnet-5 cost $0.6120, over the $0.5000 ceiling; the estimate was low
 ```
 
 That warning is the audit trail for a bad estimate. If you see it often on a model, its

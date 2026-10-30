@@ -23,12 +23,12 @@ API key at all.
 
 | | |
 | --- | --- |
-| No TTY | `husk rm` and `husk init` need `--yes`. `--approve ask` refuses to start |
+| No TTY | `husk rm` needs `--yes`; `husk init` writes its defaults, and `--yes` only quiets its note. `--approve ask` refuses to start |
 | Colour | Off automatically when piped; `NO_COLOR` also honoured |
 | Exit codes | `0` ok, `1` error, `2` usage, `130` interrupted. `husk exec` passes the child's code through |
 | stdout vs stderr | `husk run` puts the answer on **stdout** and everything else on stderr |
 | Docker | Preinstalled on `ubuntu-latest`, so you get kernel isolation for free |
-| Telemetry | None. Nothing leaves the runner except calls to the model provider you configure |
+| Telemetry | None. What leaves the runner: calls to the model provider you configure, the image a computer pulls, and whatever your commands and the agent's tools fetch |
 
 ## A computer for a job
 
@@ -106,8 +106,8 @@ Everything Husk writes — machine records, workspaces, run events — then land
 the workspace, where `actions/cache` can see it and where nothing survives the job.
 
 <Warning>
-Do not cache `HUSK_HOME` between runs. `runs/` holds unredacted tool output and
-`transcripts/` holds raw conversations. See
+Do not cache `HUSK_HOME` between runs. `runs/` holds tool output that redaction screens
+only by pattern, and `transcripts/` holds raw conversations. See
 [Secrets](/security/secrets#redaction).
 </Warning>
 
@@ -202,18 +202,20 @@ diff stops rather than billing.
 
 ### Reading the answer
 
-`husk run` streams the model's text to **stdout** and every step, tool call and warning
-to **stderr**, so a plain redirect captures the answer and nothing else. For a
-structured result:
+With stdout piped, as it is in CI, `husk run` streams every step, tool call and warning
+to **stderr** and writes the answer alone to **stdout**, so a plain redirect captures the
+answer and nothing else. For a structured result:
 
 ```bash
-husk run reviewer.yaml "$(cat /tmp/diff.patch)" --json > /tmp/result.json
+husk run reviewer.yaml "$(cat /tmp/diff.patch)" --json > /tmp/result.json || true
 jq -r '.text'       /tmp/result.json
 jq -r '.stopReason' /tmp/result.json    # complete | step_limit | budget | timeout | …
 jq -r '.usage.costUsd' /tmp/result.json
 ```
 
-Fail the job when the run was cut short rather than when it merely disagreed with you:
+A run cut short exits 1 (and a stopped one 130), which ends a step under Actions' `bash -e`
+before the `jq` lines run: hence the `|| true`, and the check on `stopReason`. Warn, or
+fail, when the run was cut short rather than when it merely disagreed with you:
 
 ```bash
 STOP=$(jq -r .stopReason /tmp/result.json)
@@ -315,8 +317,8 @@ floor. Read `husk doctor` in the log rather than assuming.
 
 ## Troubleshooting
 
-**`refusing to destroy N computers without confirmation on a non-interactive stdin`** —
-add `--yes` to `husk rm`.
+**`refusing to destroy "ci" without --yes on a non-interactive stdin`** — add `--yes` to
+`husk rm`. With `--all`, the message counts the computers instead.
 
 **`--approve ask needs a terminal to ask on`** — use `auto` or `readonly`.
 

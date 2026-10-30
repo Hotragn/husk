@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { ctxOf } from '../context.js';
 import type { EventTopic, HuskEvent } from '../events.js';
+import { sendTo } from '../viewers.js';
 
 const TOPICS: EventTopic[] = ['computers', 'runs', 'providers', 'triggers', 'adapters', 'reaper'];
 
@@ -18,8 +19,8 @@ export async function eventRoutes(app: FastifyInstance): Promise<void> {
 
     const write = (event: HuskEvent) => {
       if (topics && !topics.has(event.topic)) return;
-      if (socket.readyState !== socket.OPEN) return;
-      socket.send(JSON.stringify({ type: event.type, at: event.at, topic: event.topic, payload: event.payload }));
+      // Dropped while the viewer is far behind: the console also polls what these announce.
+      sendTo(socket, JSON.stringify({ type: event.type, at: event.at, topic: event.topic, payload: event.payload }), { droppable: true });
     };
 
     const unsubscribe = ctx.bus.subscribe(write);

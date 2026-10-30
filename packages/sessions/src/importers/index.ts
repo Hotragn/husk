@@ -3,6 +3,7 @@ import { mapLimit } from '@husk-ai/core';
 import type { ImportInput, Transcript, TranscriptImporter, TranscriptSource } from '@husk-ai/core';
 import { ClaudeCodeImporter, parseClaudeJsonl } from './claude.js';
 import { ChatGPTImporter } from './chatgpt.js';
+import { CodexImporter } from './codex.js';
 import { CursorImporter } from './cursor.js';
 import { GeminiImporter } from './gemini.js';
 import { MarkdownImporter } from './markdown.js';
@@ -11,6 +12,7 @@ import { DEFAULT_WINDOW, listDirs, listFiles, readHeadTail, wholeLines } from '.
 
 export * from './claude.js';
 export * from './chatgpt.js';
+export * from './codex.js';
 export * from './cursor.js';
 export * from './gemini.js';
 export * from './markdown.js';
@@ -22,6 +24,7 @@ export function builtinImporters(): TranscriptImporter[] {
   return [
     new ClaudeCodeImporter(),
     new ChatGPTImporter(),
+    new CodexImporter(),
     new CursorImporter(),
     new GeminiImporter(),
     new MarkdownImporter(),

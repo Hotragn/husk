@@ -1,4 +1,4 @@
-import { HUSK_USER_AGENT, HuskError } from '@husk-ai/core';
+import { HUSK_USER_AGENT, HuskError } from '@husk-ai/core/contracts';
 import { errorFromResponse, transportError } from './errors.js';
 import { decodeEvents } from './sse.js';
 

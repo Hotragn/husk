@@ -1,8 +1,8 @@
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { LocalProvider, windowsHint, windowsReason } from './local.js';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { LocalProvider, setShellPlan, windowsHint, windowsReason, wslWorks } from './local.js';
 import type { ShellPlan } from './local.js';
 import type { Computer } from '@husk-ai/core';
 import { ComputerManager } from '../manager.js';
@@ -65,6 +65,28 @@ async function freshComputer(): Promise<Computer> {
 // The /work contract is a posix-and-WSL promise; the cmd.exe fallback reports
 // its own truthful workdir instead and is covered by the degradation tests.
 describe.skipIf(process.platform === 'win32')('local provider /work contract', () => {
+  // #113: a link made in the shell holds a guest target the host cannot follow.
+  it('follows a symlink that stays inside /work, for a file and a directory', async () => {
+    const c = await freshComputer();
+    const r = await c.exec({
+      cmd: 'echo INSIDE > /work/real.txt && ln -s /work/real.txt /work/link.txt && mkdir /work/sub && echo X > /work/sub/x && ln -s /work/sub /work/link-dir',
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+
+    expect(Buffer.from(await c.readFile('/work/link.txt')).toString().trim()).toBe('INSIDE');
+    expect((await c.listDir('/work/link-dir')).map((e) => e.name)).toEqual(['x']);
+    expect((await c.stat('/work/link.txt'))?.type).toBe('file');
+  });
+
+  // /etc/hosts exists on Linux and macOS; a dangling link would only prove "missing".
+  it('refuses a symlink that leaves the workspace, as a path outside it', async () => {
+    const c = await freshComputer();
+    const r = await c.exec({ cmd: 'ln -s /etc/hosts /work/escape' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    // Refused as a path outside the workspace, not reported as missing.
+    await expect(c.readFile('/work/escape')).rejects.toMatchObject({ code: 'E_FS_DENIED', message: expect.not.stringMatching(/^cannot read/) });
+  });
+
   it('runs a script written through the file tools via its /work path', async () => {
     const c = await freshComputer();
     await c.writeFile('/work/hello.sh', 'echo marker-from-work\n');
@@ -83,6 +105,24 @@ describe.skipIf(process.platform === 'win32')('local provider /work contract', (
     const w = await c.exec({ cmd: 'printf shell-made > /work/out.txt' });
     expect(w.exitCode).toBe(0);
     expect(Buffer.from(await c.readFile('/work/out.txt')).toString('utf8')).toBe('shell-made');
+  });
+
+  it('reads no further than it was asked to, and refuses a whole file over its limit', async () => {
+    const c = await freshComputer();
+    expect((await c.exec({ cmd: 'head -c 200000 /dev/zero | tr "\\0" a > /work/big.txt' })).exitCode).toBe(0);
+    await expect(c.readFile('/work/big.txt', { maxBytes: 1000 })).rejects.toMatchObject({ code: 'E_QUOTA' });
+    const head = await c.readTextFile('/work/big.txt', 10);
+    expect(head.startsWith('aaaaaaaaaa\n')).toBe(true);
+    expect(head).toContain('goes on past 10 bytes');
+    expect((await c.readFile('/work/big.txt')).byteLength).toBe(200000);
+  });
+
+  it('refuses a pipe at once instead of waiting for a writer that never comes', async () => {
+    const c = await freshComputer();
+    expect((await c.exec({ cmd: 'mkfifo /work/pipe' })).exitCode).toBe(0);
+    const started = Date.now();
+    await expect(c.readFile('/work/pipe')).rejects.toMatchObject({ code: 'E_FS_DENIED', message: expect.stringContaining('not a regular file') });
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 
   it('maps /tmp to the computer tmp the file tools use', async () => {
@@ -122,6 +162,14 @@ describe.skipIf(process.platform === 'win32')('local provider /work contract', (
  * was sandboxed.
  */
 describe('the local provider', () => {
+  // These are about the registry, not the shell. On Windows, detecting the shell
+  // runs wsl.exe synchronously for up to 8s + 15s per distro, and a slow or
+  // broken WSL made whichever test created the first computer here time out.
+  beforeAll(() => {
+    if (process.platform === 'win32') setShellPlan({ kind: 'windows', degradation: 'wsl-absent', label: 'test: Windows host shell' });
+  });
+  afterAll(() => setShellPlan(undefined));
+
   it('can remove a registered computer after its workspace disappears', async () => {
     const computer = await freshComputer();
     const provider = new LocalProvider();
@@ -211,5 +259,42 @@ describe('the local provider', () => {
       expect(windowsReason(plan())).toBeNull();
       expect(windowsHint(plan())).toBeNull();
     });
+  });
+});
+
+// #110: the first WSL use after boot can outlast the probe that starts it.
+describe('wslWorks', () => {
+  const answer = (stdout: string, error?: string) =>
+    (() => ({ stdout: Buffer.from(stdout), stderr: Buffer.alloc(0), status: 0, signal: null, pid: 1, output: [], ...(error ? { error: Object.assign(new Error(error), { code: error }) } : {}) })) as never;
+
+  it('tries a cold distro once more when the first probe times out', () => {
+    const calls: number[] = [];
+    let n = 0;
+    const run = ((_cmd: string, _args: string[], opts: { timeout: number }) => {
+      calls.push(opts.timeout);
+      return n++ === 0 ? (answer('', 'ETIMEDOUT') as () => unknown)() : (answer('husk-wsl-ok\n') as () => unknown)();
+    }) as never;
+    expect(wslWorks('Ubuntu', run)).toBe(true);
+    expect(calls).toEqual([15_000, 30_000]);
+  });
+
+  it('does not retry on a re-check, which runs inside a live server', () => {
+    const calls: number[] = [];
+    const run = ((_c: string, _a: string[], opts: { timeout: number }) => {
+      calls.push(opts.timeout);
+      return (answer('', 'ETIMEDOUT') as () => unknown)();
+    }) as never;
+    expect(wslWorks('Ubuntu', run, false)).toBe(false);
+    expect(calls).toEqual([15_000]);
+  });
+
+  it('does not retry a distro that answered with an error', () => {
+    let n = 0;
+    const run = (() => {
+      n++;
+      return (answer('Catastrophic failure') as () => unknown)();
+    }) as never;
+    expect(wslWorks('Ubuntu', run)).toBe(false);
+    expect(n).toBe(1);
   });
 });

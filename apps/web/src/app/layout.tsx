@@ -15,11 +15,10 @@ import "./globals.css";
  */
 
 /**
- * Page views are counted by Cloudflare Web Analytics, which Cloudflare adds to
- * each page as it serves it; there is no analytics code in this repository.
- * The beacon loads from `static.cloudflareinsights.com` -- Cloudflare's own
- * host, the company already serving every byte of this site -- so no third
- * party learns of a visit, and it sets no cookie.
+ * Page views are counted by PostHog (`src/instrumentation-client.ts`), which is a
+ * third party: the browser sends each view to us.i.posthog.com. It sets no
+ * cookie and records no session, and the pages that disclose analytics name
+ * it.
  *
  * Worth being precise, because this site says "no telemetry": that claim is
  * about the product. `husk` the CLI phones nobody and nothing here changes it.

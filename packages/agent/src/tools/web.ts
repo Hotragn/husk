@@ -3,7 +3,7 @@ import { extractTitle, htmlToText, looksLikeHtml } from '../html.js';
 import { assertUrlAllowed } from '../net.js';
 import { defineTool } from '../types.js';
 import type { AgentTool } from '../types.js';
-import { deadline, readCapped } from './fetching.js';
+import { deadline, fetchChecked, readCapped } from './fetching.js';
 import { int, object, str } from './util.js';
 
 const DEFAULT_FETCH_BYTES = 256 * 1024;
@@ -35,19 +35,18 @@ export const fetch_url = defineTool<{ url: string; maxBytes?: number }, FetchUrl
     const cap = Math.min(input.maxBytes ?? DEFAULT_FETCH_BYTES, Math.max(4096, ctx.maxOutputBytes));
     const d = deadline(ctx.signal, FETCH_TIMEOUT_MS);
     try {
-      const res = await fetch(parsed, {
-        redirect: 'follow',
-        signal: d.signal,
-        headers: { accept: 'text/html,application/xhtml+xml,application/json;q=0.9,text/plain;q=0.8,*/*;q=0.5' },
-      });
-      // A redirect chain can land somewhere the policy would have refused.
-      assertUrlAllowed(res.url || parsed.toString(), ctx.spec.computer.network);
+      // Every hop of a redirect chain is checked before it is asked, not after.
+      const { res, url } = await fetchChecked(
+        parsed,
+        { signal: d.signal, headers: { accept: 'text/html,application/xhtml+xml,application/json;q=0.9,text/plain;q=0.8,*/*;q=0.5' } },
+        (next) => assertUrlAllowed(next, ctx.spec.computer.network),
+      );
 
       const contentType = res.headers.get('content-type') ?? '';
       const body = await readCapped(res, cap);
       const isHtml = looksLikeHtml(contentType || null, body.text);
       return {
-        url: res.url || parsed.toString(),
+        url: url.toString(),
         status: res.status,
         contentType,
         title: isHtml ? extractTitle(body.text) : undefined,

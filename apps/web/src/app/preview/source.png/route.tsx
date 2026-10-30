@@ -10,10 +10,9 @@ import { ogCard } from "@/lib/og-card";
  * not a second one.
  *
  * Not GitHub's own `opengraph.githubassets.com` render, which would have been
- * the lazy option: this site self-hosts its fonts and counts page views through
- * the host that already serves it, specifically so that nothing is requested
- * from anyone the reader did not choose to talk to. A hover preview is not the place to break
- * that for one PNG.
+ * the lazy option: this site self-hosts its fonts so that a page view does not
+ * become a request to a font CDN, and a hover preview is not the place to add
+ * another third party for one PNG. The one it does have, PostHog, is disclosed.
  */
 export const dynamic = "force-static";
 

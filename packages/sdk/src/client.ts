@@ -8,7 +8,7 @@ import type {
   RunEvent,
   RunResult,
   StreamEvent,
-} from '@husk-ai/core';
+} from '@husk-ai/core/contracts';
 import { openEventStream } from './events.js';
 import type { EventStreamOptions, HuskEventStream } from './events.js';
 import { Http } from './http.js';
@@ -115,8 +115,16 @@ class ComputersApi {
     return this.http.request<ComputerInfo>('GET', `/v1/computers/${enc(id)}`, opts);
   }
 
-  destroy(id: string, opts: CallOptions = {}): Promise<void> {
-    return this.http.request<void>('DELETE', `/v1/computers/${enc(id)}`, opts);
+  /**
+   * A chat's computer (one made over MCP) is deleted only with `confirm: true`,
+   * which sends its id back as `?confirm=`. Ask the person before passing it.
+   * `erase: true` also takes what a chat's or a bot's computer keeps for its next
+   * one, its files and browser logins, and needs `confirm: true` on any computer.
+   */
+  destroy(id: string, opts: CallOptions & { confirm?: boolean; erase?: boolean } = {}): Promise<void> {
+    const { confirm, erase, ...rest } = opts;
+    const query = { ...(confirm ? { confirm: id } : {}), ...(erase ? { erase: 'true' } : {}) };
+    return this.http.request<void>('DELETE', `/v1/computers/${enc(id)}`, { ...rest, query });
   }
 
   stop(id: string, opts: CallOptions = {}): Promise<ComputerInfo> {
@@ -176,8 +184,9 @@ class ComputersApi {
    * A whole directory, as a gzipped tar.
    *
    * The archive is built by the computer's own `tar`, so this works on every
-   * provider including the ones whose filesystem the host cannot see. Paths
-   * inside it are relative to `path`, so it can be unpacked anywhere.
+   * provider including the ones whose filesystem the host cannot see. Its
+   * entries start with the directory's own name (`src/…` for `/work/src`), so
+   * uploading it to the parent puts it back.
    *
    * The default timeout is generous: tarring a source tree on a cold machine
    * takes longer than the client's usual 15s, and aborting mid-archive leaves

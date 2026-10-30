@@ -35,6 +35,7 @@ function isFirstRun(): boolean {
 const ROUTES: Record<string, () => Promise<{ run: (argv: string[]) => Promise<number> }>> = {
   doctor: () => import('./commands/doctor.js'),
   onboard: () => import('./commands/onboard.js'),
+  setup: () => import('./commands/setup.js'),
   up: () => import('./commands/up.js'),
   ps: () => import('./commands/ps.js'),
   rm: () => import('./commands/rm.js'),
@@ -48,6 +49,7 @@ const ROUTES: Record<string, () => Promise<{ run: (argv: string[]) => Promise<nu
   distill: () => import('./commands/distill.js'),
   run: () => import('./commands/run.js'),
   serve: () => import('./commands/serve.js'),
+  remote: () => import('./commands/remote.js'),
   mcp: () => import('./commands/mcp.js'),
   models: () => import('./commands/models.js'),
   validate: () => import('./commands/validate.js'),
@@ -63,7 +65,6 @@ const ALIASES: Record<string, string> = {
   run_: 'run',
   sh: 'shell',
   check: 'doctor',
-  setup: 'onboard',
   quickstart: 'onboard',
 };
 
@@ -135,6 +136,9 @@ export async function main(argv: string[]): Promise<number> {
     return EXIT_OK;
   }
 
+  // ~/.husk/.env before the command reads its keys. The environment the
+  // command was started with wins over the file.
+  (await import('@husk-ai/core')).loadEnvFile();
   const mod = await route();
   return mod.run(rest);
 }
@@ -152,7 +156,7 @@ function unknownCommandMessage(name: string): string {
 
 /**
  * Ctrl-C aborts in-flight work rather than killing the process, so a run stops
- * between steps and a computer is never left half-created. A second Ctrl-C from
+ * cleanly, mid-step if need be, and a computer is never left half-created. A second Ctrl-C from
  * an impatient user leaves immediately.
  */
 export function installSignalHandlers(): void {

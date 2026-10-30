@@ -14,8 +14,12 @@ export const SERVER_ERROR_CODES = [
   'E_HUSK_NOT_FOUND',
   'E_RUN_NOT_FOUND',
   'E_APPROVAL_NOT_FOUND',
+  'E_HANDOFF_NOT_FOUND',
+  'E_BROWSER_NOT_FOUND',
   'E_TRANSCRIPT_NOT_FOUND',
   'E_ROUTE_NOT_FOUND',
+  'E_COMPUTER_HELD',
+  'E_COMPUTER_IN_CHAT',
 ] as const;
 
 export type ServerErrorCode = HuskErrorCode | (typeof SERVER_ERROR_CODES)[number];
@@ -54,6 +58,8 @@ const EXPLICIT: Partial<Record<ServerErrorCode, number>> = {
   E_MODEL_UNAVAILABLE: 503,
   E_EXEC_TIMEOUT: 504,
   E_NOT_IMPLEMENTED: 501,
+  E_COMPUTER_HELD: 409,
+  E_COMPUTER_IN_CHAT: 409,
 };
 
 /**
@@ -132,12 +138,18 @@ export function installErrorHandling(app: FastifyInstance): void {
             : 'E_INTERNAL';
     if (status >= 500) req.log.error({ err }, 'unhandled error');
     const body: ErrorBody = { error: { code, message: err.message } };
-    if (status === 413) body.error.hint = 'request bodies cap at 32 MB';
+    // The route's own cap: a sign-in step's is 64 KB, not the API's 32 MB.
+    if (status === 413) body.error.hint = `request bodies cap at ${sizeOf(req.routeOptions.bodyLimit)} here`;
     void reply.code(status).send(body);
   });
 }
 
-type Missing = 'computer' | 'husk' | 'run' | 'approval' | 'transcript';
+/** 65536 as "64 KB", 33554432 as "32 MB": binary units, as the docs give them. */
+function sizeOf(bytes: number): string {
+  return bytes >= 1024 * 1024 ? `${Math.round(bytes / 1024 / 1024)} MB` : `${Math.round(bytes / 1024)} KB`;
+}
+
+type Missing = 'computer' | 'husk' | 'run' | 'approval' | 'handoff' | 'transcript';
 
 // These name real commands and real endpoints. A hint that sends someone to
 // `husk ls` -- which does not exist -- costs more trust than no hint at all.
@@ -146,6 +158,7 @@ const MISSING_HINTS: Record<Missing, string> = {
   husk: 'list them with `GET /v1/husks`, or look in ~/.husk/husks',
   run: 'list recent runs with `GET /v1/runs`',
   approval: 'approvals expire 120s after they are raised',
+  handoff: 'list the ones waiting with `GET /v1/handoffs`; a handoff ends when its run does',
   transcript: 'import it again with `husk import`',
 };
 

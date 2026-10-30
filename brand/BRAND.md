@@ -35,7 +35,7 @@ loudly and with a hint, and it does not hard-fail.
 
 > **Your AI chat gets a computer.**
 
-Five words a person can repeat without explaining. It names the thing they already have
+Six words a person can repeat without explaining. It names the thing they already have
 (an AI chat) and the one thing that changes (it gets a computer), with no category word or
 adjective doing the persuading.
 
@@ -283,13 +283,15 @@ confidence, including what it could not determine.
 *Proof:* `husk import ~/.claude/projects/.../session.jsonl` → a `husk.yaml` you can read.
 *Copy that lives here:* the second fold, the `sessions` docs, most of the launch post.
 
-### Pillar 4 — Nothing leaves
+### Pillar 4 — Nothing reports back
 
-*Claim:* Nothing leaves the machine except the calls to the model provider you configured.
+*Claim:* Husk has no product telemetry. What leaves the machine is what a task needs: the
+model providers you configured, and the sites you send it to.
 *Because:* No telemetry, no analytics, no crash reporter — absent from the codebase, not
 disabled by a flag. Tool output passes through `redact()` before it re-enters the
 conversation.
-*Proof:* grep the repo. Apache-2.0, and the network calls are the ones you can name.
+*Proof:* grep the repo. Apache-2.0, and the network calls are the ones you can name: the
+networking page lists every one.
 *Copy that lives here:* the footer, the privacy page (one screen, no legalese), the
 `redact()` docs.
 
@@ -324,10 +326,9 @@ them, rather than lifted.*
 
 *Where the faces actually live, because the token file does not say General
 Sans: `tokens.css` still declares the previous stack on `--font-display`,
-`--font-ui` and `--font-mono`, and `drift-check` requires the three vendored
+`--font-ui` and `--font-mono`, and `drift-check` requires the two vendored
 copies to stay byte-identical to it. `apps/web` and `apps/docs` re-point those
 three tokens in their own `globals.css`, immediately after the `@import`, where
-the change is commented. `apps/console` ships no font files and never did, so
-it resolves to the fallback stacks either way and this change does not reach
-it. If the console ever gets the real faces, that is the moment to move the
-declarations into `tokens.css` and sync all three copies.*
+the change is commented. `apps/console` is not a copy: it carries its own
+tuning under the same token names (neutral surfaces, one teal accent, Inter
+bundled with the app), checked for WCAG AA by its own `contrast.test.ts`.*

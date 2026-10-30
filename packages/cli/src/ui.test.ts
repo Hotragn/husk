@@ -107,6 +107,27 @@ describe('colour', () => {
     ui.configure({ color: false });
     expect(ui.red('x')).toBe('x');
   });
+
+  it('follows each stream: none on a piped stdout while a terminal stderr keeps it', () => {
+    const was = { out: process.stdout.isTTY, err: process.stderr.isTTY };
+    Object.defineProperty(process.stdout, 'isTTY', { value: undefined, configurable: true });
+    Object.defineProperty(process.stderr, 'isTTY', { value: true, configurable: true });
+    try {
+      ui.configure({});
+      ui.print(ui.red('answer'));
+      ui.note(ui.red('status'));
+      expect(stdout()).toBe('answer\n');
+      expect(stderr()).toContain('31m');
+      // Asked for, it stays on a pipe too.
+      out.length = 0;
+      ui.configure({ color: true });
+      ui.print(ui.red('answer'));
+      expect(stdout()).toContain('31m');
+    } finally {
+      Object.defineProperty(process.stdout, 'isTTY', { value: was.out, configurable: true });
+      Object.defineProperty(process.stderr, 'isTTY', { value: was.err, configurable: true });
+    }
+  });
 });
 
 describe('table', () => {

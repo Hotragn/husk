@@ -6,8 +6,9 @@ order: 2
 ---
 
 Eleven providers ship in `@husk-ai/models`. Three have their own wire format and their own
-file; the rest speak OpenAI's `/v1/chat/completions` dialect and are configuration
-rather than code.
+file. The other eight speak OpenAI's `/v1/chat/completions` dialect: OpenAI in a file of
+its own, for its reasoning models' quirks, and seven that are configuration rather than
+code.
 
 | Provider | Priority | Environment variable | Free tier |
 | --- | --- | --- | --- |
@@ -23,8 +24,10 @@ rather than code.
 | `lmstudio` | 42 | none — `LMSTUDIO_HOST` moves the endpoint | local, so free |
 | `ollama` | 40 | none — `OLLAMA_HOST` moves the endpoint | local, so free |
 
-Priority is the quality ordering `auto` walks, highest first. It is not a statement about
-which provider is better at your task.
+Priority orders the providers in `husk doctor` and `husk models`, and it is the order
+`husk run` walks to resolve `auto`, `free` and `local`. The router's own strategies sort
+by model and ignore it: see [the router page](/models#what-auto-free-and-local-actually-pick).
+It is not a statement about which provider is better at your task.
 
 A provider with no key set is not an error. It is reported, with the fix:
 
@@ -34,7 +37,7 @@ A provider with no key set is not an error. It is reported, with the fix:
       ollama/qwen2.5:1.5b, ollama/qwen2.5:7b, ollama/llama3.2:latest
   ✗ anthropic
       ANTHROPIC_API_KEY is not set
-      fix: Set ANTHROPIC_API_KEY for Claude, or run \`ollama pull gemma3\` for a free local model.
+      fix: Set ANTHROPIC_API_KEY for Claude, or run \`ollama pull qwen2.5:7b\` for a free local model that can call tools.
   ✗ google
       GOOGLE_API_KEY is not set
       fix: Set GOOGLE_API_KEY — aistudio.google.com gives a free key with a Gemini Flash free tier.`}
@@ -42,17 +45,19 @@ A provider with no key set is not an error. It is reported, with the fix:
 
 ## Setting a key
 
-Husk reads keys from the process environment. Nothing is stored in `~/.husk`, and no
-command writes a key to disk.
+Husk reads keys from the process environment, and from `~/.husk/.env` if you write one.
+No command writes a key to disk.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 husk doctor            # confirms it took
 ```
 
-For a persistent, non-shell-history setup, `~/.husk/.env` is the file Husk reserves for
-local overrides. On Windows, `setx ANTHROPIC_API_KEY "sk-ant-..."` and open a new
-terminal.
+For a persistent, non-shell-history setup, put them in `~/.husk/.env`, one `KEY=value`
+per line (`#` comments, `export ` and quotes are fine). Every `husk` command and the MCP
+server read it at start, for any key the environment does not already set: a key you
+export wins over the file. On Windows, `setx ANTHROPIC_API_KEY "sk-ant-..."` and open a
+new terminal also works.
 
 <Warning>
 A key in the environment is visible to every process you launch. It is **not** passed
@@ -77,7 +82,10 @@ window.
 Three things here are not shared with the OpenAI dialect, and they are why this provider
 has its own file: tool results ride inside a `user` message rather than a `tool` role,
 extended thinking is a content block whose signature must be echoed back verbatim, and
-prompt caching is opt-in per block.
+prompt caching is opt-in per block. A reply's signature comes back as `thinkingSignature`
+when the reply had one thinking block, and a thinking part that carries it is sent back
+with it; JSON mode is an assistant prefill of `{`, which is put back at the start of the
+reply.
 
 Caching is placed on exactly two blocks — the system prompt, and the last *stable* user
 turn. Every `cache_control` marker costs a cache write, and marking the newest turn
@@ -131,7 +139,10 @@ low rate limit. Pro is not.
 Gemini is genuinely a different wire format, not a dialect: `contents` instead of
 `messages`, `model` instead of `assistant`, function results keyed by **name** rather
 than by call id, and a JSON Schema subset that rejects half of draft-07. Each of those
-is a translation `@husk-ai/models` owns.
+is a translation `@husk-ai/models` owns. A tool's schema loses the keywords Gemini
+rejects, `additionalProperties`, `default` and `examples` among them, and a `const`
+becomes a one-value `enum`; a parameter keeps its name whatever it is called. A `$ref` is
+dropped, not inlined from `$defs`.
 
 <Note>
 Google prices Gemini 2.5 Pro in two tiers, above and below a 200k-token prompt.
@@ -172,9 +183,13 @@ export OPENROUTER_API_KEY=sk-or-...       # openrouter.ai
 ```
 
 OpenRouter is one of three providers Husk asks for a live catalogue instead of trusting
-the static one. The `:free` suffix is the whole pricing signal:
-`deepseek/deepseek-chat` bills and `deepseek/deepseek-chat:free` does not, so a
-discovered model ending in `:free` is priced at zero and is eligible for `--model free`.
+the static one; Together and LM Studio are the others. Each asks once and keeps the
+answer for the life of the process, so a long-running `husk serve` sees a newly listed
+model only after a restart. Ollama's list is asked again after 30 seconds. The `:free`
+suffix is the whole pricing signal: `deepseek/deepseek-chat` bills and
+`deepseek/deepseek-chat:free` does not, so a discovered model ending in `:free` is
+priced at zero and is eligible for `--model free`. A discovered model the catalog does
+not know has no price at all, and is counted at `$0`.
 
 Husk sends OpenRouter's two attribution headers, `http-referer: https://github.com/Hotragn/husk` and
 `x-title: Husk`. Without them your calls are filed as anonymous on OpenRouter's activity
@@ -235,21 +250,27 @@ export OLLAMA_HOST=http://127.0.0.1:11434          # the default
 
 ## Self-hosting a compatible endpoint
 
-Anything that speaks `/v1/chat/completions` can be pointed at through the base-URL
-override of a provider you are not otherwise using:
+Two of the OpenAI-dialect providers take a base-URL override: `openai`
+(`OPENAI_BASE_URL`) and `lmstudio` (`LMSTUDIO_HOST`). The other six always call their
+own service.
+
+For a server of your own that needs no key, `LMSTUDIO_HOST` is the one to use: LM
+Studio's provider asks the endpoint's `/models` for what it serves, so `husk models`
+lists it as `lmstudio/<name>`, and prices all of it at zero.
 
 ```bash
-export OPENAI_BASE_URL=http://10.0.0.5:8000/v1
-export OPENAI_API_KEY=whatever-your-gateway-wants
+export LMSTUDIO_HOST=http://10.0.0.5:8000/v1
 husk models
 ```
 
-Husk will apply OpenAI's reasoning-model quirks to any model id matching `o1`–`o9` or
-`gpt-5`, so avoid those names on a gateway that does not want them.
+`OPENAI_BASE_URL` keeps OpenAI's own catalogue and sends `OPENAI_API_KEY`, so it suits a
+proxy in front of OpenAI: `husk run` finds only the model ids that catalogue names. Husk
+applies OpenAI's reasoning-model quirks to any model id matching `o1`–`o9` or `gpt-5`, so
+avoid those names on a gateway that does not want them.
 
 ## What Husk sends where
 
 Model requests go to the provider you configure. Other tasks may contact public
 sources, search providers, remote computers, and image registries. The installed
 runtime has no product telemetry or crash reporter; the hosted website and docs
-use Cloudflare Web Analytics.
+use PostHog analytics.

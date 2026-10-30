@@ -12,9 +12,7 @@
  * is one label -- and booting a container to assert a string would make this a
  * test of Docker.
  */
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { Computer, Logger } from '@husk-ai/core';
 import type { ComputerManager } from '@husk-ai/runtime';
 import { describe, expect, it } from 'vitest';
@@ -51,7 +49,7 @@ async function session(labels: Record<string, string>) {
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
 
   let notified = 0;
-  client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+  client.setNotificationHandler('notifications/tools/list_changed', () => {
     notified++;
   });
 

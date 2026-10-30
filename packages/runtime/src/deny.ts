@@ -9,8 +9,11 @@ export interface CommandRule {
  *
  * Without this anchor, `grep -r "sudo" .` and `echo "shutdown" >> notes.txt` get
  * refused — and a deny list that cries wolf is a deny list users switch off.
+ *
+ * A lookbehind, so a match starts at the command and not at the separator
+ * before it: that is the part an allow entry has to cover to lift the rule.
  */
-const CMD = String.raw`(?:^|[\n;|&]\s*|\$\(\s*|\bthen\s+|\bdo\s+)`;
+const CMD = String.raw`(?<=^|[\n;|&]\s*|\$\(\s*|\bthen\s+|\bdo\s+)`;
 
 function atCommandStart(body: string): RegExp {
   return new RegExp(CMD + body);
@@ -40,7 +43,8 @@ export const DEFAULT_DENY: CommandRule[] = [
   { pattern: atCommandStart(String.raw`(?:shutdown|reboot|halt|poweroff)\b`), reason: 'host power control' },
   { pattern: atCommandStart(String.raw`init\s+0\b`), reason: 'host power control' },
   {
-    pattern: atCommandStart(String.raw`(?:systemctl|service)\s+\S+\s+(?:stop|disable|mask)\b`),
+    // `systemctl [options] stop <unit>`, and `service <name> stop`.
+    pattern: atCommandStart(String.raw`(?:systemctl\s+(?:-\S+\s+)*|service\s+\S+\s+)(?:stop|disable|mask)\b`),
     reason: 'stopping host services',
   },
   { pattern: /(?:^|[^>])>>?\s*\/etc\/(?:passwd|shadow|sudoers|hosts)\b/, reason: 'overwriting a system file' },

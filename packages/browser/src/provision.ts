@@ -52,6 +52,8 @@ export const CHROME_FOR_TESTING_MANIFEST =
 
 /** Where installs live inside the computer. Under /work so `persist: true` keeps them. */
 export const CACHE_ROOT = '/work/.husk-browser';
+/** Where a page's downloads land: beside the browser cache, in /work, so they stay with the computer. */
+export const DOWNLOADS_DIR = '/work/downloads';
 
 const SYSTEM_CANDIDATES = ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable'] as const;
 
@@ -357,8 +359,8 @@ export async function provisionChromium(
         ? 'the computer has a downloader but could not reach the CDN; check `husk exec <name> ' +
           `-- curl -sSI ${plan.url}\`, or install a system chromium and husk will use that instead`
         : 'this machine has neither curl nor python3, so there is nothing here to download ' +
-          'with, and nothing was attempted over the network. Use a flavor whose image ships ' +
-          'one -- `--flavor python` works -- or set computer.image to your own.',
+          'with, and nothing was attempted over the network. Use `--flavor full`, the image that ' +
+          'carries what Chromium needs to run, or set computer.image to your own.',
       details: { url: plan.url, haveDownloader: canDownload, detail: dl.detail.slice(0, 500) },
     });
   }
@@ -411,7 +413,8 @@ async function findCached(
   arch: BrowserArch,
   signal?: AbortSignal,
 ): Promise<ProvisionResult | null> {
-  const glob = arch === 'arm64' ? 'chrome-linux/headless_shell' : 'chrome-headless-shell-linux64/chrome-headless-shell';
+  // The layout the download unpacks to, from the one table that says it.
+  const glob = downloadPlanFor(arch).binaryPath;
   const r = await sh(
     computer,
     `ls -d ${CACHE_ROOT}/chromium-${arch}-*/${glob} 2>/dev/null | head -n 1`,

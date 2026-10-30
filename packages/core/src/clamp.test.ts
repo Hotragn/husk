@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { clampText } from './util.js';
+import { clampText, fileTooLarge, headText } from './util.js';
 
 const FFFD = /�/;
 
@@ -63,5 +63,23 @@ describe('clampText', () => {
     const omitted = Number(/\[(\d+) bytes elided/.exec(r.text)![1]);
     const kept = Buffer.byteLength(r.text.replace(/\n\.\.\. \[\d+ bytes elided by husk\] \.\.\.\n/, ''), 'utf8');
     expect(kept + omitted).toBe(1000);
+  });
+});
+
+describe('a bounded read', () => {
+  it('returns a file that fits, whole', () => {
+    expect(headText(Buffer.from('hello'), 5)).toBe('hello');
+  });
+
+  it('says so when the file went on past the limit, read one byte over', () => {
+    const text = headText(Buffer.from('hello world'), 5);
+    expect(text.startsWith('hello\n')).toBe(true);
+    expect(text).toContain('goes on past 5 bytes');
+  });
+
+  it('refuses a whole read that is too large, as a quota, with what to do', () => {
+    const err = fileTooLarge('/work/big.bin', 1024);
+    expect(err).toMatchObject({ code: 'E_QUOTA', details: { limit: 1024 } });
+    expect(err.hint).toContain('offset and limit');
   });
 });

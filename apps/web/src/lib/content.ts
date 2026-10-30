@@ -156,15 +156,14 @@ export const TRANSCRIPT: TermLine[] = [
 export const TRANSCRIPT_TEXT = TRANSCRIPT.map((l) => l.text).join("\n");
 
 /**
- * `husk` with no arguments on a machine that has never run it — the twenty
- * lines where the free path either proves itself or does not. Quoted from
- * brand/voice-examples.md §2. The bad news sits in the same table as the good
- * news, in the same type, at the same weight.
+ * An illustrative provider report. The bad news sits in the same table as
+ * the good news, in the same type, at the same weight. Do not present this as
+ * literal current CLI output: providers and installed versions vary by device.
  */
 export const DOCTOR: TermLine[] = [
-  { kind: "prompt", text: "$ npx -y @husk-ai/cli" },
+  { kind: "prompt", text: "$ husk doctor" },
   { kind: "blank", text: "" },
-  { kind: "out", text: "husk 0.1.0 · first run · ~/.husk created" },
+  { kind: "out", text: "example report · your providers may differ" },
   { kind: "blank", text: "" },
   { kind: "out", text: "computer providers" },
   {
@@ -187,7 +186,7 @@ export const DOCTOR: TermLine[] = [
     text: "selected      local + ollama/gemma3       free, on this machine, no account",
   },
   { kind: "blank", text: "" },
-  { kind: "dim", text: "no telemetry. nothing left this machine." },
+  { kind: "dim", text: "no product telemetry; tasks may contact the services they use." },
 ];
 
 /** README.md, "Turn a chat into a bot". */
@@ -270,7 +269,7 @@ export const MCP_TOOLS: Array<{ name: string; what: string }> = [
 ];
 
 /**
- * The browser, from `packages/mcp/src/browser-tools.ts`. Five of thirteen — the
+ * The browser, from `packages/mcp/src/browser-tools.ts`. Five of fifteen — the
  * five that make the shape obvious. A real Chromium inside the computer, driven
  * by structured page text rather than by pixels, which is why an agent can use
  * it without seeing.
@@ -283,8 +282,8 @@ export const BROWSER_TOOLS: Array<{ name: string; what: string }> = [
   { name: "browser_screenshot", what: "take a screenshot, to check a layout or show you" },
 ];
 
-/** Thirteen ship; the list above is the first five. */
-export const BROWSER_TOOL_COUNT = 13;
+/** Fifteen ship; the list above is the first five. */
+export const BROWSER_TOOL_COUNT = 15;
 
 /**
  * The first three prompts, in the order that proves the most fastest.

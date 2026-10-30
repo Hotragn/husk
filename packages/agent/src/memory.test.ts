@@ -58,7 +58,8 @@ describe('trimHistory', () => {
 
   it('keeps the system prompt, the first user turn and the last window', async () => {
     const messages: ModelMessage[] = [{ role: 'system', content: 'be terse' }, ...conversation(10)];
-    const out = await trimHistory(messages, { windowTurns: 2 });
+    // Each question is two turns here: the question with its tool step, then the answer.
+    const out = await trimHistory(messages, { windowTurns: 4 });
 
     expect(out.elided).toBeGreaterThan(0);
     expect(out.messages[0]).toEqual({ role: 'system', content: 'be terse' });
@@ -67,6 +68,42 @@ describe('trimHistory', () => {
     expect(out.messages.at(-1)).toEqual({ role: 'assistant', content: 'answer 9' });
     expect(out.messages).toContainEqual(user('question 8'));
     expect(out.messages).not.toContainEqual(user('question 5'));
+  });
+
+  it('trims one long run, whose every tool step is a turn of its own', async () => {
+    // One prompt and 60 tool steps, as `husk run` or a chat trigger makes: one user turn.
+    const run: ModelMessage[] = [user('fix the build')];
+    for (let i = 0; i < 60; i++) run.push(assistantCalling(`step ${i}`, `s${i}`), toolResult(`s${i}`));
+    run.push({ role: 'assistant', content: 'done' });
+
+    const out = await trimHistory(run, { windowTurns: 5 });
+    expect(out.elided).toBeGreaterThan(100);
+    expect(out.messages[0]).toEqual(user('fix the build'));
+    expect(out.messages.at(-1)).toEqual({ role: 'assistant', content: 'done' });
+    expect(JSON.stringify(out.messages)).toContain('step 59');
+    expect(JSON.stringify(out.messages)).not.toContain('step 50"');
+    assertPaired(out.messages);
+    // The marker joins the model's next step: never two assistant messages in a row.
+    out.messages.forEach((m, i) => expect([m.role, out.messages[i + 1]?.role]).not.toEqual(['assistant', 'assistant']));
+  });
+
+  it('hands an earlier summary to the next one, rather than dropping it', async () => {
+    const seen: string[] = [];
+    const summariser = async (slice: ModelMessage[]) => {
+      seen.push(renderForSummary(slice));
+      return `summary ${seen.length}`;
+    };
+    const first = await trimHistory(conversation(10), { windowTurns: 2, summarise: true, summariser });
+    const second = await trimHistory([...first.messages, ...conversation(10).slice(4)], { windowTurns: 2, summarise: true, summariser });
+    expect(second.summarised).toBe(true);
+    expect(seen[1]).toContain('summary 1');
+    expect(JSON.stringify(second.messages)).toContain('summary 2');
+  });
+
+  it('keeps a husk’s examples, and anchors on the person’s own first message', async () => {
+    const examples: ModelMessage[] = [user('example question'), { role: 'assistant', content: 'example answer' }];
+    const out = await trimHistory([...examples, ...conversation(10)], { windowTurns: 2, pinned: 2 });
+    expect(out.messages.slice(0, 3)).toEqual([...examples, user('question 0')]);
   });
 
   it('never orphans a tool_result', async () => {

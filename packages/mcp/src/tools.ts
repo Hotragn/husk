@@ -1,7 +1,8 @@
 import type { Computer } from '@husk-ai/core';
 import { HuskError, PROBE_COMPUTER_INFO, clampText, explainShellFailure, formatBytes, redact } from '@husk-ai/core';
 import { browseInComputer } from '@husk-ai/core';
-import { BROWSER_TOOLS, BROWSER_TOOL_NAMES, callBrowserTool } from './browser-tools.js';
+import { STOP_UNCONFIRMED, ensureRunning } from '@husk-ai/runtime';
+import { BROWSER_TOOLS, BROWSER_TOOL_NAMES, callBrowserTool, secondsArg } from './browser-tools.js';
 import { workspaceNote } from './workspace.js';
 
 /**
@@ -16,6 +17,8 @@ export interface ToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** MCP Apps metadata (`ui.resourceUri`, `ui.visibility`), for clients that render cards. */
+  _meta?: Record<string, unknown>;
 }
 
 export const TOOLS: ToolDef[] = [
@@ -30,7 +33,7 @@ export const TOOLS: ToolDef[] = [
       properties: {
         command: { type: 'string', description: 'The shell command, run with sh -c.' },
         cwd: { type: 'string', description: 'Working directory. Defaults to /work.' },
-        timeoutSec: { type: 'number', description: 'Kill the command after this long. Defaults to 120.' },
+        timeoutSec: { type: 'number', description: 'Stop the command after this many seconds: 120 by default, 3600 at most.' },
         stdin: { type: 'string', description: 'Text piped to the command on stdin.' },
       },
       required: ['command'],
@@ -39,8 +42,8 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'read_file',
     description:
-      'Read a text file from the computer. Use offset/limit for large files rather than ' +
-      'reading the whole thing -- output is capped and the middle will be elided.',
+      'Read a text file from the computer. Without offset/limit you get its start, about 96 KB, ' +
+      'with a note when it goes on; read the rest by line with offset and limit.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -155,17 +158,31 @@ function fail(text: string): ToolResult {
 }
 
 const MAX_TOOL_OUTPUT = 96 * 1024;
+/** The longest a `shell` call may run. */
+const SHELL_MAX_SEC = 3600;
 
-/** Run one tool call against a live computer. Never throws; errors come back as results. */
+/**
+ * A chat tool as the shared Husk runs it (`deps.runTool` in `husk serve`): the
+ * same `callTool`, on a computer woken first if a chat's idle timer stopped it.
+ */
+export async function runTool(computer: Computer, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+  return callTool(await ensureRunning(computer), name, args, signal);
+}
+
+/**
+ * Run one tool call against a live computer. Never throws; errors come back as results.
+ * `signal` is the chat cancelling the call: a command it started is stopped.
+ */
 export async function callTool(
   computer: Computer,
   name: string,
   args: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<ToolResult> {
   try {
     switch (name) {
       case 'shell':
-        return await shell(computer, args);
+        return await shell(computer, args, signal);
       case 'read_file':
         return await readFile(computer, args);
       case 'write_file':
@@ -177,12 +194,12 @@ export async function callTool(
       case 'expose_port':
         return await exposePort(computer, args);
       case 'computer_info':
-        return await computerInfo(computer);
+        return await computerInfo(computer, signal);
       case 'browse':
-        return await browse(computer, args);
+        return await browse(computer, args, signal);
       default:
         if (BROWSER_TOOL_NAMES.has(name)) {
-          return await callBrowserTool(computer, name, args, MAX_TOOL_OUTPUT);
+          return await callBrowserTool(computer, name, args, MAX_TOOL_OUTPUT, signal);
         }
         return fail(`unknown tool: ${name}`);
     }
@@ -196,7 +213,7 @@ export async function callTool(
   }
 }
 
-async function shell(computer: Computer, args: Record<string, unknown>): Promise<ToolResult> {
+async function shell(computer: Computer, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
   const command = String(args.command ?? '');
   if (!command.trim()) return fail('command is empty');
 
@@ -204,14 +221,23 @@ async function shell(computer: Computer, args: Record<string, unknown>): Promise
     cmd: command,
     ...(args.cwd ? { cwd: String(args.cwd) } : {}),
     ...(args.stdin !== undefined ? { stdin: String(args.stdin) } : {}),
-    timeoutSec: typeof args.timeoutSec === 'number' ? args.timeoutSec : 120,
+    // 0, a negative number or one past what a timer can hold used to mean no
+    // limit at all, or an instant kill. An hour is the ceiling /v1/.../exec has.
+    timeoutSec: secondsArg(args.timeoutSec, 120, SHELL_MAX_SEC),
     maxOutputBytes: MAX_TOOL_OUTPUT,
+    ...(signal ? { signal } : {}),
   });
 
   const parts: string[] = [];
   if (r.stdout) parts.push(r.stdout.trimEnd());
   if (r.stderr) parts.push(`[stderr]\n${r.stderr.trimEnd()}`);
-  if (r.timedOut) parts.push(`[timed out after ${Math.round(r.durationMs / 1000)}s and was killed]`);
+  // "stopped" only when the provider confirmed it; otherwise its own line in stderr says why not.
+  // Cancelled or taken over is not a timeout, and whoever stopped it says why.
+  if (r.timedOut) {
+    const secs = Math.round(r.durationMs / 1000);
+    if (signal?.aborted) parts.push(`[stopped after ${secs}s]`);
+    else parts.push(r.stderr.includes(STOP_UNCONFIRMED) ? `[timed out after ${secs}s]` : `[timed out after ${secs}s and was stopped]`);
+  }
   if (r.exitCode !== 0 && !r.timedOut) parts.push(`[exit ${r.exitCode}]`);
 
   // Attached per failure, not once per session. The note at the top of the
@@ -226,17 +252,18 @@ async function shell(computer: Computer, args: Record<string, unknown>): Promise
 
 async function readFile(computer: Computer, args: Record<string, unknown>): Promise<ToolResult> {
   const path = String(args.path ?? '');
-  const text = await computer.readTextFile(path, MAX_TOOL_OUTPUT);
   const offset = typeof args.offset === 'number' ? Math.max(1, args.offset) : undefined;
   const limit = typeof args.limit === 'number' ? args.limit : undefined;
 
-  if (offset === undefined && limit === undefined) return ok(redact(text));
+  if (offset === undefined && limit === undefined) return ok(redact(await computer.readTextFile(path, MAX_TOOL_OUTPUT)));
 
-  const lines = text.split('\n');
+  // A part of a large file: the whole of it is read (bounded, or refused), so
+  // a line past the first 96 KB is reachable; what comes back is capped.
+  const lines = new TextDecoder().decode(await computer.readFile(path)).split('\n');
   const start = (offset ?? 1) - 1;
   const slice = lines.slice(start, limit ? start + limit : undefined);
   const header = `[lines ${start + 1}-${start + slice.length} of ${lines.length}]`;
-  return ok(`${header}\n${redact(slice.join('\n'))}`);
+  return ok(clampText(`${header}\n${redact(slice.join('\n'))}`, MAX_TOOL_OUTPUT).text);
 }
 
 async function writeFile(computer: Computer, args: Record<string, unknown>): Promise<ToolResult> {
@@ -252,7 +279,8 @@ async function editFile(computer: Computer, args: Record<string, unknown>): Prom
   const newStr = String(args.new_string ?? '');
   if (!oldStr) return fail('old_string is empty; use write_file to create a file');
 
-  const before = await computer.readTextFile(path);
+  // The whole file, or a refusal: an edit made to part of a file and written back loses the rest.
+  const before = new TextDecoder().decode(await computer.readFile(path));
   const first = before.indexOf(oldStr);
   if (first === -1) {
     return fail(
@@ -294,13 +322,14 @@ async function exposePort(computer: Computer, args: Record<string, unknown>): Pr
   return ok(`port ${port} is published at ${where}`);
 }
 
-async function computerInfo(computer: Computer): Promise<ToolResult> {
+async function computerInfo(computer: Computer, signal?: AbortSignal): Promise<ToolResult> {
   // huskinfo exists in the sandbox/ images; everywhere else, probe for the same
   // fields. Shared with the agent's copy so that one tool name cannot report two
   // different sets of facts depending on how the caller got here.
   const r = await computer.exec({
     cmd: `command -v huskinfo >/dev/null 2>&1 && huskinfo || { ${PROBE_COMPUTER_INFO}; }`,
     timeoutSec: 20,
+    ...(signal ? { signal } : {}),
   });
 
   const info = computer.info;
@@ -331,7 +360,7 @@ async function computerInfo(computer: Computer): Promise<ToolResult> {
  * agent reads is what this machine can actually reach, and the console Browser
  * panel shows the same page.
  */
-async function browse(computer: Computer, args: Record<string, unknown>): Promise<ToolResult> {
+async function browse(computer: Computer, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
   const url = String(args.url ?? '');
   if (!url) return fail('browse needs a url');
 
@@ -339,6 +368,7 @@ async function browse(computer: Computer, args: Record<string, unknown>): Promis
     url,
     ...(typeof args.maxBytes === 'number' ? { maxBytes: args.maxBytes } : {}),
     ...(typeof args.timeoutSec === 'number' ? { timeoutSec: args.timeoutSec } : {}),
+    ...(signal ? { signal } : {}),
   });
 
   const head = [

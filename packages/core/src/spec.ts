@@ -12,6 +12,7 @@ export const NetworkPolicySchema = z.object({
   mode: z.enum(['none', 'egress', 'full']).default('egress'),
   allow: z.array(z.string()).optional(),
   deny: z.array(z.string()).optional(),
+  strict: z.boolean().optional(),
 });
 
 export const ComputerConfigSchema = z.object({
@@ -28,7 +29,7 @@ export const ComputerConfigSchema = z.object({
   network: NetworkPolicySchema.default({ mode: 'egress' }),
   packages: z.array(z.string()).default([]),
   setup: z.string().optional(),
-  env: z.record(z.string()).default({}),
+  env: z.record(z.string(), z.string()).default({}),
   workdir: z.string().default('/work'),
   persist: z.boolean().default(false),
   mounts: z
@@ -51,7 +52,7 @@ export const ComputerConfigSchema = z.object({
    * Optional rather than `.default({})` so a spec that never mentions labels
    * serialises exactly as it did before.
    */
-  labels: z.record(z.string()).optional(),
+  labels: z.record(z.string(), z.string()).optional(),
 });
 
 export const LimitsSchema = z.object({
@@ -116,7 +117,18 @@ export const ExampleSchema = z.object({
   assistant: z.string(),
 });
 
-export const HuskSpecSchema = z.object({
+/**
+ * What runs the husk. `builtin` is Husk's own agent loop, on `model`.
+ * `claude-code` and `codex` are the person's own CLI, run headless under their
+ * own login with Husk's tools and nothing else. `resume` continues a Claude
+ * Code chat, by its session id, on that chat's computer.
+ */
+export const EngineSchema = z.object({
+  type: z.enum(['builtin', 'claude-code', 'codex']).default('builtin'),
+  resume: z.string().regex(/^[A-Za-z0-9-]{8,80}$/, 'resume is a Claude Code session id').optional(),
+});
+
+const HuskSpecObject = z.object({
   /** Schema version. Bumped only on breaking changes. */
   apiVersion: z.literal('husk/v1').default('husk/v1'),
   name: z
@@ -131,6 +143,7 @@ export const HuskSpecSchema = z.object({
   model: z.string().default('auto'),
   /** Tried in order when the primary is unavailable, rate limited, or over budget. */
   fallbackModels: z.array(z.string()).default([]),
+  engine: EngineSchema.prefault({}),
   temperature: z.number().min(0).max(2).optional(),
   /** The system prompt. Supports {{var}} interpolation from RunOptions.vars. */
   persona: z.string().default(''),
@@ -138,23 +151,13 @@ export const HuskSpecSchema = z.object({
   examples: z.array(ExampleSchema).default([]),
   /** Tool names, or the computer / files / web / http bundles. */
   tools: z.array(z.string()).default(['computer']),
-  computer: ComputerConfigSchema.default({}),
-  limits: LimitsSchema.default({}),
-  guardrails: GuardrailsSchema.default({}),
-  memory: MemorySchema.default({}),
-  triggers: z.array(TriggerSchema).default([{ type: 'cli' }]).superRefine((triggers, ctx) => {
-    for (const [index, trigger] of triggers.entries()) {
-      if (trigger.type === 'discord' || trigger.type === 'slack' || trigger.type === 'telegram') {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [index, 'type'],
-          message: `${trigger.type} triggers are not wired into the Husk server yet. Use http, webhook, cron, or cli; messaging adapters must be started explicitly in your own application.`,
-        });
-      }
-    }
-  }),
+  computer: ComputerConfigSchema.prefault({}),
+  limits: LimitsSchema.prefault({}),
+  guardrails: GuardrailsSchema.prefault({}),
+  memory: MemorySchema.prefault({}),
+  triggers: z.array(TriggerSchema).default([{ type: 'cli' }]),
   /** Free-form, carried through untouched. */
-  metadata: z.record(z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
   /** Provenance: which transcript this husk was distilled from. */
   origin: z
     .object({
@@ -166,7 +169,32 @@ export const HuskSpecSchema = z.object({
     .optional(),
 });
 
+/**
+ * A CLI engine reaches the computer through Husk's MCP tools, which run what
+ * they are asked without a person approving each call and without the
+ * built-in loop's command filters. A husk that relies on either says so here,
+ * when it is saved, rather than at its first run.
+ */
+export const HuskSpecSchema = HuskSpecObject.superRefine((spec, ctx) => {
+  const engine = spec.engine.type;
+  if (spec.engine.resume && engine !== 'claude-code') {
+    ctx.addIssue({ code: 'custom', path: ['engine', 'resume'], message: 'resume continues a Claude Code chat; it needs engine type claude-code' });
+  }
+  if (engine === 'builtin') return;
+  if (spec.guardrails.approvalMode !== 'auto') {
+    ctx.addIssue({ code: 'custom', path: ['guardrails', 'approvalMode'], message: `the ${engine} engine runs Husk's tools without asking; use approvalMode auto, or the builtin engine` });
+  }
+  if (spec.guardrails.denyCommands.length || spec.guardrails.allowCommands.length) {
+    ctx.addIssue({ code: 'custom', path: ['guardrails'], message: `the ${engine} engine cannot hold a husk to denyCommands or allowCommands; use the builtin engine` });
+  }
+  // Its computer is Husk's MCP server's, which takes a network mode and nothing finer.
+  if (spec.computer.network.allow?.length || spec.computer.network.deny?.length || spec.computer.image) {
+    ctx.addIssue({ code: 'custom', path: ['computer'], message: `the ${engine} engine's computer takes a network mode, not allow or deny lists or an image; use the builtin engine` });
+  }
+});
+
 export type HuskSpec = z.infer<typeof HuskSpecSchema>;
+export type Engine = z.infer<typeof EngineSchema>;
 export type HuskSpecInput = z.input<typeof HuskSpecSchema>;
 export type ComputerConfig = z.infer<typeof ComputerConfigSchema>;
 export type Limits = z.infer<typeof LimitsSchema>;
