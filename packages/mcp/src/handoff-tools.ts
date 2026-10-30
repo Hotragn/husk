@@ -54,10 +54,5 @@ export function relayText(handoffId: string, reason: string, link: string): stri
   );
 }
 
-/** Who is holding the computer, for a tool call made while a handoff is open. */
-export function heldText(handoffId: string, reason: string): string {
-  return (
-    `The user has the computer right now (handoff ${handoffId}: ${reason}). Wait for them to tell you they are ` +
-    `done, then call hand_off_done with handoff "${handoffId}". Do not use the computer until then.`
-  );
-}
+// The shared Husk refuses tool calls on a held computer with the same words.
+export { heldText } from '@husk-ai/server/workspace-viewer';

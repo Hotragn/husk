@@ -16,7 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var problem: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        config = ServerConfig(environment: ProcessInfo.processInfo.environment)
+        config = Self.findHusk()
         status = StatusItemController(open: { [weak self] in self?.open(\.consoleURL) },
                                       takeOver: { [weak self] in self?.open(\.takeOverURL) },
                                       quit: { NSApp.terminate(nil) })
@@ -28,9 +28,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Displays come and go; the notch is re-found on every change.
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in self?.render() }
+        // The desktop app shows its own notch: the pill makes way while it runs.
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.render() }
+        }
+    }
+
+    /// The shared Husk's address and token, from its record, unless HUSK_URL or HUSK_TOKEN say otherwise.
+    private static func findHusk() -> ServerConfig? {
+        let environment = ProcessInfo.processInfo.environment
+        let file = daemonRecordURL(environment: environment, home: FileManager.default.homeDirectoryForCurrentUser)
+        return ServerConfig(environment: environment, record: readDaemonRecord(at: file))
     }
 
     private func poll() {
+        // Every time: a Husk that restarted has a new token, and maybe a new port.
+        config = Self.findHusk()
         guard let config else {
             overview = nil
             render()
@@ -42,8 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let problem: String? = switch code {
             case 200? where next != nil: nil
             case 200?: "Husk sent something Husk Bar cannot read. Update both."
-            case nil: "Husk is not running. Start it with `husk serve`."
-            case 401?: "Husk asks for a token. Launch Husk Bar with the same HUSK_TOKEN as the server."
+            case nil: "Husk is not running. A chat that uses it starts it, and so does the Husk app."
+            case 401?: "Husk refused Husk Bar. If you run the server yourself, launch Husk Bar with its HUSK_TOKEN."
             case 404?: "This Husk is too old for Husk Bar. Update it."
             default: "Husk answered with an error (\(code ?? 0))."
             }
@@ -60,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func render() {
         let summary = Summary(overview)
-        let why = config == nil ? "HUSK_URL is not a loopback address, so Husk Bar will not contact it." : problem
+        let why = config == nil ? "Husk's address is not a loopback address, so Husk Bar will not contact it." : problem
         status?.update(summary: summary, overview: overview, problem: why)
         pill?.update(summary: summary, overview: overview)
     }

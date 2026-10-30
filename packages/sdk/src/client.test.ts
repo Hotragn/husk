@@ -182,8 +182,11 @@ describe('responses', () => {
     const client = new HuskClient({ fetch });
     await client.computers.destroy('cmp_chat1');
     await client.computers.destroy('cmp_chat1', { confirm: true });
+    await client.computers.destroy('cmp_chat1', { confirm: true, erase: true });
     expect(new URL(String(calls[0]!.url)).search).toBe('');
     expect(new URL(String(calls[1]!.url)).searchParams.get('confirm')).toBe('cmp_chat1');
+    expect(new URL(String(calls[1]!.url)).searchParams.has('erase')).toBe(false);
+    expect(new URL(String(calls[2]!.url)).search).toBe('?confirm=cmp_chat1&erase=true');
   });
 
   it('streams exec events in order and swallows the terminating done frame', async () => {

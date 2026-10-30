@@ -49,7 +49,8 @@ describe('Computers panel', () => {
 
   it("shows each computer's app, chat label, last used time and disk size", async () => {
     render(<ComputersPanel activeId={null} onSelect={() => {}} />);
-    expect(screen.getByText('Claude Desktop')).toBeTruthy();
+    // The app's mark in the husk, the same as the desktop window's tabs and the notch.
+    expect(screen.getByText('Claude Desktop').querySelector('svg.glyph-husk')).toBeTruthy();
     expect(screen.getByText('Claude Desktop · chat started 10:42')).toBeTruthy();
     expect(await screen.findByText('5.0 MiB')).toBeTruthy();
   });
@@ -62,13 +63,14 @@ describe('Computers panel', () => {
     expect(requests.some((r) => r.method === 'DELETE')).toBe(false);
   });
 
-  it('deletes with the id typed back once the person confirms', async () => {
+  it('deletes with the id typed back once the person confirms, erasing its files and browser logins', async () => {
     const confirm = vi.fn(() => true);
     vi.stubGlobal('confirm', confirm);
     render(<ComputersPanel activeId={null} onSelect={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Delete cmp_chat1' }));
     expect(String(confirm.mock.calls[0]?.[0])).toContain('Claude Desktop · chat started 10:42');
+    expect(String(confirm.mock.calls[0]?.[0])).toContain('browser’s logins');
     await waitFor(() => expect(requests.some((r) => r.method === 'DELETE')).toBe(true));
-    expect(requests.find((r) => r.method === 'DELETE')?.url).toBe('/v1/computers/cmp_chat1?confirm=cmp_chat1');
+    expect(requests.find((r) => r.method === 'DELETE')?.url).toBe('/v1/computers/cmp_chat1?confirm=cmp_chat1&erase=true');
   });
 });

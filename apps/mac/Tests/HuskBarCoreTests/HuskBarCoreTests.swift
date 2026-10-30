@@ -18,6 +18,12 @@ final class SummaryTests: XCTestCase {
         XCTAssertTrue(Summary(overview(running: 2, waiting: 1)).isWaiting)
     }
 
+    func testAComputerThePersonTookIsNotWaitingOnThem() {
+        let taken = Handoff(handoffId: "hnd_me", reason: "You took over this computer", computerId: "cmp_0", runId: "person")
+        let o = Overview(computers: [Computer(id: "cmp_0", state: "running", provider: "docker")], activeRuns: [], handoffs: [taken])
+        XCTAssertEqual(Summary(o), .running(1))
+    }
+
     func testStoppedComputersDoNotShowThePill() {
         let o = Overview(computers: [Computer(id: "cmp_1", state: "stopped", provider: "local")], activeRuns: [], handoffs: [])
         XCTAssertEqual(Summary(o), .idle)
@@ -58,7 +64,62 @@ final class ServerConfigTests: XCTestCase {
         let o = decodeOverview(Data(json.utf8))
         XCTAssertEqual(o?.computers.first?.title, "Cursor · chat started 09:12")
         XCTAssertEqual(o?.handoffs.count, 1)
+        XCTAssertNil(o?.remote)
         XCTAssertNil(decodeOverview(Data("not json".utf8)))
+    }
+
+    func testSaysWhenRemoteAccessIsOnAndWhyItIsOff() {
+        let json = """
+        {"computers":[],"activeRuns":[],"handoffs":[],"remote":{"on":true,"publicUrl":"https://box.tail1234.ts.net","apps":1,"warning":"1 advisory against this install: upgrade Husk"}}
+        """
+        let remote = decodeOverview(Data(json.utf8))?.remote
+        XCTAssertEqual(remote?.line, "Remote access on · https://box.tail1234.ts.net · 1 app")
+        XCTAssertEqual(remote?.warning, "1 advisory against this install: upgrade Husk")
+        let off = RemoteAccess(on: false, publicUrl: "https://box.tail1234.ts.net", apps: 0, offReason: "a critical advisory against fastify")
+        XCTAssertEqual(off.line, "Remote access off: a critical advisory against fastify")
+    }
+}
+
+final class SharedHuskTests: XCTestCase {
+    private let record = DaemonRecord(url: "http://127.0.0.1:52411", token: "t0ken")
+
+    func testFindsTheSharedHuskFromItsRecord() {
+        let c = ServerConfig(environment: [:], record: record)
+        XCTAssertEqual(c?.baseURL.absoluteString, "http://127.0.0.1:52411")
+        XCTAssertEqual(c?.request().value(forHTTPHeaderField: "Authorization"), "Bearer t0ken")
+        XCTAssertNil(ServerConfig(environment: [:], record: DaemonRecord(url: "http://127.0.0.1:52411", token: nil))?.token)
+    }
+
+    func testTheEnvironmentWinsWhenSetByHand() {
+        let both = ServerConfig(environment: ["HUSK_URL": "http://localhost:9000", "HUSK_TOKEN": "mine"], record: record)
+        XCTAssertEqual(both?.baseURL.absoluteString, "http://localhost:9000")
+        XCTAssertEqual(both?.token, "mine")
+        let tokenOnly = ServerConfig(environment: ["HUSK_TOKEN": "mine"], record: record)
+        XCTAssertEqual(tokenOnly?.baseURL.absoluteString, "http://127.0.0.1:7377")
+        XCTAssertEqual(tokenOnly?.token, "mine")
+    }
+
+    func testRefusesARecordThatIsNotLoopback() {
+        XCTAssertNil(ServerConfig(environment: [:], record: DaemonRecord(url: "http://10.0.0.2:7377", token: nil)))
+    }
+
+    func testReadsTheRecordWhereHuskWritesIt() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let file = daemonRecordURL(environment: [:], home: home)
+        XCTAssertEqual(file.path, home.appendingPathComponent(".husk/daemon.json").path)
+        XCTAssertEqual(daemonRecordURL(environment: ["HUSK_HOME": "/tmp/h"], home: home).path, "/tmp/h/daemon.json")
+        XCTAssertNil(readDaemonRecord(at: file))
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"url":"http://127.0.0.1:52411","token":null,"pid":42,"version":"0.2.0","startedAt":"x"}"#.utf8).write(to: file)
+        XCTAssertEqual(readDaemonRecord(at: file), DaemonRecord(url: "http://127.0.0.1:52411", token: nil))
+    }
+
+    func testThePillMakesWayForTheDesktopApp() {
+        XCTAssertTrue(showsPill(.running(1), desktopAppRunning: false))
+        XCTAssertFalse(showsPill(.running(1), desktopAppRunning: true))
+        XCTAssertFalse(showsPill(.waiting(1), desktopAppRunning: true))
+        XCTAssertFalse(showsPill(.idle, desktopAppRunning: false))
     }
 }
 

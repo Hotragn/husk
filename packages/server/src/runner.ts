@@ -1,7 +1,7 @@
-import { livePageFor } from '@husk-ai/browser';
 import { HuskError, isHuskError } from '@husk-ai/core';
 import type {
   ApprovalRequest,
+  ChatRequest,
   Computer,
   HandoffRequest,
   ComputerSpec,
@@ -12,10 +12,11 @@ import type {
   ToolCallPart,
 } from '@husk-ai/core';
 import { ApprovalRegistry } from './approvals.js';
+import { admitCall, givenBack } from './control.js';
 import type { PendingApproval } from './approvals.js';
-import { HandoffRegistry } from './handoffs.js';
+import { HandoffRegistry, PERSON_RUN } from './handoffs.js';
 import type { PendingHandoff } from './handoffs.js';
-import type { ComputerSourceLike, ManagerLike, ResolvedDeps, ServerRunOptions } from './deps.js';
+import type { ComputerSourceLike, ManagerLike, ResolvedDeps, RouterLike, ServerRunOptions } from './deps.js';
 import { EventBus } from './events.js';
 import { huskError } from './errors.js';
 import type { RunSummary } from './store.js';
@@ -63,6 +64,21 @@ function pinnedSource(computer: Computer): ComputerSourceLike {
 }
 
 /**
+ * The router a husk's run calls, with its `fallbackModels` on every request,
+ * as `husk run` gives them; a server run used to drop them. `getModelInfo`
+ * stays, for the budget to price a call before making it.
+ */
+function withFallbacks(router: RouterLike, fallbacks: string[]): RouterLike {
+  if (!fallbacks.length) return router;
+  const r = router as RouterLike & { getModelInfo?: (model: string) => Promise<unknown> };
+  return {
+    chat: (req) => r.chat({ ...req, fallbacks } as ChatRequest),
+    stream: (req) => r.stream({ ...req, fallbacks } as ChatRequest),
+    ...(r.getModelInfo ? { getModelInfo: (model: string) => r.getModelInfo!(model) } : {}),
+  } as RouterLike;
+}
+
+/**
  * Core owns `approval_required` now, so the wire event is just a `RunEvent`.
  * The alias remains because every signature in this file already names it.
  */
@@ -107,7 +123,7 @@ export interface RunnerOptions {
  */
 export class Runner {
   readonly approvals: ApprovalRegistry;
-  readonly handoffs = new HandoffRegistry();
+  readonly handoffs: HandoffRegistry;
   private readonly active = new Map<string, ActiveRun>();
 
   constructor(
@@ -118,6 +134,7 @@ export class Runner {
     this.approvals = new ApprovalRegistry(
       opts.approvalTimeoutMs === undefined ? {} : { timeoutMs: opts.approvalTimeoutMs },
     );
+    this.handoffs = new HandoffRegistry({ file: deps.holdsFile });
   }
 
   get activeCount(): number {
@@ -166,6 +183,8 @@ export class Runner {
     runId: string,
     signal: AbortSignal,
     onEvent: (e: ServerRunEvent) => void,
+    /** The runner's own word in the run, such as a pause: a streamed run's `onEvent` takes only the agent's. */
+    notice: (e: ServerRunEvent) => void = onEvent,
   ): ServerRunOptions {
     if (body.input === undefined || body.input === null || body.input === '') {
       throw huskError('E_SPEC_INVALID', 'run requires a non-empty `input`', {
@@ -175,8 +194,8 @@ export class Runner {
     const approvalMode = body.approvalMode ?? spec.guardrails.approvalMode;
     const opts: ServerRunOptions = {
       input: body.input,
-      maxSteps: body.maxSteps ?? spec.limits.maxSteps,
-      // The server's ceiling wins over the husk's: a husk file is user data.
+      // A caller may lower the husk's own limits for one run, never raise them.
+      maxSteps: Math.min(body.maxSteps ?? spec.limits.maxSteps, spec.limits.maxSteps),
       maxCostUsd: Math.min(body.maxCostUsd ?? spec.limits.maxCostUsd, spec.limits.maxCostUsd),
       maxTokens: spec.limits.maxTokens,
       timeoutSec: spec.limits.timeoutSec,
@@ -189,22 +208,31 @@ export class Runner {
     if (body.vars) opts.vars = body.vars;
     // Not gated on approval mode: a handoff pauses the run, it does not act on
     // the machine, so there is nothing for an approver to decide.
+    // Its browser stays open while the person comes to it: every hold keeps its own (handoffs.ts).
     opts.onHandoff = async (request: HandoffRequest, runSignal: AbortSignal) => {
-      // Nobody may be watching yet, and the browser closes itself after five idle
-      // minutes. The login form the person is coming to fill in has to still be there.
       const computerId = request.computerId;
-      const keepAlive = computerId ? setInterval(() => livePageFor(computerId), 60_000) : undefined;
-      keepAlive?.unref?.();
-      try {
-        return await this.handoffs.request(
-          { runId, husk: spec.name, reason: request.reason, ...(computerId ? { computerId } : {}), signal: runSignal },
-          (pending: PendingHandoff) => {
-            onEvent({ type: 'handoff_required', request });
-            this.bus.emit('runs', 'handoff_required', pending);
-          },
-        );
-      } finally {
-        if (keepAlive) clearInterval(keepAlive);
+      return await this.handoffs.request(
+        { runId, husk: spec.name, reason: request.reason, ...(computerId ? { computerId } : {}), signal: runSignal },
+        (pending: PendingHandoff) => {
+          // The run's id, not the agent's own, as on run_start: one id is true in the stream, the store and a cancel.
+          onEvent({ type: 'handoff_required', handoffId: pending.handoffId, request: { ...request, runId } });
+          this.bus.emit('runs', 'handoff_required', pending);
+        },
+      );
+    };
+    // The run's tools obey a person holding its computer, as a chat's do: stopped
+    // part-way when they take it. Where a chat's call is refused so it can tell
+    // its person, a bot's waits, said once, until they give it back (J5-e):
+    // nobody is there to tell. A cancel or the run's timeout still ends it.
+    // The loop names the computer, so a run's very first call obeys a hold too.
+    opts.admitTool = async (call, runSignal, computerId = this.active.get(runId)?.computerId) => {
+      if (!computerId) return { signal: runSignal, done: () => {}, stopped: () => undefined };
+      const taken = () => this.handoffs.list().some((h) => h.computerId === computerId && h.runId === PERSON_RUN);
+      for (let paused = false; ; paused = true) {
+        const admitted = await admitCall(this.handoffs, computerId, call.name, runSignal);
+        if (!('refused' in admitted) || runSignal.aborted || !taken()) return admitted;
+        if (!paused) notice({ type: 'warning', message: 'Paused: a person took over the computer. The run goes on when they give it back.' });
+        await givenBack(this.handoffs, computerId, runSignal);
       }
     };
     if (approvalMode === 'ask') {
@@ -218,7 +246,7 @@ export class Runner {
           args: request.args ?? {},
         };
         return this.approvals.request({ runId, husk: spec.name, call, signal }, (pending: PendingApproval) => {
-          onEvent({ type: 'approval_required', approvalId: pending.approvalId, request });
+          onEvent({ type: 'approval_required', approvalId: pending.approvalId, request: { ...request, runId } });
           this.bus.emit('runs', 'approval_required', pending);
         });
       };
@@ -235,7 +263,9 @@ export class Runner {
 
   private async begin(spec: HuskSpec, body: RunRequestBody): Promise<{ runId: string; model: string }> {
     const runId = this.deps.store.newRunId();
-    const model = body.model ?? spec.model;
+    const chosen = body.model ?? spec.model;
+    // A CLI engine's run is named for the CLI, and the model only when one was asked for.
+    const model = spec.engine.type === 'builtin' ? chosen : [spec.engine.type, chosen === 'auto' ? '' : chosen].filter(Boolean).join('/');
     await this.deps.store.startRun({
       runId,
       husk: spec.name,
@@ -287,7 +317,7 @@ export class Runner {
     try {
       const agent = await this.deps.agentFactory({
         spec,
-        router: this.deps.router,
+        router: withFallbacks(this.deps.router, spec.fallbackModels),
         computers: await this.computerSource(body),
       });
       const opts = this.buildOptions(spec, body, runId, abort.signal, (e) =>
@@ -356,19 +386,29 @@ export class Runner {
     try {
       const agent = await this.deps.agentFactory({
         spec,
-        router: this.deps.router,
+        router: withFallbacks(this.deps.router, spec.fallbackModels),
         computers: await this.computerSource(body),
       });
       // Approvals and handoffs pause the agent inside a tool call, so the event
       // that says so cannot wait for the agent's next event: it would arrive only
       // once the person had already answered. Wake the loop as soon as one lands.
       let wake: (() => void) | undefined;
-      const opts = this.buildOptions(spec, body, runId, abort.signal, (e) => {
-        if (e.type === 'approval_required' || e.type === 'handoff_required') {
+      const opts = this.buildOptions(
+        spec,
+        body,
+        runId,
+        abort.signal,
+        (e) => {
+          if (e.type === 'approval_required' || e.type === 'handoff_required') {
+            sideChannel.push(e);
+            wake?.();
+          }
+        },
+        (e) => {
           sideChannel.push(e);
           wake?.();
-        }
-      });
+        },
+      );
 
       const events = agent.stream(opts)[Symbol.asyncIterator]();
       for (;;) {

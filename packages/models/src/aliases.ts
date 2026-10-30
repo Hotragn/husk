@@ -121,7 +121,7 @@ export function knownAliases(): string[] {
   return [...Object.keys(STATIC_ALIASES), ...Object.keys(DYNAMIC_ALIASES)];
 }
 
-/** The alias table as `husk models --aliases` should print it. */
+/** Every alias, what it points at, and where that came from: a table to print. No command prints it yet. */
 export function aliasTable(overrides: Record<string, string> = {}): Array<{
   alias: string;
   target: string;

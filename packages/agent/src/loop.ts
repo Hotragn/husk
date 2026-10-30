@@ -3,6 +3,7 @@ import {
   clampText,
   createLogger,
   estimateTokens,
+  expandEnvRefs,
   id,
   mapLimit,
   messageText,
@@ -27,6 +28,7 @@ import type {
   ToolSchema,
   Usage,
 } from '@husk-ai/core';
+import { withCallSignal } from '@husk-ai/browser';
 import { Budget, pricingOf } from './budget.js';
 import { renderForSummary, trimHistory } from './memory.js';
 import { EventQueue } from './queue.js';
@@ -464,10 +466,16 @@ class Run {
     }
 
     if (done) return done;
-    if (streamError && !text && !toolCalls.length) {
+    // A stop, or a provider failing part-way, leaves a reply that is not an
+    // answer: the run ends as what happened, never `complete` with half a reply.
+    // Tool calls that arrived whole still run, and meet the stop themselves.
+    if (!toolCalls.length && this.abort.signal.aborted) {
+      throw new HuskError('E_ABORTED', streamError?.message ?? 'the run was stopped mid-reply');
+    }
+    if (streamError && !toolCalls.length) {
       throw new HuskError(
         streamError.code === 'E_MODEL_UNAVAILABLE' ? 'E_MODEL_UNAVAILABLE' : 'E_MODEL_ERROR',
-        streamError.message,
+        text ? `the model's reply was cut short: ${streamError.message}` : streamError.message,
         { hint: 'run `husk doctor` to see which models are reachable' },
       );
     }
@@ -554,6 +562,7 @@ class Run {
           runId: this.runId,
           huskId: this.spec.name,
           tool: tool.name,
+          callId: call.id,
           args: call.args,
           prompt: `Allow ${tool.name}?`,
           details: call.args,
@@ -563,10 +572,24 @@ class Run {
       }
     }
 
+    // A host that shares the computer with a person may refuse the call, or
+    // stop it part-way through the signal it runs under.
+    // The built-in computer tools say so; a host-supplied Tool may not touch the computer at all.
+    const touchesComputer = (tool as { needsComputer?: boolean }).needsComputer === true;
+    // The computer first, so the host is asked about this computer even on the
+    // run's first call. A computer that will not come up fails in the handler, as before.
+    const computerId = touchesComputer && this.opts.admitTool ? (await this.acquireComputer().catch(() => undefined))?.id : undefined;
+    const admitted = touchesComputer && this.opts.admitTool ? await this.opts.admitTool(call, this.abort.signal, computerId) : undefined;
+    if (admitted && 'refused' in admitted) return finish(admitted.refused, true);
+    const signal = admitted?.signal ?? this.abort.signal;
     try {
-      const output = await tool.handler(call.args, this.toolContext(call));
-      return finish(tool.render ? tool.render(output) : stringify(output), false);
+      // Under the call's signal, so what it does in the browser stops with it.
+      const output = await withCallSignal(signal, () => tool.handler(call.args, this.toolContext(call, signal)));
+      const stopped = admitted?.stopped();
+      return stopped ? finish(stopped, true) : finish(tool.render ? tool.render(output) : stringify(output), false);
     } catch (err) {
+      const stopped = admitted?.stopped();
+      if (stopped) return finish(stopped, true);
       if (this.abort.signal.aborted) {
         return finish(this.timedOut ? 'Error: the run ran out of time.' : 'Error: the run was aborted.', true);
       }
@@ -574,6 +597,8 @@ class Run {
       const message = he ? `${he.message}${he.hint ? `\nHint: ${he.hint}` : ''}` : (err as Error).message;
       this.log.debug(`tool ${call.name} failed`, err);
       return finish(`Error: ${message}`, true);
+    } finally {
+      admitted?.done();
     }
   }
 
@@ -631,11 +656,11 @@ class Run {
     return this.spec.guardrails.redactSecrets ? redact(clamped.text) : clamped.text;
   }
 
-  private toolContext(call: ToolCallPart): AgentToolContext {
+  private toolContext(call: ToolCallPart, signal: AbortSignal = this.abort.signal): AgentToolContext {
     return {
       computer: this.computer,
       log: this.log.child(call.name),
-      signal: this.abort.signal,
+      signal,
       huskId: this.spec.name,
       runId: this.runId,
       state: this.state,
@@ -647,6 +672,7 @@ class Run {
           runId: this.runId,
           huskId: this.spec.name,
           tool: call.name,
+          callId: call.id,
           args: call.args,
           prompt,
           details,
@@ -711,6 +737,8 @@ class Run {
     if (!this.spec.memory.enabled) return;
     const trimmed = await trimHistory(this.messages, {
       windowTurns: this.spec.memory.windowTurns,
+      // The examples come first, a user and an assistant message each: kept, so the anchor is the person's own message.
+      pinned: this.spec.examples.length * 2,
       summarise: this.spec.memory.summarise,
       summariser: (slice) => this.summarise(slice),
       onWarning: (message) => this.emit({ type: 'warning', message }),
@@ -746,9 +774,20 @@ class Run {
  * receives, so it is a free function rather than a private method: a test can
  * prove that a label set in a husk.yaml is the same label `resolveSshSettings`
  * reads, without booting an agent to find out.
+ *
+ * Two things become real here. `${NAME}` in `computer.env` is read from `env`.
+ * And `guardrails`' allow and deny lists become the labels every provider holds
+ * each command to (`commandRulesOf` in @husk-ai/runtime reads them), so an
+ * allow entry lifts a built-in refusal as the docs say. A computer reused by
+ * its key keeps the lists it was made with.
  */
-export function computerSpecFor(spec: HuskSpec): ComputerSpec {
+export function computerSpecFor(spec: HuskSpec, env: NodeJS.ProcessEnv = process.env): ComputerSpec {
   const c = spec.computer;
+  const { allowCommands, denyCommands } = spec.guardrails;
+  const rules = {
+    ...(allowCommands.length ? { 'husk.allowCommands': JSON.stringify(allowCommands) } : {}),
+    ...(denyCommands.length ? { 'husk.denyCommands': JSON.stringify(denyCommands) } : {}),
+  };
   return {
     name: spec.name,
     provider: c.provider,
@@ -760,14 +799,14 @@ export function computerSpecFor(spec: HuskSpec): ComputerSpec {
     idleTimeoutSec: c.idleTimeoutSec,
     maxLifetimeSec: c.maxLifetimeSec,
     network: c.network,
-    env: c.env,
+    env: Object.fromEntries(Object.entries(c.env).map(([k, v]) => [k, expandEnvRefs(v, env, `computer.env.${k}`)])),
     mounts: c.mounts,
     workdir: c.workdir,
     persist: c.persist,
     packages: c.packages,
     setup: c.setup,
     user: c.user,
-    labels: c.labels,
+    labels: Object.keys(rules).length ? { ...c.labels, ...rules } : c.labels,
   };
 }
 
@@ -780,7 +819,9 @@ export function computerSpecFor(spec: HuskSpec): ComputerSpec {
  */
 export function buildAssistantMessage(response: ChatResponse): ModelMessage {
   const parts: ContentPart[] = [];
-  if (response.thinking) parts.push({ type: 'thinking', text: response.thinking });
+  if (response.thinking) {
+    parts.push({ type: 'thinking', text: response.thinking, ...(response.thinkingSignature ? { signature: response.thinkingSignature } : {}) });
+  }
   if (response.text) parts.push({ type: 'text', text: response.text });
   for (const call of response.toolCalls) parts.push(call);
   if (!parts.length) return { role: 'assistant', content: '' };

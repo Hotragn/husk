@@ -8,10 +8,12 @@ A computer is disposable. Two ceilings decide when one goes away on its own.
 
 | Field | Default | What it means |
 | --- | --- | --- |
-| `idleTimeoutSec` | `900` (15 minutes) | Destroy after this long with no `exec` |
+| `idleTimeoutSec` | `900` (15 minutes) in a husk.yaml | Destroy after this long with no `exec` |
 | `maxLifetimeSec` | `0` (off) | Destroy this long after creation, whatever the activity |
 
-Both are per-machine and both are disabled by `0`.
+Both are per-machine and both are disabled by `0`. A computer made by `husk up` or
+`POST /v1/computers` has no idle limit unless you give one, and a chat's computer has
+neither: only you delete it.
 
 ```yaml
 computer:
@@ -23,8 +25,9 @@ computer:
 husk up scratch --idle-timeout 3600
 ```
 
-"Idle" means no `exec`. Every `exec` on the `local` provider touches `lastUsedAt` and
-rewrites the record; the container providers read `State.StartedAt` from the engine.
+"Idle" means no `exec`. Every `exec` records when it ran: on `local`, `ssh` and `fly` in
+the computer's record, and on Docker and Podman, whose engine knows only when the
+container started, in `~/.husk/computers/<id>.used`.
 
 ## The reaper
 
@@ -32,23 +35,25 @@ rewrites the record; the container providers read `State.StartedAt` from the eng
 interval timer is `unref`'d, so it never holds a CLI process open, and `startReaper` is
 idempotent.
 
-`husk serve` starts it. The CLI's one-shot commands do not — a `husk exec` that also
-garbage-collected somebody else's machine would be a surprise.
+`husk serve` starts it, and so does the shared Husk that chats' tools go through. The
+CLI's one-shot commands do not — a `husk exec` that also garbage-collected somebody
+else's machine would be a surprise.
 
-The sweep asks every provider that implements `reap()` and ignores the ones that do not.
-
-Docker and Podman also implement `reap()` now. Idle cleanup runs only while the
-owning process has started the reaper, such as `husk serve`. One-shot commands do
-not leave a background scheduler behind; use `husk rm` for explicit removal.
-
-A reaper failure in one provider is logged at debug and does not stop the others.
+All five providers implement `reap()`, and the sweep asks each one. A reaper failure in
+one provider is logged at debug and does not stop the others.
 
 ## Stopping versus destroying
 
 | Command | Filesystem | Recoverable |
 | --- | --- | --- |
 | `husk stop <name>` | kept | yes, with `husk start` |
-| `husk rm <name>` | gone | no |
+| `husk rm <name>` | gone, except what a chat's or a bot's computer keeps on Docker and Podman | no |
+| `husk rm --erase <name>` | gone, that included | no |
+
+On Docker and Podman, a computer that persists under a key — every chat's, and a bot's
+with `persist: true` — keeps its `/work` volume through `husk rm`, browser logins
+included, and its next computer finds them. `--erase`, like the console's Delete, takes
+them too. Everywhere else `husk rm` deletes the workspace.
 
 A stopped machine still counts against nothing — only `running` and `creating` machines
 count toward the eight-machine quota — but it still occupies disk.
@@ -62,10 +67,10 @@ The map lives in `~/.husk/computers/bindings.json`, written with write-then-rena
 a binding points at a machine that no longer exists, it is cleared and a new machine is
 created.
 
-MCP uses this: the session key defaults to `$HUSK_SESSION`, then to the literal `mcp`,
-and the machine is named `mcp-<key>`. It is created with `idleTimeoutSec: 3600` — an hour,
-because a conversation has long pauses in it — and destroyed when the client disconnects
-unless you pass `--keep`.
+MCP uses this. `--session <key>` or `$HUSK_SESSION` names the key, and the machine is
+`mcp-<key>`; without one, each chat gets a computer of its own. A chat's computer is made
+with `persist: true` and no idle or lifetime limit. After ten idle minutes it is stopped,
+unless you hold it, and its next call starts it again.
 
 ```bash
 claude mcp add husk-api -- npx -y @husk-ai/mcp --session api --flavor python
@@ -78,11 +83,12 @@ Two keys, two machines, two filesystems, one client.
 
 | Trigger | What happens |
 | --- | --- |
-| `husk rm` | The machine and its filesystem are destroyed; the binding is cleared |
-| MCP client disconnects (stdin closes) | The machine is destroyed unless `--keep` |
+| `husk rm` | The machine is destroyed and the binding cleared, except what a chat's or a bot's computer keeps on Docker and Podman (above) |
+| MCP client disconnects (stdin closes) | The machine is stopped, not destroyed. With `--keep` it is left running |
 | SIGINT / SIGTERM to `husk mcp` | Same |
-| Ctrl-C during `husk run` | The run aborts between steps. **The machine is left alone** |
-| Reaper | Only on `local`, `ssh` and `fly` |
+| Ctrl-C during `husk run` | The run aborts at once, mid-step if need be. **The machine is left alone** |
+| Ten idle minutes, on a chat's computer | Stopped. Its files stay |
+| Reaper | Destroys a computer past its idle or lifetime limit, on every provider |
 
 Ctrl-C during a run is deliberately non-destructive. You interrupted the agent, not the
 machine, and destroying the filesystem you were about to inspect would be the wrong

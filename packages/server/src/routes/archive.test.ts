@@ -9,11 +9,17 @@
  * bytes, and the scratch file is cleaned up on every path including failure.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Buffer } from 'node:buffer';
+import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildTestApp, FakeComputer } from '../testing.js';
 import type { TestApp } from '../testing.js';
 import type { ExecRequest, ExecResult } from '@husk-ai/core';
+import { downloadScript } from './archive.js';
 
 /**
  * A computer whose `tar` does something.
@@ -21,35 +27,41 @@ import type { ExecRequest, ExecResult } from '@husk-ai/core';
  * `FakeComputer` answers every exec with "ran: <cmd>", which is enough for
  * routes that only care that a command was issued. These routes read back what
  * tar wrote, so the double has to honour the part of the contract they depend
- * on: `tar -czf X` makes a file at X, `wc -c < X` reports its size.
+ * on: the archive lands at the file `head` writes, and the script prints its
+ * size, then tar's status when tar failed.
  */
 class TarringComputer extends FakeComputer {
-  failTarWith: number | null = null;
+  /** The whole script's exit status: 66 is its "no such path". */
+  failWith: number | null = null;
+  /** tar's own status, kept aside by the script when tar fails part-way. */
+  tarStatus: number | null = null;
+  /** The size the script reports, as `head` cut it off. */
+  archiveBytes: number | null = null;
   readonly commands: string[] = [];
+  readonly reads: string[] = [];
 
   override async exec(req: ExecRequest): Promise<ExecResult> {
     const cmd = Array.isArray(req.cmd) ? req.cmd.join(' ') : req.cmd;
     this.commands.push(cmd);
+    const result = (exitCode: number, stdout = '', stderr = ''): ExecResult => ({ exitCode, stdout, stderr, durationMs: 1, truncated: false, timedOut: false });
 
-    const created = /tar -czf '([^']+)'/.exec(cmd);
+    const created = /tar -czf - .*\| head -c \d+ > '([^']+)'/.exec(cmd);
     if (created) {
-      if (this.failTarWith !== null) {
-        return { exitCode: this.failTarWith, stdout: '', stderr: 'tar: no such file', durationMs: 1, truncated: false, timedOut: false };
-      }
+      if (this.failWith !== null) return result(this.failWith, '', 'no such path: /nope');
       await this.writeFile(created[1]!, Buffer.from('PRETEND-TARBALL'));
-      return { exitCode: 0, stdout: '', stderr: '', durationMs: 1, truncated: false, timedOut: false };
-    }
-
-    const sized = /wc -c < '([^']+)'/.exec(cmd);
-    if (sized) {
-      const bytes = (await this.readFile(sized[1]!).catch(() => new Uint8Array())).length;
-      return { exitCode: 0, stdout: `${bytes}\n`, stderr: '', durationMs: 1, truncated: false, timedOut: false };
+      const size = this.archiveBytes ?? 'PRETEND-TARBALL'.length;
+      return result(0, `${size}\n${this.tarStatus ?? ''}`, this.tarStatus ? 'tar: /work/secret: Cannot open: Permission denied' : '');
     }
 
     const removed = /rm -f '([^']+)'/.exec(cmd);
     if (removed) await this.remove(removed[1]!);
 
-    return { exitCode: 0, stdout: '', stderr: '', durationMs: 1, truncated: false, timedOut: false };
+    return result(0);
+  }
+
+  override async readFile(path: string): Promise<Uint8Array> {
+    this.reads.push(path);
+    return super.readFile(path);
   }
 }
 
@@ -97,19 +109,41 @@ describe('fs/download and fs/upload', () => {
   });
 
   it('deletes the staged archive when tar fails too', async () => {
-    computer.failTarWith = 1;
+    computer.failWith = 1;
     const res = await ctx.app.inject({ method: 'GET', url: '/v1/computers/c1/fs/download?path=/work' });
     expect(res.statusCode).toBeGreaterThanOrEqual(400);
     expect(computer.commands.some((c) => c.startsWith('rm -f'))).toBe(true);
   });
 
   it('says the path does not exist rather than reporting a tar failure', async () => {
-    // exit 2 is the guard in the script, not tar's own failure, and the hint
+    // 66 is the guard in the script, a status tar never returns, and the hint
     // should send someone to `ls` rather than to their tar installation.
-    computer.failTarWith = 2;
+    computer.failWith = 66;
     const res = await ctx.app.inject({ method: 'GET', url: '/v1/computers/c1/fs/download?path=/nope' });
     expect(res.statusCode).toBeGreaterThanOrEqual(400);
     expect(res.body).toContain('does not exist');
+    // tar's own fatal status, 2, is not mistaken for it.
+    computer.failWith = 2;
+    const failed = await ctx.app.inject({ method: 'GET', url: '/v1/computers/c1/fs/download?path=/work' });
+    expect(failed.body).not.toContain('does not exist');
+  });
+
+  it('cuts the archive off inside the computer, and refuses one over the cap before reading it', async () => {
+    computer.archiveBytes = 256 * 1024 * 1024 + 1;
+    const res = await ctx.app.inject({ method: 'GET', url: '/v1/computers/c1/fs/download?path=/' });
+    expect(res.json().error).toMatchObject({ code: 'E_QUOTA' });
+    expect(res.json().error.message).toContain('256 MiB');
+    expect(computer.commands.find((c) => c.includes('tar -czf'))).toContain(`head -c ${256 * 1024 * 1024 + 1} >`);
+    expect(computer.reads).toEqual([]);
+    expect(computer.commands.some((c) => c.startsWith('rm -f'))).toBe(true);
+  });
+
+  it('says tar stopped part-way, rather than sending what it wrote', async () => {
+    computer.tarStatus = 2;
+    const res = await ctx.app.inject({ method: 'GET', url: '/v1/computers/c1/fs/download?path=/work' });
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(res.body).toContain('tar stopped with status 2');
+    expect(computer.reads).toEqual([]);
   });
 
   it('needs a path', async () => {
@@ -185,5 +219,54 @@ describe('fs/download and fs/upload', () => {
       expect(interpreted(cmd), cmd).not.toContain('touch /tmp/pwned');
       expect(interpreted(cmd), cmd).not.toContain('whoami');
     }
+  });
+});
+
+/** Whether this machine can run the script for real: a POSIX sh with tar, gzip and head, as Linux and macOS have. */
+const realShell = process.platform !== 'win32' && spawnSync('sh', ['-c', 'command -v tar && command -v gzip && command -v head']).status === 0;
+
+describe.skipIf(!realShell)('the download script, run in a real shell', () => {
+  // Made before the tests, not as the file is read: a skipped block is still read.
+  let dir = '';
+  beforeAll(() => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'husk-archive-')));
+    mkdirSync(join(dir, 'work', 'sub'), { recursive: true });
+    writeFileSync(join(dir, 'work', 'a.txt'), 'hello');
+    // Random bytes do not compress, so the archive is bigger than a small cap.
+    writeFileSync(join(dir, 'work', 'sub', 'noise.bin'), randomBytes(200_000));
+  });
+  const run = (path: string, cap?: number) => {
+    const scratch = join(dir, `out-${Math.random().toString(36).slice(2)}.tgz`);
+    const r = spawnSync('sh', ['-c', downloadScript(path, scratch, `${scratch}.rc`, cap)], { encoding: 'utf8' });
+    return { status: r.status, out: r.stdout.trim().split(/\s+/), scratch };
+  };
+
+  it('archives the path under its own name, and prints its size alone', () => {
+    const { status, out, scratch } = run(join(dir, 'work'));
+    expect(status).toBe(0);
+    expect(out).toEqual([String(statSync(scratch).size)]);
+    expect(spawnSync('tar', ['-tzf', scratch], { encoding: 'utf8' }).stdout).toContain('work/a.txt');
+  });
+
+  it('exits 66 for a path that is not there', () => {
+    expect(run(join(dir, 'nope')).status).toBe(66);
+  });
+
+  it('stops one byte past the cap, and writes no more than that', () => {
+    const { status, out, scratch } = run(join(dir, 'work'), 1000);
+    expect(status).toBe(0);
+    expect(out[0]).toBe('1001');
+    expect(statSync(scratch).size).toBe(1001);
+  });
+
+  it('keeps tar’s own status when it could not read a file', () => {
+    if (process.getuid?.() === 0) return; // root reads a file whatever its mode
+    const locked = join(dir, 'locked');
+    mkdirSync(locked);
+    writeFileSync(join(locked, 'secret'), 'x');
+    chmodSync(join(locked, 'secret'), 0o000);
+    const { status, out } = run(locked);
+    expect(status).toBe(0);
+    expect(out[1]).toMatch(/^[1-9]/);
   });
 });

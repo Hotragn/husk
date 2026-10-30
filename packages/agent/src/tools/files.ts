@@ -144,7 +144,8 @@ export const edit_file = defineTool<
       });
     }
     const computer = await ctx.acquireComputer();
-    const before = await computer.readTextFile(input.path, 8 * 1024 * 1024);
+    // The whole file, or a refusal: an edit made to part of a file and written back loses the rest.
+    const before = new TextDecoder().decode(await computer.readFile(input.path));
     const hits = countOccurrences(before, input.oldString);
 
     if (hits === 0) {
@@ -271,6 +272,11 @@ export const search_files = defineTool<
     const computer = await ctx.acquireComputer();
     const root = input.path ?? computer.info.workdir ?? '/work';
     const max = input.maxResults ?? 100;
+    // ripgrep runs in a shell, which no jail sees: the root is checked through the
+    // computer's own call first, as the fallback's listDir checks it. A refusal throws.
+    if (!(await computer.stat(root))) {
+      throw new HuskError('E_TOOL_ERROR', `nothing to search at ${root}`, { hint: 'list the directory first to confirm the path' });
+    }
 
     if (await hasRipgrep(computer, ctx)) {
       const argv = ['rg', '--line-number', '--no-heading', '--color', 'never', '--max-count', String(max)];
@@ -447,6 +453,11 @@ export const move = defineTool<{ from: string; to: string }, { from: string; to:
         hint: 'list the directory first to confirm the path',
       });
     }
+    // The destination is held to the jail as the source is, by the computer's
+    // own call: `mv` runs in a shell, which no jail sees. The check resolves
+    // its directory too, and a link it is, which `mv` would move into. A
+    // refusal throws here.
+    await computer.stat(input.to);
     const cmd =
       shellQuote(['mkdir', '-p', parentOf(input.to)]) + ' && ' + shellQuote(['mv', '--', input.from, input.to]);
     const res = await computer.exec({ cmd, timeoutSec: 60, maxOutputBytes: 8192, signal: ctx.signal });

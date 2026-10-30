@@ -51,11 +51,15 @@ Linux computer and hands back `cmd.exe` has not delivered one.
 One directory, `~/.husk` (or `$HUSK_HOME`), mode `0700`:
 
 ```text
-config.json  husks/  computers/  workspaces/  runs/  transcripts/  data/  cache/
+config.json  .env  husks/  computers/  workspaces/  runs/  transcripts/  data/  cache/  daemon.json  jobs.json  remote/
 ```
 
-Delete it in one move. No keys are stored there; keys are read from the environment on
-every invocation.
+Delete it in one move, after exporting any workspace you want to keep: `workspaces/`
+holds the saved ones. Husk never writes your API keys there. It reads them from the
+environment, and from `~/.husk/.env` for any the environment does not set. The
+credentials it does keep are its own, readable only by you: the shared Husk's and the
+job host's tokens, in `daemon.json` and `jobs.json`, and remote access's keys in `remote/`.
+[What lands on disk](/start/install#what-lands-on-disk) has the whole layout.
 
 ---
 
@@ -219,9 +223,10 @@ spec's `model:` comes from the transcript's metadata when Husk recognises it, an
 
 ### Can I set the container's user or labels from `husk.yaml`?
 
-No. `ComputerConfigSchema` has no `user` or `labels` field, even though `ComputerSpec`
-does. Those are reachable only through `POST /v1/computers`.
-[Details](/reference/husk-yaml#computer).
+Yes. `computer.user` sets the user commands run as. On Docker and Podman it replaces the
+unprivileged uid 1000 they otherwise run as, so `user: root` means root inside the
+container, with its capabilities still dropped. `computer.labels` carries provider
+settings, such as `husk.ssh` and `husk.fly.app`. [Details](/reference/husk-yaml#computer).
 
 ---
 
@@ -255,10 +260,12 @@ deliberately, put it in `computer.env` where a reviewer can see it.
 
 ### Will a secret reach the model?
 
-Every tool result passes through `redact()` first — nine credential formats plus PEM
-private keys. It is a pattern list, so a format it does not know gets through. And note
-that the live `tool_delta` stream and the persisted `runs/` events are **not**
-redacted; only what the model reads is. [Details](/security/secrets#redaction).
+Every tool result passes through `redact()` first, while `guardrails.redactSecrets` is on,
+as it is by default. It knows a dozen credential formats — Anthropic, OpenAI, Groq,
+Google, GitHub, Slack, AWS, npm, Fly and xAI keys, and `Authorization` headers — plus PEM
+and PGP private keys. It is a pattern list, so a format it does not know gets through.
+The live `tool_delta` stream and the run events in `runs/` are redacted the same way;
+the model's own text is not. [Details](/security/secrets#redaction).
 
 ### What does `approvalMode: ask` do with no human present?
 
@@ -281,9 +288,10 @@ No account, no config file, and nothing is created until the model calls a tool.
 
 ### Does the MCP server speak HTTP?
 
-No. Stdio only, despite what `docs/ARCHITECTURE.md` says. There is an accessor that
-hands you the raw protocol server if you want to attach your own transport, but no HTTP
-server ships in the package. [Details](/mcp#transports).
+For chat apps on the web, yes. `npx @husk-ai/mcp` speaks stdio to the chat apps on this
+machine. `husk serve --remote` serves MCP over streamable HTTP at `<public URL>/mcp`, for
+its owner only, so claude.ai and ChatGPT can reach it through a tunnel you run.
+[Details](/mcp#transports).
 
 ### Does `husk serve` support multiple users?
 
@@ -295,15 +303,19 @@ Run one process per person.
 
 Check that the SDK and server use matching versions and that the base URL points to
 the running control plane. The current SDK is tested against the server routes.
-The starter workspace viewer exposes workspace routes only, so computer and bot
-requests need the full `husk serve` control plane.
+The starter workspace viewer serves the workspace routes, and only the few others its
+computer-tools switch and a hand-off link need, so computer and bot requests need the
+full `husk serve` control plane.
 
 ### Do the Discord, Slack and Telegram triggers work?
 
-The adapter APIs are available for custom integrations. The built-in trigger host
-supports `http`, `webhook`, and `cron`. A husk file with Discord, Slack, or Telegram
-triggers now fails validation with an actionable message instead of silently ignoring
-them. See [the Discord guide](/guides/discord-bot#step-6-the-glue) for a custom integration.
+Yes. Declare the trigger in the husk with the `channels` it may answer in (for
+Telegram, an `allowlist` of users or chats), set its token before `husk serve`, and the
+server starts the adapter. A trigger with no list is not started, since it would answer
+anyone. `GET /v1/triggers` shows each one, and says what it is waiting for: the list, a
+token, or for Slack its second secret. See
+[Triggers](/chat-to-bot/triggers#discord-slack-and-telegram) and
+[the Discord guide](/guides/discord-bot#step-6-turn-on-the-trigger).
 
 ---
 

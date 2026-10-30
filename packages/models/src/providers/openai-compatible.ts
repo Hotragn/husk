@@ -21,6 +21,7 @@ import type {
   ToolSchema,
   Usage,
 } from '@husk-ai/core';
+import { estimateTokens } from '@husk-ai/core';
 import { catalogFor, findModel, unknownModel, type CatalogModel } from '../catalog.js';
 import { costOf } from '../cost.js';
 import { httpError, jsonHeaders, missingKey, networkError, type ErrorContext } from '../http.js';
@@ -336,7 +337,15 @@ export class OpenAICompatibleProvider implements ModelProvider {
       yield { type: 'tool_call', call };
     }
 
-    if (usage.inputTokens || usage.outputTokens) yield { type: 'usage', usage };
+    // A server that sent no usage (Mistral, Cerebras and LM Studio are asked for
+    // none) is counted by Husk's own estimate. Left at 0/0, their runs cost $0
+    // and the budget never grew.
+    if (!usage.inputTokens && !usage.outputTokens) {
+      const prompt = estimateTokens(JSON.stringify([body['messages'], body['tools'] ?? []]));
+      const completion = estimateTokens(text + thinking + (emitted.length ? JSON.stringify(emitted) : ''));
+      usage = this.usageOf({ usage: { prompt_tokens: prompt, completion_tokens: completion } }, model);
+    }
+    yield { type: 'usage', usage };
 
     const response: ChatResponse = {
       model: `${this.id}/${model}`,

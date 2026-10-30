@@ -152,9 +152,18 @@ describe('buildRunArgs', () => {
   it('gives podman exactly the same hardening as docker', () => {
     const d = run({ cpus: 3, memoryMb: 777 }, docker);
     const p = run({ cpus: 3, memoryMb: 777 }, podman);
-    // The provider label is the only thing that may differ: the point of the
-    // shared layer is that podman is not a second, drifting implementation.
-    expect(p.map((a) => a.replace('husk.provider=podman', 'husk.provider=docker'))).toEqual(d);
+    // The provider label and docker's init are the only things that may differ:
+    // the point of the shared layer is that podman is not a second, drifting
+    // implementation.
+    expect(p.map((a) => a.replace('husk.provider=podman', 'husk.provider=docker'))).toEqual(d.filter((a) => a !== '--init'));
+  });
+
+  it('runs an init as PID 1 on docker, so a stopped command leaves no zombies', () => {
+    const args = run();
+    expect(args).toContain('--init');
+    expect(args.indexOf('--init')).toBeLessThan(args.indexOf('debian:bookworm-slim'));
+    // Podman's init needs an optional package; a container that fails to start is worse.
+    expect(run({}, podman)).not.toContain('--init');
   });
 });
 
@@ -167,7 +176,16 @@ describe('buildExecArgs', () => {
   it('adds -t only when a pty was asked for', () => {
     expect(buildExecArgs(docker, { containerId: 'c', cmd: 'ls' })).not.toContain('-t');
     const tty = buildExecArgs(docker, { containerId: 'c', cmd: 'ls', tty: true });
-    expect(tty.slice(0, 3)).toEqual(['exec', '-i', '-t']);
+    expect(tty.slice(0, 2)).toEqual(['exec', '-t']);
+  });
+
+  it('never pairs -t with -i, which the engine refuses when its own stdin is not a terminal', () => {
+    // The console's Terminal asks for a tty and sends no input: -t alone runs.
+    expect(buildExecArgs(docker, { containerId: 'c', cmd: 'ls', tty: true })).not.toContain('-i');
+    // Input to write wins over the pty: a pipe cannot be a terminal.
+    const piped = buildExecArgs(docker, { containerId: 'c', cmd: 'cat', tty: true, stdin: true });
+    expect(piped.slice(0, 2)).toEqual(['exec', '-i']);
+    expect(piped).not.toContain('-t');
   });
 
   it('places cwd, env and user before the container id', () => {
@@ -381,6 +399,82 @@ describe('pullable', () => {
     const probe = new Probe(new Set(['debian:bookworm-slim']));
     expect(await probe.pull(mirrored())).toBe('debian:bookworm-slim');
     expect(probe.fellBack).toBe(true);
+  });
+});
+
+/** A provider whose engine only builds: records each argv and each Dockerfile it is handed. */
+class Builder extends OciProvider {
+  readonly name: ProviderName = 'docker';
+  readonly description = 'builder';
+  readonly priority = 0;
+  readonly argvs: string[][] = [];
+  readonly dockerfiles: string[] = [];
+
+  constructor(
+    private readonly built = new Set<string>(),
+    private readonly fails = '',
+  ) {
+    super(docker);
+  }
+
+  async isAvailable(): Promise<Availability> {
+    return { available: true, isolated: true, isolationKind: 'kernel' };
+  }
+
+  protected override cli(args: string[]) {
+    this.argvs.push(args);
+    const tag = args[args.indexOf('-t') + 1] as string;
+    const settled =
+      args[0] === 'image'
+        ? this.built.has(args[2] as string)
+          ? Promise.resolve({ stdout: '', stderr: '' })
+          : Promise.reject(new Error('no such image'))
+        : this.fails
+          ? Promise.reject(Object.assign(new Error('build failed'), { stderr: this.fails }))
+          : Promise.resolve({ stdout: '', stderr: '' }).then((r) => (this.built.add(tag), r));
+    settled.catch(() => undefined);
+    return Object.assign(settled, { child: { stdin: { end: (text: string) => void this.dockerfiles.push(text) } } }) as unknown as ReturnType<OciProvider['cli']>;
+  }
+
+  bake(image: string, spec: ComputerSpec) {
+    return this.withPackages(image, spec);
+  }
+}
+
+describe('packages, built into an image of the computer’s own', () => {
+  it('builds them FROM the computer’s image, as root, with nothing for context', async () => {
+    const b = new Builder();
+    const tag = await b.bake('debian:bookworm-slim', { packages: ['jq', 'curl'] });
+    expect(tag).toMatch(/^husk-packages:[0-9a-f]{16}$/);
+    expect(b.argvs[1]?.slice(0, 6)).toEqual(['build', '--quiet', '-t', tag, '-f', '-']);
+    expect(b.dockerfiles).toEqual([
+      'FROM debian:bookworm-slim\nUSER root\nRUN set -f; PKGS="curl jq"; apt-get update -qq && apt-get install -y --no-install-recommends $PKGS\n',
+    ]);
+  });
+
+  it('builds a list once, whatever its order, and leaves a computer with none alone', async () => {
+    const b = new Builder();
+    const first = await b.bake('debian:bookworm-slim', { packages: ['jq', 'curl'] });
+    expect(await b.bake('debian:bookworm-slim', { packages: ['curl', 'jq', 'jq'] })).toBe(first);
+    expect(b.dockerfiles).toHaveLength(1);
+    expect(await b.bake('debian:bookworm-slim', {})).toBe('debian:bookworm-slim');
+    expect(await b.bake('python:3.12-slim', { flavor: 'python', packages: ['requests[socks]>=2.32,<3'] })).not.toBe(first);
+  });
+
+  it('refuses a name a shell or a Dockerfile would read as more, before anything runs', async () => {
+    for (const bad of ['jq; rm -rf /', '$(id)', '`id`', 'a b', "it's", 'jq\nRUN id']) {
+      const b = new Builder();
+      await expect(b.bake('debian:bookworm-slim', { packages: [bad] })).rejects.toMatchObject({ code: 'E_SPEC_INVALID' });
+      expect(b.argvs).toEqual([]);
+    }
+  });
+
+  it('says what the build said when it fails, and makes no computer', async () => {
+    const b = new Builder(new Set(), 'Reading package lists...\nE: Unable to locate package nosuchpkg');
+    await expect(b.bake('debian:bookworm-slim', { packages: ['nosuchpkg'] })).rejects.toMatchObject({
+      code: 'E_COMPUTER_FAILED',
+      message: expect.stringContaining('Unable to locate package nosuchpkg'),
+    });
   });
 });
 

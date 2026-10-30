@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { HuskError } from '@husk-ai/core';
+import { rewriteGuestPaths } from '../policy.js';
 import {
   JAIL_EXIT,
   SshProvider,
@@ -254,13 +259,37 @@ describe('the remote path jail', () => {
       expect(toGuestRemotePath(toRemotePath(p, jail), jail)).toBe(p);
     }
   });
+
+  it('accepts the real directories the shell prints, and nothing beside them', () => {
+    expect(toRemotePath('/home/ubuntu/.husk-work/cmp_1/work/a.txt', jail)).toBe('/home/ubuntu/.husk-work/cmp_1/work/a.txt');
+    expect(toRemotePath('/home/ubuntu/.husk-work/cmp_1/tmp', jail)).toBe('/home/ubuntu/.husk-work/cmp_1/tmp');
+    expect(() => toRemotePath('/home/ubuntu/.husk-work/cmp_1/work/../../cmp_2/work/a', jail)).toThrow(/outside/);
+    expect(() => toRemotePath('/home/ubuntu/.husk-work/cmp_1/workshop', jail)).toThrow(/outside/);
+  });
+});
+
+describe("a command's guest paths", () => {
+  const map = (script: string) => rewriteGuestPaths(script, jail, toRemotePath);
+
+  it('lands on the computer directory, since the box has no /work', () => {
+    expect(map('mkdir -p /work/sub && mv -- /work/a.txt /work/sub/b.txt')).toBe(
+      'mkdir -p /home/ubuntu/.husk-work/cmp_1/work/sub && mv -- /home/ubuntu/.husk-work/cmp_1/work/a.txt /home/ubuntu/.husk-work/cmp_1/work/sub/b.txt',
+    );
+    expect(map('rg --regexp needle /work')).toBe('rg --regexp needle /home/ubuntu/.husk-work/cmp_1/work');
+    expect(map('cat /tmp/x')).toBe('cat /home/ubuntu/.husk-work/cmp_1/tmp/x');
+  });
+
+  it('leaves a climb out, and everything else, as it was written', () => {
+    expect(map('cat /work/../../etc/passwd')).toBe('cat /work/../../etc/passwd');
+    expect(map('ls /etc /workshop')).toBe('ls /etc /workshop');
+  });
 });
 
 describe('remoteJailGuard', () => {
   const guard = remoteJailGuard('/home/ubuntu/.husk-work/cmp_1/work/a', jail);
 
   it('resolves symlinks on the far end before touching anything', () => {
-    expect(guard).toMatch(/readlink -f/);
+    expect(guard).toMatch(/readlink -m/);
   });
 
   it('accepts only paths under the two mounts', () => {
@@ -278,6 +307,37 @@ describe('remoteJailGuard', () => {
     // The whole path stays inside one single-quoted word; the embedded quote is
     // closed, escaped and reopened, so `rm -rf /` is filename text, not a command.
     expect(nasty).toContain(`__h='/home/u/.husk-work/c/work/it'\\''s; rm -rf /'; `);
+  });
+});
+
+/** Whether this machine can run the guards for real: a POSIX sh with GNU `readlink -m`, as a Linux box has. */
+const realShell = process.platform !== 'win32' && spawnSync('sh', ['-c', 'readlink -m -- /no/such/path'], { encoding: 'utf8' }).status === 0;
+
+describe.skipIf(!realShell)('the remote guards, run in a real shell', () => {
+  // Made before the tests, not as the file is read: a skipped block is still read.
+  let box = jailFor('/nowhere');
+  beforeAll(() => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'husk-ssh-jail-')));
+    const outside = realpathSync(mkdtempSync(join(tmpdir(), 'husk-outside-')));
+    box = jailFor(join(base, 'cmp_1'));
+    mkdirSync(join(box.root, 'sub'), { recursive: true });
+    mkdirSync(box.tmp, { recursive: true });
+    symlinkSync(outside, join(box.root, 'out'));
+    symlinkSync(join(outside, 'not-yet'), join(box.root, 'dangling'));
+    symlinkSync(join(box.root, 'sub'), join(box.root, 'in'));
+  });
+  const status = (script: string) => spawnSync('sh', ['-c', script + 'true']).status;
+  const guard = (p: string) => status(remoteJailGuard(p, box));
+
+  it('lets a path in, made yet or not, through a link that stays inside', () => {
+    expect([guard(join(box.root, 'a.txt')), guard(join(box.root, 'new/dir/a.txt')), guard(join(box.root, 'in/a.txt'))]).toEqual([0, 0, 0]);
+  });
+
+  it('refuses a link out, one under a directory not made yet included, and one to nothing yet', () => {
+    expect(guard(join(box.root, 'out/a.txt'))).toBe(JAIL_EXIT);
+    // `readlink -f` failed on this one, and the raw path then passed.
+    expect(guard(join(box.root, 'out/new/dir/a.txt'))).toBe(JAIL_EXIT);
+    expect(guard(join(box.root, 'dangling'))).toBe(JAIL_EXIT);
   });
 });
 
@@ -320,6 +380,13 @@ describe('SshProvider.isAvailable', () => {
     expect(a.reason).toMatch(/invalid port/);
     expect(a.hint).toBeTruthy();
   });
+
+  it('does not call this machine isolated from itself, whichever account ssh logs in to', async () => {
+    // Nothing listens on port 1, so the probe fails at once: the target is this machine all the same.
+    for (const target of ['someone@127.0.0.1:1', 'someone@localhost:1', 'someone@[::1]:1']) {
+      expect(await new SshProvider({ env: { HUSK_SSH_TARGET: target } }).isAvailable()).toMatchObject({ isolated: false, isolationKind: 'guardrails' });
+    }
+  }, 60_000);
 });
 
 describe('diagnoseSsh', () => {

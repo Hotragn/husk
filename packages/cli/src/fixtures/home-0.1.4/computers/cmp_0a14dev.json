@@ -1,0 +1,19 @@
+{
+  "id": "cmp_0a14dev",
+  "name": "dev",
+  "provider": "ssh",
+  "state": "running",
+  "image": "ssh:me@box.lan",
+  "workdir": "/work",
+  "createdAt": "2026-09-18T09:00:00.000Z",
+  "lastUsedAt": "2026-09-18T09:00:00.000Z",
+  "nativeId": "/home/me/.husk-guest/cmp_0a14dev",
+  "spec": {
+    "name": "dev",
+    "flavor": "python",
+    "provider": "ssh",
+    "labels": {
+      "husk.ssh": "me@box.lan"
+    }
+  }
+}

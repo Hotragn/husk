@@ -6,8 +6,7 @@
  * links carry a short-lived token scoped to one computer, and a link for one
  * chat's computer cannot open another chat's.
  */
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { Computer, ComputerSpec, Logger } from '@husk-ai/core';
 import type { ComputerManager } from '@husk-ai/runtime';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -184,6 +183,39 @@ describe('a card link opens one computer and nothing else', () => {
     const r = await call('computer_open_ui', { computer: 'new' });
     expect(r.isError).toBe(true);
     expect(made).toHaveLength(0);
+  });
+
+  it('puts a working link in the first computer call for a client without cards, and Take over works from it', async () => {
+    const { call } = await connect(false);
+    const first = (await call('shell', { command: 'echo', computer: 'new' })).content[0]!.text;
+    const url = /take it over at (http:\/\/127\.0\.0\.1:\d+\/#computer=cmp_1&token=[0-9a-f]{64}) /.exec(first)?.[1] ?? '';
+    expect(url).not.toBe('');
+    expect((await call('shell', { command: 'echo', computer: 'cmp_1' })).content[0]!.text).not.toMatch(/token=/);
+
+    const taken = await fetch(`${originIn(url)}/v1/scoped/computer/takeover`, { method: 'POST', headers: { authorization: `Bearer ${tokenIn(url)}` } });
+    expect(taken.status).toBe(201);
+    const { handoffId } = (await taken.json()) as { handoffId: string };
+    // The chat is paused, and cannot give itself the computer back.
+    const held = await call('shell', { command: 'echo', computer: 'cmp_1' });
+    expect(held.isError).toBe(true);
+    expect(held.content[0]!.text).toContain('took over this computer');
+    expect(held.content[0]!.text).toContain('computer_open_ui');
+    expect((await call('hand_off_done', { handoff: handoffId })).isError).toBe(true);
+    // Asking for the person again gets the same words, never "call hand_off_done".
+    const handOff = await call('hand_off', { reason: 'Sign in', computer: 'cmp_1' });
+    expect(handOff.isError).toBe(true);
+    expect(handOff.content[0]!.text).toContain('took over this computer');
+    expect(handOff.content[0]!.text).not.toContain('then call hand_off_done');
+    // Give back with the same link, which still opens the computer afterwards.
+    const auth = { authorization: `Bearer ${tokenIn(url)}` };
+    expect((await fetch(`${originIn(url)}/v1/handoffs/${handoffId}/done`, { method: 'POST', headers: auth })).status).toBe(200);
+    expect((await fetch(`${originIn(url)}/v1/scoped/computer`, { headers: auth })).status).toBe(200);
+    expect((await call('shell', { command: 'echo', computer: 'cmp_1' })).isError).toBeFalsy();
+  });
+
+  it('leaves the link out of the first call for a client that shows the card', async () => {
+    const { call } = await connect(true);
+    expect(JSON.stringify((await call('shell', { command: 'echo', computer: 'new' })).content)).not.toMatch(/token=/);
   });
 
   it('gives a plain link for a client without cards', async () => {

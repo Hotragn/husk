@@ -110,6 +110,10 @@ export function renderSpec(spec: HuskSpec, opts: RenderOptions = {}): string {
     for (const m of spec.fallbackModels) out.push(`  - ${scalar(m)}`);
   }
   if (spec.temperature !== undefined) out.push(`temperature: ${spec.temperature}`);
+  if (spec.engine.type !== 'builtin') {
+    out.push('engine:', `  type: ${spec.engine.type}`);
+    if (spec.engine.resume) out.push(`  resume: ${scalar(spec.engine.resume)}`);
+  }
   out.push('');
 
   out.push(...block('persona', spec.persona, ''));

@@ -25,16 +25,23 @@ Guardrails handle (1) and (2). Only isolation handles (3).
 
 ### Isolated — `docker`, `podman`, `fly`
 
-A kernel boundary. The agent runs as uid 1000 in a container with:
+A kernel boundary. On `docker` and `podman` the agent runs as uid 1000 (unless
+`computer.user` names another) in a container with:
 
 - `--cap-drop ALL` and `--security-opt no-new-privileges`
 - a read-only root filesystem, with writable layers only at `/work` and `/tmp`
 - memory, CPU and pid limits (`--pids-limit 512`, so a fork bomb hits a ceiling)
 - the root account locked, no sudo, no setuid path to privilege
-- the network policy you declared
+- `--network none` when you declare `mode: none` (see [Network policy](#network-policy)
+  for what `egress` does and does not stop)
 
 An injected model in this mode can wreck the container. It cannot reach your home
 directory, your SSH keys, your Docker socket, or your other containers.
+
+`fly` machines are Firecracker microVMs: a different machine from yours, so the same
+holds for your laptop. Husk does not yet pass the hardening above to them, though: no
+user, read-only root, capability or network settings. Inside the VM the agent runs
+with the image's defaults.
 
 `husk doctor` reports `isolated: true`.
 
@@ -44,7 +51,7 @@ directory, your SSH keys, your Docker socket, or your other containers.
 
 | control | what it stops |
 | --- | --- |
-| path jail (file tools) | every file-tool call resolves through `realpath` and is rejected if the target leaves the workspace — including via a symlink created inside it. Shell commands are **not** path-confined: they start in the workspace, but absolute host paths and `..` reach whatever your user reaches. On a Windows host the jail currently errs the other way and refuses *any* symlink inside the workspace, because the host reads those files through `\\wsl.localhost\` and cannot follow a Linux link ([#113](https://github.com/Hotragn/husk/issues/113)) |
+| path jail (file tools) | every file-tool call resolves through `realpath` and is rejected if the target leaves the workspace — including via a symlink created inside it. Shell commands are **not** path-confined: they start in the workspace, but absolute host paths and `..` reach whatever your user reaches. A link the host cannot follow itself (one made in the shell with a `/work` target, or any WSL link read through `\\wsl.localhost\`) is resolved by asking the computer for its `realpath`, and the result goes through the same check ([#113](https://github.com/Hotragn/husk/issues/113)) |
 | environment scrub | `ANTHROPIC_API_KEY`, `AWS_*`, `*_TOKEN`, `*_SECRET` and everything else not on a small allow-list never reach the process |
 | command policy | a short list of unrecoverable commands (`rm -rf /`, `mkfs`, `dd of=/dev/sda`, `curl … \| sh`, `sudo`, fork bombs) is refused |
 | output caps | a runaway process cannot exhaust memory through captured output |
@@ -100,22 +107,53 @@ computer:
   safe reading of an under-specified policy.
 - `full` — unrestricted, minus explicit denies.
 
-On `docker`, `none` is enforced by the kernel (`--network none`). On `egress`, hostname
-allow-listing is enforced at the tool layer, not by a firewall — a process that opens a
-raw socket is not stopped. That is a real limitation and it is why `none` and `full` are
-the honest choices when the distinction matters.
+What enforces the policy depends on what is reaching out:
+
+| What reaches out | `docker`, `podman` | `local` | `ssh` | `fly` |
+| --- | --- | --- | --- | --- |
+| Husk's own tools (`browse`, `browser_goto`, `browser_tabs`, `browser_run`, `browser_script`) | every mode | every mode | every mode | every mode |
+| The browser's page loads (redirects, links, frames, pop-ups) | every mode | every mode | every mode, while a call runs | every mode, while a call runs |
+| Processes (shell, scripts, servers): `none` | enforced by the kernel (`--network none`) | not enforced | not enforced | not enforced |
+| Processes: `egress`, a deny list, internal addresses | not enforced | not enforced | not enforced | not enforced |
+
+Nothing firewalls a process yet: on `egress`, a process that opens a raw socket is not
+stopped. That is a real limitation, and it is why `none` on docker or podman, or `full`,
+are the honest choices when the distinction matters. Where a provider cannot enforce
+what a policy declares, Husk says so: as a warning when the computer is made, and in the
+note the chat reads first. Ask for strict enforcement (`strict: true` under
+`computer.network`, or `husk-mcp --network-strict`) and Husk refuses to make the computer
+instead.
+
+The tool layer checks the URLs Husk itself opens: `browse` (every redirect hop, not
+just the first URL), `browser_goto`, a new tab from `browser_tabs`, the `goto` steps of
+`browser_run` and the `page.goto` calls of `browser_script`. Below it, the browser
+driver checks every document a page loads by itself against the same policy: a
+redirect's every hop, a link, a script that sends the page somewhere, a frame (cross-site
+ones included) and a pop-up's first load. A refused load is stopped before anything is
+sent, and the result says so. It does not check subresources (images, scripts, a page's
+own `fetch` calls). Those are not documents, and a page's scripts cannot read a
+cross-origin response anyway. On the one-process-per-call fallback, used by a provider
+that cannot keep the driver running, it checks only while a call runs. With no policy set, which is the
+MCP server's default, public addresses are allowed and Husk refuses internal ones
+(loopback it does not own, private ranges, link-local, the cloud metadata address), in
+IPv6 spellings too, such as `[::ffff:169.254.169.254]`. Names are not resolved, so a
+public name that points at an internal address is not caught.
 
 ## Secrets
 
 Two independent controls:
 
-1. **Nothing credential-shaped enters the machine.** The environment scrub is deny-by-
-   pattern over a small allow-list, so a variable you have never heard of is dropped
-   rather than forwarded.
-2. **Nothing credential-shaped leaves a tool.** Every tool result passes through
-   `redact()` before it re-enters the conversation, matching Anthropic, OpenAI, Google,
-   GitHub, Slack and AWS access key IDs plus PEM private keys. An agent that `cat`s a
-   `.env` sees the file; the model sees `sk-ant-…[redacted]`.
+1. **Nothing credential-shaped enters the machine.** On `local`, the environment scrub
+   rebuilds a command's environment from a small allow-list, so a variable you have
+   never heard of is dropped rather than forwarded. The other providers never pass this
+   machine's environment in.
+2. **Nothing credential-shaped leaves a tool.** While `guardrails.redactSecrets` is on,
+   the default, every tool result passes through `redact()` before it re-enters the
+   conversation, matching Anthropic, OpenAI, Groq, Google, GitHub, Slack, npm, Fly and
+   xAI keys, AWS access key IDs, the token in an `Authorization` or
+   `Proxy-Authorization` header, and PEM private keys (untyped, RSA, EC, DSA, OpenSSH,
+   encrypted or PGP). An agent that `cat`s a `.env` sees the file; the model sees
+   `sk-ant-…[redacted]`.
 
    An AWS *secret* access key is the documented exception: it is forty characters of
    base64 with no prefix and nothing to match on, so no pattern finds it without also
@@ -141,20 +179,102 @@ guardrails:
 
 In `ask`, tools marked `dangerous` pause for a human. **If no approver is wired up, the
 call is denied, not allowed** — a headless server running an `ask`-mode husk fails closed.
-In `readonly`, dangerous tools are never offered.
+In `readonly`, dangerous tools are still listed, and every call to one is refused.
+
+## Remote access
+
+`husk serve --remote` is the one way Husk takes calls from the internet, from claude.ai and
+ChatGPT. It is off unless you start it, and it is for one person, its owner. The setup is
+in the guide (`apps/docs/content/guides/remote-access.mdx`); the routes are in
+[API.md](API.md#remote-access).
+
+- **Who gets in.** Whoever first types the claim code, which is printed on a terminal and
+  never into a log (80 bits, 15 minutes, 5 tries), and makes a passkey. After that, only
+  that passkey, with the person verified and its counter going up.
+- **Tokens.** Access tokens are EdDSA JWTs for one hour, for this public URL's `/mcp`
+  alone. Refresh tokens last 30 days and change on every use; a reused one ends its whole
+  family, including what a request in flight at that moment would mint.
+- **What the internet reaches.** Remote access's own port, which the tunnel publishes.
+  It serves the sign-in, `/mcp`, and the links Husk minted for a remote chat, and nothing
+  else, whatever `Host` header a request carries. The console and the API stay on their
+  own port, on loopback, behind the machine's token.
+- **Links.** A link a remote chat gives its person opens only after the owner's passkey,
+  used in that browser: the chat holds the link too, and a chat can be shared. Off, reset
+  and signing the app out end it.
+- **What a remote chat runs on.** Computers from an isolated provider only, bound apart
+  from this machine's own chats. An `ssh` target that is this machine (`localhost`,
+  `127.0.0.1`, `::1`) is not isolated from it, and is refused. The workspace tools, which
+  work on this machine's files, are not offered.
+- **What runs without you.** Reading: opening and moving around a page, snapshots and
+  screenshots, `browse`, `read_file` and `list_dir`. Commands, file changes, an exposed
+  port, and the browser's clicks, typing, choices, uploads, steps and scripts wait for
+  the owner's passkey (`DANGEROUS_TOOLS` in `packages/mcp/src/approvals.ts`), on a page
+  that shows the computer and every argument exactly; a call too big to show is never put to them. Opening
+  a page can still act on a site the computer's browser is signed in to, as any link
+  can. After a passkey, the owner may let one app use one tool unasked for an hour; that
+  grant is for the tool, whatever its arguments.
+- **Off.** One switch revokes every token and makes the public URL a 404.
+- **Advisories.** Husk will not serve remotely while a high or critical security advisory
+  stands against the packages it runs (checked at start and daily), and switches itself
+  off when one appears.
+- **What a flood can do.** Budgets are per minute and never per address, which a tunnel
+  hides. What the owner already let in has its own, and every route its own for everyone
+  else, so a flood holds up only the route it is aimed at: a new app's first sign-in, or
+  the page a link opens on. If that happens, switch remote access off.
+- **Who can read it.** The chat app sees every tool result. Depending on the tunnel, so
+  can its provider: Tailscale Funnel and ngrok with TLS ended at the agent cannot,
+  Cloudflare and Fly can. The guide has the table.
+
+Two security reviews of remote access in October 2026, and the work on what they found,
+turned up these. Each is fixed and has a test:
+
+| Found | Now |
+| --- | --- |
+| A refresh token minted by a request in flight could outlive the reuse that ended its family | A family a reuse ended stays ended, and nothing awaits between that check and the mint; off and reset end requests in flight too |
+| The public surface was chosen by the `Host` header, which a tunnel passes on as written | Remote access has its own port, and its requests carry a mark only this process knows |
+| Sign-in errors were redirected to any return address an app registered: an open redirect | Errors are shown on the page; the page warns of a return address that is not a chat app Husk knows |
+| Tokens kept working after the public URL changed | The state belongs to its URL: a new one starts over |
+| A link made on this machine opened under the public URL | Only links minted for a remote chat open there |
+| One stranger could use up the budget the owner's approvals and sign-ins shared | Those have budgets of their own |
+| A passkey whose counter fell back to zero was accepted | Refused, as WebAuthn asks |
+| The approval page showed a cut, redacted line, which could hide what a command ran | It shows every argument exactly, with hidden characters escaped |
+| The claim code was printed into a service's log | It is printed on a terminal only |
+| A link the chat was given could take over the computer and type into its browser, with no passkey | A link opens only after the owner's passkey, used in that browser |
+| Links outlived off, reset and their app's sign-out | All three end them |
+| An access token outlived the reuse that ended its family, for up to an hour | It ends with its family |
+| A sign-in that had typed the old claim code still made its owner after a new code | A new code ends it |
+| The public port kept `Idempotency-Key` records, which strangers could fill, replay past a limit, or read another's answer from | It keeps none |
+| The public port read bodies of up to 32 MB before checking a token or a budget | `/mcp` checks first, and sign-in bodies are at most 64 KB |
+| An app id such as `__proto__` crashed the sign-in | Ids are looked up as registered |
+| A hand-off link opened in a browser under the public URL showed "Reconnect": the console's `/health` check was a 404 there | `/health` answers there, saying only that it is up |
 
 ## What we do not do
 
 - **No telemetry.** Not off by default — absent. No analytics, no crash reporter, no
-  phone-home. The only calls Husk makes are to the model provider you configured and to a
-  registry when pulling an image.
-- **No credential storage.** Husk reads keys from the environment and never writes them to
-  `~/.husk`. One thing does land there verbatim: `husk import` caches the transcript you
-  gave it, so a chat log containing a key keeps that key in `~/.husk/transcripts`. What
+  phone-home. The only calls Husk makes are to the model provider you configured, to a
+  registry when pulling an image, and — the first time a computer needs the rendered
+  browser and has no Chromium of its own — to Chrome for Testing (Playwright's build on
+  arm64), from inside that computer. With remote access on, it also asks the npm
+  registry for advisories, sending its packages' names and versions and nothing else.
+- **No credential storage.** Husk reads keys from the environment, or from a
+  `~/.husk/.env` you write, and never writes them to `~/.husk`. One thing does land
+  there verbatim: `husk import` caches the transcript you gave it, so a chat log
+  containing a key keeps that key in `~/.husk/transcripts`. What
   Husk *derives* from it is redacted first — the distilled `husk.yaml`, its name, its
   slug and its filename — but the cached copy of your own file is not rewritten.
 - **No remote execution by default.** `husk serve` binds loopback, and it refuses to start
-  on a non-loopback address without `HUSK_TOKEN` set.
+  on a non-loopback address without `HUSK_TOKEN` set. Remote access (above) is the one
+  exception, and only when you start it. The shared Husk that a chat starts
+  also binds loopback, always with a token it mints and writes to `~/.husk/daemon.json`
+  (owner-only); any program running as you can read that file. The links Husk gives a
+  chat, so it can show you a computer, carry a short-lived token scoped to that one
+  computer (ten minutes unused, eight hours at most). The chat sees the link, so it holds
+  that token too.
+- **Take over is cooperation, not a security boundary.** Taking over, and a chat's
+  hand-off, stop the AI's Husk tool calls. They do not stop code already running in the
+  computer, or a chat app that can run commands on your machine itself (Claude Code,
+  Codex). Today a tool call that is already running when you take over finishes first;
+  stopping it at once is tracked in [#187](https://github.com/Hotragn/husk/issues/187).
 
 ## Securing the repository itself
 
@@ -162,9 +282,13 @@ A key that never reaches a model is still a key if it reaches a commit.
 
 `scripts/secret-scan.mjs` reads tracked files and walks `git log -p --all`, so its
 coverage is exactly *reachable from a ref* — every branch, tag and note, including a
-second root. `.npmrc` is deliberately tracked, because it carries shared settings and
-ignoring it would change nothing for a file git already follows; `npm login` writes
-`_authToken` into that same file, so the scanner is what covers it.
+second root. A merge is read against its first parent, so a change made while resolving
+a conflict is read too, and so are commit and annotated-tag messages. In CI the checkout
+brings branches and tags, not notes or a stash, so those are covered by a local run only.
+`.npmrc` is deliberately tracked, because it carries shared settings and ignoring it would
+change nothing for a file git already follows; a token written into it, as
+`npm login --location=project` does, is what the scanner covers. Plain `npm login` writes
+to the user's own `~/.npmrc`, which git never sees.
 
 Three things follow from "reachable from a ref":
 
@@ -173,7 +297,8 @@ Three things follow from "reachable from a ref":
   those commits from your scanner and from nobody else. Scan an unmerged ref *before*
   deleting it.
 - **`--all` includes `refs/stash`**, so a stash entry can be the only thing keeping a
-  commit in scope — and `stash@{1}` and older live in a reflog the scan never reaches.
+  commit in scope, and its working-tree changes are read, since a stash commit is a merge
+  — and `stash@{1}` and older live in a reflog the scan never reaches.
 - **A clean scan means nothing without its scope.** Record the ref set and the commit
   count alongside the result, or the result is not repeatable.
 

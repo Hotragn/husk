@@ -166,6 +166,8 @@ export interface HuskSummary {
   displayName: string;
   description: string;
   model: string;
+  /** `builtin`, or the person's own `claude-code` or `codex`. Absent from an older Husk. */
+  engine?: string;
   version: string;
   tools: string[];
   triggers: string[];
@@ -320,6 +322,8 @@ export interface BrowserStatus {
 export interface ScopedComputer {
   computerId: string;
   label?: string;
+  /** Where it runs; absent from an older Husk. */
+  provider?: string;
   state: string;
   handoff: PendingHandoff | null;
 }
@@ -339,7 +343,138 @@ export interface Overview {
   computers: ComputerInfo[];
   activeRuns: ActiveRunInfo[];
   handoffs: PendingHandoff[];
+  /** The last tool call on each computer, chats included. Absent from older servers. */
+  activity?: Record<string, ActivityEntry>;
+  /** The AI's call running on each computer now: what a take-over waits for. Absent from older servers. */
+  running?: Record<string, { tool: string; since: string }>;
+  /** Computers a chat runs in its own process: watched and taken over from the chat's link. Absent from older servers. */
+  inChat?: string[];
+  /** Remote access, when this Husk was started with it. `warning`: advisories short of high, or a check not made. */
+  remote?: { on: boolean; publicUrl: string; apps: number; offReason?: string; warning?: string };
 }
+
+/** One tool call on a computer. `summary` never carries typed text. */
+export interface ActivityEntry {
+  at: string;
+  tool: string;
+  ok: boolean;
+  ms: number;
+  via: string;
+  summary?: string;
+}
+
+/** `POST /v1/computers/:id/bot`: a draft husk.yaml from the chat, to review before saving. */
+export interface BotDraft {
+  transcriptId: string;
+  yaml: string;
+  spec: { name: string; engine?: { type: BotEngine; resume?: string } };
+  distilled: { confidence?: number; notes?: string[] };
+  /** What the draft can run on, best first; absent from an older Husk. */
+  engines?: BotEngine[];
+  /** On Claude Code, the bot would go on with this chat rather than start from the draft. */
+  continues?: boolean;
+}
+
+/** What a bot made from a chat runs on: the person's own Claude Code or Codex, or Husk's own engine. */
+export type BotEngine = 'claude-code' | 'codex' | 'builtin';
+
+/** A chat Husk found on this machine, as `GET /v1/sessions/discover` lists it. */
+export interface FoundChat {
+  id: string;
+  source: string;
+  title: string;
+  messageCount: number;
+  updatedAt: string;
+  /** The file it is in. */
+  origin: string;
+}
+
+/** `POST /v1/sessions/import`: the chat, or, for a file that holds many, which one. */
+export type ImportedChat =
+  | { transcript: { id: string; title?: string; source: string } }
+  | { source: string; choices: Array<{ id: string; title: string; messages: number; updatedAt?: string }> };
+
+/** A chat app Husk can connect, as `GET /v1/setup` reports it. */
+export interface ChatApp {
+  id: string;
+  name: string;
+  found: boolean;
+  connected: boolean;
+  /** Husk is in it, but starts an older or another Husk: Update moves it here. Absent from older servers. */
+  outdated?: boolean;
+  where: string;
+  after: string;
+}
+
+/** A computer provider and whether this machine can run it. */
+export interface ComputerOption {
+  name: string;
+  description: string;
+  available: boolean;
+  isolated?: boolean | null;
+  reason?: string;
+  hint?: string;
+}
+
+export interface SetupState {
+  apps: ChatApp[];
+  computers: ComputerOption[];
+}
+
+export interface ConnectResult {
+  id: string;
+  ok: boolean;
+  message: string;
+  backup?: string;
+}
+
+export interface ComputerChoice {
+  provider?: string;
+  flavor?: 'base' | 'python' | 'node' | 'full';
+}
+
+/** A published advisory against a package this Husk runs, from the npm registry. */
+export interface RemoteAdvisory {
+  name: string;
+  version: string;
+  title: string;
+  severity: 'low' | 'moderate' | 'high' | 'critical';
+  url: string;
+  /** The versions it affects, as the advisory gives them. */
+  vulnerable?: string;
+}
+
+/** `GET /v1/remote`: chat apps on the web reaching this Husk. The route is a 404 unless `husk serve --remote`. */
+export interface RemoteStatus {
+  on: boolean;
+  /** Why it is off: switched off here, or an advisory switched it off. */
+  offReason?: string;
+  publicUrl: string;
+  /** What a chat app is given: `<publicUrl>/mcp`. */
+  endpoint: string;
+  owner: boolean;
+  /** Apps the owner signed in, and that have not been signed out since. */
+  apps: Array<{ id: string; name: string; createdAt: string }>;
+  /** The last advisory check's findings, every severity. */
+  advisories: RemoteAdvisory[];
+  checkedAt?: string;
+  /** Why the last check could not be made; it is tried again. */
+  checkError?: string;
+}
+
+/** One message on `WS /v1/computers/:id/screen`. */
+/** One open tab, from `GET /v1/computers/:id/browser/tabs`. `active` is the one the screen shows. */
+export interface BrowserTab {
+  targetId: string;
+  url: string;
+  title: string;
+  active: boolean;
+}
+
+export type ScreenMessage =
+  | { type: 'frame'; data: string; width: number; height: number }
+  | { type: 'idle'; message: string }
+  | { type: 'error'; code: string; message: string };
 
 /** `GET /v1/computers/:id/stats`. Null means not measured; `notes` says why. */
 export interface ComputerStats {

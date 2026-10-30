@@ -1,19 +1,18 @@
 import type { FastifyInstance } from 'fastify';
 import { ctxOf } from '../context.js';
 import { notFound } from '../errors.js';
-import { SseStream, pipeSse } from '../sse.js';
+import { SseStream, closedEarly, pipeSse } from '../sse.js';
 import type { RunRequestBody } from '../runner.js';
 
 export async function runRoutes(app: FastifyInstance): Promise<void> {
   const ctx = ctxOf(app);
   const { store, log } = ctx.deps;
 
-  app.post('/v1/husks/:name/run', async (req) => {
+  app.post('/v1/husks/:name/run', async (req, reply) => {
     const { name } = req.params as { name: string };
+    const signal = closedEarly(reply);
     const { spec } = await store.readHusk(name);
-    const abort = new AbortController();
-    req.raw.on('close', () => abort.abort(new Error('client disconnected')));
-    return ctx.runner.run(spec, (req.body ?? {}) as RunRequestBody, abort.signal);
+    return ctx.runner.run(spec, (req.body ?? {}) as RunRequestBody, signal);
   });
 
   app.post('/v1/husks/:name/run/stream', async (req, reply) => {

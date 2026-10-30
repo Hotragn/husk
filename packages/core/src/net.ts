@@ -75,32 +75,85 @@ function ipv4Octets(host: string): [number, number, number, number] | null {
   return all.length === 4 ? (all as [number, number, number, number]) : null;
 }
 
+/**
+ * An IPv6 literal as its eight 16-bit groups, or null when it is not one.
+ *
+ * Read as numbers rather than matched as text: `[::ffff:169.254.169.254]`,
+ * which the URL parser rewrites to `[::ffff:a9fe:a9fe]`, is the metadata
+ * endpoint, and a rule that only knew the spellings `::1` and `fe80:` let it,
+ * the host's own `[::ffff:7f00:1]` and the unspecified `[::]` straight through.
+ */
+function ipv6Groups(host: string): number[] | null {
+  if (!host.includes(':')) return null;
+  let h = host;
+  // A dotted IPv4 tail is the last two groups.
+  const tail = /^(.*:)([^:]*\.[^:]*)$/.exec(h);
+  if (tail) {
+    const v4 = ipv4Octets(tail[2]!);
+    if (!v4) return null;
+    h = `${tail[1]}${((v4[0] << 8) | v4[1]).toString(16)}:${((v4[2] << 8) | v4[3]).toString(16)}`;
+  }
+  const halves = h.split('::');
+  if (halves.length > 2) return null;
+  const groups = (part: string) => (part === '' ? [] : part.split(':').map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : Number.NaN)));
+  const head = groups(halves[0]!);
+  const rest = halves.length === 2 ? groups(halves[1]!) : [];
+  if ([...head, ...rest].some(Number.isNaN)) return null;
+  const missing = 8 - head.length - rest.length;
+  if (halves.length === 1 ? missing !== 0 : missing < 1) return null;
+  return [...head, ...new Array<number>(halves.length === 2 ? missing : 0).fill(0), ...rest];
+}
+
+/** The IPv4 address an IPv6 one carries -- mapped, compatible, or NAT64 -- or null. */
+function embeddedV4(g: number[]): [number, number, number, number] | null {
+  const v4: [number, number, number, number] = [g[6]! >> 8, g[6]! & 0xff, g[7]! >> 8, g[7]! & 0xff];
+  const zeros = (from: number, to: number) => g.slice(from, to).every((x) => x === 0);
+  if (zeros(0, 5) && g[5] === 0xffff) return v4; // ::ffff:a.b.c.d
+  if (zeros(0, 6)) return v4; // ::a.b.c.d, which includes :: and ::1 as 0.0.0.0 and 0.0.0.1
+  if (g[0] === 0x64 && g[1] === 0xff9b && zeros(2, 6)) return v4; // 64:ff9b::/96, NAT64
+  return null;
+}
+
+function internalV4([a, b]: [number, number, number, number]): boolean {
+  if (a === 127 || a === 0 || a === 10) return true;
+  if (a === 169 && b === 254) return true; // link-local, incl. the metadata endpoint
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true; // carrier-grade NAT
+  return false;
+}
+
 export function isInternalHost(host: string): boolean {
   const h = host.toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '');
 
   if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local')) return true;
   if (h.endsWith('.internal') || h === 'metadata.google.internal') return true;
-  if (h === '::1' || h === '0:0:0:0:0:0:0:1') return true;
-  if (/^f[cd][0-9a-f]{2}:/.test(h) || /^fe80:/.test(h)) return true;
+
+  const g = ipv6Groups(h);
+  if (g) {
+    if (isLoopbackGroups(g)) return true;
+    if ((g[0]! & 0xfe00) === 0xfc00) return true; // fc00::/7, unique local
+    if ((g[0]! & 0xffc0) === 0xfe80 || (g[0]! & 0xffc0) === 0xfec0) return true; // link-local, old site-local
+    const v4 = embeddedV4(g);
+    return v4 !== null && internalV4(v4);
+  }
 
   const v4 = ipv4Octets(h);
-  if (v4) {
-    const a = v4[0];
-    const b = v4[1];
-    if (a === 127 || a === 0 || a === 10) return true;
-    if (a === 169 && b === 254) return true; // link-local, incl. the metadata endpoint
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true; // carrier-grade NAT
-  }
-  return false;
+  return v4 !== null && internalV4(v4);
+}
+
+/** `::1`, the unspecified `::` (which reaches this host), or IPv4 loopback inside IPv6. */
+function isLoopbackGroups(g: number[]): boolean {
+  const v4 = embeddedV4(g);
+  return v4 !== null && (v4[0] === 127 || v4[0] === 0);
 }
 
 /** Loopback specifically, as distinct from the rest of the private ranges. */
 export function isLoopbackHost(host: string): boolean {
   const h = host.toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '');
   if (h === 'localhost' || h.endsWith('.localhost')) return true;
-  if (h === '::1' || h === '0:0:0:0:0:0:0:1') return true;
+  const g = ipv6Groups(h);
+  if (g) return isLoopbackGroups(g);
   const v4 = ipv4Octets(h);
   return v4 !== null && (v4[0] === 127 || v4[0] === 0);
 }
@@ -133,6 +186,36 @@ export function ownsLoopback(provider: string): boolean {
  */
 export function sharesHostNetwork(provider: string): boolean {
   return !OWNS_LOOPBACK.has(provider);
+}
+
+/**
+ * What a provider cannot enforce of a network policy for the processes in the
+ * computer, as a sentence to warn with, or undefined when there is nothing to say.
+ *
+ * Husk's own tools and the browser's page loads follow the policy on every
+ * provider: the tool layer checks the URLs Husk opens, and the browser driver
+ * checks every document a page loads. Everything else in the computer -- a
+ * shell command, a script, a server the agent starts -- is the provider's to
+ * stop. Docker and Podman give a `none` computer no network at all; nothing
+ * firewalls `egress` or a deny list yet. The internal-address floor is not
+ * firewalled for processes either, which the matrix in SECURITY-MODEL.md says
+ * rather than every computer saying it.
+ */
+export function networkEnforcement(provider: string, policy: NetworkPolicy | undefined): string | undefined {
+  if (!policy) return undefined;
+  const kernel = provider === 'docker' || provider === 'podman';
+  if (policy.mode === 'none') {
+    return kernel
+      ? undefined
+      : `network mode "none" is not enforced on ${provider}: Husk's own tools and the browser's page loads follow it, but a process in the computer can still reach the network`;
+  }
+  if (policy.mode === 'egress') {
+    return `network mode "egress" holds Husk's own tools and the browser's page loads to the allow-list, but no provider firewalls it yet: a process in the computer can still reach any host`;
+  }
+  if (policy.deny?.length) {
+    return `the network deny list holds for Husk's own tools and the browser's page loads, but no provider firewalls it yet: a process in the computer can still reach those hosts`;
+  }
+  return undefined;
 }
 
 export interface HostPolicyContext {

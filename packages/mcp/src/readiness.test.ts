@@ -1,5 +1,4 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { createLogger } from '@husk-ai/core';
 import type { Computer, ComputerInfo } from '@husk-ai/core';
 import type { ComputerManager } from '@husk-ai/runtime';
@@ -52,7 +51,7 @@ describe('MCP reconnects', () => {
     if (!Array.isArray(first.content)) throw new Error('Expected MCP content array');
     expect(first.content[0]).toMatchObject({ type: 'text', text: expect.stringMatching(/\n$/) });
     expect(first.content[1]).toMatchObject({ type: 'text', text: expect.stringContaining('ok') });
-    expect(first.content.map((item) => item.text ?? '').join('')).toMatch(/\nok$/);
+    expect(first.content.map((item) => ('text' in item ? item.text : '')).join('')).toMatch(/\nok$/);
 
     const second = await s.shell();
     expect(second.content).toEqual([{ type: 'text', text: 'ok' }]);

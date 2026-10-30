@@ -33,6 +33,12 @@ describe('the note the model reads first', () => {
     expect(isolationNote(info('docker'))).toMatch(/isolated from the host/);
   });
 
+  it('says when the computer cannot enforce the network policy it was given', () => {
+    const offline = (provider: ProviderName) => ({ ...info(provider), spec: { provider, network: { mode: 'none' as const } } });
+    expect(isolationNote(offline('docker'))).not.toMatch(/Note:/);
+    expect(isolationNote(offline('ssh'))).toMatch(/Note: network mode "none" is not enforced on ssh/);
+  });
+
   it('refuses to call a guarded directory a sandbox', () => {
     const note = isolationNote(info('local', { 'husk.shell': 'wsl:Ubuntu' }));
     expect(note).toMatch(/NOT a sandbox/);

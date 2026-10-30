@@ -1,4 +1,4 @@
-import { HuskError, formatDuration } from '@husk-ai/core';
+import { HuskError, formatDuration, loadConfig } from '@husk-ai/core';
 import type { Computer, ComputerInfo } from '@husk-ai/core';
 import { ComputerManager } from '@husk-ai/runtime';
 import * as ui from '../ui.js';
@@ -12,7 +12,10 @@ import * as ui from '../ui.js';
 let cached: ComputerManager | undefined;
 
 export function manager(): ComputerManager {
-  cached ??= new ComputerManager();
+  if (!cached) {
+    const { maxComputers, provider } = loadConfig();
+    cached = new ComputerManager({ maxComputers, provider });
+  }
   return cached;
 }
 

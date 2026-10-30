@@ -1,6 +1,6 @@
 import { readFile as readHostFile, mkdir, writeFile as writeHostFile } from 'node:fs/promises';
 import { dirname, posix } from 'node:path';
-import { HuskError, clampText, id as newId } from '@husk-ai/core';
+import { HuskError, READ_FILE_MAX_BYTES, clampText, fileTooLarge, headText, id as newId } from '@husk-ai/core';
 import type {
   Availability,
   Computer,
@@ -14,8 +14,9 @@ import type {
   ProviderName,
   WriteFileOptions,
 } from '@husk-ai/core';
-import { GUEST_ROOT, evaluateCommand, normaliseGuestPath, shellQuote } from '../policy.js';
-import { expired, forgetInfo, loadInfos, persistInfo } from '../registry.js';
+import { GUEST_ROOT, commandRulesOf, evaluateCommand, normaliseGuestPath, shellQuote } from '../policy.js';
+import { forgetInfo, loadInfos, persistInfo, reapExpired } from '../registry.js';
+import { EXEC_TAG, REAP_SCRIPT, STOP_UNCONFIRMED, newExecTag, timerMs } from '../reap.js';
 import { parseLsLong } from './oci-common.js';
 import { resolveImage } from '../images.js';
 
@@ -102,7 +103,8 @@ function mapState(state: string | undefined): ComputerInfo['state'] {
 export function resolveFlyConfig(opts: FlyOptions = {}, spec?: ComputerSpec): Partial<FlyConfig> {
   const env = opts.env ?? process.env;
   return {
-    token: opts.token ?? env.FLY_API_TOKEN ?? env.FLY_ACCESS_TOKEN ?? '',
+    // HUSK_FLY_TOKEN first: a Husk that itself runs on Fly keeps the computers' app token in a secret of its own name.
+    token: opts.token ?? env.HUSK_FLY_TOKEN ?? env.FLY_API_TOKEN ?? env.FLY_ACCESS_TOKEN ?? '',
     app: opts.app ?? spec?.labels?.['husk.fly.app'] ?? env.HUSK_FLY_APP ?? env.FLY_APP_NAME ?? '',
     region: opts.region ?? spec?.labels?.['husk.fly.region'] ?? env.HUSK_FLY_REGION ?? env.FLY_REGION,
     baseUrl: opts.baseUrl ?? env.HUSK_FLY_API ?? FLY_API,
@@ -125,19 +127,23 @@ export async function flyRequest<T>(
   path: string,
   body?: unknown,
   timeoutMs?: number,
+  /** A caller's stop, on top of the timeout. */
+  signal?: AbortSignal,
 ): Promise<T> {
   const url = `${cfg.baseUrl}${path}`;
+  const timeout = AbortSignal.timeout(timeoutMs ?? cfg.timeoutMs);
   let res: Response;
   try {
     res = await cfg.fetch(url, {
       method,
       headers: {
-        Authorization: `Bearer ${cfg.token}`,
+        // `fly tokens create` prints `FlyV1 fm2_…`, scheme included, as flyctl sends it; an older token is a bearer.
+        Authorization: cfg.token.startsWith('FlyV1 ') ? cfg.token : `Bearer ${cfg.token}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(timeoutMs ?? cfg.timeoutMs),
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
     });
   } catch (err) {
     const aborted = (err as Error).name === 'TimeoutError' || (err as Error).name === 'AbortError';
@@ -157,13 +163,21 @@ export async function flyRequest<T>(
   }
 }
 
+/**
+ * Where to get a token, and which: one that reaches the computers' app alone.
+ * `fly auth token` prints the person's own, which reaches every app they can.
+ */
+export function flyTokenHint(app?: string): string {
+  return `make a token for the computers' app alone with \`fly tokens create deploy --app ${app || '<app>'}\`, and export it as HUSK_FLY_TOKEN`;
+}
+
 export function flyError(status: number, body: string, app: string, method: string, path: string): HuskError {
   const detail = extractMessage(body);
   const base = { status, body: clampText(body, 2000).text, method, path };
 
   if (status === 401 || status === 403) {
     return new HuskError('E_NO_CREDENTIALS', `fly rejected the token (${status})${detail ? `: ${detail}` : ''}`, {
-      hint: 'run `fly auth token` and export it as FLY_API_TOKEN',
+      hint: flyTokenHint(app),
       details: base,
     });
   }
@@ -305,6 +319,10 @@ class FlyComputer implements Computer {
     return this.info;
   }
 
+  markUsed(): void {
+    this.touch();
+  }
+
   private touch(): void {
     this.info.lastUsedAt = new Date().toISOString();
     void persistInfo(this.info).catch(() => {});
@@ -321,11 +339,7 @@ class FlyComputer implements Computer {
     this.assertLive();
     const started = Date.now();
 
-    const labels = this.info.spec.labels ?? {};
-    const decision = evaluateCommand(req.cmd, {
-      deny: splitList(labels['husk.denyCommands']),
-      allow: splitList(labels['husk.allowCommands']),
-    });
+    const decision = evaluateCommand(req.cmd, commandRulesOf(this.info.spec.labels));
     if (!decision.allowed) {
       throw new HuskError('E_EXEC_DENIED', `refused: ${decision.reason}`, {
         hint: 'add a pattern to guardrails.allowCommands in husk.yaml if this is intentional',
@@ -335,11 +349,18 @@ class FlyComputer implements Computer {
     if (req.stdin !== undefined) {
       throw new HuskError('E_EXEC_FAILED', 'the fly exec endpoint cannot accept stdin', {
         hint: 'write the input to a file with writeFile and redirect from it',
+        details: { stdin: 'unsupported' },
       });
     }
 
+    // A stop that arrived before the start runs nothing at all.
+    if (req.signal?.aborted) {
+      return { exitCode: 124, stdout: '', stderr: '', durationMs: 0, truncated: false, timedOut: true };
+    }
     const script = typeof req.cmd === 'string' ? req.cmd : shellQuote(req.cmd);
-    const env = { ...this.info.spec.env, ...req.env };
+    // Inherited by everything the command starts, so a stop can find all of it (reap.ts).
+    const tag = newExecTag();
+    const env = { ...this.info.spec.env, ...req.env, [EXEC_TAG]: tag };
     const assignments = Object.entries(env)
       .map(([k, v]) => `${k}=${shellQuote([v])}`)
       .join(' ');
@@ -355,18 +376,25 @@ class FlyComputer implements Computer {
         this.cfg,
         'POST',
         this.path('/exec'),
-        { command: ['/bin/sh', '-c', wrapped], timeout: timeoutSec > 0 ? timeoutSec : 0 },
-        // A little slack over the remote timeout, so the remote one wins and we
-        // learn the exit code instead of guessing at a dead socket.
-        (timeoutSec > 0 ? timeoutSec + 15 : 3600) * 1000,
+        { command: ['/bin/sh', '-c', wrapped], timeout: timeoutSec > 0 ? timeoutSec + 15 : 0 },
+        // Husk's own deadline decides, as on the other providers: past it the request is
+        // dropped and the command reaped below, so a timeout is always `timedOut`. What
+        // the machine answers when its own timeout fires is not documented, so that one
+        // comes later, only to end a command whose reap was lost.
+        timerMs(timeoutSec > 0 ? timeoutSec : 3600) as number,
+        req.signal,
       );
     } catch (err) {
-      const timedOut = /timed out/.test((err as Error).message);
+      const timedOut = /timed out/.test((err as Error).message) || req.signal?.aborted === true;
       if (!timedOut) throw err;
+      // Whether the machine ends the command when the request goes away is not
+      // documented, so the stop also reaps it there.
+      const stopped = await this.raw(`set -- ${shellQuote([tag])}\n${REAP_SCRIPT}`, 15).then((r) => r.exit_code === 0, () => false);
+      const message = (err as Error).message;
       return {
         exitCode: 124,
         stdout: '',
-        stderr: (err as Error).message,
+        stderr: stopped ? message : `${message}\n${STOP_UNCONFIRMED}`,
         durationMs: Date.now() - started,
         truncated: false,
         timedOut: true,
@@ -440,10 +468,24 @@ class FlyComputer implements Computer {
     this.touch();
   }
 
-  async readFile(path: string): Promise<Uint8Array> {
+  async readFile(path: string, opts: { maxBytes?: number } = {}): Promise<Uint8Array> {
+    const max = opts.maxBytes ?? READ_FILE_MAX_BYTES;
+    const bytes = await this.readHead(path, max);
+    if (bytes.byteLength > max) throw fileTooLarge(normaliseGuestPath(path, this.info.workdir), max);
+    return bytes;
+  }
+
+  async readTextFile(path: string, maxBytes = 1024 * 1024): Promise<string> {
+    return headText(await this.readHead(path, maxBytes), maxBytes);
+  }
+
+  /** At most `maxBytes + 1` bytes from the start, stopped in the machine: one past tells the caller there was more. */
+  private async readHead(path: string, maxBytes: number): Promise<Uint8Array> {
     this.assertLive();
     const target = normaliseGuestPath(path, this.info.workdir);
-    const r = await this.raw(`base64 ${shellQuote([target])} | tr -d '\\n'`, 120);
+    const q = shellQuote([target]);
+    // A pipeline answers with its last command's status, so a missing file is caught first.
+    const r = await this.raw(`test -r ${q} && ! test -d ${q} || { echo "cannot read ${target}" >&2; exit 1; }; head -c ${maxBytes + 1} -- ${q} | base64 | tr -d '\\n'`, 120);
     if ((r.exit_code ?? 1) !== 0) {
       throw new HuskError('E_FS_DENIED', `cannot read ${target}: ${(r.stderr ?? '').trim()}`, {
         hint: 'check the path exists inside the machine',
@@ -451,11 +493,6 @@ class FlyComputer implements Computer {
     }
     this.touch();
     return new Uint8Array(Buffer.from((r.stdout ?? '').trim(), 'base64'));
-  }
-
-  async readTextFile(path: string, maxBytes = 1024 * 1024): Promise<string> {
-    const buf = await this.readFile(path);
-    return clampText(Buffer.from(buf).toString('utf8'), maxBytes).text;
   }
 
   async listDir(path: string): Promise<DirEntry[]> {
@@ -567,11 +604,6 @@ class FlyComputer implements Computer {
   }
 }
 
-function splitList(v: string | undefined): string[] | undefined {
-  if (!v) return undefined;
-  return v.split('\u0000').filter(Boolean);
-}
-
 // ---------------------------------------------------------------------------
 // The provider
 // ---------------------------------------------------------------------------
@@ -591,8 +623,8 @@ export class FlyProvider implements ComputerProvider {
   private config(spec?: ComputerSpec): FlyConfig {
     const c = resolveFlyConfig(this.opts, spec);
     if (!c.token) {
-      throw new HuskError('E_NO_CREDENTIALS', 'FLY_API_TOKEN is not set', {
-        hint: 'run `fly auth token` and export it as FLY_API_TOKEN',
+      throw new HuskError('E_NO_CREDENTIALS', 'no fly token is set: HUSK_FLY_TOKEN, or FLY_API_TOKEN', {
+        hint: flyTokenHint(c.app),
       });
     }
     if (!c.app) {
@@ -615,8 +647,8 @@ export class FlyProvider implements ComputerProvider {
         available: false,
         isolated: true,
         isolationKind: 'kernel',
-        reason: 'FLY_API_TOKEN is not set',
-        hint: 'run `fly auth token` and export it as FLY_API_TOKEN (fly machines are metered, not free)',
+        reason: 'no fly token is set: HUSK_FLY_TOKEN, or FLY_API_TOKEN',
+        hint: `${flyTokenHint(c.app)} (fly machines are metered, not free)`,
       };
     }
     if (!c.app) {
@@ -658,6 +690,12 @@ export class FlyProvider implements ComputerProvider {
   }
 
   async create(spec: ComputerSpec): Promise<Computer> {
+    // Said, not dropped, and before a machine bills: Fly runs an image from a registry, and Husk builds none there.
+    if (spec.packages?.length) {
+      throw new HuskError('E_SPEC_INVALID', 'fly computers do not install packages', {
+        hint: 'use a computer.image that has them, or docker or podman, which build them into the computer',
+      });
+    }
     const cfg = this.config(spec);
     const id = newId('cmp');
     const workdir = spec.workdir ?? GUEST_ROOT;
@@ -778,13 +816,6 @@ export class FlyProvider implements ComputerProvider {
   }
 
   async reap(): Promise<string[]> {
-    const removed: string[] = [];
-    for (const info of expired(await this.list())) {
-      const c = await this.get(info.id).catch(() => null);
-      if (!c) continue;
-      await c.destroy().catch(() => {});
-      removed.push(info.id);
-    }
-    return removed;
+    return reapExpired(this);
   }
 }

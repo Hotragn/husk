@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { HuskApi } from '../api/client';
 import type { Overview } from '../api/wire';
 import { OverviewPanel, sortRows } from './OverviewPanel';
@@ -14,7 +14,7 @@ const computer = (id: string, state: 'running' | 'stopped', lastUsedAt: string, 
 const REASON = '<img src=x onerror="alert(1)"> Sign in to example.com';
 const overview: Overview = {
   computers: [
-    computer('cmp_idle', 'running', '2026-10-20T09:00:00Z', { chatLabel: 'Cursor · chat started 09:00', platform: 'Cursor' }),
+    computer('cmp_idle', 'running', '2026-10-20T09:00:00Z', { chatLabel: 'Cursor · chat started 09:00', platform: 'Cursor', provider: 'ssh' }),
     computer('cmp_stopped', 'stopped', '2026-10-19T09:00:00Z'),
     computer('cmp_busy', 'running', '2026-10-20T08:00:00Z'),
     computer('cmp_wait', 'running', '2026-10-20T07:00:00Z', { chatLabel: 'Claude Desktop · chat started 07:00', platform: 'Claude Desktop' }),
@@ -27,17 +27,37 @@ describe('sortRows', () => {
   it('puts waiting first, then busy, then idle by most recent use', () => {
     expect(sortRows(overview).map((r) => r.computer.id)).toEqual(['cmp_wait', 'cmp_busy', 'cmp_idle', 'cmp_stopped']);
   });
+
+  it('marks a computer its chat runs itself, and only that one', () => {
+    const rows = sortRows({ ...overview, inChat: ['cmp_idle'] });
+    expect(rows.filter((r) => r.inChat).map((r) => r.computer.id)).toEqual(['cmp_idle']);
+  });
 });
 
 describe('Overview panel', () => {
   let requests: string[];
+  let sockets: string[];
   beforeEach(() => {
     requests = [];
+    sockets = [];
+    vi.stubGlobal(
+      'WebSocket',
+      class {
+        onmessage = null;
+        onclose = null;
+        constructor(url: string) {
+          sockets.push(new URL(url).pathname + new URL(url).search.replace(/[?&]token=[^&]*/, ''));
+        }
+        close() {}
+      },
+    );
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (input: string) => {
+      vi.fn(async (input: string, init?: RequestInit) => {
         const path = new URL(input).pathname;
-        requests.push(path);
+        requests.push(init?.method && init.method !== 'GET' ? `${init.method} ${path}` : path);
+        if (path.endsWith('/takeover')) return Response.json({ handoffId: 'hnd_me', runId: 'person', husk: 'you', reason: 'x', computerId: 'cmp_idle', createdAt: '' }, { status: 201 });
+        if (path.endsWith('/done')) return Response.json({ handoffId: 'hnd_me', outcome: 'done' });
         if (path === '/v1/overview') return Response.json(overview);
         if (path === '/v1/doctor') return Response.json({ providers: [{ name: 'docker', available: true, isolated: true, isolationKind: 'container' }] });
         if (path.endsWith('/stats')) return Response.json({ cpuPercent: null, memoryBytes: null, memoryLimitBytes: null, diskBytes: null, notes: ['x'] });
@@ -55,7 +75,7 @@ describe('Overview panel', () => {
     const { container } = render(<OverviewPanel onOpen={() => {}} />);
     await screen.findByText('Running triage · step 2 · shell');
     const text = container.querySelector('.overview-summary')?.textContent ?? '';
-    expect(text.replace(/\s+/g, ' ')).toBe('3 running · 1 waiting on you · 1 stopped');
+    expect(text.replace(/\s+/g, ' ')).toBe('3 running 1 waiting on you 1 stopped');
   });
 
   it('shows what each computer is doing, with the waiting reason as text', async () => {
@@ -66,32 +86,62 @@ describe('Overview panel', () => {
     expect(screen.getByText('Cursor · chat started 09:00')).toBeTruthy();
   });
 
-  it('takes over and opens Terminal, Files and Browser on the right computer', async () => {
+  it('takes over on the chat page, and opens Terminal on the right computer', async () => {
     const onOpen = vi.fn();
     render(<OverviewPanel onOpen={onOpen} />);
     const waiting = await screen.findByRole('article', { name: 'Claude Desktop · chat started 07:00' });
     fireEvent.click(within(waiting).getByRole('button', { name: 'Take over' }));
     fireEvent.click(within(waiting).getByRole('button', { name: 'Terminal' }));
     expect(onOpen.mock.calls).toEqual([
-      ['handoffs', 'cmp_wait'],
+      ['chat', 'cmp_wait'],
       ['terminal', 'cmp_wait'],
     ]);
   });
 
-  it('says not available rather than inventing numbers', async () => {
-    render(<OverviewPanel onOpen={() => {}} />);
-    expect((await screen.findAllByText('CPU not available · memory not available · disk not available')).length).toBeGreaterThan(0);
+  it('shows only what was measured, never an estimate', async () => {
+    const { container } = render(<OverviewPanel onOpen={() => {}} />);
+    await screen.findByText('Running triage · step 2 · shell');
+    await vi.waitFor(() => expect(requests.some((p) => p.endsWith('/stats'))).toBe(true));
+    expect(container.textContent).not.toMatch(/CPU|memory|disk/);
   });
 
-  it('looks at a browser only when asked, since a frame counts as using the computer', async () => {
+  it('looks at an idle ssh computer’s browser only when asked, since a frame there counts as using it', async () => {
     const { container } = render(<OverviewPanel onOpen={() => {}} />);
     await screen.findByText('Running triage · step 2 · shell');
     expect(requests.some((p) => p.endsWith('/thumbnail'))).toBe(false);
-    const busy = screen.getByRole('article', { name: 'cmp_busy' });
-    fireEvent.click(within(busy).getByRole('button', { name: 'Look at browser' }));
-    expect(await within(busy).findByText('No browser is open on this computer.')).toBeTruthy();
-    expect(requests.filter((p) => p.endsWith('/thumbnail'))).toEqual(['/v1/computers/cmp_busy/thumbnail']);
+    const idle = screen.getByRole('article', { name: 'Cursor · chat started 09:00' });
+    fireEvent.click(within(idle).getByRole('button', { name: 'Look at browser' }));
+    expect(await within(idle).findByText('No browser is open on this computer.')).toBeTruthy();
+    expect(requests.filter((p) => p.endsWith('/thumbnail'))).toEqual(['/v1/computers/cmp_idle/thumbnail']);
     expect(container.querySelector('.overview-thumb')).toBeNull();
+  });
+
+  it('shows the screen live, slowly, on every pushed-screen computer, and on ssh only while in use', async () => {
+    render(<OverviewPanel onOpen={() => {}} />);
+    await screen.findByText('Running triage · step 2 · shell');
+    // The screens open just after the cards render.
+    await waitFor(() => expect([...sockets].sort()).toEqual(['/v1/computers/cmp_busy/screen?fps=1', '/v1/computers/cmp_wait/screen?fps=1']));
+  });
+
+  it('takes an idle computer at any moment, and gives it back', async () => {
+    const onOpen = vi.fn();
+    render(<OverviewPanel onOpen={onOpen} />);
+    const idle = await screen.findByRole('article', { name: 'Cursor · chat started 09:00' });
+    fireEvent.click(within(idle).getByRole('button', { name: 'Take over' }));
+    await vi.waitFor(() => expect(onOpen).toHaveBeenCalledWith('chat', 'cmp_idle'));
+    expect(requests).toContain('POST /v1/computers/cmp_idle/takeover');
+
+    overview.handoffs.push({ handoffId: 'hnd_me', runId: 'person', husk: 'you', reason: 'x', computerId: 'cmp_idle', createdAt: '' });
+    try {
+      cleanup();
+      render(<OverviewPanel onOpen={onOpen} />);
+      const held = await screen.findByRole('article', { name: 'Cursor · chat started 09:00' });
+      expect(within(held).getByText('You have this computer')).toBeTruthy();
+      fireEvent.click(within(held).getByRole('button', { name: 'Give back' }));
+      await vi.waitFor(() => expect(requests).toContain('POST /v1/handoffs/hnd_me/done'));
+    } finally {
+      overview.handoffs.pop();
+    }
   });
 
   it('shows a handoff that has no computer card, with Take over', async () => {
@@ -113,7 +163,7 @@ describe('Overview panel', () => {
       const { container } = render(<OverviewPanel onOpen={() => {}} />);
       await screen.findByText('Running triage · step 2 · shell');
       expect(container.querySelector('.overview-summary')?.textContent?.replace(/\s+/g, ' ')).toBe(
-        '3 running · 1 waiting on you · 1 stopped · 1 other',
+        '3 running 1 waiting on you 1 stopped 1 other',
       );
     } finally {
       overview.computers.pop();

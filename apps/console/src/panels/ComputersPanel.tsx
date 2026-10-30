@@ -27,6 +27,7 @@ import {
   formatWhen,
 } from '../components/primitives';
 import { IsolationBadge } from './DoctorPanel';
+import { AppBadge } from '../desktop/AppGlyph';
 import type { Tone } from '../components/primitives';
 
 const FLAVORS = ['base', 'python', 'node', 'full'] as const;
@@ -118,8 +119,8 @@ export function ComputersPanel({
     (c: ComputerInfo) => {
       const whose = c.chatLabel ? ` (${c.chatLabel})` : '';
       const ok = window.confirm(
-        `Delete ${c.id}${whose}? Its files at ${c.nativeId ?? c.workdir} and everything installed on it go with it. ` +
-          'This cannot be undone.',
+        `Delete ${c.id}${whose}? Its files at ${c.nativeId ?? c.workdir}, everything installed on it and its ` +
+          'browser’s logins go with it. This cannot be undone.',
       );
       if (ok) void act(c.id, () => api.destroyComputer(c.id));
     },
@@ -205,7 +206,7 @@ export function ComputersPanel({
                       {c.id}
                       {c.name && c.name !== c.id ? <span className="field-note"> · {c.name}</span> : null}
                     </td>
-                    <td>{c.platform ?? '—'}</td>
+                    <td>{c.platform ? <AppBadge platform={c.platform} /> : '—'}</td>
                     <td>{c.chatLabel ?? '—'}</td>
                     <td className="mono tnum">{formatWhen(c.lastUsedAt)}</td>
                     <td className="mono tnum">

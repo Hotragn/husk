@@ -1,13 +1,17 @@
 import { Buffer } from 'node:buffer';
 import { HuskError, clampText } from '@husk-ai/core';
 import type { Computer, ComputerInfo, ComputerSpec, ExecRequest, ExecResult } from '@husk-ai/core';
+import type { ActivityEntry } from '../activity.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
-import { SseStream } from '../sse.js';
+import { SseStream, closedEarly } from '../sse.js';
+import { sendTo } from '../viewers.js';
+import { programCall } from './handoffs.js';
 import { browseInComputer } from '@husk-ai/core';
-import { livePageFor } from '@husk-ai/browser';
+import { browserSessionFor, livePageFor } from '@husk-ai/browser';
+import type { BrowserSession } from '@husk-ai/browser';
 import { localWorkspaceBytes } from '@husk-ai/runtime';
 
 const NetworkPolicySchema = z.object({
@@ -33,7 +37,7 @@ const ComputerSpecSchema = z
     idleTimeoutSec: z.number().int().min(0).optional(),
     maxLifetimeSec: z.number().int().min(0).optional(),
     network: NetworkPolicySchema.optional(),
-    env: z.record(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
     mounts: z
       .array(z.object({ source: z.string(), target: z.string(), readonly: z.boolean().optional() }))
       .optional(),
@@ -42,7 +46,7 @@ const ComputerSpecSchema = z
     persist: z.boolean().optional(),
     packages: z.array(z.string()).optional(),
     setup: z.string().optional(),
-    labels: z.record(z.string()).optional(),
+    labels: z.record(z.string(), z.string()).optional(),
   })
   .strict();
 
@@ -50,7 +54,7 @@ const ExecSchema = z
   .object({
     cmd: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
     cwd: z.string().optional(),
-    env: z.record(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
     timeoutSec: z.number().int().positive().max(3600).optional(),
     stdin: z.string().optional(),
     tty: z.boolean().optional(),
@@ -83,6 +87,12 @@ function requirePath(query: unknown): string {
   return p;
 }
 
+/** How often the live screen asks for a frame, at most. */
+const SCREEN_FPS = 4;
+
+/** The largest file `fs/read` returns: the same ceiling as an archive. */
+const MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024;
+
 export async function computerRoutes(app: FastifyInstance): Promise<void> {
   const ctx = ctxOf(app);
   const { manager, log } = ctx.deps;
@@ -91,11 +101,35 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
 
   // Everything the console's overview needs, in one call: every computer, what
   // each run is doing and which computer it is on, and who is waiting on a person.
-  app.get('/v1/overview', async () => ({
-    computers: await manager.list(),
-    activeRuns: ctx.runner.listActive(),
-    handoffs: ctx.runner.handoffs.list(),
-  }));
+  app.get('/v1/overview', async () => {
+    const computers = await manager.list();
+    // The last tool call on each computer, so a chat's computer shows what it is
+    // doing even though no husk run is driving it.
+    const activity: Record<string, ActivityEntry> = {};
+    for (const c of computers) {
+      const last = ctx.activity.latest(c.id);
+      if (last) activity[c.id] = last;
+    }
+    return {
+      computers,
+      activeRuns: ctx.runner.listActive(),
+      handoffs: ctx.runner.handoffs.list(),
+      activity,
+      // What the AI is doing right now: a take-over says what it waits for, and
+      // the desktop opens a computer's window when a call starts, not ends.
+      running: ctx.runner.handoffs.control.inFlight(),
+      // Run by a chat in its own process: watched and taken over from the chat's own link.
+      inChat: [...ctx.inChat],
+      // Remote access whenever this Husk serves it, for Husk Bar: on, or off and why.
+      ...(ctx.remote ? { remote: ctx.remote.brief() } : {}),
+    };
+  });
+
+  app.get('/v1/computers/:id/activity', async (req) => {
+    const { id } = req.params as { id: string };
+    await mustGet(app, id);
+    return { entries: ctx.activity.list(id) };
+  });
 
   app.post('/v1/computers', async (req: FastifyRequest, reply: FastifyReply) => {
     const spec = parseOr422(ComputerSpecSchema, req.body) as ComputerSpec;
@@ -113,14 +147,18 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete('/v1/computers/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
+    const query = req.query as { confirm?: unknown; erase?: unknown };
     // A chat's computer holds that chat's work, and Husk never removes one on
     // its own. Deleting it takes the id typed back as ?confirm=, which the
-    // console sends only after the person confirms.
+    // console sends only after the person confirms. So does ?erase=true, which
+    // takes the files and the browser's logins a chat's or bot's computer keeps
+    // for its next one (`husk rm` keeps them: it means "stop for now").
+    const erase = query.erase === 'true';
     const target = await manager.get(id);
-    if (target?.info.spec?.labels?.['husk.via'] === 'mcp' && (req.query as { confirm?: unknown }).confirm !== id) {
-      throw invalidSpec([`confirm: deleting a chat's computer needs ?confirm=${id}`]);
+    if ((erase || target?.info.spec?.labels?.['husk.via'] === 'mcp') && query.confirm !== id) {
+      throw invalidSpec([`confirm: ${erase ? 'erasing a computer' : "deleting a chat's computer"} needs ?confirm=${id}`]);
     }
-    const removed = await manager.destroy(id);
+    const removed = await manager.destroy(id, { erase });
     if (!removed) throw notFound('computer', id);
     ctx.bus.emit('computers', 'computer_destroyed', { id });
     return reply.code(204).send();
@@ -196,25 +234,32 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
     return info;
   });
 
-  app.post('/v1/computers/:id/exec', async (req) => {
+  app.post('/v1/computers/:id/exec', async (req, reply) => {
     const { id } = req.params as { id: string };
+    // Before any await: a disconnect during the lookup still counts.
+    const signal = closedEarly(reply);
     const body = parseOr422(ExecSchema, req.body);
     const computer = await mustGet(app, id);
-    const abort = new AbortController();
-    req.raw.on('close', () => abort.abort(new HuskError('E_ABORTED', 'client disconnected')));
-    const result: ExecResult = await computer.exec({ ...body, signal: abort.signal } as ExecRequest);
-    return result;
+    const call = programCall(ctx.runner.handoffs, id, req, 'exec', signal);
+    try {
+      const result: ExecResult = await computer.exec({ ...body, signal: call.signal } as ExecRequest);
+      return result;
+    } finally {
+      call.done();
+    }
   });
 
   app.post('/v1/computers/:id/exec/stream', async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = parseOr422(ExecSchema, req.body);
     const computer = await mustGet(app, id);
+    // Before the stream opens, so a refusal is still an error reply.
+    const call = programCall(ctx.runner.handoffs, id, req, 'exec', closedEarly(reply));
     const stream = new SseStream(req, reply);
     try {
       const result = await computer.exec({
         ...body,
-        signal: stream.signal,
+        signal: AbortSignal.any([call.signal, stream.signal]),
         onStdout: (data) => stream.send({ type: 'stdout', data }),
         onStderr: (data) => stream.send({ type: 'stderr', data }),
       } as ExecRequest);
@@ -227,6 +272,8 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
       } else {
         stream.close();
       }
+    } finally {
+      call.done();
     }
     return reply;
   });
@@ -242,17 +289,17 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
   app.get('/v1/computers/:id/fs/read', async (req, reply) => {
     const { id } = req.params as { id: string };
     const computer = await mustGet(app, id);
-    const bytes = await computer.readFile(requirePath(req.query));
+    // A person's download: larger than a tool's read, still bounded, since it is held in memory.
+    const bytes = await computer.readFile(requirePath(req.query), { maxBytes: MAX_DOWNLOAD_BYTES });
     return reply.type('application/octet-stream').send(Buffer.from(bytes));
   });
 
   app.put('/v1/computers/:id/fs/write', async (req, reply) => {
     const { id } = req.params as { id: string };
     const computer = await mustGet(app, id);
-    const body = req.body;
-    const content =
-      body instanceof Buffer ? new Uint8Array(body) : typeof body === 'string' ? body : Buffer.from(String(body ?? ''));
-    await computer.writeFile(requirePath(req.query), content);
+    // The bytes as sent, whatever their type: every parser keeps them
+    // (body.ts). A JSON body went through `String()` and became `[object Object]`.
+    await computer.writeFile(requirePath(req.query), new Uint8Array(req.rawBody ?? Buffer.alloc(0)));
     return reply.code(204).send();
   });
 
@@ -303,6 +350,98 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
     return page;
   });
 
+  // -- live screen ---------------------------------------------------------
+
+  /**
+   * The computer's browser, live, for as long as somebody watches.
+   *
+   * Frames are pushed: Chrome's own screencast, through the long-lived driver
+   * in the computer, acked no faster than SCREEN_FPS and held to this viewer's
+   * `fps`. One screencast serves every viewer of a computer and stops when the
+   * last one leaves. Where the provider cannot keep a driver running, this asks
+   * for one frame at a time instead, as it always did. Watching is not using:
+   * only a tool call moves the computer's last-used time, so a screen left open
+   * never keeps a computer awake. It never launches a browser: with none open
+   * it says so once until one appears.
+   */
+  app.get('/v1/computers/:id/screen', { websocket: true }, (socket, req) => {
+    const { id } = req.params as { id: string };
+    // `?fps=1` for a small screen among many, such as a card on Home. Never above the cap.
+    const fps = Math.min(SCREEN_FPS, Math.max(1, Number((req.query as { fps?: string }).fps) || SCREEN_FPS));
+    let open = true;
+    let stopWatching: (() => void) | undefined;
+    socket.on('close', () => {
+      open = false;
+      stopWatching?.();
+      stopWatching = undefined;
+    });
+    // A frame the viewer is too far behind for is dropped: the next one shows the same screen, newer.
+    const send = (obj: unknown, droppable = false) => {
+      if (open) sendTo(socket, JSON.stringify(obj), { droppable });
+    };
+    const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    void (async () => {
+      if (!(await manager.get(id))) {
+        send({ type: 'error', code: 'E_COMPUTER_NOT_FOUND', message: `no computer ${id}` });
+        socket.close();
+        return;
+      }
+      let idle = false;
+      let watched: BrowserSession | undefined;
+      let polling = false;
+      while (open) {
+        const started = Date.now();
+        const session = browserSessionFor(id);
+        // Asking keeps an open browser from closing for idleness while it is watched.
+        const page = session?.livePage();
+        if (watched && watched !== session) {
+          // Closed and made again: the old session's cast is gone with it.
+          stopWatching?.();
+          stopWatching = undefined;
+          watched = undefined;
+          polling = false;
+        }
+        if (!page || !session) {
+          if (!idle) send({ type: 'idle', message: 'no browser is open on this computer yet' });
+          idle = true;
+          await pause(1000);
+          continue;
+        }
+        idle = false;
+        if (!watched) {
+          watched = session;
+          const stop = await session.watchScreen(
+            fps,
+            (frame) => send({ type: 'frame', ...frame }, true),
+            // Pushing stopped for good after it started: ask for frames instead.
+            () => {
+              stopWatching = undefined;
+              polling = true;
+            },
+          );
+          if (!open) stop?.();
+          else if (stop) stopWatching = stop;
+          else polling = true;
+        }
+        if (!polling) {
+          await pause(1000);
+          continue;
+        }
+        let wait = 1000 / fps;
+        try {
+          const frame = await page.frame(60);
+          send({ type: 'frame', ...frame }, true);
+        } catch {
+          // Mid-navigation frames fail and the next one usually lands. A stopped
+          // computer fails every time, so slow down rather than spin on it.
+          wait = 1000;
+        }
+        await pause(Math.max(0, wait - (Date.now() - started)));
+      }
+    })();
+  });
+
   // -- terminal ------------------------------------------------------------
 
   /**
@@ -317,9 +456,8 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
     const abort = new AbortController();
     let closed = false;
 
-    const send = (obj: unknown) => {
-      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(obj));
-    };
+    // A terminal's output must not go missing: a viewer too far behind is disconnected instead, and reconnects.
+    const send = (obj: unknown) => sendTo(socket, JSON.stringify(obj), { droppable: false });
 
     socket.on('close', () => {
       closed = true;

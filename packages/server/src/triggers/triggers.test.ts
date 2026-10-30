@@ -1,16 +1,19 @@
 import { createHmac } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CronScheduler } from '../cron.js';
-import { buildTestApp, sampleSpec } from '../testing.js';
+import { buildTestApp, fakeAgentFactory, sampleSpec } from '../testing.js';
 import type { TestApp } from '../testing.js';
 import { CronBindings } from './cron.js';
 import { extractInput, mountKey } from './http.js';
 import { hmacHex, safeCompareHex, verifyHmacSignature } from './webhook.js';
 import type { FastifyRequest } from 'fastify';
+import type { AdapterContext } from '@husk-ai/adapters';
+import type { AdapterFactory } from '../deps.js';
 
 let harness: TestApp;
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await harness?.cleanup();
 });
 
@@ -269,6 +272,85 @@ describe('mounted triggers', { timeout: 30_000 }, () => {
     expect(forged.statusCode).toBe(403);
   });
 
+  it('takes a signed webhook without the server token, and an unsigned one only with it', async () => {
+    harness = await buildTestApp({ token: 'secret', triggers: true });
+    await harness.app.inject({
+      method: 'POST',
+      url: '/v1/husks',
+      headers: { authorization: 'Bearer secret' },
+      payload: { spec: { ...sampleSpec(), triggers: [{ type: 'webhook', path: '/gh', secret: 'shhh' }, { type: 'webhook', path: '/open' }] } },
+    });
+    const body = JSON.stringify({ input: 'ship it' });
+    const post = (path: string, headers: Record<string, string>) =>
+      harness.app.inject({ method: 'POST', url: `/v1/w/triage${path}`, headers: { 'content-type': 'application/json', ...headers }, payload: body });
+
+    // GitHub signs with its secret and cannot send a bearer token.
+    const signed = await post('/gh', { 'x-hub-signature-256': sign('shhh', body) });
+    expect(signed.statusCode).toBe(200);
+    expect(signed.json().text).toBe('done');
+    expect((await post('/gh', { 'x-hub-signature-256': sign('guess', body) })).statusCode).toBe(403);
+    expect((await post('/gh', {})).statusCode).toBe(401);
+
+    // An unsigned webhook still takes the token, and a signature cannot stand in for it.
+    expect((await post('/open', {})).statusCode).toBe(401);
+    const pretend = await post('/open', { 'x-husk-signature': sign('anything', body) });
+    expect(pretend.statusCode).toBe(403);
+    expect(pretend.json().error.message).toContain('no secret');
+    expect((await post('/open', { authorization: 'Bearer secret' })).statusCode).toBe(200);
+  });
+
+  it('takes a webhook secret written as ${NAME} from where Husk runs, and mounts nothing when NAME is not set', async () => {
+    vi.stubEnv('HUSK_TEST_HOOK_SECRET', 'shhh');
+    harness = await buildTestApp({ triggers: true });
+    const hook = (path: string, name: string) => ({ type: 'webhook', path, secret: `\${${name}}` });
+    await harness.app.inject({
+      method: 'POST',
+      url: '/v1/husks',
+      payload: { spec: { ...sampleSpec(), triggers: [hook('/set', 'HUSK_TEST_HOOK_SECRET'), hook('/unset', 'HUSK_TEST_NEVER_SET')] } },
+    });
+    const body = JSON.stringify({ input: 'ship it' });
+    const post = (path: string, secret: string) =>
+      harness.app.inject({
+        method: 'POST',
+        url: `/v1/w/triage${path}`,
+        headers: { 'content-type': 'application/json', 'x-husk-signature': sign(secret, body) },
+        payload: body,
+      });
+
+    expect((await post('/set', 'shhh')).statusCode).toBe(200);
+    // The placeholder's own text, as printed in the docs, signs nothing.
+    expect((await post('/set', '${HUSK_TEST_HOOK_SECRET}')).statusCode).toBe(403);
+    expect((await post('/unset', '${HUSK_TEST_NEVER_SET}')).statusCode).toBe(404);
+    expect((await harness.app.inject({ method: 'GET', url: '/v1/husks/triage' })).body).toContain('${HUSK_TEST_HOOK_SECRET}');
+  });
+
+  it('takes a signed webhook prompt from the signed body, never the query string', async () => {
+    const prompts: string[] = [];
+    const agent = fakeAgentFactory();
+    harness = await buildTestApp({
+      triggers: true,
+      agent: async (...args) => {
+        const inner = await agent(...args);
+        return { ...inner, run: (opts) => (prompts.push(String(opts.input)), inner.run(opts)) };
+      },
+    });
+    await harness.app.inject({
+      method: 'POST',
+      url: '/v1/husks',
+      payload: { spec: { ...sampleSpec(), triggers: [{ type: 'webhook', path: '/hook', secret: 'shhh' }] } },
+    });
+    // A captured delivery, replayed with a prompt of the replayer's choosing.
+    const body = JSON.stringify({ input: 'ship it' });
+    const res = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/w/triage/hook?input=rm%20-rf%20%2F',
+      headers: { 'content-type': 'application/json', 'x-husk-signature': sign('shhh', body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(prompts).toEqual(['ship it']);
+  });
+
   it('signs over the exact bytes received, not a re-serialised object', async () => {
     harness = await buildTestApp({ triggers: true });
     await harness.app.inject({
@@ -331,5 +413,127 @@ describe('mounted triggers', { timeout: 30_000 }, () => {
     expect((await harness.app.inject({ method: 'POST', url: '/v1/t/triage/ask', payload: { input: 'x' } })).statusCode).toBe(
       200,
     );
+  });
+});
+
+describe('chat triggers', { timeout: 30_000 }, () => {
+  /** A stand-in adapter that records its lifecycle and lets a test send it a message. */
+  function fakeAdapters() {
+    const started: Array<{ kind: string; options: unknown; ctx: AdapterContext }> = [];
+    let stopped = 0;
+    const factory: AdapterFactory = (kind, options) => ({
+      id: kind,
+      async start(ctx) {
+        started.push({ kind, options, ctx });
+      },
+      async stop() {
+        stopped++;
+      },
+    });
+    return { factory, started, stopped: () => stopped };
+  }
+
+  async function addHusk(triggers: unknown[], name = 'triage') {
+    const res = await harness.app.inject({ method: 'POST', url: '/v1/husks', payload: { spec: { ...sampleSpec(name), triggers } } });
+    expect(res.statusCode, res.body).toBeLessThan(300);
+  }
+
+  it('starts a discord adapter, lists it, and routes its messages to a run', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await addHusk([{ type: 'discord', channels: ['123'], mentionOnly: true }]);
+
+    expect(fake.started).toHaveLength(1);
+    expect(fake.started[0]).toMatchObject({ kind: 'discord', options: { channels: ['123'], mentionOnly: true } });
+    const reply = await fake.started[0]!.ctx.run('why is main red?', { userId: 'u', channelId: '123' });
+    expect(reply).toBe('done');
+
+    const listed = (await harness.app.inject({ method: 'GET', url: '/v1/triggers' })).json().triggers;
+    expect(listed).toContainEqual(expect.objectContaining({ husk: 'triage', type: 'discord' }));
+  });
+
+  it('passes the telegram allowlist through', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await addHusk([{ type: 'telegram', allowlist: ['alice'] }]);
+    expect(fake.started[0]).toMatchObject({ kind: 'telegram', options: { allowlist: ['alice'] } });
+  });
+
+  it('says Slack is idle until a second secret is set, and which way it listens', async () => {
+    const fake = fakeAdapters();
+    vi.stubEnv('SLACK_BOT_TOKEN', 'xoxb-test');
+    vi.stubEnv('SLACK_APP_TOKEN', '');
+    vi.stubEnv('SLACK_SIGNING_SECRET', '');
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await addHusk([{ type: 'slack', channels: ['C1'] }]);
+    const detail = async () =>
+      ((await harness.app.inject({ method: 'GET', url: '/v1/triggers' })).json().triggers as Array<{ type: string; detail: string }>).find((t) => t.type === 'slack')!.detail;
+    expect(await detail()).toMatch(/^idle -- set SLACK_APP_TOKEN/);
+    // Read again at the next sync, which any saved husk causes.
+    vi.stubEnv('SLACK_APP_TOKEN', 'xapp-test');
+    await addHusk([{ type: 'http', path: '/a' }], 'other');
+    expect(await detail()).toBe('SLACK_BOT_TOKEN is set; socket mode');
+    vi.stubEnv('SLACK_SIGNING_SECRET', 'shhh');
+    await addHusk([{ type: 'http', path: '/b' }], 'another');
+    expect(await detail()).toBe('SLACK_BOT_TOKEN is set; events api at /v1/a/triage/slack/events');
+  });
+
+  it('keeps a running adapter across an unrelated sync, and stops it when the husk goes', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await addHusk([{ type: 'slack', channels: ['C1'] }]);
+    await addHusk([{ type: 'http', path: '/' }], 'other');
+    expect(fake.started).toHaveLength(1);
+    expect(fake.stopped()).toBe(0);
+
+    await harness.app.inject({ method: 'DELETE', url: '/v1/husks/triage' });
+    expect(fake.stopped()).toBe(1);
+  });
+
+  it('serves a route an adapter mounts without the server token, and nothing else under /v1/a', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ token: 'secret', triggers: true, createAdapter: fake.factory });
+    await harness.app.inject({
+      method: 'POST',
+      url: '/v1/husks',
+      headers: { authorization: 'Bearer secret' },
+      payload: { spec: { ...sampleSpec(), triggers: [{ type: 'slack', channels: ['C1'] }] } },
+    });
+    fake.started[0]!.ctx.mountHttp!('/slack/events', async (req) => ({
+      status: 200,
+      body: { echoed: req.rawBody.toString() },
+    }));
+
+    const hit = await harness.app.inject({ method: 'POST', url: '/v1/a/triage/slack/events', payload: 'ping' });
+    expect(hit.statusCode).toBe(200);
+    expect(hit.json()).toEqual({ echoed: 'ping' });
+
+    const miss = await harness.app.inject({ method: 'POST', url: '/v1/a/triage/nothing', payload: 'ping' });
+    expect(miss.statusCode).toBe(404);
+  });
+
+  it('refuses a bot that would answer anyone', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await addHusk([{ type: 'discord' }, { type: 'telegram' }]);
+    expect(fake.started).toHaveLength(0);
+    const listed = (await harness.app.inject({ method: 'GET', url: '/v1/triggers' })).json().triggers;
+    expect(listed).toContainEqual(expect.objectContaining({ type: 'discord', detail: expect.stringContaining('not started') }));
+  });
+
+  it('gives each platform to one husk, because one token cannot serve two', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await addHusk([{ type: 'discord', channels: ['1'] }], 'first');
+    await addHusk([{ type: 'discord', channels: ['2'] }], 'second');
+    expect(fake.started.map((s) => s.ctx.husk)).toEqual(['first']);
+  });
+
+  it('starts one adapter even when two syncs race', async () => {
+    const fake = fakeAdapters();
+    harness = await buildTestApp({ triggers: true, createAdapter: fake.factory });
+    await harness.app.inject({ method: 'POST', url: '/v1/husks', payload: { spec: { ...sampleSpec('bot'), triggers: [{ type: 'telegram', allowlist: ['a'] }] } } });
+    await Promise.all([harness.app.inject({ method: 'POST', url: '/v1/husks', payload: { spec: sampleSpec('x') } }), harness.app.inject({ method: 'POST', url: '/v1/husks', payload: { spec: sampleSpec('y') } })]);
+    expect(fake.started).toHaveLength(1);
   });
 });

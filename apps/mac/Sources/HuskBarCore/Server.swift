@@ -1,19 +1,43 @@
 import Foundation
 
-/// Where the local Husk server is, read from the same place the CLI and SDK
-/// read it: `HUSK_URL` (default http://127.0.0.1:7377) and `HUSK_TOKEN`.
-/// The app stores nothing of its own and never asks for credentials.
+/// The shared Husk's record, which it writes as it starts: its address and
+/// token. The desktop app and a chat's MCP server find it the same way. Read
+/// again on every poll, since a Husk that restarted has a new token.
+public struct DaemonRecord: Decodable, Equatable {
+    public let url: String
+    public let token: String?
+}
+
+/// Where the record is: `$HUSK_HOME/daemon.json`, else `~/.husk/daemon.json`.
+public func daemonRecordURL(environment: [String: String], home: URL) -> URL {
+    let root = environment["HUSK_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+        ?? home.appendingPathComponent(".husk", isDirectory: true)
+    return root.appendingPathComponent("daemon.json")
+}
+
+/// The record, or nil when there is none or it cannot be read.
+public func readDaemonRecord(at url: URL) -> DaemonRecord? {
+    guard let data = try? Data(contentsOf: url) else { return nil }
+    return try? JSONDecoder().decode(DaemonRecord.self, from: data)
+}
+
+/// Where the local Husk server is. Set by hand, `HUSK_URL` and `HUSK_TOKEN`
+/// win, read as the CLI and SDK read them; else the shared Husk's record;
+/// else http://127.0.0.1:7377. The app stores nothing of its own and never
+/// asks for credentials.
 public struct ServerConfig: Equatable {
     public let baseURL: URL
     public let token: String?
 
     /// Loopback only. Anything else is refused, not contacted.
-    public init?(environment: [String: String]) {
-        let raw = environment["HUSK_URL"].flatMap { $0.isEmpty ? nil : $0 } ?? "http://127.0.0.1:7377"
+    public init?(environment: [String: String], record: DaemonRecord? = nil) {
+        func set(_ name: String) -> String? { environment[name].flatMap { $0.isEmpty ? nil : $0 } }
+        let shared = set("HUSK_URL") == nil && set("HUSK_TOKEN") == nil ? record : nil
+        let raw = shared?.url ?? set("HUSK_URL") ?? "http://127.0.0.1:7377"
         guard let url = URL(string: raw), ServerConfig.isLoopback(url) else { return nil }
         baseURL = url
-        let token = environment["HUSK_TOKEN"] ?? ""
-        self.token = token.isEmpty ? nil : token
+        let token = shared != nil ? shared?.token : set("HUSK_TOKEN")
+        self.token = (token ?? "").isEmpty ? nil : token
     }
 
     public static func isLoopback(_ url: URL) -> Bool {
@@ -40,6 +64,15 @@ public struct ServerConfig: Equatable {
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         return req
     }
+}
+
+/// The Husk desktop app's bundle id. While it runs, its own notch shows the
+/// computers, so Husk Bar's pill makes way: one notch, not two.
+public let desktopAppBundleID = "dev.husk.desktop"
+
+/// Whether Husk Bar shows its pill: something to say, and no desktop app saying it.
+public func showsPill(_ summary: Summary, desktopAppRunning: Bool) -> Bool {
+    summary.pillText != nil && !desktopAppRunning
 }
 
 /// Decode an overview body. Nil on anything unexpected, so the app shows

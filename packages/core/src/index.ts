@@ -10,4 +10,6 @@ export * from './logger.js';
 export * from './util.js';
 export * from './audit.js';
 export * from './config.js';
+export * from './daemon.js';
+export * from './chat-apps.js';
 export * from './contracts.js';

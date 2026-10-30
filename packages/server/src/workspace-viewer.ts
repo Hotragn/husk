@@ -2,15 +2,14 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import Fastify from 'fastify';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { Buffer } from 'node:buffer';
-import { livePageFor } from '@husk-ai/browser';
-import { HUSK_VERSION, HuskError } from '@husk-ai/core';
+import { HUSK_VERSION } from '@husk-ai/core';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { consoleAssetsPath } from '@husk-ai/console-assets';
 import { bearerToken, hostnameOf, isLoopbackHost } from './auth.js';
-import { huskError, sendError } from './errors.js';
+import { sendError } from './errors.js';
 import type { HandoffRegistry } from './handoffs.js';
 import type { ScopedTokens } from './scoped-tokens.js';
-import { registerHandoffRoutes } from './routes/handoffs.js';
+import { registerHandoffRoutes, registerScopedComputerRoutes, scopeCovers, takeOver } from './routes/handoffs.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 
 export type WorkspaceProfile = 'starter' | 'computer';
@@ -33,6 +32,8 @@ export interface WorkspaceViewerOptions {
 export interface ScopedComputer {
   computerId: string;
   label?: string;
+  /** Where it runs: on ssh and fly every picture of its screen is a command on it, so the link's view shows it when asked. */
+  provider?: string;
   state: string;
 }
 
@@ -56,7 +57,7 @@ export async function createWorkspaceViewer(options: WorkspaceViewerOptions = {}
     reply.header('Cache-Control', 'no-store');
     reply.header('Referrer-Policy', 'no-referrer');
     reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     return payload;
   });
   app.get('/health', async () => ({ ok: true, version: HUSK_VERSION, mode: 'starter', profile: options.getProfile?.() ?? 'starter', uptimeSec: Math.floor(process.uptime()) }));
@@ -76,45 +77,16 @@ export async function createWorkspaceViewer(options: WorkspaceViewerOptions = {}
   if (options.handoffs) {
     const { registry, tokens, describe } = options.handoffs;
     const scopeOf = (req: FastifyRequest): string | undefined => tokens.verify(bearerToken(req) ?? '');
-    const notYours = () =>
-      new HuskError('E_COMPUTER_NOT_FOUND', 'no computer with that link', {
-        hint: 'the link has expired; ask your AI chat to open the computer again',
-      });
-    const computerOf = (req: FastifyRequest): string => {
-      const scope = scopeOf(req);
-      if (!scope?.startsWith('computer:')) throw notYours();
-      return scope.slice('computer:'.length);
-    };
+    // A person's take-over ends with their Give back, or with this viewer.
+    const closing = new AbortController();
+    app.addHook('onClose', async () => closing.abort());
     await app.register(async (scoped) => {
       scoped.setErrorHandler((error, _req, reply) => sendError(reply, error));
       registerHandoffRoutes(scoped, {
         registry,
-        authorize: (req, h) => {
-          const scope = scopeOf(req);
-          return (h.computerId !== undefined && scope === `computer:${h.computerId}`) || scope === `handoff:${h.handoffId}`;
-        },
+        authorize: (req, h) => scopeCovers(scopeOf(req), h),
       });
-      // What a computer link opens: its state, and the handoff waiting on it, if any.
-      scoped.get('/v1/scoped/computer', async (req) => {
-        const id = computerOf(req);
-        const computer = await describe(id);
-        if (!computer) throw notYours();
-        return { ...computer, handoff: registry.list().find((h) => h.computerId === id) ?? null };
-      });
-      // A read-only look at its browser. Taking over goes through a handoff.
-      scoped.get('/v1/scoped/computer/screen', async (req, reply) => {
-        const page = livePageFor(computerOf(req));
-        if (!page) {
-          throw huskError('E_BROWSER_NOT_FOUND', 'this computer has no browser open', {
-            hint: 'nothing to show until your AI opens a page',
-          });
-        }
-        const frame = await page.frame();
-        return reply
-          .header('x-husk-viewport', `${frame.width}x${frame.height}`)
-          .type('image/jpeg')
-          .send(Buffer.from(frame.data, 'base64'));
-      });
+      registerScopedComputerRoutes(scoped, { scopeOf, describe, registry, takeOver: (id) => takeOver(registry, id, closing.signal, {}, 'link') });
     });
   }
   await app.register((await import('@fastify/static')).default, { root: options.consoleDir ?? consoleAssetsPath, prefix: '/', index: ['index.html'] });
@@ -134,14 +106,16 @@ export async function startWorkspaceViewer(options: WorkspaceViewerOptions = {})
  * stays out of requests, logs and Referer headers; the console moves it to
  * session storage and strips it from the address bar.
  */
-export function handoffLink(origin: string, handoffId: string, token: string): string {
-  return `${origin}/#handoff=${encodeURIComponent(handoffId)}&token=${encodeURIComponent(token)}`;
+/** `page`: where the link opens; `/oauth/link` under remote access's public URL, which asks for the owner's passkey first. */
+export function handoffLink(origin: string, handoffId: string, token: string, page = '/'): string {
+  return `${origin}${page}#handoff=${encodeURIComponent(handoffId)}&token=${encodeURIComponent(token)}`;
 }
 
-export function computerLink(origin: string, computerId: string, token: string): string {
-  return `${origin}/#computer=${encodeURIComponent(computerId)}&token=${encodeURIComponent(token)}`;
+export function computerLink(origin: string, computerId: string, token: string, page = '/'): string {
+  return `${origin}${page}#computer=${encodeURIComponent(computerId)}&token=${encodeURIComponent(token)}`;
 }
 
-export { HandoffRegistry } from './handoffs.js';
+export { HandoffRegistry, PERSON_RUN, heldText, refusalText, takenText } from './handoffs.js';
+export { underControl } from './control.js';
 export { ScopedTokens } from './scoped-tokens.js';
 export type { PendingHandoff } from './handoffs.js';

@@ -10,15 +10,13 @@ import { mkdtempSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import type { ElicitResult } from '@modelcontextprotocol/sdk/types.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import type { ElicitResult } from '@modelcontextprotocol/client';
 import type { Computer, Logger } from '@husk-ai/core';
 import type { ComputerManager } from '@husk-ai/runtime';
 import { WorkspaceStore } from '@husk-ai/workspaces';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HuskMcpServer } from './server.js';
+import { HuskMcpServer, asksInChat } from './server.js';
 
 const silent = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger;
 
@@ -62,7 +60,7 @@ async function session(elicit?: Elicit, clientName = 'claude-code') {
   const client = new Client({ name: clientName, version: '0' }, { capabilities: elicit ? { elicitation: {} } : {} });
   const asked: string[] = [];
   if (elicit) {
-    client.setRequestHandler(ElicitRequestSchema, async (req) => {
+    client.setRequestHandler('elicitation/create', async (req) => {
       const message = String((req.params as { message?: string }).message);
       asked.push(message);
       return elicit(message);
@@ -169,6 +167,32 @@ describe('hand_off over MCP, with in-chat prompts', () => {
     expect(r.isError).toBe(false);
     expect(r.text).toContain('they are done');
     expect((await call('shell', { command: 'echo hi' })).isError).toBe(false);
+  });
+});
+
+describe('which chat apps get "Done" in the chat, and which a link', () => {
+  // The clientInfo.name each app sends, as far as it is known; J6-a confirms
+  // each against the app itself. A form-elicitation capability is declared.
+  for (const [app, name, inChat] of [
+    ['Claude Code', 'claude-code', true],
+    ['Cursor', 'cursor-vscode', true],
+    ['VS Code', 'Visual Studio Code', true],
+    ['Claude Desktop, which declares the form but never shows it', 'claude-ai', false],
+    ['Claude Desktop’s Code tab', 'local-agent-mode-husk', false],
+    ['Codex', 'codex-mcp-client', false],
+    ['Gemini CLI', 'gemini-cli-mcp-client', false],
+    ['Windsurf', 'windsurf-client', false],
+    ['Zed', 'Zed', false],
+  ] as Array<[string, string, boolean]>) {
+    it(`${app}: ${inChat ? 'asks in the chat' : 'gives the link at once'}`, () => {
+      expect(asksInChat(name, {})).toBe(inChat);
+    });
+  }
+
+  it('gives the link to any app that declares no form, or only links', () => {
+    expect(asksInChat('claude-code', undefined)).toBe(false);
+    expect(asksInChat('claude-code', { url: {} })).toBe(false);
+    expect(asksInChat('claude-code', { form: {}, url: {} })).toBe(true);
   });
 });
 

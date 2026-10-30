@@ -1,0 +1,264 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Computer, ComputerInfo, ExecResult } from '@husk-ai/core';
+import type { CdpTransport, DriverRequest, DriverResult, ScreencastEvent, ScreenFrame } from './cdp.js';
+import { BrowserSession, browserFor, closeBrowserFor, markUsedFor } from './session.js';
+
+/**
+ * The shared screencast, and what counts as using the computer, with no
+ * Chromium: a computer whose execs say "Chromium is installed and up", and a
+ * transport that records casts and lets the test push frames.
+ */
+
+const ok = (stdout = ''): ExecResult => ({ exitCode: 0, stdout, stderr: '', durationMs: 1, truncated: false, timedOut: false });
+
+function fakeComputer(): Computer & { used: number } {
+  const info = { id: 'screen-1', name: 'screen-1', provider: 'docker', state: 'running', image: 'none', workdir: '/work', createdAt: '', lastUsedAt: '', spec: {} } as ComputerInfo;
+  const computer = {
+    id: info.id,
+    info,
+    used: 0,
+    markUsed() {
+      computer.used++;
+    },
+    async exec(input: { cmd: string }): Promise<ExecResult> {
+      if (input.cmd.includes('command -v chromium')) return ok('/usr/bin/chromium\n');
+      if (input.cmd.includes('--version')) return ok('Chromium 140.0\n');
+      if (input.cmd.includes('import socket')) return ok('43123\n');
+      return ok();
+    },
+  } as unknown as Computer & { used: number };
+  return computer;
+}
+
+function fakeTransport(pushes = true) {
+  let listener: ((e: ScreencastEvent) => void) | undefined;
+  const t = {
+    pushes,
+    casts: [] as Array<{ targetId: string; fps: number }>,
+    stops: [] as string[],
+    /** Pictures taken with `Page.frame`, and what the next one shows. */
+    shots: 0,
+    shot: 'captured',
+    async run(req: DriverRequest): Promise<DriverResult> {
+      return {
+        results: req.steps.map((s) => {
+          if (s.op !== 'send') return {};
+          if (s.method === 'Target.createTarget') return { targetId: 'T1' };
+          if (s.method === 'Page.getLayoutMetrics') return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } };
+          if (s.method === 'Page.captureScreenshot') {
+            t.shots++;
+            return { data: t.shot };
+          }
+          return {};
+        }),
+      };
+    },
+    async close(): Promise<void> {},
+    async screencast(targetId: string, fps: number): Promise<boolean> {
+      if (!t.pushes) return false;
+      t.casts.push({ targetId, fps });
+      return true;
+    },
+    async stopScreencast(targetId: string): Promise<void> {
+      t.stops.push(targetId);
+    },
+    onScreencast(fn: (e: ScreencastEvent) => void) {
+      listener = fn;
+      return () => {
+        listener = undefined;
+      };
+    },
+    end(reason: string) {
+      listener?.({ type: 'ended', reason });
+    },
+    push(targetId: string, data: string) {
+      listener?.({ type: 'frame', targetId, frame: { data, width: 800, height: 600 } });
+    },
+  };
+  return t;
+}
+
+async function launched(pushes = true) {
+  const computer = fakeComputer();
+  const transport = fakeTransport(pushes);
+  const session = new BrowserSession(computer, { idleTimeoutMs: 0, transport: () => transport as CdpTransport });
+  await session.activePage();
+  return { computer, transport, session };
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('the shared screencast', () => {
+  it('starts one cast at the fastest rate asked for, and stops it when the last viewer leaves', async () => {
+    const { transport, session } = await launched();
+    const stopA = await session.watchScreen(1, () => undefined);
+    const stopB = await session.watchScreen(4, () => undefined);
+    expect(transport.casts).toEqual([
+      { targetId: 'T1', fps: 1 },
+      { targetId: 'T1', fps: 4 },
+    ]);
+    stopB!();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(transport.casts.at(-1)).toEqual({ targetId: 'T1', fps: 1 });
+    stopA!();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(transport.stops).toEqual(['T1']);
+  });
+
+  it('holds each viewer to its own rate, and always ends on the newest frame', async () => {
+    const { transport, session } = await launched();
+    vi.useFakeTimers();
+    const slow: string[] = [];
+    const fast: string[] = [];
+    await session.watchScreen(1, (f) => slow.push(f.data));
+    await session.watchScreen(4, (f) => fast.push(f.data));
+    transport.push('T1', 'a');
+    await vi.advanceTimersByTimeAsync(300);
+    transport.push('T1', 'b');
+    await vi.advanceTimersByTimeAsync(300);
+    transport.push('T1', 'c');
+    // The page went still. The slow viewer must not be left on "a".
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(fast).toEqual(['a', 'b', 'c']);
+    expect(slow).toEqual(['a', 'c']);
+  });
+
+  it('shows a new viewer the last frame at once, since a still page sends no more', async () => {
+    const { transport, session } = await launched();
+    await session.watchScreen(4, () => undefined);
+    transport.push('T1', 'still');
+    const seen: ScreenFrame[] = [];
+    await session.watchScreen(1, (f) => seen.push(f));
+    expect(seen.map((f) => f.data)).toEqual(['still']);
+  });
+
+  it('never shows a new viewer a frame from a cast that has stopped', async () => {
+    // The bug: the page moved on with nobody watching, and the next viewer was
+    // shown what it looked like before.
+    const { transport, session } = await launched();
+    vi.useFakeTimers();
+    const stopA = await session.watchScreen(4, () => undefined);
+    transport.push('T1', 'old page');
+    stopA!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(transport.stops).toEqual(['T1']);
+    transport.shot = 'page now';
+    const seen: string[] = [];
+    await session.watchScreen(4, (f) => seen.push(f.data));
+    expect(seen).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(seen).toEqual(['page now']);
+  });
+
+  it('takes the first picture itself when a still page pushes nothing, and that is not use', async () => {
+    const { computer, transport, session } = await launched();
+    const used = computer.used;
+    vi.useFakeTimers();
+    const seen: string[] = [];
+    await session.watchScreen(1, (f) => seen.push(f.data));
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(seen).toEqual(['captured']);
+    expect(transport.shots).toBe(1);
+    expect(computer.used).toBe(used);
+  });
+
+  it('takes no picture when the cast sends one in time', async () => {
+    const { transport, session } = await launched();
+    vi.useFakeTimers();
+    await session.watchScreen(4, () => undefined);
+    await vi.advanceTimersByTimeAsync(300);
+    transport.push('T1', 'painted');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(transport.shots).toBe(0);
+  });
+
+  it('hands viewers back to poll when pushing stops for good after it started', async () => {
+    // The driver died and its replacement fell back to one exec per call: a
+    // viewer left waiting for pushed frames would stare at one frame forever.
+    const { transport, session } = await launched();
+    vi.useFakeTimers();
+    const stopped = vi.fn();
+    expect(await session.watchScreen(4, () => undefined, stopped)).toBeTypeOf('function');
+    transport.pushes = false;
+    transport.end('the browser driver exited');
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(stopped).toHaveBeenCalledOnce();
+  });
+
+  it('says it cannot push, so the caller polls, when the transport cannot cast', async () => {
+    const { session } = await launched(false);
+    expect(await session.watchScreen(4, () => undefined)).toBeUndefined();
+  });
+});
+
+describe('what counts as using the computer', () => {
+  it('a tool call does; watching the screen and taking a frame do not', async () => {
+    const { computer, session } = await launched();
+    const afterLaunch = computer.used;
+    expect(afterLaunch).toBeGreaterThan(0);
+    await session.watchScreen(4, () => undefined);
+    await session.livePage()!.frame().catch(() => undefined);
+    expect(computer.used).toBe(afterLaunch);
+    await session.activePage();
+    expect(computer.used).toBe(afterLaunch + 1);
+  });
+
+  it('a person’s input does, through markUsedFor', async () => {
+    const computer = fakeComputer();
+    browserFor(computer);
+    markUsedFor(computer.id);
+    expect(computer.used).toBe(1);
+    markUsedFor('no-such-computer');
+    await closeBrowserFor(computer.id);
+  });
+});
+
+describe('what a script may visit', () => {
+  it('is what goto may: the session answers the driver’s checkUrl with the network policy', async () => {
+    let ask: ((op: string, args: Record<string, unknown>) => unknown) | undefined;
+    const transport = {
+      ...fakeTransport(),
+      onHostCall(fn: (op: string, args: Record<string, unknown>) => unknown) {
+        ask = fn;
+      },
+    };
+    const session = new BrowserSession(fakeComputer(), {
+      idleTimeoutMs: 0,
+      network: { mode: 'egress', allow: ['example.com'] },
+      transport: () => transport as CdpTransport,
+    });
+    await session.activePage();
+    expect(ask!('checkUrl', { url: 'https://example.com/a' })).toBe('https://example.com/a');
+    for (const url of ['https://evil.test/', 'file:///etc/passwd', 'http://169.254.169.254/latest/meta-data/']) {
+      expect(() => ask!('checkUrl', { url }), url).toThrow(/refus/);
+    }
+    const nodes = [{ nodeId: '1', role: { value: 'button' }, name: { value: 'Go' }, backendDOMNodeId: 7 }];
+    expect(ask!('compact', { nodes })).toEqual([{ ref: 'e7', role: 'button', name: 'Go', depth: 0 }]);
+  });
+});
+
+describe('a long request', () => {
+  it('keeps the browser from closing for idleness until it is done', async () => {
+    const transport = { ...fakeTransport(), inFlight: true, busy: () => transport.inFlight };
+    const session = new BrowserSession(fakeComputer(), { idleTimeoutMs: 50, transport: () => transport as CdpTransport });
+    await session.activePage();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(session.livePage()).toBeDefined();
+    transport.inFlight = false;
+    // livePage just re-armed the timer, so give it one more period.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(session.livePage()).toBeUndefined();
+  });
+});
+
+describe('a refused script URL', () => {
+  it('never says the URL back into the computer', async () => {
+    let ask: ((op: string, args: Record<string, unknown>) => unknown) | undefined;
+    const transport = { ...fakeTransport(), onHostCall: (fn: typeof ask) => void (ask = fn) };
+    const session = new BrowserSession(fakeComputer(), { idleTimeoutMs: 0, transport: () => transport as CdpTransport });
+    await session.activePage();
+    expect(() => ask!('checkUrl', { url: 'no scheme and a secret-looking blob' })).toThrow(/^not a valid URL$/);
+  });
+});

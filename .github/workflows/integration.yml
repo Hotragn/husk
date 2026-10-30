@@ -1,0 +1,37 @@
+name: integration
+
+# The suites behind HUSK_INTEGRATION=1: the real browser on a real computer
+# (packages/mcp/src/browser-integration.test.ts), the packed CLI installed and run
+# (packages/cli/src/pack.test.ts) and doctor against the real machine
+# (packages/cli/src/smoke.test.ts). They pull a large image and run real
+# computers, so they stay out of every PR -- and until now nothing ran them at
+# all, so a break could sit unnoticed for a release. Weekly, and on demand.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: integration suites on a real docker computer
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: docker version
+      # Each package's own tests, from the package, so its vitest config applies:
+      # from the repo root mcp's HUSK_DAEMON=off is skipped, and every chat test
+      # then spends 20 s looking for a shared Husk that is not there.
+      - run: npm test -w @husk-ai/mcp -w @husk-ai/cli
+        env:
+          HUSK_INTEGRATION: "1"

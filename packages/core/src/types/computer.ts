@@ -18,6 +18,13 @@ export interface NetworkPolicy {
   allow?: string[];
   /** Always-denied hosts, applied even in 'full' mode. */
   deny?: string[];
+  /**
+   * Refuse to create a computer on a provider that cannot enforce this policy
+   * for every process in it, rather than warn and go on (see
+   * `networkEnforcement`). Husk's own tools and the browser's page loads follow
+   * the policy on every provider either way.
+   */
+  strict?: boolean;
 }
 
 export interface MountSpec {
@@ -116,6 +123,7 @@ export interface ExecRequest {
   cmd: string | string[];
   cwd?: string;
   env?: Record<string, string>;
+  /** Seconds before the command is killed. 120 when unset. */
   timeoutSec?: number;
   stdin?: string;
   user?: string;
@@ -135,6 +143,31 @@ export interface ExecResult {
   durationMs: number;
   truncated: boolean;
   timedOut: boolean;
+}
+
+/**
+ * A long-lived process whose stdin stays open, for a helper that answers many
+ * requests over one start -- the browser driver is the one that exists.
+ *
+ * Starting one does not count as using the computer, and nor does anything
+ * written to it: whoever drives the process calls `markUsed` when the work is
+ * a real tool call, so that watching a screen does not keep a computer awake.
+ */
+export interface SpawnRequest {
+  cmd: string | string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  user?: string;
+  /** Raw chunks. A caller that needs lines splits them itself. */
+  onStdout: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
+  /** Fires once, after stdout has been flushed. */
+  onExit: (exitCode: number) => void;
+}
+
+export interface ComputerProcess {
+  write(data: string): void;
+  kill(): void;
 }
 
 export interface DirEntry {
@@ -163,7 +196,13 @@ export interface Computer {
   exec(req: ExecRequest): Promise<ExecResult>;
 
   writeFile(path: string, content: string | Uint8Array, opts?: WriteFileOptions): Promise<void>;
-  readFile(path: string): Promise<Uint8Array>;
+  /**
+   * The whole file. Over `maxBytes` (READ_FILE_MAX_BYTES unless asked for
+   * more) it is refused with E_QUOTA, and the read stops at the limit where it
+   * runs: one `read_file /dev/zero` must not exhaust the shared Husk.
+   */
+  readFile(path: string, opts?: { maxBytes?: number }): Promise<Uint8Array>;
+  /** The file as text: at most `maxBytes` from the start, read no further, with a note when there is more. */
   readTextFile(path: string, maxBytes?: number): Promise<string>;
   listDir(path: string): Promise<DirEntry[]>;
   stat(path: string): Promise<DirEntry | null>;
@@ -179,9 +218,19 @@ export interface Computer {
 
   stop(): Promise<void>;
   start(): Promise<void>;
-  destroy(): Promise<void>;
+  /**
+   * Remove the machine. A keyed one (a chat's or a bot's) keeps the files it
+   * persists for the next machine with its key, unless `erase` is set: then
+   * they go too, browser profile and logins included. Providers that keep
+   * nothing for a key delete everything either way.
+   */
+  destroy(opts?: { erase?: boolean }): Promise<void>;
 
   /** Optional capabilities -- callers must feature-detect. */
+  /** Start a process with stdin held open. Absent where the provider cannot keep one. */
+  spawn?(req: SpawnRequest): ComputerProcess;
+  /** Record use that did not go through `exec`, such as a tool call answered by a spawned helper. */
+  markUsed?(): void;
   snapshot?(name?: string): Promise<{ id: string; sizeBytes?: number }>;
   /** Live CPU and memory, where the provider can measure them. Only while running. */
   usage?(): Promise<ComputerUsage>;

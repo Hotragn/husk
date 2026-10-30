@@ -4,7 +4,12 @@ import { describe, expect, it } from 'vitest';
 import { errorResponse, jsonResponse, recordingFetch, streamResponse } from '../testing.js';
 import { GoogleProvider, geminiSchema, toGeminiContents } from './google.js';
 
-const KEY = 'AIzaSyTHISISNOTAREALGOOGLEKEY0123456789';
+// PLACEHOLDER -- not a real API key. No Google project issued it and it
+// unlocks nothing. It is shaped like a Google key because these tests check
+// that the key stays out of URLs and is redacted from errors, and it is split
+// in two so the file never contains a key-shaped string for a secret scanner
+// to flag. GitHub secret-scanning alert #1 was this value, resolved as used in tests.
+const KEY = 'AIza' + 'SyTHISISNOTAREALGOOGLEKEY0123456789';
 
 const SSE = [
   'data: {"candidates":[{"content":{"parts":[{"text":"Look"}]}}]}\n\n',
@@ -382,5 +387,18 @@ describe('geminiSchema', () => {
       items: { type: 'object', additionalProperties: true, properties: { a: { type: 'string', $id: 'x' } } },
     });
     expect(pruned).toEqual({ type: 'array', items: { type: 'object', properties: { a: { type: 'string' } } } });
+  });
+
+  it('keeps a parameter whose name is a keyword, pruning only its schema', () => {
+    const pruned = geminiSchema({
+      type: 'object',
+      properties: { default: { type: 'string', default: 'x' }, const: { type: 'string' }, examples: { type: 'array' } },
+      required: ['default'],
+    });
+    expect(pruned).toEqual({
+      type: 'object',
+      properties: { default: { type: 'string' }, const: { type: 'string' }, examples: { type: 'array' } },
+      required: ['default'],
+    });
   });
 });

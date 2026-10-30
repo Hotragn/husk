@@ -1,6 +1,6 @@
 # Husk — releasing
 
-Eleven packages publish together, at one version, in dependency order. Every
+Thirteen packages publish together, at one version, in dependency order. Every
 cross-workspace pin is exact, so the order is not a preference: publishing a package
 before something it depends on produces an immediate `notarget` for anyone installing
 in between.
@@ -23,15 +23,18 @@ because that step had been sitting on `main`, unused, since `0.1.2`.
 
 ## The sequence
 
-1. **One commit bumps everything.** Fifteen manifests, twenty-eight cross-workspace
-   pins, the version constants the drift check enforces, `docs/API.md`, and **all three
-   lockfiles** — `apps/docs` and `apps/web` are outside the workspace, so each needs its
-   own `cd` and `npm install --package-lock-only`. A root install does not reach them.
+1. **One commit bumps everything.** Every manifest with a version (eighteen), every
+   `@husk-ai/*` pin between them (thirty-seven), the version constants, `docs/API.md`,
+   both versions in `server.json` (the server and its npm package), the Claude Code
+   plugin's `plugins/husk/.claude-plugin/plugin.json`, and **all four lockfiles**. The
+   root one is the workspace's; `apps/docs`, `apps/web` and `apps/desktop` are outside
+   it, so each needs its own `cd` and `npm install --package-lock-only`, which a root
+   install does not reach. `npm run drift` names anything left on the old version.
 
 2. **`npm run preflight`.** Read-only: manifests, publish order, and what the registry
    already has.
 
-3. **`npm run install-smoke`.** Packs all eleven, installs them into a scratch directory
+3. **`npm run install-smoke`.** Packs all thirteen, installs them into a scratch directory
    outside the checkout, and drives the installed copies: the CLI lifecycle, an MCP
    handshake over stdio, an SDK import. Everything else in the gate tests the *workspace*,
    where a symlink satisfies an import the published package never declared — which is how
@@ -47,6 +50,10 @@ because that step had been sitting on `main`, unused, since `0.1.2`.
 4. **Tag at an explicit SHA**, never at `HEAD`. `HEAD` moves; a release is a point.
 
 5. **`release.yml` publishes in dependency order**, then creates the GitHub Release.
+   Before anything, it runs the `starter` workflow (the Claude Desktop extension's
+   bundle and its smoke test), and the publish job checks the `NPM_TOKEN` secret with
+   `npm whoami` before building. The Release it cuts carries the extension,
+   `build/*.mcpb`, and its `.sha256`.
 
 6. **Verify from outside the repo**, against the registry rather than the workflow:
 
@@ -58,6 +65,45 @@ because that step had been sitting on `main`, unused, since `0.1.2`.
    walking up from the script's location, so a check run inside the checkout can bind
    the workspace copy and report on your working tree instead of on what shipped.
 
+## Previews
+
+A preview is a GitHub pre-release under a `preview-X.Y.Z` tag. It carries the Claude
+Desktop extension (`husk-X.Y.Z.mcpb` and its `.sha256`) and notes that say what has and
+has not been observed with real users, as `preview-0.2.0` did on 7 October 2026. It
+publishes nothing to npm, so the CHANGELOG keeps its entries under `[Unreleased]` and
+says the preview exists, and nothing may describe an npm release of that version until
+the sequence above has run.
+
+## The desktop installers
+
+The same tag builds the desktop app on Windows, macOS and Linux (`release.yml`'s
+`desktop` job, after the npm publish) and attaches its installers to the Release: the
+Windows installer, the Mac disk image and the Linux AppImage.
+
+Each is signed where its certificate is set as a repository secret, and the run warns,
+installer by installer, where one is not:
+
+| Secret | What it is | What it turns on |
+| --- | --- | --- |
+| `MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD` | a Developer ID Application certificate, base64 `.p12`, and its password | the Mac app is signed, with the hardened runtime |
+| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | the Apple account that notarizes | the signed app is notarized, so Gatekeeper opens it without a warning |
+| `WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD` | a code-signing certificate, base64 `.pfx`, and its password | the Windows installer and app are signed, so SmartScreen knows the publisher |
+
+AppImages are not signed, as is usual on Linux.
+
+With no certificate, the installer is built unsigned and never signed with whatever a
+runner's keychain holds. A dry run (`workflow_dispatch`, `dry_run: true`) builds them all,
+signing included, and keeps them as the run's artifacts: try signing that way before a
+release depends on it.
+
+**Check the installers themselves**, on a fresh machine, before telling anyone:
+
+- **macOS:** `spctl --assess --type execute --verbose "/Applications/Husk.app"` says
+  `accepted` and `source=Notarized Developer ID`.
+- **Windows:** `Get-AuthenticodeSignature "Husk Setup X.Y.Z.exe"` says `Valid`.
+- **Both:** a first run opens on Connect, and a chat connected from there gets its
+  computer.
+
 ## Two ways the registry will lie to you
 
 **npm's read path is eventually consistent.** A `GET` for a version you just published
@@ -67,7 +113,7 @@ and treating a 404 as a failed publish is how a release gets attempted twice.
 
 **`npm audit signatures --json` only reports problems.** It emits `invalid` and
 `missing` and enumerates nothing that passed, so a clean run means "nothing failed",
-not "all eleven have provenance". Confirming provenance means decoding each
+not "all thirteen have provenance". Confirming provenance means decoding each
 attestation individually.
 
 Both of these belong to a wider rule: **check the artifact, never the exit status.**

@@ -1,4 +1,4 @@
-import type { GetPromptResult, Prompt } from '@modelcontextprotocol/sdk/types.js';
+import type { GetPromptResult, Prompt } from '@modelcontextprotocol/server';
 
 /**
  * One-click starters. Each is a short, visible template the user sends as their

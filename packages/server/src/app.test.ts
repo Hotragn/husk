@@ -1,7 +1,7 @@
 import { HUSK_VERSION } from '@husk-ai/core';
 import type { RunEvent } from '@husk-ai/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildTestApp, fakeAgentFactory, sampleSpec } from './testing.js';
+import { buildTestApp, fakeAgentFactory, fakeModelProvider, sampleSpec } from './testing.js';
 import type { TestApp } from './testing.js';
 
 let harness: TestApp;
@@ -25,6 +25,23 @@ describe('health and doctor', () => {
   // Doctor probes the real machine, which is the point of this test. On Windows
   // that includes wsl.exe, synchronously, with 8s and 15s timeouts, so a slow or
   // broken WSL takes seconds; the budget covers that rather than letting WSL fail it.
+  // #121: the control plane's doctor took the first model Ollama listed.
+  it('selects the preferred model, not the first one listed', { timeout: 30_000 }, async () => {
+    await harness.cleanup();
+    const local = (name: string, parameterCount: number) => ({
+      id: `ollama/${name}`, provider: 'ollama', name, displayName: name, contextWindow: 32_768,
+      maxOutputTokens: 4096, supportsTools: true, supportsVision: false, supportsStreaming: true, free: true, parameterCount,
+    });
+    harness = await buildTestApp({
+      modelProviders: [{
+        ...fakeModelProvider, id: 'ollama', displayName: 'Ollama',
+        listModels: async () => [local('qwen2.5:1.5b', 1.5e9), local('qwen2.5:7b', 7.6e9)],
+      }],
+    });
+    const report = (await harness.app.inject({ method: 'GET', url: '/v1/doctor' })).json();
+    expect(report.selection.model).toBe('ollama/qwen2.5:7b');
+  });
+
   it('reports the honest state of the machine at /v1/doctor', { timeout: 30_000 }, async () => {
     const res = await harness.app.inject({ method: 'GET', url: '/v1/doctor' });
     expect(res.statusCode).toBe(200);
@@ -198,6 +215,19 @@ describe('computers', () => {
     expect((await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}` })).statusCode).toBe(200);
     expect((await del(`?confirm=${id}`)).statusCode).toBe(204);
     expect((await harness.app.inject({ method: 'GET', url: `/v1/computers/${id}` })).statusCode).toBe(404);
+    // A plain delete, like `husk rm`, leaves what the chat keeps for its next computer.
+    expect(harness.manager.erased.has(id)).toBe(false);
+  });
+
+  it('erases a computer, files and browser logins, only with the id typed back as confirm', async () => {
+    const created = await harness.app.inject({ method: 'POST', url: '/v1/computers', payload: { provider: 'local' } });
+    const id = created.json().id as string;
+    const del = (query: string) => harness.app.inject({ method: 'DELETE', url: `/v1/computers/${id}${query}` });
+
+    expect((await del('?erase=true')).statusCode).toBe(422);
+    expect(harness.manager.erased.size).toBe(0);
+    expect((await del(`?erase=true&confirm=${id}`)).statusCode).toBe(204);
+    expect(harness.manager.erased).toEqual(new Set([id]));
   });
 
   it('reports disk use without running anything in the computer', async () => {

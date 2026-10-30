@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { HuskError } from '@husk-ai/core';
-import { browserFor } from '@husk-ai/browser';
+import { browserFor, describeHappened } from '@husk-ai/browser';
 import type { SnapshotNode } from '@husk-ai/browser';
 import { defineTool, type AgentTool, type AgentToolContext } from '../types.js';
 
@@ -31,13 +31,13 @@ async function sessionOf(ctx: AgentToolContext): Promise<ReturnType<typeof brows
 function renderSnapshot(nodes: SnapshotNode[]): string {
   if (nodes.length === 0) return 'the page exposes no accessible elements';
   return nodes
-    .map((n) => `${n.ref}  ${n.role}${n.name ? ` "${n.name}"` : ''}${n.value ? ` = "${n.value}"` : ''}`)
+    .map((n) => `${'  '.repeat(n.depth ?? 0)}${n.ref}  ${n.role}${n.name ? ` "${n.name}"` : ''}${n.value ? ` = "${n.value}"` : ''}`)
     .join('\n');
 }
 
 export const browserGoto = defineTool<
   { url: string; timeoutSec?: number },
-  { url: string; title: string; loaded: boolean; text: string }
+  { url: string; title: string; loaded: boolean; text: string; also: string[] }
 >({
   name: 'browser_goto',
   description:
@@ -62,13 +62,15 @@ export const browserGoto = defineTool<
     return {
       url: result.url,
       title: await page.title(),
-      loaded: result.loaded,
+      loaded: result.loaded || Boolean(result.downloads?.length),
       text: await page.text(Math.min(ctx.maxOutputBytes, 120_000)),
+      also: describeHappened(result),
     };
   },
 
   render(out) {
-    return `${out.url}\n${out.title}${out.loaded ? '' : '\n[load event never fired; showing what rendered so far]'}\n\n${out.text}`;
+    const also = out.also.map((l) => `\n${l}`).join('');
+    return `${out.url}\n${out.title}${out.loaded ? '' : '\n[load event never fired; showing what rendered so far]'}${also}\n\n${out.text}`;
   },
 });
 
@@ -97,14 +99,22 @@ export const browserSnapshot = defineTool<{ limit?: number }, { url: string; nod
   },
 });
 
-export const browserClick = defineTool<{ ref: string }, { url: string; nodes: SnapshotNode[] }>({
+export const browserClick = defineTool<
+  { ref: string; force?: boolean; dialog?: 'accept' | 'dismiss' },
+  { url: string; nodes: SnapshotNode[]; also: string[] }
+>({
   name: 'browser_click',
   description:
     'Click the element with this ref, then return a fresh snapshot of whatever the page became. ' +
-    'Refs come from browser_snapshot; there is deliberately no way to click a coordinate.',
+    'Refs come from browser_snapshot; there is deliberately no way to click a coordinate. A click ' +
+    'on something disabled, hidden, still moving or covered is refused, saying why; force clicks anyway.',
   parameters: {
     type: 'object',
-    properties: { ref: { type: 'string', description: 'A `ref` from browser_snapshot, e.g. e42.' } },
+    properties: {
+      ref: { type: 'string', description: 'A `ref` from browser_snapshot, e.g. e42, or f2e7 inside a frame.' },
+      force: { type: 'boolean', description: 'Press at its centre without the checks. Defaults to false.' },
+      dialog: { type: 'string', enum: ['accept', 'dismiss'], description: 'How to answer a confirm or a prompt this opens: dismiss (the default) or accept.' },
+    },
     required: ['ref'],
     additionalProperties: false,
   },
@@ -116,18 +126,18 @@ export const browserClick = defineTool<{ ref: string }, { url: string; nodes: Sn
     // Waits for the load only when the click actually started one. Waiting
     // unconditionally cost a flat 5s on every click that opened a menu, which
     // is most of them.
-    await page.clickAndSettle(input.ref);
-    return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }) };
+    const happened = await page.clickAndSettle(input.ref, 5000, { force: input.force === true, ...(input.dialog ? { dialog: input.dialog } : {}) });
+    return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }), also: describeHappened(happened) };
   },
 
   render(out) {
-    return `now at ${out.url}\n\n${renderSnapshot(out.nodes)}`;
+    return `${out.also.map((l) => `${l}\n`).join('')}now at ${out.url}\n\n${renderSnapshot(out.nodes)}`;
   },
 });
 
 export const browserType = defineTool<
   { ref: string; text: string; submit?: boolean },
-  { url: string; nodes: SnapshotNode[] }
+  { url: string; nodes: SnapshotNode[]; also: string[] }
 >({
   name: 'browser_type',
   description:
@@ -148,16 +158,12 @@ export const browserType = defineTool<
 
   async handler(input, ctx) {
     const page = await (await sessionOf(ctx)).activePage();
-    await page.type(input.ref, input.text);
-    if (input.submit) {
-      await page.press('Enter');
-      await page.waitForLoad(10_000);
-    }
-    return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }) };
+    const happened = await page.type(input.ref, input.text, { submit: input.submit === true });
+    return { url: await page.url(), nodes: await page.snapshot({ limit: 400 }), also: describeHappened(happened) };
   },
 
   render(out) {
-    return `now at ${out.url}\n\n${renderSnapshot(out.nodes)}`;
+    return `${out.also.map((l) => `${l}\n`).join('')}now at ${out.url}\n\n${renderSnapshot(out.nodes)}`;
   },
 });
 
