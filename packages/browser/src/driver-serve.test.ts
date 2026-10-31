@@ -45,8 +45,8 @@ interface FakeChromium {
   onRelease: unknown[];
   /** A frame in the page's process, its <iframe> node 9, whose nodes number afresh: its document now. */
   child?: { loader: string };
-  /** Lightpanda's: where a link meant for a new tab goes; whether the page's own hit test finds something; a page this connection does not have. */
-  newTab?: string;
+  /** Lightpanda's: what the clicked link needs (a tab of its own, a download); whether the page's own hit test finds something; a page this connection does not have. */
+  linkNeeds?: { tab: string } | { download: string };
   pointHit?: boolean;
   attachFails?: boolean;
   close(): Promise<void>;
@@ -153,7 +153,7 @@ async function fakeChromium(frames = 4): Promise<FakeChromium> {
                 : fn.includes('className')
                   ? '<div.backdrop> "Backdrop"'
                   : fn.includes("'_self'")
-                    ? (fake.newTab ?? null)
+                    ? (fake.linkNeeds ?? null)
                     : undefined;
             reply({ result: { value } });
             break;
@@ -618,10 +618,19 @@ describe.skipIf(!python)('driver.py --serve, on Lightpanda', { timeout: 30_000 }
     fake = await fakeChromium();
     driver = serveDriver(fake.port);
     await lp([{ op: 'action', do: 'snapshot' }]);
-    fake.newTab = 'https://fake.test/elsewhere';
+    fake.linkNeeds = { tab: 'https://fake.test/elsewhere' };
     expect(String((await clickOn({ ref: 'e7' }))['error'])).toMatch(/e7 opens https:\/\/fake\.test\/elsewhere in a new tab, which Lightpanda cannot show/);
     expect(pressed()).toBe(0);
     expect(await clickOn({ ref: 'e7', force: true })).toMatchObject({ ref: 'e7', checked: false });
+  });
+
+  it('refuses a click on a download link, which Lightpanda would ignore, saying how to get it', async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    await lp([{ op: 'action', do: 'snapshot' }]);
+    fake.linkNeeds = { download: 'https://fake.test/report.txt' };
+    expect(String((await clickOn({ ref: 'e7' }))['error'])).toMatch(/e7 downloads https:\/\/fake\.test\/report\.txt, which Lightpanda does not do from a link: browser_tabs open moves this computer to Chrome/);
+    expect(pressed()).toBe(0);
   });
 
   it("checks what covers an element with the page's own hit test", async () => {
