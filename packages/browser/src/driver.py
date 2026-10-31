@@ -829,12 +829,15 @@ DESCRIBE = r'''function () {
   return '<' + el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + cls + '>' + (text ? ' "' + text + '"' : '');
 }'''
 GONE = '%s is no longer on the page; take a snapshot and use the new ref'
-# The address a link opens in a tab of its own, or null.
-NEW_TAB = r'''function () {
+# What a link needs that Lightpanda does not do: a tab of its own, or a
+# download (Lightpanda downloads only what a navigation's response sends as one).
+LINK_NEEDS = r'''function () {
   const el = this.nodeType === 1 ? this : this.parentElement;
   const a = el && el.closest('a[href], area[href]');
-  const t = a ? (a.getAttribute('target') || '').toLowerCase() : '';
-  return a && t && !['_self', '_top', '_parent'].includes(t) ? a.href : null;
+  if (!a) return null;
+  if (a.hasAttribute('download')) return { download: a.href };
+  const t = (a.getAttribute('target') || '').toLowerCase();
+  return t && !['_self', '_top', '_parent'].includes(t) ? { tab: a.href } : null;
 }'''
 
 
@@ -1346,10 +1349,12 @@ def act_click(conn, sid, step, deadline):
         over = covering(conn, el, target, x, y, deadline)
         if over:
             raise DriverError(ACTION, '%s is covered: a click on it would land on %s instead; close or move that first, or pass force to click anyway' % (el['ref'], over))
-        # Lightpanda opens no second tab, so a link meant for one would seem to do nothing.
-        away = call_on(conn, el['sid'], target, NEW_TAB, deadline) if conn.engine == 'lightpanda' else None
-        if away:
-            raise DriverError(ACTION, '%s opens %s in a new tab, which Lightpanda cannot show: browser_goto it to open it here, or browser_tabs open it, which moves this computer to Chrome' % (el['ref'], away))
+        # A link meant for a new tab, or for a download, would seem to do nothing on Lightpanda.
+        needs = call_on(conn, el['sid'], target, LINK_NEEDS, deadline) if conn.engine == 'lightpanda' else None
+        if isinstance(needs, dict) and needs.get('download'):
+            raise DriverError(ACTION, '%s downloads %s, which Lightpanda does not do from a link: browser_tabs open moves this computer to Chrome, where the same click downloads it' % (el['ref'], needs['download']))
+        if isinstance(needs, dict) and needs.get('tab'):
+            raise DriverError(ACTION, '%s opens %s in a new tab, which Lightpanda cannot show: browser_goto it to open it here, or browser_tabs open it, which moves this computer to Chrome' % (el['ref'], needs['tab']))
     started = set(conn.downloads)
     # The page's session takes the click wherever it lands, a cross-site frame included.
     to_front(conn, sid, deadline)

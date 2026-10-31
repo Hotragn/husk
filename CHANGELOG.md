@@ -167,8 +167,11 @@ pre-release of 7 October.
   lightpanda` for a chat app. It downloads about 75 MB once, checked against its published
   checksum, and always starts with its telemetry off. Lightpanda draws no screen, so a
   computer on it moves to Chrome, with its address and cookies, when it needs a
-  screenshot, a second tab or a person, and then stays on Chrome. It runs on Docker,
-  Podman and the local provider. Chrome is still the default
+  screenshot, a second tab or a person, and then stays on Chrome. A click on a link that
+  downloads, or opens a new tab, is refused on it, saying what to do instead. It runs on
+  Docker, Podman and the local provider. In Husk's own run it held 28 MB where Chrome
+  held 548 MB, and opened its first page in less than half the time; each call after that
+  costs the same. Chrome is still the default
   ([#270](https://github.com/Hotragn/husk/pull/270)).
 
 ### Changed

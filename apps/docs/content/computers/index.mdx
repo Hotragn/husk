@@ -202,8 +202,35 @@ A computer's rendered browser is Chrome, unless it asks for
 | Downloaded once per computer | about 95–111 MB | about 75 MB, checked against its published SHA-256 before it runs |
 | Draws the page | yes | no: no screenshots and no live screen |
 | Tabs | as many as a page opens | one |
+| Downloads from a link | yes | no |
+| Sees what covers a button | yes | no |
 | Providers | all of them | `docker`, `podman` and `local` |
 | Sandbox | Chrome's own, outside a container | none of its own: on `docker` and `podman` the container is its sandbox |
+
+### Which one to pick
+
+Measured by the e2e run's `lightpanda` job on GitHub's `ubuntu-latest`, the same calls on
+the same page in two Docker computers, one run on 31 October 2026:
+
+| | Chrome | Lightpanda |
+| --- | --- | --- |
+| The first page, with the download and the start | 4.3 s | 1.9 s |
+| Each call after that (open, read, wait) | 61–78 ms | 60–66 ms |
+| Three actions in one `browser_run` | 382 ms | 370 ms |
+| Memory the browser holds | 548 MB | 28 MB |
+
+Lightpanda's gain is memory and the first start, not each call: past the first page, a
+call costs the same in both, because the time goes to Husk and the driver rather than to
+the browser. So:
+
+- **Pick Lightpanda** for a bot that runs on its own, on `docker` or `podman`, to read
+  pages or fill in forms on sites that welcome it. Several of those fit where one Chrome
+  would, and each starts in about half the time.
+- **Stay on Chrome** for a chat; for a bot you want to watch in the console; for
+  anything that needs a picture of the page, a login, a download, or a click that must
+  not land under a cookie banner; and for sites that block automated browsers. A
+  computer on Lightpanda moves to Chrome by itself for a picture, a second tab or a
+  person, but not for the rest.
 
 To choose it:
 
@@ -224,9 +251,17 @@ whatever the page held only in memory does not. The computer then stays on Chrom
 login you make there is kept, as on any Chrome computer. Until it moves, its live screen
 in the console says that Lightpanda draws no screen.
 
-**Links that open a new tab.** Lightpanda opens no second tab, so a click on a link meant
-for one is refused with the link's address: `browser_goto` opens it in the same tab, and
-`browser_tabs open` opens it in a new one, which moves the computer to Chrome.
+**Links that open a new tab, or download.** Lightpanda opens no second tab, so a click on
+a link meant for one is refused with the link's address: `browser_goto` opens it in the
+same tab, and `browser_tabs open` opens it in a new one, which moves the computer to
+Chrome. It downloads only a file a page's own load sends as one, so a click on a link
+marked to download is refused too, saying that `browser_tabs open` moves the computer to
+Chrome, where the same click downloads it.
+
+**What covers a button.** Before a click, Husk checks that nothing covers the element.
+Lightpanda's hit test does not see an element drawn over another, a cookie banner
+over a button for one, so on Lightpanda that check passes, and the click reaches the
+button where in Chrome it would be refused, naming the banner.
 
 **Where it does not run.** Husk keeps Lightpanda's page alive through one long-lived
 driver, and on `ssh` and `fly` there is none, so those computers use Chrome and say why.
@@ -240,10 +275,12 @@ the unmodified release from GitHub when a computer first needs it, and runs it a
 program of its own.
 
 <NotYet>
-Lightpanda is not the default, because it cannot yet do everything Chrome does here: one
-tab, no pop-ups, no picture. Each e2e run's `lightpanda` job runs the browser journeys on
-Lightpanda and times it beside Chrome on the same calls, and that is what decides whether
-it becomes the default.
+Lightpanda is not the default, because it cannot yet do everything Chrome does here. In
+the run above, 5 of Husk's 8 browser journeys passed on it: the covered-button check (in
+two of them) and a download from a link are the three that did not. With those, one tab
+and no picture, a default of Lightpanda would take features away from bots that use
+them. Each e2e run's `lightpanda` job runs the journeys again and times both browsers,
+and that is what decides whether it becomes the default.
 </NotYet>
 
 ## huskinfo
