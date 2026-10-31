@@ -5,41 +5,24 @@
  * the code. Rewording is fine; inventing a capability is not. See BRAND.md §5.
  */
 
-/**
- * `SITE_URL` is deliberately not here. It reads Vercel's `VERCEL_*` variables,
- * which are not `NEXT_PUBLIC_` and are therefore `undefined` in a client
- * bundle -- and this file is imported by client components. It lives in
- * `lib/site-url.ts`, which only server code may import.
- */
 const stripTrailingSlash = (url: string) => url.replace(/\/+$/, "");
 
 export const REPO_URL = "https://github.com/Hotragn/husk";
 export const PREVIEW_RELEASE_URL = `${REPO_URL}/releases/tag/preview-0.2.0`;
 /**
- * Where the Docs link in the nav goes.
- *
- * Set NEXT_PUBLIC_DOCS_URL on this project to the docs deployment. It is a
- * second variable rather than a guess derived from SITE_URL, because the two
- * sites are two Vercel projects on unrelated hostnames today and only become
- * `example.com` and `docs.example.com` once a real domain exists -- deriving
- * one from the other would be right exactly once.
- *
- * The fallback is split on environment. In `next dev` the docs are on port
- * 3001 and running both at once is the normal case when a link crosses between
- * them, so a dev link to GitHub is a link never exercised locally. In
- * production an unset variable falls back to the README -- a page that answers,
- * rather than a hostname that may not.
+ * Where the Docs link in the nav goes: docs.huskai.dev from a production build,
+ * the docs dev server under `next dev` -- running both at once is the normal
+ * case when a link crosses between them, and a production URL in dev is a link
+ * never exercised locally. `NEXT_PUBLIC_DOCS_URL` overrides both.
  */
 export const DOCS_URL = stripTrailingSlash(
   process.env.NEXT_PUBLIC_DOCS_URL ??
     (process.env.NODE_ENV === "production"
-      ? `${REPO_URL}#readme`
+      ? "https://docs.huskai.dev"
       : "http://localhost:3001"),
 );
 export const LICENCE = "Apache-2.0";
-export const WORKSPACE_GUIDE_URL = process.env.NEXT_PUBLIC_DOCS_URL
-  ? `${stripTrailingSlash(process.env.NEXT_PUBLIC_DOCS_URL)}/start/workspaces`
-  : `${REPO_URL}/blob/main/apps/docs/content/start/workspaces.mdx`;
+export const WORKSPACE_GUIDE_URL = `${DOCS_URL}/start/workspaces`;
 
 export const SITE_DESCRIPTION =
   "Husk gives your AI chat a computer: a terminal, files and a browser it can use to do the work. Keep what it finds in a workspace and pick it up later. Free and open source, no account needed.";

@@ -44,7 +44,7 @@ export default function Home() {
     const doc = docs.find((d) => d.href === path);
     return {
       href,
-      image: `/preview${path}`,
+      image: `/preview${path}.png`,
       title: doc?.frontmatter.title ?? path,
       summary: doc?.frontmatter.description ?? '',
     };
@@ -132,7 +132,7 @@ hint:  add a pattern to guardrails.allowCommands in husk.yaml if this is intenti
                 href={href}
                 /* The destination's own share card, from the same frontmatter
                    this card shows, so the preview cannot disagree with it. */
-                image={`/preview${href}`}
+                image={`/preview${href}.png`}
                 title={section.items[0]?.title ?? section.title}
                 summary={section.items[0]?.description ?? ''}
                 className="section-card"
