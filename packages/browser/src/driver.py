@@ -1256,13 +1256,21 @@ def covering(conn, el, target, x, y, deadline):
     levels = list(el['outer']) + [(el['sid'], el['backend'])]
     if conn.engine == 'lightpanda':
         # No getNodeForLocation there. In the top document the page's own hit
-        # test stands in, the one Lightpanda's click uses; in a frame, no check.
-        if len(levels) > 1:
+        # test stands in, the one Lightpanda's click uses. Not in a frame: its
+        # document is another JavaScript world, which the top's hit test cannot
+        # be compared with, so a click there goes unchecked, as before.
+        if el.get('frame') or len(levels) > 1:
             return None
-        hit_object = point_object(conn, el['sid'], x, y, deadline)
-        if not hit_object or call_on(conn, el['sid'], target, WITHIN, deadline, [{'objectId': hit_object}]) is True:
+        try:
+            hit_object = point_object(conn, el['sid'], x, y, deadline)
+            if not hit_object or call_on(conn, el['sid'], target, WITHIN, deadline, [{'objectId': hit_object}]) is True:
+                return None
+            return call_on(conn, el['sid'], hit_object, DESCRIBE, deadline) or 'something else'
+        except DriverError as exc:
+            # Lightpanda could not say: the click goes ahead, unchecked, rather than fail.
+            if exc.kind != PROTOCOL:
+                raise
             return None
-        return call_on(conn, el['sid'], hit_object, DESCRIBE, deadline) or 'something else'
     for i, ((sid, want), (ox, oy)) in enumerate(zip(levels, el.get('origins') or [(0.0, 0.0)])):
         try:
             hit = conn.call(

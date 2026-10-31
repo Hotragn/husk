@@ -1440,6 +1440,12 @@ async function lightpandaJourney() {
     await serveFixture(r.body.id);
     return r.body.id;
   };
+  // Gone once its part is done: the shared Husk runs at most eight computers.
+  const drop = async (id) => {
+    await api('DELETE', `/v1/computers/${id}?confirm=${id}`, undefined, rec.token, { 'x-husk-as': 'person' }).catch(() => undefined);
+    const at = created.indexOf(id);
+    if (at >= 0) created.splice(at, 1);
+  };
   const onLightpanda = async (id) => /browser is Lightpanda/.test(textOf(await tool(id, 'browser_status')));
   // What the browser itself holds in memory, Chromium's processes or Lightpanda's one.
   const memoryMb = async (id) =>
@@ -1483,6 +1489,11 @@ async function lightpandaJourney() {
       'browser memory': `${await memoryMb(id)} MB`,
     };
   }
+  await drop(chrome);
+  const names = Object.keys(speed.Chrome);
+  const table = ['| | Chrome | Lightpanda |', '| --- | --- | --- |', ...names.map((n) => `| ${n} | ${speed.Chrome[n]} | ${speed.Lightpanda[n]} |`)];
+  // Said now, so a later step that fails cannot take the numbers with it.
+  console.log(`\n== Lightpanda beside Chrome ==\n${table.join('\n')}\n`);
   check('Lightpanda is still the browser after the timed calls', await onLightpanda(lp));
 
   // The journeys, each on a computer of its own: a screenshot or a second tab moves one to Chrome.
@@ -1498,6 +1509,7 @@ async function lightpandaJourney() {
     if (!(await onLightpanda(id).catch(() => true))) outcome += ', moving to Chrome on the way';
     findings.push(`${journey.name}: ${outcome}`);
     console.log(`lp journey ${journey.name}: ${outcome}`);
+    await drop(id);
   }
 
   // A person taking over gets Chrome, and a screen, with no call from the AI.
@@ -1522,12 +1534,6 @@ async function lightpandaJourney() {
   const reopened = textOf(await tool(lp, 'browser_snapshot'));
   check('the page it was on is open again in Chrome', /Husk fixture page/.test(reopened), reopened.slice(0, 200));
 
-  const names = Object.keys(speed.Chrome);
-  const table = [
-    '| | Chrome | Lightpanda |',
-    '| --- | --- | --- |',
-    ...names.map((n) => `| ${n} | ${speed.Chrome[n]} | ${speed.Lightpanda[n]} |`),
-  ];
   const passed = findings.filter((f) => f.endsWith(': passed')).length;
   const report = `### Lightpanda beside Chrome\n\n${table.join('\n')}\n\n**${passed} of ${findings.length} browser journeys passed on Lightpanda.**\n\n${findings.map((f) => `- ${f}`).join('\n')}\n`;
   console.log(`\n${report}`);

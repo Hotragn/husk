@@ -636,6 +636,17 @@ describe.skipIf(!python)('driver.py --serve, on Lightpanda', { timeout: 30_000 }
     expect(fake.received.some((m) => m.method === 'DOM.getNodeForLocation')).toBe(false);
   });
 
+  it("clicks in a frame without asking the top document's hit test, which is another JavaScript world", async () => {
+    fake = await fakeChromium();
+    driver = serveDriver(fake.port);
+    fake.child = { loader: 'C1' };
+    fake.pointHit = true;
+    fake.within = false;
+    await lp([{ op: 'action', do: 'snapshot' }]);
+    expect(await clickOn({ ref: 'f1e7' })).toMatchObject({ ref: 'f1e7', checked: true });
+    expect(fake.received.some((m) => m.method === 'Runtime.evaluate' && String(m.params?.['expression']).includes('elementFromPoint'))).toBe(false);
+  });
+
   it('says the browser is gone when its connection no longer has the page, so the host starts it again', async () => {
     fake = await fakeChromium();
     driver = serveDriver(fake.port);
