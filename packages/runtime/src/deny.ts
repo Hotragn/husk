@@ -53,7 +53,8 @@ export const DEFAULT_DENY: CommandRule[] = [
   { pattern: /:\(\)\s*\{\s*:\|:&\s*\}\s*;\s*:/, reason: 'fork bomb' },
   { pattern: atCommandStart(String.raw`sudo\b`), reason: 'privilege escalation' },
   {
-    pattern: atCommandStart(String.raw`(?:nc|ncat|netcat)\b[^|;&]*\s-[a-zA-Z]*e[a-zA-Z]*\b`),
+    // `-e`, alone or among other flags, and ncat's long `--exec` and `--sh-exec`.
+    pattern: atCommandStart(String.raw`(?:nc|ncat|netcat)\b[^|;&]*\s(?:-[a-zA-Z]*e[a-zA-Z]*|--(?:sh-)?exec)\b`),
     reason: 'reverse shell',
   },
 ];

@@ -93,4 +93,32 @@ describe('verifyWebhookSignature', () => {
       }),
     ).toEqual({ ok: true });
   });
+
+  describe('a signature that parses but is the wrong shape', () => {
+    const rawBody = '{"event":"deploy"}';
+    const hex = createHmac('sha256', secret).update(rawBody).digest('hex');
+    const check = (signature: string) => verifyWebhookSignature({ secret, rawBody, signature });
+
+    it('accepts the bare hex some senders send, with no sha256= in front', () => {
+      expect(check(hex)).toEqual({ ok: true });
+    });
+
+    it('rejects a hex too short or too long, and never throws', () => {
+      // timingSafeEqual throws on buffers of unequal length; the length guard before it is what keeps this a 403 and not a 500.
+      for (const signature of [`sha256=${hex.slice(0, 32)}`, `sha256=${hex}${hex}${hex}`, hex.slice(0, 1)]) {
+        expect(() => check(signature)).not.toThrow();
+        expect(check(signature)).toEqual({ ok: false, reason: 'signature does not match' });
+      }
+    });
+
+    it('rejects a value of the right length that is not hex', () => {
+      expect(check(`sha256=${'z'.repeat(hex.length)}`)).toEqual({ ok: false, reason: 'signature does not match' });
+    });
+
+    it('refuses a signature named for another algorithm, even one whose hex would match', () => {
+      expect(check(`sha1=${hex}`)).toEqual({ ok: false, reason: 'signature is not sha256' });
+      // The name is read without regard to case, as the hex is.
+      expect(check(`SHA256=${hex.toUpperCase()}`)).toEqual({ ok: true });
+    });
+  });
 });
