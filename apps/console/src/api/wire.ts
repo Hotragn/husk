@@ -474,6 +474,8 @@ export interface BrowserTab {
 export type ScreenMessage =
   | { type: 'frame'; data: string; width: number; height: number }
   | { type: 'idle'; message: string }
+  /** A browser on Lightpanda, which draws nothing: shown as its message. */
+  | { type: 'noScreen'; message: string }
   | { type: 'error'; code: string; message: string };
 
 /** `GET /v1/computers/:id/stats`. Null means not measured; `notes` says why. */

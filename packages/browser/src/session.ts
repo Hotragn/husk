@@ -1,10 +1,10 @@
-import { HuskError, assertUrlAllowed, onComputerDestroyed, ownsLoopback } from '@husk-ai/core';
-import type { Computer, NetworkPolicy } from '@husk-ai/core';
+import { HuskError, assertUrlAllowed, loadConfig, onComputerDestroyed, ownsLoopback } from '@husk-ai/core';
+import type { BrowserEngine, Computer, NetworkPolicy } from '@husk-ai/core';
 import { CdpConnection, ComputerDriverTransport, createTarget, forNoCall } from './cdp.js';
-import type { CdpTransport, ScreencastEvent, ScreenFrame } from './cdp.js';
+import type { CdpParams, CdpTransport, ScreencastEvent, ScreenFrame } from './cdp.js';
 import { Page, compactAxTree } from './page.js';
 import type { ActionOutcome, AxNodeLike, GotoResult, PageAction, ScriptOutcome } from './page.js';
-import { CACHE_ROOT, provisionChromium } from './provision.js';
+import { CACHE_ROOT, provisionChromium, provisionLightpanda } from './provision.js';
 import type { ProvisionResult } from './provision.js';
 
 /**
@@ -55,6 +55,36 @@ const DEFAULT_IDLE_MS = 5 * 60_000;
 const FIRST_FRAME_MS = 1000;
 const PROFILE_DIR = `${CACHE_ROOT}/profile`;
 const LOG_PATH = `${CACHE_ROOT}/chromium.log`;
+const LIGHTPANDA_LOG = `${CACHE_ROOT}/lightpanda.log`;
+/** Lightpanda's cookies, kept between its launches, and what Chrome starts with when the computer moves. */
+const LIGHTPANDA_COOKIES = `${CACHE_ROOT}/lightpanda-cookies.json`;
+/** Present once this computer's browser has moved to Chrome. It stays there, with the logins made in it. */
+const MOVED_MARK = `${CACHE_ROOT}/moved-to-chrome`;
+/** Chrome's `--window-size`; Lightpanda takes no window, so it gets this as an override. */
+const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
+
+/** The browser a computer starts with: its own setting, else this machine's (config.json), else Chrome. */
+export function wantedEngine(computer: Computer): BrowserEngine {
+  const own = computer.info.spec?.browser;
+  if (own) return own;
+  try {
+    return loadConfig().browser;
+  } catch {
+    // A config.json Husk cannot read is reported where it is read for itself; the browser starts.
+    return 'chrome';
+  }
+}
+
+/** A cookie as Chrome's Storage.setCookies takes it, from Lightpanda's own CDP-style list. */
+function cookiesOf(value: unknown): CdpParams[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((c: Record<string, unknown>) => {
+    if (typeof c?.['name'] !== 'string' || typeof c['value'] !== 'string' || typeof c['domain'] !== 'string') return [];
+    const expires = typeof c['expires'] === 'number' && c['expires'] > 0 ? { expires: c['expires'] } : {};
+    const sameSite = c['sameSite'] === 'Strict' || c['sameSite'] === 'Lax' || c['sameSite'] === 'None' ? { sameSite: c['sameSite'] } : {};
+    return [{ name: c['name'], value: c['value'], domain: c['domain'], path: typeof c['path'] === 'string' ? c['path'] : '/', secure: c['secure'] === true, httpOnly: c['httpOnly'] === true, ...expires, ...sameSite }];
+  });
+}
 
 /**
  * Say plainly when the debug port is reachable by things other than the driver.
@@ -69,6 +99,8 @@ const LOG_PATH = `${CACHE_ROOT}/chromium.log`;
  * reads.
  */
 let warnedComputers: Set<string> | undefined;
+/** Computers told that Lightpanda runs there with no sandbox around it. */
+let unsandboxed: Set<string> | undefined;
 
 export function warnIfDebugPortIsExposed(
   computer: Computer,
@@ -81,7 +113,7 @@ export function warnIfDebugPortIsExposed(
   warnedComputers.add(computer.id);
   say(
     `warning: this provider (${computer.info.provider}) shares a network stack with the host, ` +
-      `so Chromium's debug port (127.0.0.1:${port}) may be reachable by other local processes. ` +
+      `so the browser's debug port (127.0.0.1:${port}) may be reachable by other local processes. ` +
       `CDP has no authentication. Use docker, podman or fly for browsing you do not trust.`,
   );
 }
@@ -105,6 +137,12 @@ export class BrowserSession {
   private launching: Promise<Page> | undefined;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   private chromium: ProvisionResult | undefined;
+  private lightpanda: ProvisionResult | undefined;
+  /** What runs the browser, chosen at its first launch. Lightpanda moves to Chrome, never back. */
+  private engine: BrowserEngine | undefined;
+  private moving: Promise<void> | undefined;
+  /** Where the last goto went, for a move to Chrome that finds Lightpanda's page already gone. */
+  private lastUrl: string | undefined;
   private port = 0;
   private readonly progressListeners = new Set<(message: string) => void>();
   private transport: CdpTransport | undefined;
@@ -167,17 +205,119 @@ export class BrowserSession {
    * counts as using the computer. With a long-lived driver nothing here runs
    * an `exec`, so nothing else would record the use -- and the screen, the
    * thumbnail and a handoff come in through `livePage`, which must not.
+   *
+   * `needs` names what this call needs a browser that draws for -- a
+   * screenshot, a second tab -- and moves a computer on Lightpanda to Chrome
+   * before it runs.
    */
-  async activePage(): Promise<Page> {
+  async activePage(needs?: string): Promise<Page> {
     this.touch();
     this.computer.markUsed?.();
+    // A move to Chrome under way: wait for it, and act on Chrome rather than on the page it is closing.
+    await this.moving;
+    if (needs && this.engine === 'lightpanda') await this.toChrome(needs);
+    return await this.current(needs);
+  }
+
+  /** The live page, or one launched now. */
+  private async current(needs?: string): Promise<Page> {
     if (this.page && this.conn && !this.conn.closed) return this.page;
     // Every caller waits on the same launch, so the one whose call started it
     // going away must not stop it for the rest.
-    this.launching ??= forNoCall(() => this.launch()).finally(() => {
+    this.launching ??= forNoCall(() => this.launch(needs)).finally(() => {
       this.launching = undefined;
     });
     return await this.launching;
+  }
+
+  /** What runs the browser now: undefined until it first starts. */
+  get engineNow(): BrowserEngine | undefined {
+    return this.engine;
+  }
+
+  /** The browser this computer runs, or would start with, for a status. Never starts one. */
+  async plannedEngine(): Promise<BrowserEngine> {
+    if (this.engine) return this.engine;
+    if (wantedEngine(this.computer) === 'chrome' || !this.computer.spawn) return 'chrome';
+    const mark = await this.computer.exec({ cmd: `test -e ${MOVED_MARK} && echo moved || true`, timeoutSec: 15 }).catch(() => undefined);
+    return mark?.stdout.includes('moved') ? 'chrome' : 'lightpanda';
+  }
+
+  /**
+   * Move this computer's browser from Lightpanda to Chrome, for good, because
+   * `why` needs one that draws: a person's hands, a picture, a second tab.
+   * Its address and cookies go with it -- from the page while it answers,
+   * else from the cookies Lightpanda saved and the last address it was sent
+   * to. What the page held only in memory does not. A browser that is not
+   * running is not started: the next one is Chrome.
+   */
+  async toChrome(why: string): Promise<void> {
+    if (this.engine !== 'lightpanda') return;
+    this.moving ??= forNoCall(() => this.move(why)).finally(() => {
+      this.moving = undefined;
+    });
+    await this.moving;
+  }
+
+  private async move(why: string): Promise<void> {
+    const live = this.livePage() !== undefined;
+    const from = live ? await this.leaving() : {};
+    // Chrome first: a call that comes in while Lightpanda stops starts Chrome, never Lightpanda again.
+    this.engine = 'chrome';
+    await this.close('moved to Chrome', 'lightpanda');
+    await this.computer.exec({ cmd: `mkdir -p ${CACHE_ROOT} && touch ${MOVED_MARK}`, timeoutSec: 15 }).catch(() => undefined);
+    const stays = 'It stays on Chrome, where a login made now is kept.';
+    if (!live) {
+      this.say(`this computer's browser moves from Lightpanda to Chrome, because ${why}. ${stays}`);
+      return;
+    }
+    const page = await this.current();
+    const cookies = from.cookies ?? (await this.savedCookies());
+    if (cookies.length) await this.conn?.send('Storage.setCookies', { cookies }).catch(() => undefined);
+    const url = from.url ?? this.lastUrl;
+    let reopened = false;
+    if (url && /^https?:/i.test(url)) {
+      try {
+        await page.goto(this.allowed(url));
+        reopened = true;
+      } catch {
+        // The page Chrome cannot open again is said below; Chrome itself is up.
+      }
+    }
+    this.say(
+      `this computer's browser moved from Lightpanda to Chrome, because ${why}. ` +
+        `${reopened ? `${url} is open there again, with its cookies; ` : 'It starts on a blank page, with the cookies Lightpanda had; '}` +
+        `what the page held only in memory did not come along. ${stays}`,
+    );
+  }
+
+  /** Lightpanda's address and cookies, if its page answers within a few seconds. */
+  private async leaving(): Promise<{ url?: string; cookies?: CdpParams[] }> {
+    const page = this.page;
+    const conn = this.conn;
+    if (!page || !conn) return {};
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<undefined>((r) => (timer = setTimeout(() => r(undefined), 3000)));
+    const read = (async () => {
+      const url = await page.url();
+      const jar = await conn.send('Storage.getCookies', {});
+      return { url, cookies: cookiesOf(jar['cookies']) };
+    })().catch(() => undefined);
+    try {
+      return (await Promise.race([read, late])) ?? {};
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** The cookies Lightpanda wrote when its connection closed. */
+  private async savedCookies(): Promise<CdpParams[]> {
+    const r = await this.computer.exec({ cmd: ['cat', LIGHTPANDA_COOKIES], timeoutSec: 15 }).catch(() => undefined);
+    try {
+      return cookiesOf(JSON.parse(r?.stdout || '[]'));
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -194,7 +334,9 @@ export class BrowserSession {
     // Checked before the browser starts: a refused URL must not cost a launch.
     const checked = this.allowed(url);
     const page = await this.activePage();
-    return await page.goto(checked, opts);
+    const went = await page.goto(checked, opts);
+    this.lastUrl = went.url || checked;
+    return went;
   }
 
   /**
@@ -300,7 +442,8 @@ export class BrowserSession {
 
   private async syncCastNow(): Promise<void> {
     const t = this.transport;
-    const page = this.page && this.conn && !this.conn.closed ? this.page : undefined;
+    // A page that draws nothing has nothing to cast.
+    const page = this.page && this.page.drawsScreen !== false && this.conn && !this.conn.closed ? this.page : undefined;
     const want =
       t && page && this.viewers.size > 0
         ? { targetId: page.id, fps: Math.max(...[...this.viewers].map((v) => v.fps)) }
@@ -484,7 +627,8 @@ export class BrowserSession {
     // Checked like goto, and before the browser starts: a new tab is a navigation
     // too, and a refused one must not cost a launch. about:blank is no address.
     const checked = url === 'about:blank' ? url : this.allowed(url);
-    await this.activePage();
+    // Lightpanda keeps one tab: a second one is Chrome's.
+    await this.activePage('a second tab was opened');
     const conn = this.conn;
     if (!conn) throw new HuskError('E_TOOL_ERROR', 'the browser is not running', { hint: 'call goto first' });
 
@@ -493,14 +637,20 @@ export class BrowserSession {
     return { targetId, url: checked };
   }
 
-  private async launch(): Promise<Page> {
+  private async launch(needs?: string): Promise<Page> {
     const say = (m: string): void => this.say(m);
     // What is left of a browser that stopped under an earlier call goes first:
     // its driver, and its process if it is wedged rather than gone.
     if (this.conn || this.port) await this.close('restarted');
 
-    this.chromium ??= await provisionChromium(this.computer, { onProgress: say });
-    this.port = await this.startChromium(this.chromium.binary, say);
+    const engine = (this.engine ??= await this.chooseEngine(needs, say));
+    if (engine === 'lightpanda') {
+      this.lightpanda ??= await provisionLightpanda(this.computer, { onProgress: say });
+      this.port = await this.startLightpanda(this.lightpanda.binary, say);
+    } else {
+      this.chromium ??= await provisionChromium(this.computer, { onProgress: say });
+      this.port = await this.startChromium(this.chromium.binary, say);
+    }
 
     let page: Page;
     try {
@@ -509,6 +659,7 @@ export class BrowserSession {
         : new ComputerDriverTransport(this.computer, this.port, {
             // What a page loads by itself goes by the policy too, checked by the driver.
             policy: { network: this.opts.network ?? this.computer.info.spec.network, loopbackIsOwn: ownsLoopback(this.computer.info.provider) },
+            engine,
           });
       const conn = new CdpConnection(transport);
       this.conn = conn;
@@ -516,11 +667,13 @@ export class BrowserSession {
       transport.onHostCall?.((op, args) => this.answerHost(op, args));
 
       const targetId = await createTarget(conn, 'about:blank');
-      page = new Page(conn, targetId);
+      page = new Page(conn, targetId, engine === 'chrome');
       await page.init();
-      if (this.opts.viewport) await page.setViewport(this.opts.viewport.width, this.opts.viewport.height);
+      // Lightpanda takes no window size, so it gets Chrome's as an override.
+      const viewport = this.opts.viewport ?? (engine === 'lightpanda' ? DEFAULT_VIEWPORT : undefined);
+      if (viewport) await page.setViewport(viewport.width, viewport.height);
     } catch (err) {
-      // Chromium is up but cannot be driven: reap it, or every failed launch leaks one.
+      // The browser is up but cannot be driven: reap it, or every failed launch leaks one.
       await this.close('not started');
       throw err;
     }
@@ -529,9 +682,69 @@ export class BrowserSession {
     this.touch();
     // Anyone still watching from before an idle close gets the new browser.
     void this.syncCast();
-    say(`Chromium is up on the computer's own 127.0.0.1:${this.port}`);
+    say(`${engine === 'lightpanda' ? 'Lightpanda' : 'Chromium'} is up on the computer's own 127.0.0.1:${this.port}`);
     warnIfDebugPortIsExposed(this.computer, this.port, say);
     return page;
+  }
+
+  /**
+   * Chrome, unless Lightpanda was asked for and can serve: it needs a driver
+   * that keeps running (its page lives as long as one connection), a computer
+   * that has not moved to Chrome before, and a first call that needs no
+   * screen. Said once when the answer is not the one asked for.
+   */
+  private async chooseEngine(needs: string | undefined, say: (m: string) => void): Promise<BrowserEngine> {
+    if ((await this.plannedEngine()) === 'chrome') {
+      if (wantedEngine(this.computer) === 'lightpanda' && !this.computer.spawn) {
+        say(`this computer's browser is Chrome: Lightpanda needs a provider that keeps a process running (docker, podman or local), and ${this.computer.info.provider} does not`);
+      }
+      return 'chrome';
+    }
+    if (needs) {
+      await this.computer.exec({ cmd: `mkdir -p ${CACHE_ROOT} && touch ${MOVED_MARK}`, timeoutSec: 15 }).catch(() => undefined);
+      say(`this computer's browser starts on Chrome rather than Lightpanda, because ${needs}. It stays on Chrome.`);
+      return 'chrome';
+    }
+    return 'lightpanda';
+  }
+
+  /**
+   * Start Lightpanda detached and wait until its debugger answers, as
+   * `launchChromium` does Chromium, in one exec. Telemetry off, which is
+   * Husk's promise; cookies kept between its launches; frames and stylesheets
+   * loaded, which snapshots and the visibility checks need. `--port` comes
+   * last, so the kill pattern can anchor on it.
+   */
+  private async startLightpanda(binary: string, say: (m: string) => void): Promise<number> {
+    const port = await this.freePort();
+    say('starting Lightpanda and waiting for its debugger');
+    // Once per computer, as the debug-port warning is.
+    unsandboxed ??= new Set();
+    if (!ownsLoopback(this.computer.info.provider) && !unsandboxed.has(this.computer.id)) {
+      unsandboxed.add(this.computer.id);
+      say(
+        `warning: Lightpanda has no sandbox of its own, and on this provider (${this.computer.info.provider}) nothing else holds it, ` +
+          'so a hostile page meets this machine through any flaw in it. Use docker or podman for pages you do not trust.',
+      );
+    }
+    const cmd =
+      `mkdir -p ${CACHE_ROOT}; ` +
+      `(LIGHTPANDA_DISABLE_TELEMETRY=true setsid ${binary} serve --host 127.0.0.1 --load-resources iframe,stylesheet ` +
+      `--cookie ${LIGHTPANDA_COOKIES} --cookie-jar ${LIGHTPANDA_COOKIES} --http-timeout 60000 --port ${port} ` +
+      `>${LIGHTPANDA_LOG} 2>&1 </dev/null &) ; ` +
+      `for i in $(seq 1 80); do ` +
+      `curl -sf --max-time 2 -o /dev/null http://127.0.0.1:${port}/json/version && exit 0; ` +
+      `sleep 0.25; done; exit 1`;
+    const ready = await this.computer.exec({ cmd, timeoutSec: 90 });
+    if (ready.exitCode !== 0) {
+      const log = (await this.computer.exec({ cmd: ['tail', '-c', '4000', LIGHTPANDA_LOG], timeoutSec: 15 }).catch(() => undefined))?.stdout ?? '';
+      await this.computer.exec({ cmd: killCommand('lightpanda', port), timeoutSec: 15 }).catch(() => undefined);
+      throw new HuskError('E_COMPUTER_FAILED', 'Lightpanda started but never opened its debugging port', {
+        hint: "its log is in details; setting this computer's browser to chrome works around it",
+        details: { port, log: log.slice(-2000) },
+      });
+    }
+    return port;
   }
 
   /**
@@ -638,7 +851,8 @@ export class BrowserSession {
     return Number.isInteger(port) && port > 1024 ? port : 9222;
   }
 
-  async close(reason = 'closed'): Promise<void> {
+  /** `running` is the browser on the port, when the session already says another. */
+  async close(reason = 'closed', running: BrowserEngine | undefined = this.engine): Promise<void> {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = undefined;
     this.page = undefined;
@@ -654,16 +868,18 @@ export class BrowserSession {
 
     if (this.port) {
       // Killed by port rather than by pid: the pid we captured is the setsid
-      // wrapper's, and Chromium reparents away from it immediately.
-      await this.computer
-        .exec({
-          cmd: `pkill -f -- "--remote-debugging-port=${this.port}" || true`,
-          timeoutSec: 30,
-        })
-        .catch(() => undefined);
+      // wrapper's, and the browser reparents away from it immediately.
+      await this.computer.exec({ cmd: killCommand(running ?? 'chrome', this.port), timeoutSec: 30 }).catch(() => undefined);
       this.port = 0;
     }
   }
+}
+
+/** How to stop the browser on `port`, by the command line it was started with. */
+function killCommand(engine: BrowserEngine, port: number): string {
+  return engine === 'lightpanda'
+    ? `pkill -f -- "serve --host 127.0.0.1 .*--port ${port}$" || true`
+    : `pkill -f -- "--remote-debugging-port=${port}" || true`;
 }
 
 const sessions = new Map<string, BrowserSession>();
@@ -697,6 +913,15 @@ export function markUsedFor(computerId: string): void {
 /** This computer's browser session if it has one, for watching its screen. Never creates one. */
 export function browserSessionFor(computerId: string): BrowserSession | undefined {
   return sessions.get(computerId);
+}
+
+/**
+ * Ready this computer's browser for a person who will see and use it: one on
+ * Lightpanda, which draws nothing, moves to Chrome. Never starts a browser
+ * that is not running, and does nothing for one already on Chrome.
+ */
+export async function toChromeFor(computerId: string, why = 'a person is taking it over'): Promise<void> {
+  await sessions.get(computerId)?.toChrome(why);
 }
 
 export async function closeBrowserFor(computerId: string): Promise<void> {

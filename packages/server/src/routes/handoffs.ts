@@ -11,6 +11,11 @@ import { CHAT_RUN, PERSON_RUN } from '../handoffs.js';
 import type { HandoffRegistry, PendingHandoff } from '../handoffs.js';
 import type { HandoffOutcome } from '@husk-ai/core';
 
+/** What a screen says for a browser on Lightpanda, which draws nothing until it moves to Chrome. */
+export const NO_SCREEN = "this computer's browser is Lightpanda, which draws no screen";
+export const NO_SCREEN_HINT = 'taking the computer over moves it to Chrome, which does';
+const MOVING = "this computer's browser is moving from Lightpanda to Chrome, so you can see it";
+
 /** Viewport coordinates in CSS pixels. Bounded so nothing absurd reaches Chromium. */
 const coord = z.number().finite().min(0).max(20_000);
 
@@ -383,6 +388,7 @@ export function registerScopedComputerRoutes(
         hint: 'nothing to show until your AI opens a page',
       });
     }
+    if (page.drawsScreen === false) throw huskError('E_BROWSER_NOT_FOUND', NO_SCREEN, { hint: NO_SCREEN_HINT });
     const frame = await page.frame();
     return reply
       .header('cache-control', 'no-store')
@@ -420,6 +426,8 @@ export function registerHandoffRoutes(app: FastifyInstance, opts: HandoffRouteOp
         hint: 'the run has not opened a browser, or it was closed; finish the step another way and press done',
       });
     }
+    // The hold moves a Lightpanda browser to Chrome; until it is there, nothing draws.
+    if (page.drawsScreen === false) throw huskError('E_BROWSER_NOT_FOUND', MOVING, { hint: 'it shows here in a moment' });
     return page;
   };
 

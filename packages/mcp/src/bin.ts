@@ -22,6 +22,7 @@ options
   --session <key>     reuse a named machine (default: unique to this server process)
   --provider <name>   docker | podman | local | ssh | fly  (default: best available)
   --flavor <name>     base | python | node | full          (default: full, which runs the browser)
+  --browser <name>    chrome | lightpanda                  (default: config.json's browser, else chrome)
   --network <mode>    none | egress | full                 (default: full, minus internal addresses)
   --network-strict    refuse a provider that cannot enforce --network for every process
   --memory <mb>       memory ceiling
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
         profile: { type: 'string', default: 'computer' },
         provider: { type: 'string' },
         flavor: { type: 'string' },
+        browser: { type: 'string' },
         network: { type: 'string' },
         'network-strict': { type: 'boolean', default: false },
         memory: { type: 'string' },
@@ -89,6 +91,10 @@ async function main(): Promise<void> {
   // Every chat is offered the browser tools, and only `full` runs the browser
   // (images.ts). Providers without flavours (local, ssh) ignore it.
   spec.flavor = (values.flavor ?? 'full') as Flavor;
+  if (values.browser) {
+    if (values.browser !== 'chrome' && values.browser !== 'lightpanda') throw new Error('--browser must be chrome or lightpanda');
+    spec.browser = values.browser;
+  }
   // Strict refuses a provider that cannot hold every process to a mode. With no
   // --network there is no mode, and it used to be dropped without a word.
   if (values['network-strict'] && !values.network) throw new Error('--network-strict needs --network: it refuses a provider that cannot hold every process to that mode');

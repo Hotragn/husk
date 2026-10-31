@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { HuskError } from '@husk-ai/core';
-import type { Computer, ComputerProcess, ExecRequest, ExecResult, NetworkPolicy } from '@husk-ai/core';
+import type { BrowserEngine, Computer, ComputerProcess, ExecRequest, ExecResult, NetworkPolicy } from '@husk-ai/core';
 import { DRIVER_PATH, DRIVER_SOURCE } from './driver.js';
 import { DOWNLOADS_DIR } from './provision.js';
 
@@ -332,6 +332,12 @@ export interface ComputerTransportOptions {
    * says so in the action's result. Husk checks the URLs it sends itself.
    */
   policy?: DriverPolicy;
+  /**
+   * The browser behind the port. Lightpanda keeps a page only as long as one
+   * connection, so it is never driven one exec per request, and its driver
+   * answers a few things Chromium's way (driver.py).
+   */
+  engine?: BrowserEngine;
 }
 
 /** The computer's network policy, and whether its loopback is its own (see `ownsLoopback`). */
@@ -349,6 +355,7 @@ export class ComputerDriverTransport implements CdpTransport {
   private readonly pinnedPath: string | undefined;
   private readonly maxOutputBytes: number;
   private readonly policy: DriverPolicy | undefined;
+  private readonly engine: BrowserEngine | undefined;
   /** Resolves to the path the driver actually landed on. */
   private installed: Promise<string> | undefined;
   /** Cached so the common call skips a /json/version round trip. The driver rediscovers if it is stale. */
@@ -373,6 +380,7 @@ export class ComputerDriverTransport implements CdpTransport {
     this.pinnedPath = opts.driverPath;
     this.maxOutputBytes = opts.maxOutputBytes ?? 96 * 1024 * 1024;
     this.policy = opts.policy;
+    this.engine = opts.engine;
   }
 
   async run(req: DriverRequest): Promise<DriverResult> {
@@ -386,12 +394,21 @@ export class ComputerDriverTransport implements CdpTransport {
           steps: req.steps,
           downloads: DOWNLOADS_DIR,
           ...(this.policy ? { policy: this.policy } : {}),
+          ...(this.engine ? { engine: this.engine } : {}),
           ...(req.targetId !== undefined ? { targetId: req.targetId } : {}),
         },
         timeoutMs,
         signal,
       );
-      return served ? resultOf(served) : await this.runOneShot(req, signal);
+      if (served) return resultOf(served);
+      // Each exec would meet a new, empty Lightpanda: its page lives only with its one connection.
+      if (this.engine === 'lightpanda') {
+        throw new HuskError('E_COMPUTER_FAILED', "Lightpanda needs Husk's long-lived browser driver, and it could not start in this computer", {
+          hint: 'set this computer\'s browser to chrome, which works without it',
+          details: { kind: 'browser_gone' },
+        });
+      }
+      return await this.runOneShot(req, signal);
     } catch (err) {
       // Stopped part-way: say that, not what the stop looked like from here.
       stopIfAborted(signal);

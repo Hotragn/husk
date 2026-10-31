@@ -8,7 +8,7 @@ import { ctxOf } from '../context.js';
 import { huskError, invalidSpec, notFound } from '../errors.js';
 import { SseStream, closedEarly } from '../sse.js';
 import { sendTo } from '../viewers.js';
-import { programCall } from './handoffs.js';
+import { NO_SCREEN, NO_SCREEN_HINT, programCall } from './handoffs.js';
 import { browseInComputer } from '@husk-ai/core';
 import { browserSessionFor, livePageFor } from '@husk-ai/browser';
 import type { BrowserSession } from '@husk-ai/browser';
@@ -31,6 +31,7 @@ const ComputerSpecSchema = z
     provider: z.string().min(1).optional(),
     image: z.string().min(1).optional(),
     flavor: z.enum(['base', 'python', 'node', 'full']).optional(),
+    browser: z.enum(['chrome', 'lightpanda']).optional(),
     cpus: z.number().positive().max(64).optional(),
     memoryMb: z.number().int().positive().max(131_072).optional(),
     diskMb: z.number().int().positive().optional(),
@@ -212,6 +213,7 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
     if (!page) {
       throw huskError('E_BROWSER_NOT_FOUND', 'this computer has no browser open', { hint: 'nothing to show until a run opens a page' });
     }
+    if (page.drawsScreen === false) throw huskError('E_BROWSER_NOT_FOUND', NO_SCREEN, { hint: NO_SCREEN_HINT });
     const frame = await page.frame(40);
     return reply.header('cache-control', 'no-store').type('image/jpeg').send(Buffer.from(frame.data, 'base64'));
   });
@@ -388,6 +390,7 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
         return;
       }
       let idle = false;
+      let blind = false;
       let watched: BrowserSession | undefined;
       let polling = false;
       while (open) {
@@ -408,6 +411,15 @@ export async function computerRoutes(app: FastifyInstance): Promise<void> {
           await pause(1000);
           continue;
         }
+        if (page.drawsScreen === false) {
+          // Said once; it moves to Chrome, and draws, when a person takes the computer over.
+          if (!blind) send({ type: 'noScreen', message: `${NO_SCREEN}. ${NO_SCREEN_HINT}.` });
+          blind = true;
+          idle = false;
+          await pause(1000);
+          continue;
+        }
+        blind = false;
         idle = false;
         if (!watched) {
           watched = session;

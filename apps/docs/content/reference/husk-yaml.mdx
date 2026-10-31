@@ -89,6 +89,7 @@ the block exists.
 | `computer.enabled` | boolean | — | `true` |
 | `computer.provider` | string | not validated against the provider list | best available |
 | `computer.flavor` | enum | `base` \| `python` \| `node` \| `full` | `base` |
+| `computer.browser` | enum | `chrome` \| `lightpanda` | `browser` in `~/.husk/config.json`, else `chrome` |
 | `computer.image` | string | overrides `flavor` | — |
 | `computer.cpus` | number | > 0, ≤ 64; no limit on `local` and `ssh` | `2` on Docker and Podman, `1` on Fly |
 | `computer.memoryMb` | integer | > 0, ≤ 131072; Fly rounds up to a multiple of 256 | `2048` on Docker and Podman, `1024` on Fly |

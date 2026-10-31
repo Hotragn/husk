@@ -1,7 +1,21 @@
 # Third-party notices
 
 Husk takes ideas from the projects below. No code from them is included or
-required at run time.
+required at run time, except Lightpanda, which a computer runs only when it is
+asked for.
+
+## Lightpanda
+
+https://github.com/lightpanda-io/browser
+
+A computer whose browser is `lightpanda` downloads Lightpanda's unmodified
+release binary from GitHub, checked against the SHA-256 GitHub publishes for it,
+and runs it inside the computer as a program of its own, which Husk drives over
+the Chrome DevTools Protocol. None of its code is part of Husk, and Husk never
+changes or redistributes it. Lightpanda is licensed under the GNU Affero
+General Public License, version 3 (AGPL-3.0-only); its source, for the version
+Husk pins (`LIGHTPANDA_VERSION` in `packages/browser/src/provision.ts`), is at
+https://github.com/lightpanda-io/browser/tree/1.0.2.
 
 ## ego-lite
 

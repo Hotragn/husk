@@ -161,6 +161,15 @@ pre-release of 7 October.
   delete. It reads and changes them with one `memory` tool on every engine: Husk's own,
   Claude Code and Codex. `memory.backend` now defaults to `file`; `sqlite` is not built
   yet, and a run on it says so ([#269](https://github.com/Hotragn/husk/pull/269)).
+- **Lightpanda, a lighter browser, as a choice.** A computer can run
+  [Lightpanda](https://lightpanda.io) instead of Chrome: `computer.browser: lightpanda` in
+  a husk.yaml, `"browser": "lightpanda"` in `~/.husk/config.json`, or `--browser
+  lightpanda` for a chat app. It downloads about 75 MB once, checked against its published
+  checksum, and always starts with its telemetry off. Lightpanda draws no screen, so a
+  computer on it moves to Chrome, with its address and cookies, when it needs a
+  screenshot, a second tab or a person, and then stays on Chrome. It runs on Docker,
+  Podman and the local provider. Chrome is still the default
+  ([#270](https://github.com/Hotragn/husk/pull/270)).
 
 ### Changed
 

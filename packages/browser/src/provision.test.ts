@@ -56,7 +56,7 @@ describe('browser prerequisite checks', () => {
 
   it('reports passing local prerequisites without touching the network', async () => {
     const { computer, commands } = machine({ system: 'Linux', missing: [] });
-    expect(await inspectBrowserCapability(computer)).toEqual({ installed: false, readyToInstall: true, arch: 'x64' });
+    expect(await inspectBrowserCapability(computer)).toEqual({ engine: 'chrome', installed: false, readyToInstall: true, arch: 'x64' });
     expect(commands.some((cmd) => cmd.includes('urlopen(') || cmd.includes('urlretrieve('))).toBe(false);
   });
 

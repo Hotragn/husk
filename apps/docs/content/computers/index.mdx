@@ -117,6 +117,7 @@ Every field a computer can be created with. In a `husk.yaml` these live under
 | `provider` | string | best available | `docker`, `podman`, `local`, `ssh`, `fly` |
 | `image` | string | from `flavor` | Explicit image reference. Overrides `flavor` |
 | `flavor` | enum | `base`; `full` for a chat's computer | `base`, `python`, `node`, `full`. The rendered browser needs `full` — see below |
+| `browser` | enum | `browser` in `~/.husk/config.json`, else `chrome` | `chrome` or `lightpanda` — see [The browser](#the-browser) |
 | `cpus` | number | `2`; `1` on Fly | CPU allocation |
 | `memoryMb` | number | `2048`; `1024` on Fly | Memory ceiling |
 | `diskMb` | number | `2048` | Size of the writable `/work` layer |
@@ -190,6 +191,60 @@ A package is a name with a version if you like (`curl`, `requests==2.32`,
 On `local`, Python and npm packages install with uv, pip or npm. `ssh` and `fly`
 computers refuse `packages`: on SSH the host is yours to install on, and on Fly use a
 `computer.image` that has them.
+
+## The browser
+
+A computer's rendered browser is Chrome, unless it asks for
+[Lightpanda](https://lightpanda.io), a lighter browser made for automation.
+
+| | Chrome | Lightpanda |
+| --- | --- | --- |
+| Downloaded once per computer | about 95–111 MB | about 75 MB, checked against its published SHA-256 before it runs |
+| Draws the page | yes | no: no screenshots and no live screen |
+| Tabs | as many as a page opens | one |
+| Providers | all of them | `docker`, `podman` and `local` |
+| Sandbox | Chrome's own, outside a container | none of its own: on `docker` and `podman` the container is its sandbox |
+
+To choose it:
+
+- for one husk, `computer.browser: lightpanda` in its `husk.yaml`;
+- for every computer on this machine that does not say, `"browser": "lightpanda"` in
+  `~/.husk/config.json`;
+- for one chat app, `--browser lightpanda` on its `npx -y @husk-ai/mcp` line, or on
+  `husk mcp`.
+
+A computer's own setting wins over `config.json`, and with neither it is Chrome.
+`husk doctor` says which one this machine uses, and `browser_status` says which one a
+computer uses.
+
+**When it moves to Chrome.** Lightpanda draws nothing, so a computer on it moves to
+Chrome when something needs a picture or a person: a screenshot, a second tab, a chat's
+`hand_off`, or you taking the computer over. The page's address and cookies go with it;
+whatever the page held only in memory does not. The computer then stays on Chrome, so a
+login you make there is kept, as on any Chrome computer. Until it moves, its live screen
+in the console says that Lightpanda draws no screen.
+
+**Links that open a new tab.** Lightpanda opens no second tab, so a click on a link meant
+for one is refused with the link's address: `browser_goto` opens it in the same tab, and
+`browser_tabs open` opens it in a new one, which moves the computer to Chrome.
+
+**Where it does not run.** Husk keeps Lightpanda's page alive through one long-lived
+driver, and on `ssh` and `fly` there is none, so those computers use Chrome and say why.
+On `local`, nothing sandboxes Lightpanda: use `docker` or `podman` for pages you do not
+trust. It needs Linux with glibc, and on arm64 a kernel with 4 KB pages
+([lightpanda-io/browser#1370](https://github.com/lightpanda-io/browser/issues/1370)).
+
+**Telemetry and licence.** Lightpanda sends usage telemetry unless told not to, and Husk
+always starts it with `LIGHTPANDA_DISABLE_TELEMETRY=true`. It is AGPL-3.0: Husk downloads
+the unmodified release from GitHub when a computer first needs it, and runs it as a
+program of its own.
+
+<NotYet>
+Lightpanda is not the default, because it cannot yet do everything Chrome does here: one
+tab, no pop-ups, no picture. Each e2e run's `lightpanda` job runs the browser journeys on
+Lightpanda and times it beside Chrome on the same calls, and that is what decides whether
+it becomes the default.
+</NotYet>
 
 ## huskinfo
 

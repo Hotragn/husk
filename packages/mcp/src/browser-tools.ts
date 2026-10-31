@@ -568,7 +568,7 @@ async function browserTool(computer: Computer, name: string, args: Record<string
     case 'browser_screenshot': {
       const fullPage = args.fullPage === true;
       const path = typeof args.path === 'string' && args.path.trim() ? args.path : '/work/screenshot.png';
-      const page = await session.activePage();
+      const page = await session.activePage('a screenshot was asked for');
       const data = await page.screenshot({ fullPage });
       const bytes = Buffer.from(data, 'base64');
       await computer.writeFile(path, bytes);
@@ -681,13 +681,19 @@ async function browserTool(computer: Computer, name: string, args: Record<string
     }
 
     case 'browser_status': {
-      const found = await inspectBrowserCapability(computer);
+      const found = await inspectBrowserCapability(computer, await session.plannedEngine());
+      // Lightpanda is said first, since it changes what a screenshot or a second tab does.
+      const engine =
+        found.engine === 'lightpanda'
+          ? "This computer's browser is Lightpanda: lighter than Chrome, and it draws no screen. A screenshot, a second tab or a person taking over moves it to Chrome, for good.\n"
+          : '';
       if (found.installed) {
         return text(
-          `a browser is already installed: ${found.binary} (${found.source}${found.version ? `, ${found.version}` : ''}). browser_goto will not download anything.`,
+          `${engine}a browser is already installed: ${found.binary} (${found.source}${found.version ? `, ${found.version}` : ''}). browser_goto will not download anything.`,
         );
       }
-      if (!found.readyToInstall) return text(`This computer cannot install a rendered browser yet: ${found.reason}${found.hint ? `\n${found.hint}` : ''}\nText-only browse remains a separate capability.`);
+      if (!found.readyToInstall) return text(`${engine}This computer cannot install a rendered browser yet: ${found.reason}${found.hint ? `\n${found.hint}` : ''}\nText-only browse remains a separate capability.`);
+      if (found.engine === 'lightpanda') return text(`${engine}Lightpanda is not installed yet. The first browser_goto downloads about 75 MB into /work/.husk-browser and checks it against its published checksum.`);
       return text(
         'No browser is installed. Python and known Chromium system dependencies passed preflight. ' +
           'The first browser_goto downloads about 95–111 MB into /work/.husk-browser. ' +

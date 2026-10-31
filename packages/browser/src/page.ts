@@ -317,7 +317,16 @@ export class Page {
   constructor(
     private readonly conn: CdpConnection,
     readonly targetId: string,
+    /** False on Lightpanda, which draws nothing: a picture of the page is refused rather than faked. */
+    readonly drawsScreen = true,
   ) {}
+
+  private assertScreen(): void {
+    if (this.drawsScreen) return;
+    throw new HuskError('E_NOT_IMPLEMENTED', 'Lightpanda draws no screen, so there is no picture of this page', {
+      hint: 'a screenshot, or a person taking the computer over, moves its browser to Chrome',
+    });
+  }
 
   private preludeSteps(): SendStep[] {
     if (!this.viewport) return this.prelude;
@@ -578,6 +587,7 @@ export class Page {
 
   /** Base64 png (or jpeg). `fullPage` captures past the viewport. */
   async screenshot(opts: ScreenshotOptions = {}): Promise<string> {
+    this.assertScreen();
     const format = opts.format ?? 'png';
     const params: CdpParams = { format, captureBeyondViewport: opts.fullPage === true };
     if (format === 'jpeg') params['quality'] = opts.quality ?? 80;
@@ -610,6 +620,7 @@ export class Page {
    * device scale. One driver invocation.
    */
   async frame(quality = 70): Promise<{ data: string; width: number; height: number }> {
+    this.assertScreen();
     const [metrics, shot] = await this.run([
       { op: 'send', method: 'Page.getLayoutMetrics', params: {}, session: true },
       { op: 'send', method: 'Page.captureScreenshot', params: { format: 'jpeg', quality }, session: true },

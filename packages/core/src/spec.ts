@@ -20,6 +20,8 @@ export const ComputerConfigSchema = z.object({
   enabled: z.boolean().default(true),
   provider: z.string().optional(),
   flavor: z.enum(['base', 'python', 'node', 'full']).default('base'),
+  /** Optional rather than defaulted, so a husk that never says leaves it to the machine's setting. */
+  browser: z.enum(['chrome', 'lightpanda']).optional(),
   image: z.string().optional(),
   cpus: z.number().positive().max(64).optional(),
   memoryMb: z.number().int().positive().max(131072).optional(),

@@ -290,12 +290,13 @@ export const COMMANDS: HelpEntry[] = [
     name: 'mcp',
     group: 'system',
     summary: 'Run the MCP server on stdio',
-    usage: 'husk mcp [--provider <name>] [--flavor <name>] [--session-key <key>] [--keep]',
+    usage: 'husk mcp [--provider <name>] [--flavor <name>] [--browser <name>] [--session-key <key>] [--keep]',
     details:
       'This is what an MCP client launches. stdout is the protocol channel and carries\nnothing else; logs go to stderr.',
     flags: [
       ['--provider <name>', 'docker | podman | local | ssh | fly; default: the best available'],
       ['--flavor <name>', 'base | python | node | full; default: full, the image that runs the browser'],
+      ['--browser <name>', 'chrome | lightpanda; default: the browser setting in ~/.husk/config.json, else chrome'],
       ['--session-key <key>', 'reuse a named machine; default: one for this server process'],
       ['--keep', 'leave the machine running after the client disconnects'],
     ],

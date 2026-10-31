@@ -29,6 +29,12 @@ describe('~/.husk/config.json', () => {
     expect(loadConfig(file('config.json', JSON.stringify({ model: 'free', modelAliases: { auto: 'local' } }))).modelAliases).toEqual({ auto: 'local' });
   });
 
+  it('takes the browser a computer runs when it does not say: chrome, unless set to lightpanda', () => {
+    expect(loadConfig(join(tmpdir(), 'husk-no-such-dir', 'config.json')).browser).toBe('chrome');
+    expect(loadConfig(file('config.json', JSON.stringify({ browser: 'lightpanda' }))).browser).toBe('lightpanda');
+    expect(() => loadConfig(file('config.json', JSON.stringify({ browser: 'firefox' })))).toThrow(/browser/);
+  });
+
   it('refuses what it cannot read rather than run on a default nobody asked for', () => {
     expect(() => loadConfig(file('config.json', '{ "maxComputers": 16, }'))).toThrow(/config\.json is not valid JSON/);
     expect(() => loadConfig(file('config.json', '{ "maxComputers": "16" }'))).toThrow(/maxComputers/);
