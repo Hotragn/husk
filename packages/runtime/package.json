@@ -1,7 +1,7 @@
 {
   "name": "@husk-ai/runtime",
   "version": "0.2.0",
-  "description": "Husk runtime package",
+  "description": "Computer providers and their lifecycle for Husk: Docker, Podman, Fly.io, SSH and local.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

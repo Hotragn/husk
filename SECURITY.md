@@ -53,7 +53,7 @@ than a plain "isolated", because the difference matters.
 
 | control | what it does |
 | --- | --- |
-| Path jail (file tools) | `/work` and `/tmp` only; `..` traversal and escaping symlinks both refused |
+| Path jail (file tools) | on `local` and `ssh`, `/work` and `/tmp` only, with `..` traversal and escaping symlinks both refused. On Docker, Podman and Fly the container is the boundary instead: `read_file /etc/passwd` returns the container's own copy |
 | Env scrubbing | `*_API_KEY`, `*_TOKEN`, `*_SECRET`, `AWS_*` and friends never reach a command |
 | Command policy | a deny list of unrecoverable commands, anchored to command position |
 | Network floor | loopback, link-local and RFC1918 refused **even in `network.mode: full`** |
