@@ -1,8 +1,8 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { findCli, mapLimit, parseSpec, slug } from '@husk-ai/core';
-import type { DistilledAgent, HuskSpec, Transcript, TranscriptImporter, TranscriptSource } from '@husk-ai/core';
+import { botEngines, continuesChat, mapLimit, onBotEngine, slug } from '@husk-ai/core';
+import type { BotEngine, DistilledAgent, HuskSpec, Transcript, TranscriptImporter, TranscriptSource } from '@husk-ai/core';
 import type { FastifyInstance } from 'fastify';
 import { stringify as stringifyYaml } from 'yaml';
 import { ctxOf } from '../context.js';
@@ -253,16 +253,6 @@ export async function codexTranscript(computerId: string, since: number, root = 
   return undefined;
 }
 
-/** What a bot made from a chat runs on: the person's Claude Code or Codex, or Husk's own engine. */
-type BotEngine = 'claude-code' | 'codex' | 'builtin';
-
-/** The engines a bot from this chat can run on, best first: the chat's own app, when it is installed, then any other, then Husk's own. */
-function enginesFor(transcript: Transcript): BotEngine[] {
-  const own = transcript.source === 'claude-code' || transcript.source === 'codex' ? transcript.source : undefined;
-  const installed = (['claude-code', 'codex'] as const).filter((cli) => findCli(cli) !== undefined);
-  return [...(own && installed.includes(own) ? [own] : []), ...installed.filter((cli) => cli !== own), 'builtin'];
-}
-
 export async function sessionRoutes(app: FastifyInstance): Promise<void> {
   const ctx = ctxOf(app);
   const { store, router } = ctx.deps;
@@ -275,13 +265,10 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
   const draftOf = async (transcript: Transcript, body: { useModel?: boolean; model?: string; engine?: BotEngine }) => {
     const distilled = await distill(transcript, body.useModel === true, router, body.model);
     const draft = await specFromDistilled(distilled, transcript);
-    const engines = enginesFor(transcript);
+    const engines = botEngines(transcript.source);
     const engine = body.engine && engines.includes(body.engine) ? body.engine : engines[0]!;
-    // Whether Claude Code would go on with this chat, rather than start from the draft.
-    const continues = transcript.source === 'claude-code' && /^[A-Za-z0-9-]{8,80}$/.test(transcript.id);
-    const resume = engine === 'claude-code' && continues ? transcript.id : undefined;
-    const spec = engine === 'builtin' ? draft : parseSpec({ ...draft, model: 'auto', engine: { type: engine, ...(resume ? { resume } : {}) } });
-    return { transcriptId: transcript.id, distilled, spec, yaml: stringifyYaml(spec, { lineWidth: 100 }), engines, continues };
+    const spec = onBotEngine(draft, transcript, engine);
+    return { transcriptId: transcript.id, distilled, spec, yaml: stringifyYaml(spec, { lineWidth: 100 }), engines, continues: continuesChat(transcript) };
   };
 
   /**

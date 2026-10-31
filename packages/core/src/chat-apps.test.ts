@@ -4,7 +4,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   baseLaunch,
+  botEngines,
   chatAppDefs,
+  continuesChat,
+  onBotEngine,
   connectChatApp,
   detectChatApps,
   disconnectChatApp,
@@ -17,6 +20,7 @@ import {
   shimTarget,
 } from './chat-apps.js';
 import { HUSK_RANGE } from './identity.js';
+import { defaultSpec } from './spec.js';
 
 let home = '';
 afterEach(() => {
@@ -332,5 +336,38 @@ describe('editing configs safely', () => {
     expect(r.ok).toBe(false);
     expect(r.message).toContain('real home folder');
     expect((await disconnectChatApp('codex', { home })).ok).toBe(false);
+  });
+});
+
+describe('what a bot made from a chat runs on', () => {
+  // Both always named, so what is installed on this machine never decides a test.
+  const apps = (installed: Array<'claude' | 'codex'>) => {
+    const dir = fresh();
+    const real = join(dir, 'cli');
+    writeFileSync(real, '');
+    const at = (which: 'claude' | 'codex') => (installed.includes(which) ? real : join(dir, 'not-installed'));
+    return { HUSK_CLAUDE_CLI: at('claude'), HUSK_CODEX_CLI: at('codex') };
+  };
+
+  it("is the chat's own app when it is installed, then the other one, then Husk's own engine", () => {
+    expect(botEngines('claude-code', apps(['claude', 'codex']))).toEqual(['claude-code', 'codex', 'builtin']);
+    expect(botEngines('codex', apps(['claude', 'codex']))).toEqual(['codex', 'claude-code', 'builtin']);
+    // Its own app is not installed: the other one, before Husk's own.
+    expect(botEngines('codex', apps(['claude']))).toEqual(['claude-code', 'builtin']);
+    // A chat from an app that cannot run a bot by itself.
+    expect(botEngines('chatgpt', apps(['codex']))).toEqual(['codex', 'builtin']);
+    expect(botEngines('claude-code', apps([]))).toEqual(['builtin']);
+  });
+
+  it('goes on with a Claude Code chat itself, on Claude Code only', () => {
+    const chat = { source: 'claude-code', id: '4f9e2c1a-7b3d-4e8f-9a6b-1c2d3e4f5a6b' };
+    expect(continuesChat(chat)).toBe(true);
+    expect(continuesChat({ source: 'codex', id: chat.id })).toBe(false);
+    expect(continuesChat({ source: 'claude-code', id: 'not an id' })).toBe(false);
+
+    const draft = defaultSpec('nightly');
+    expect(onBotEngine(draft, chat, 'builtin')).toBe(draft);
+    expect(onBotEngine(draft, chat, 'claude-code')).toMatchObject({ model: 'auto', engine: { type: 'claude-code', resume: chat.id } });
+    expect(onBotEngine(draft, chat, 'codex').engine).toEqual({ type: 'codex' });
   });
 });

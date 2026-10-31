@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { basename, resolve as resolvePath } from 'node:path';
-import { HuskError } from '@husk-ai/core';
-import type { DistilledAgent, ModelProvider, Transcript } from '@husk-ai/core';
+import { AGENT_CLIS, HuskError, botEngines, onBotEngine } from '@husk-ai/core';
+import type { BotEngine, DistilledAgent, ModelProvider, Transcript } from '@husk-ai/core';
 import { parse, required } from '../args.js';
 import { load, parseTranscripts, save, summarise } from '../lib/transcripts.js';
 import { pinned, resolveModel } from '../lib/models.js';
@@ -27,6 +27,7 @@ export async function run(argv: string[]): Promise<number> {
       'no-model': { type: 'boolean', default: false },
       out: { type: 'string' },
       name: { type: 'string' },
+      engine: { type: 'string' },
       force: { type: 'boolean', default: false },
     },
     'distill',
@@ -43,6 +44,16 @@ export async function run(argv: string[]): Promise<number> {
   }
 
   const transcript = await locate(ref);
+  // What the bot runs on, chosen as the console chooses: the chat's own app when
+  // it is installed, so the bot goes on under the person's own login and limits.
+  const engines = botEngines(transcript.source);
+  const asked = values.engine as string | undefined;
+  if (asked !== undefined && !(engines as string[]).includes(asked)) {
+    throw new HuskError('E_CONFIG', `--engine ${asked} is not one this chat can run on here`, {
+      hint: `here it can run on ${engines.join(', ')}; claude-code and codex need that app installed`,
+    });
+  }
+  const engine = (asked as BotEngine | undefined) ?? engines[0]!;
   const counts = summarise(transcript);
   ui.note(
     `${ui.dim('source')} ${transcript.title || transcript.id} ${ui.dim(`· ${transcript.messages.length} messages · ${transcript.source}`)}`,
@@ -59,10 +70,11 @@ export async function run(argv: string[]): Promise<number> {
   // tool bundles. `toSpec` in @husk-ai/sessions does that normalising -- including
   // `origin`, from the transcript itself, so the CLI and the control plane
   // record provenance the same way.
-  const spec = specFromDistilled(agent, {
+  const draft = specFromDistilled(agent, {
     transcript,
     ...(values.name ? { name: values.name as string } : {}),
   });
+  const spec = onBotEngine(draft, transcript, engine);
 
   const yaml = renderSpec(spec, {
     provenance: [
@@ -92,6 +104,7 @@ export async function run(argv: string[]): Promise<number> {
       ['examples', spec.examples.length ? `${spec.examples.length} pair(s)` : ui.dim('none')],
       ['tools', spec.tools.join(', ')],
       ['computer', spec.computer.enabled ? 'yes' : ui.dim('no')],
+      ['runs on', runsOn(engine, spec.engine.resume !== undefined)],
       ['confidence', confidenceBar(agent.confidence)],
     ]),
   );
@@ -168,6 +181,12 @@ async function pickProvider(
     const reason = (err as Error).message;
     return { provider: undefined, modelId: null, why: `no model reachable (${reason}) — falling back to heuristics` };
   }
+}
+
+/** The engine, as a person reads it. */
+function runsOn(engine: BotEngine, continues: boolean): string {
+  if (engine === 'builtin') return `Husk's own engine ${ui.dim('· it needs a model: an API key, or a local one')}`;
+  return `${AGENT_CLIS[engine].name}, under your own login${continues ? ', going on with this chat' : ''}`;
 }
 
 function confidenceBar(value: number): string {
