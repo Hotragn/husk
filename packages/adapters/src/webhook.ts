@@ -40,9 +40,14 @@ export function verifyWebhookSignature(opts: WebhookSignatureOptions): WebhookVe
     if (Math.abs(nowSec - ts) > opts.toleranceSec) return { ok: false, reason: 'timestamp outside the replay window' };
   }
 
+  // `sha256=<hex>` as documented, or the bare hex some senders send. A signature
+  // named for another algorithm is refused as that, not compared as a mismatch:
+  // a sender signing with sha1 is told what is wrong.
+  const eq = opts.signature.indexOf('=');
+  if (eq >= 0 && opts.signature.slice(0, eq).trim().toLowerCase() !== 'sha256') return { ok: false, reason: 'signature is not sha256' };
+  const supplied = eq >= 0 ? opts.signature.slice(eq + 1) : opts.signature;
   const body = typeof opts.rawBody === 'string' ? opts.rawBody : opts.rawBody.toString('utf8');
   const signed = opts.timestamp !== undefined ? `${opts.timestamp}.${body}` : body;
-  const supplied = opts.signature.includes('=') ? opts.signature.slice(opts.signature.indexOf('=') + 1) : opts.signature;
   return safeCompare(hmacHex(opts.secret, signed), supplied.trim().toLowerCase())
     ? { ok: true }
     : { ok: false, reason: 'signature does not match' };
