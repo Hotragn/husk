@@ -25,10 +25,25 @@ EXTRACTED
 | --- | --- |
 | `--model <m>` | Model to distil with. Default `auto` |
 | `--no-model` | Force the free heuristic path even when a model is configured |
+| `--engine <e>` | What the bot runs on: `claude-code`, `codex` or `builtin`. Default: see below |
 | `--out <file>` | Where to write. Default `husk.yaml` |
 | `--name <n>` | Override the generated husk name |
 | `--force` | Overwrite an existing file |
 | `--json` | Print the distillation result |
+
+## What the bot runs on
+
+A bot keeps running on the AI the chat came from, under your own login, with that app's
+own limits. `husk distill` picks it the way the console's "Make a bot from a chat" does:
+
+1. **The chat's own app, when it is installed.** A Claude Code chat runs on your Claude
+   Code, and goes on with that chat itself; a Codex chat runs on your Codex.
+2. **Otherwise the other one,** if it is installed. A chat from an app that cannot run on
+   its own, such as Claude Desktop or ChatGPT, runs on your Claude Code or Codex.
+3. **Husk's own engine** only when neither is installed. It needs a model of its own: an
+   API key, or a local model.
+
+`husk distill` says which it chose, on its "runs on" line, and `--engine` picks another.
 
 ## Two modes
 

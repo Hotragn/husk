@@ -217,10 +217,11 @@ export const COMMANDS: HelpEntry[] = [
     summary: 'Turn a chat into a husk.yaml',
     usage: 'husk distill <transcript-id|path> [--out husk.yaml]',
     details:
-      'Prints what it extracted and how confident it is. The heuristic path is free and needs\nno API key; --no-model forces it even when a model is configured.',
+      'Prints what it extracted and how confident it is. The heuristic path is free and needs\nno API key; --no-model forces it even when a model is configured.\n\nThe bot runs on the chat\'s own app when it is installed: a Claude Code chat on your\nClaude Code, a Codex chat on your Codex, under your own login. Otherwise on the other\none if it is installed, and on Husk\'s own engine only when neither is.',
     flags: [
       ['--model <m>', 'model to distill with (default: auto)'],
       ['--no-model', 'force the free heuristic path'],
+      ['--engine <e>', 'claude-code | codex | builtin; default: the chat\'s own app, as above'],
       ['--out <file>', 'where to write (default: husk.yaml)'],
       ['--name <n>', 'override the generated husk name'],
       ['--force', 'overwrite an existing file'],

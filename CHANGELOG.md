@@ -176,6 +176,11 @@ pre-release of 7 October.
 
 ### Changed
 
+- **`husk distill` makes a bot that runs on the chat's own app.** A Claude Code chat's
+  bot runs on your Claude Code and goes on with that chat; a Codex chat's runs on your
+  Codex, under your own login and that app's own limits. Husk's own engine is the last
+  choice, when neither is installed. This is the order the console already used, and
+  `--engine` picks another.
 - **Chats get the image with the browser by default**, and setup pulls it with its
   progress, so a chat's first page does not wait on a 2 GB download mid-call
   ([#201](https://github.com/Hotragn/husk/pull/201)).

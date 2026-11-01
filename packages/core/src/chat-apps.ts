@@ -5,6 +5,8 @@ import { delimiter, dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { HUSK_RANGE } from './identity.js';
 import { parseJsonc, setMember } from './jsonc.js';
+import { parseSpec } from './spec.js';
+import type { HuskSpec } from './spec.js';
 
 /**
  * The chat apps `husk setup` can connect, and how each one is told about Husk.
@@ -306,6 +308,34 @@ export function findCli(cli: AgentCli, env: NodeJS.ProcessEnv = process.env, hom
   const target = shimTarget(readText(found) ?? '');
   const file = target && join(dirname(found), target);
   return file && existsSync(file) ? runnable(file) : undefined;
+}
+
+/** What a bot made from a chat runs on: the person's Claude Code or Codex, or Husk's own engine. */
+export type BotEngine = AgentCli | 'builtin';
+
+/**
+ * The engines a bot made from a chat can run on, best first: the chat's own
+ * app when its CLI is installed, so the bot goes on under the person's own
+ * login and that app's own limits; then any other installed CLI; then Husk's
+ * own engine, which needs a model of its own. The console's "Make a bot from
+ * a chat" and `husk distill` both choose by this.
+ */
+export function botEngines(source: string, env: NodeJS.ProcessEnv = process.env): BotEngine[] {
+  const own: AgentCli | undefined = source === 'claude-code' ? 'claude-code' : source === 'codex' ? 'codex' : undefined;
+  const installed = (Object.keys(AGENT_CLIS) as AgentCli[]).filter((cli) => findCli(cli, env) !== undefined);
+  return [...(own && installed.includes(own) ? [own] : []), ...installed.filter((cli) => cli !== own), 'builtin'];
+}
+
+/** Whether a bot on Claude Code would go on with this chat itself, rather than start from the draft. */
+export function continuesChat(transcript: { source: string; id: string }): boolean {
+  return transcript.source === 'claude-code' && /^[A-Za-z0-9-]{8,80}$/.test(transcript.id);
+}
+
+/** A bot draft set to run on `engine`. On Claude Code a Claude Code chat goes on as itself; on a CLI, the CLI picks the model. */
+export function onBotEngine(draft: HuskSpec, transcript: { source: string; id: string }, engine: BotEngine): HuskSpec {
+  if (engine === 'builtin') return draft;
+  const resume = engine === 'claude-code' && continuesChat(transcript) ? transcript.id : undefined;
+  return parseSpec({ ...draft, model: 'auto', engine: { type: engine, ...(resume ? { resume } : {}) } });
 }
 
 /** Write-then-rename in the same folder, so a crash never leaves half a config. */
