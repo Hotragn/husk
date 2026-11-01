@@ -54,12 +54,27 @@ describe('browser prerequisite checks', () => {
     expect(await inspectBrowserCapability(computer)).toMatchObject({ readyToInstall: false, reason: expect.stringContaining('needs Linux') });
   });
 
-  it('says a Windows computer without WSL has no Linux for a browser, whatever its PATH holds', async () => {
-    const { computer, commands } = machine({ system: 'Windows', missing: [] });
-    Object.assign(computer.info, { spec: { labels: { 'husk.degradation': 'wsl-absent' } } });
-    await expect(provisionChromium(computer)).rejects.toThrow('the browser needs Linux, and this computer runs cmd.exe on Windows');
-    expect(await inspectBrowserCapability(computer)).toMatchObject({ readyToInstall: false, hint: expect.stringContaining('wsl --install') });
-    expect(commands).not.toContain('uname -m');
+  it('says a Windows computer without WSL has no Linux for a browser, unless WSL works by now', async () => {
+    // cmd.exe with no `uname`, cmd.exe with Git for Windows' `uname`, and a computer reopened once WSL works.
+    for (const [os, refused] of [['', true], ['MINGW64_NT-10.0-26200', true], ['Linux', false]] as const) {
+      const { computer, commands } = machine({ system: 'Linux', missing: [] });
+      const exec = computer.exec.bind(computer);
+      Object.assign(computer.info, { spec: { labels: { 'husk.degradation': 'wsl-absent' } } });
+      Object.assign(computer, {
+        exec: async (req: Parameters<Computer['exec']>[0]): Promise<ExecResult> =>
+          req.cmd === 'uname -s'
+            ? { stdout: os, stderr: os ? '' : "'uname' is not recognized as an internal or external command", exitCode: os ? 0 : 1, durationMs: 1, timedOut: false, truncated: false }
+            : exec(req),
+      });
+      const capability = await inspectBrowserCapability(computer);
+      if (refused) {
+        await expect(provisionChromium(computer)).rejects.toThrow('the browser needs Linux, and this computer runs cmd.exe on Windows');
+        expect(capability).toMatchObject({ readyToInstall: false, hint: expect.stringContaining('wsl --install') });
+        expect(commands).not.toContain('uname -m');
+      } else {
+        expect(capability).toEqual({ engine: 'chrome', installed: false, readyToInstall: true, arch: 'x64' });
+      }
+    }
   });
 
   it('reports passing local prerequisites without touching the network', async () => {

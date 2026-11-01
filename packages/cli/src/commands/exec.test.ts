@@ -12,7 +12,8 @@ describe('exec timeout', () => {
     vi.spyOn(ui, 'note').mockImplementation(() => {});
     const timedOut = { stdout: '', exitCode: 124, timedOut: true, truncated: false, durationMs: 10_000 };
 
-    exec.mockResolvedValueOnce({ ...timedOut, stderr: '' });
+    // Fly's own words for a stop it confirmed: stderr alone must not read as unconfirmed.
+    exec.mockResolvedValueOnce({ ...timedOut, stderr: 'fly api timed out after 10000ms' });
     expect(await run(['box', '--timeout', '10', '--', 'sleep 60'])).toBe(124);
     expect(warn).toHaveBeenLastCalledWith('timed out after 10s — the process tree was killed');
 
