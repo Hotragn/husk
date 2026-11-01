@@ -439,6 +439,14 @@ pre-release of 7 October.
 
 ### Security
 
+- **The fixed `glob` and `minimatch` under `@fastify/static`**, which serves the console:
+  `glob` 13.0.6 to 14.0.3, out of [GHSA-3g3m-2fjr-6pw4](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4),
+  and `minimatch` 10.2.6 to 11.0.3, out of [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249).
+  Husk never ran the affected code: `@fastify/static` calls `glob` only with `wildcard`
+  off, and Husk leaves it on. The desktop app and the Claude Desktop extension ship the
+  fixed versions. An install from npm still gets `glob` 13 until `@fastify/static` moves
+  on, because npm ignores overrides inside a published package
+  ([#276](https://github.com/Hotragn/husk/pull/276)).
 - **zod 4.** `@husk-ai/core`, `@husk-ai/server` and `@husk-ai/sessions` move from zod
   3.25.76 to 4.6.7, out of [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)
   (high: memory exhaustion validating large arrays, every version below 4.6.6). The

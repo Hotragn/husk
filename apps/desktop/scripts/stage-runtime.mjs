@@ -18,7 +18,7 @@ const run = promisify(execFile);
 const npm = process.env.npm_execpath;
 if (!npm) throw new Error('Run this with `npm run stage`.');
 
-const version = JSON.parse(await readFile(join(repo, 'package.json'), 'utf8')).version;
+const { version, overrides } = JSON.parse(await readFile(join(repo, 'package.json'), 'utf8'));
 await mkdir(join(repo, 'build'), { recursive: true });
 const packed = await mkdtemp(join(repo, 'build', 'desktop-tarballs-'));
 
@@ -35,8 +35,9 @@ for (const dir of await readdir(join(repo, 'packages'))) {
 
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
-const manifest = (deps) => JSON.stringify({ name: 'husk-desktop-runtime', private: true, version, type: 'module', dependencies: deps }, null, 2);
-await writeFile(join(out, 'package.json'), manifest({ '@husk-ai/mcp': tarballs['@husk-ai/mcp'] }).replace(/}\s*$/, `,\n  "overrides": ${JSON.stringify(tarballs)}\n}`));
+const manifest = (deps, extra = {}) => JSON.stringify({ name: 'husk-desktop-runtime', private: true, version, type: 'module', dependencies: deps, ...extra }, null, 2);
+// The repo's own overrides come too, so the app ships the dependency fixes the repo is tested with.
+await writeFile(join(out, 'package.json'), manifest({ '@husk-ai/mcp': tarballs['@husk-ai/mcp'] }, { overrides: { ...overrides, ...tarballs } }));
 console.log('Installing the production dependency graph…');
 await run(process.execPath, [npm, 'install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], {
   cwd: out,

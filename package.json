@@ -30,6 +30,9 @@
     "clean": "node scripts/clean.mjs"
   },
   "overrides": {
+    "@fastify/static": {
+      "glob": "^14.0.2"
+    },
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "tmp": "^0.2.6"
