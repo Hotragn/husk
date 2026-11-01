@@ -68,5 +68,7 @@ try {
   if (status !== 0 || !/SMOKE loaded Husk console/.test(log)) process.exitCode = 1;
 } finally {
   ollama.close();
-  rmSync(home, { recursive: true, force: true });
+  // The app asks its Husk to stop and exits without waiting, and Windows will
+  // not delete a folder a running process works in: retry while it stops.
+  rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 }

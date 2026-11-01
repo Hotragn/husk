@@ -35,6 +35,24 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  wsl:
+    name: the free path on Windows, through WSL
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      # GitHub's Windows runners have no WSL, so the packages job checks the
+      # free path in cmd.exe. This job installs WSL 2 and checks it in Linux.
+      - uses: Vampire/setup-wsl@4c48163d9f981914dd8caa0fc335fe19cca5bff4 # v7.2.0
+      - run: npm ci
+      - run: npm run build
+      - run: npm test -w @husk-ai/cli -- smoke.test.ts
+        env:
+          HUSK_EXPECT_WSL: '1'
+
   drift:
     name: duplicated facts still agree
     runs-on: ubuntu-latest

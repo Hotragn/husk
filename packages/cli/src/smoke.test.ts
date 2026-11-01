@@ -290,26 +290,27 @@ describe.skipIf(!built || !integration)('doctor, against this machine', { timeou
 describe.skipIf(!built)('the free path, end to end', { timeout: 60_000 }, () => {
   const name = 'vitest-smoke';
 
-  it('creates, execs, lists, refuses an unconfirmed rm, then removes', (ctx) => {
+  it('creates, execs, lists, refuses an unconfirmed rm, then removes', () => {
     const up = husk(['up', name, '--provider', 'local', '--json']);
     expect(up.status, up.stderr).toBe(0);
     const info = JSON.parse(up.stdout);
     expect(info.provider).toBe('local');
 
     // On Windows the local provider runs commands through WSL. When WSL is
-    // absent -- or has fallen over, which it does -- husk degrades to the host
-    // shell and says so. POSIX redirection is meaningless there, so the honest
-    // move is to skip rather than assert a Linux behaviour the machine cannot
-    // provide. CI runs this on Linux, where it always executes.
+    // absent -- or has fallen over, which it does -- husk degrades to cmd.exe,
+    // the path every Windows user without WSL gets. GitHub's Windows runners
+    // have no WSL, so the packages job walks the journey in cmd.exe (#63), and
+    // the wsl job in ci.yml installs WSL and sets HUSK_EXPECT_WSL to walk it
+    // in Linux.
     const shell = String(info.spec?.labels?.['husk.shell'] ?? '');
-    if (shell === 'windows') {
-      husk(['rm', name, '--yes']);
-      ctx.skip('no Linux shell on this host (WSL missing or unhealthy)');
-      return;
-    }
+    const cmd = shell === 'windows';
 
     try {
-      const exec = husk(['exec', name, '--json', '--', 'echo hi > a.txt; cat a.txt']);
+      if (process.env.HUSK_EXPECT_WSL === '1') expect(shell).toMatch(/^wsl:/);
+      // The machine records why it is not Linux, for the agent driving it.
+      if (cmd) expect(info.spec.labels['husk.degradation']).toMatch(/^wsl-(absent|broken)$/);
+
+      const exec = husk(['exec', name, '--json', '--', cmd ? 'echo hi> a.txt & type a.txt' : 'echo hi > a.txt; cat a.txt']);
       expect(exec.status).toBe(0);
       const result = JSON.parse(exec.stdout);
       expect(result.exitCode).toBe(0);
