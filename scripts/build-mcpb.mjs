@@ -12,7 +12,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);
 const npm = process.env.npm_execpath;
 if (!npm) throw new Error('Run this with npm run bundle:mcpb.');
-const version = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version;
+const { version, overrides } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
 await mkdir(join(root, 'build'), { recursive: true });
 const stage = await mkdtemp(join(root, 'build', 'mcpb-'));
 const packed = join(stage, 'tarballs');
@@ -26,7 +26,8 @@ for (const dir of await readdir(join(root, 'packages'))) {
   const { stdout } = await run(process.execPath, [npm, 'pack', '--json', '--pack-destination', packed], { cwd: join(root, 'packages', dir), maxBuffer: 8 * 1024 * 1024 });
   tarballs[pkg.name] = `file:${join(packed, JSON.parse(stdout)[0].filename).replaceAll('\\', '/')}`;
 }
-await writeFile(join(bundle, 'package.json'), JSON.stringify({ name: 'husk-desktop-bundle', private: true, version, type: 'module', dependencies: { '@husk-ai/mcp': tarballs['@husk-ai/mcp'] }, overrides: tarballs }, null, 2));
+// The repo's own overrides come too, so the extension ships the dependency fixes the repo is tested with.
+await writeFile(join(bundle, 'package.json'), JSON.stringify({ name: 'husk-desktop-bundle', private: true, version, type: 'module', dependencies: { '@husk-ai/mcp': tarballs['@husk-ai/mcp'] }, overrides: { ...overrides, ...tarballs } }, null, 2));
 console.log('Installing the packed production dependency graph…');
 await run(process.execPath, [npm, 'install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: bundle, timeout: 300_000, maxBuffer: 8 * 1024 * 1024 });
 // Runtime files are self-contained; do not ship local tarball paths or usernames.
