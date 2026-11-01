@@ -2,6 +2,7 @@ import { OG_CONTENT_TYPE, OG_SIZE, ogCard } from "@/lib/og-card";
 
 export const alt =
   "Why agents need honest sandboxes — guardrails stop accidents. Only isolation stops a prompt-injected model.";
+export const dynamic = "force-static";
 export const size = OG_SIZE;
 export const contentType = OG_CONTENT_TYPE;
 

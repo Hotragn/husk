@@ -274,7 +274,7 @@ installed. The
   them, so one `husk.yaml` runs on Opus or on a local Gemma.
 - **Four adapters.** Discord, Slack, Telegram, webhook.
 - **No product telemetry.** The installed runtime has no analytics, crash reporter,
-  or version ping. The marketing and documentation websites use Vercel Web Analytics.
+  or version ping. The marketing and documentation websites use PostHog analytics.
 - **No native modules.** `npm install` finishes on Windows with no C++ toolchain. Node
   20.10 or newer.
 - **Automated regression tests and archive smoke checks.** `npm test` checks the
