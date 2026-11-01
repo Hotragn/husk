@@ -2,7 +2,8 @@
 
 Two checks, both run by a person in the real apps:
 
-1. **The probe**: what each app calls itself, and whether each chat gets its own process.
+1. **The probe**: what each app calls itself, which protocol it speaks and what it
+   declares it can do, and whether each chat gets its own process.
 2. **The five tasks**: how well the app's model uses Husk.
 
 Do the probe first. It runs nothing, and its answers decide whether the in-chat "I'm
@@ -41,7 +42,8 @@ Mac use `~/Library/Application Support/Claude/claude_desktop_config.json` and
 
 5. Send `C:\Users\<you>\mcp-probe.log`. Each line is one event:
    - `start`: a new process, with its pid.
-   - `initialize`: the app's `client` name and `clientVersion`.
+   - `initialize`: the app's `client` name and `clientVersion`, the `protocol` it asked
+     for, and the `capabilities` it declares, such as `elicitation`.
    - `disconnect`: the process ended.
 
    Two chats with two different pids means one process per chat.

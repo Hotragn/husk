@@ -97,6 +97,21 @@ const SYSTEM_CANDIDATES = ['chromium', 'chromium-browser', 'google-chrome', 'goo
  * message. Observed exactly that.
  */
 async function archOf(computer: Computer, signal?: AbortSignal): Promise<BrowserArch> {
+  // A Windows computer without working WSL runs cmd.exe, where `uname` exists
+  // only if Git for Windows happens to be on PATH. Probing it there answered
+  // with `husk ps` for a machine that was up, or asked for Python 3. The label
+  // is from when the computer was made, and one reopened once WSL works runs on
+  // Linux, so the computer itself is asked before it is refused.
+  const degraded = computer.info.spec?.labels?.['husk.degradation'];
+  if (degraded && (await sh(computer, 'uname -s', { signal, timeoutSec: 30 })).out.trim() !== 'Linux') {
+    const fix =
+      degraded === 'wsl-broken'
+        ? 'WSL is installed here but not answering; the user can run `wsl --shutdown` to fix it'
+        : 'the user can run `wsl --install` to fix it';
+    throw new HuskError('E_NOT_IMPLEMENTED', 'the browser needs Linux, and this computer runs cmd.exe on Windows', {
+      hint: `${fix}. No browser download was attempted.`,
+    });
+  }
   const res = await sh(computer, 'uname -m', { signal, timeoutSec: 30 });
   if (res.code !== 0 || !res.out.trim()) {
     throw new HuskError('E_COMPUTER_FAILED', 'the computer could not run a command, so the browser cannot start', {

@@ -47,15 +47,19 @@ because that step had been sitting on `main`, unused, since `0.1.2`.
    `npm run install-smoke -- --registry` drops the local overrides and resolves the graph
    for real.
 
-4. **Tag at an explicit SHA**, never at `HEAD`. `HEAD` moves; a release is a point.
+4. **The real-machine pass.** For a release that changes what people see on their own
+   machines, a person runs [real-machine-checklist.md](real-machine-checklist.md) on
+   Windows and on a Mac, on the commit about to be tagged.
 
-5. **`release.yml` publishes in dependency order**, then creates the GitHub Release.
+5. **Tag at an explicit SHA**, never at `HEAD`. `HEAD` moves; a release is a point.
+
+6. **`release.yml` publishes in dependency order**, then creates the GitHub Release.
    Before anything, it runs the `starter` workflow (the Claude Desktop extension's
    bundle and its smoke test), and the publish job checks the `NPM_TOKEN` secret with
    `npm whoami` before building. The Release it cuts carries the extension,
    `build/*.mcpb`, and its `.sha256`.
 
-6. **Verify from outside the repo**, against the registry rather than the workflow:
+7. **Verify from outside the repo**, against the registry rather than the workflow:
 
    ```bash
    npx -y @husk-ai/cli@X.Y.Z doctor

@@ -219,6 +219,12 @@ pre-release of 7 October.
 
 ### Fixed
 
+- **`husk exec` called every timeout a kill**, even when the computer could not confirm
+  the stop. It now says the command may still be running, as the chat's `shell` tool
+  already did ([#275](https://github.com/Hotragn/husk/pull/275)).
+- **A Windows PC without WSL gave a misleading browser error**: to check `husk ps` for a
+  machine that was up, or to install Python 3. It now says the browser needs Linux, and
+  how to get WSL ([#275](https://github.com/Hotragn/husk/pull/275)).
 - **A Chromium that died stayed dead** until the shared Husk restarted. The next call now
   starts it again, keeping its logins. A failed launch, and a computer reaped for
   idleness, no longer leave a Chromium behind ([#217](https://github.com/Hotragn/husk/pull/217)).

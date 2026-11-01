@@ -126,6 +126,10 @@ and `cloudflared tunnel run husk`. See [Cloudflare's tunnel guide](https://devel
 
 ## Step 2: Start Husk with remote access
 
+If Husk is already running on this machine, quit it first: the desktop app's tray, Quit
+and stop Husk. Otherwise `husk serve` stops with "another husk server (v…) is already on
+127.0.0.1:7377".
+
 ```bash
 husk serve --remote --public-url https://box.tail1234.ts.net
 ```
