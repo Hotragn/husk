@@ -148,7 +148,11 @@ one move. `$HUSK_HOME` overrides the location; otherwise it is `~/.husk`.
   cache/            downloaded assets, snapshot tarballs
   daemon.json       the shared Husk's address and token
   daemon.log        the shared Husk's log
+  holds.json        the computers a person holds, kept across a restart of the shared Husk
+  desktop.log       the desktop app's log
   jobs.json         the job host's address and token, while a bot has a trigger
+  jobs.log          the job host's log
+  bots/             one folder per bot: where its Claude Code or Codex runs, and its notes (memory/)
   remote/           remote access: its signing key, the owner's passkey, the apps signed in
   .oriented         the marker that stops the welcome block reprinting
 ```

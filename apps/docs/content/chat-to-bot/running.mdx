@@ -29,7 +29,9 @@ it was running stops part-way, its next one waits until you press Give back, and
 says once that it paused. Then it goes on where it was. A chat is told to stop instead,
 because it has you to tell; a bot has nobody. Cancelling the run, or its
 `limits.timeoutSec`, still ends it while it waits. This holds on every engine: Husk's
-own, and your Claude Code or Codex.
+own, and your Claude Code or Codex. The one exception, for now: a bot you start with
+`husk run` on Husk's own engine runs in your terminal, outside the shared Husk, so a
+take-over does not reach it.
 
 ## What a run looks like
 

@@ -98,8 +98,9 @@ app's limits:
 
 This checks Husk against what each app sends, not the apps themselves. Cells marked
 community or not documented, and each app's real behaviour, are confirmed in the real
-apps before a release, with the probe in
-[evals/running-the-checks.md](evals/running-the-checks.md).
+apps before a release: what each app sends with the probe in
+[evals/running-the-checks.md](evals/running-the-checks.md), and what it does with
+[real-machine-checklist.md](real-machine-checklist.md).
 
 ## Summary
 

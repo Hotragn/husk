@@ -6,10 +6,12 @@
  * appends one line when the process starts, one when a client initializes, and
  * one when the client disconnects, to the log file given as the first argument
  * (default: mcp-probe.log in the home directory). The point is to see, without
- * running Husk, what each chat app calls itself in `clientInfo` and whether two
- * chats get two processes.
+ * running Husk, what each chat app calls itself in `clientInfo`, which protocol
+ * it speaks and what it declares it can do, and whether two chats get two
+ * processes.
  *
- * Logged: time, pid, clientInfo name and version.
+ * Logged: time, pid, clientInfo name and version, the protocol version asked
+ * for, and the names of the capabilities declared.
  * Nothing else: no environment, no arguments, no message content.
  *
  * Usage: node scripts/mcp-probe.mjs [log-file]
@@ -42,6 +44,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     log('initialize', {
       client: short(p.clientInfo?.name),
       clientVersion: short(p.clientInfo?.version),
+      protocol: short(p.protocolVersion),
+      capabilities: p.capabilities && typeof p.capabilities === 'object' ? Object.keys(p.capabilities).map(short) : [],
     });
     send({
       id: msg.id,

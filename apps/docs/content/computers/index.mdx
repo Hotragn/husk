@@ -204,7 +204,7 @@ A computer's rendered browser is Chrome, unless it asks for
 | Tabs | as many as a page opens | one |
 | Downloads from a link | yes | no |
 | Sees what covers a button | yes | no |
-| Providers | all of them | `docker`, `podman` and `local` |
+| Providers | any that runs Linux: not `local` on macOS, or on Windows without WSL | `docker`, `podman`, and `local` on Linux |
 | Sandbox | Chrome's own, outside a container | none of its own: on `docker` and `podman` the container is its sandbox |
 
 ### Which one to pick
