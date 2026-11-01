@@ -1,5 +1,26 @@
-import { describe, expect, it } from 'vitest';
-import { rewriteQuoted, strayQuote } from './exec.js';
+import { describe, expect, it, vi } from 'vitest';
+import { STOP_UNCONFIRMED } from '@husk-ai/runtime';
+import * as ui from '../ui.js';
+import { rewriteQuoted, run, strayQuote } from './exec.js';
+
+const exec = vi.fn();
+vi.mock('../lib/computers.js', () => ({ resolve: async () => ({ exec }) }));
+
+describe('exec timeout', () => {
+  it('says the command was killed only when the computer confirmed it', async () => {
+    const warn = vi.spyOn(ui, 'warn').mockImplementation(() => {});
+    vi.spyOn(ui, 'note').mockImplementation(() => {});
+    const timedOut = { stdout: '', exitCode: 124, timedOut: true, truncated: false, durationMs: 10_000 };
+
+    exec.mockResolvedValueOnce({ ...timedOut, stderr: '' });
+    expect(await run(['box', '--timeout', '10', '--', 'sleep 60'])).toBe(124);
+    expect(warn).toHaveBeenLastCalledWith('timed out after 10s — the process tree was killed');
+
+    exec.mockResolvedValueOnce({ ...timedOut, stderr: `fly api timed out after 10000ms\n${STOP_UNCONFIRMED}` });
+    await run(['box', '--timeout', '10', '--', 'sleep 60']);
+    expect(warn).toHaveBeenLastCalledWith(expect.stringContaining('it may still be running inside the computer'));
+  });
+});
 
 /**
  * The quoting hint exists for one host: cmd.exe, which does not strip single

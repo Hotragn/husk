@@ -54,6 +54,14 @@ describe('browser prerequisite checks', () => {
     expect(await inspectBrowserCapability(computer)).toMatchObject({ readyToInstall: false, reason: expect.stringContaining('needs Linux') });
   });
 
+  it('says a Windows computer without WSL has no Linux for a browser, whatever its PATH holds', async () => {
+    const { computer, commands } = machine({ system: 'Windows', missing: [] });
+    Object.assign(computer.info, { spec: { labels: { 'husk.degradation': 'wsl-absent' } } });
+    await expect(provisionChromium(computer)).rejects.toThrow('the browser needs Linux, and this computer runs cmd.exe on Windows');
+    expect(await inspectBrowserCapability(computer)).toMatchObject({ readyToInstall: false, hint: expect.stringContaining('wsl --install') });
+    expect(commands).not.toContain('uname -m');
+  });
+
   it('reports passing local prerequisites without touching the network', async () => {
     const { computer, commands } = machine({ system: 'Linux', missing: [] });
     expect(await inspectBrowserCapability(computer)).toEqual({ engine: 'chrome', installed: false, readyToInstall: true, arch: 'x64' });

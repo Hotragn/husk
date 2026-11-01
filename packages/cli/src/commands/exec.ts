@@ -1,3 +1,4 @@
+import { STOP_UNCONFIRMED } from '@husk-ai/runtime';
 import { UsageError, parse, parseCount, parseEnvPairs, required } from '../args.js';
 import { resolve } from '../lib/computers.js';
 import { interruptSignal } from '../signal.js';
@@ -78,7 +79,14 @@ export async function run(argv: string[]): Promise<number> {
   if (values.json) {
     ui.json(result);
   } else if (result.timedOut) {
-    ui.warn(`timed out after ${values.timeout ?? 120}s — the process tree was killed`);
+    // "Killed" only when the computer confirmed it. When it could not, it says
+    // so at the end of stderr, after the stream, where nobody would see it.
+    const secs = values.timeout ?? 120;
+    ui.warn(
+      result.stderr.includes(STOP_UNCONFIRMED)
+        ? `timed out after ${secs}s — it may still be running inside the computer: stopping it could not be confirmed`
+        : `timed out after ${secs}s — the process tree was killed`,
+    );
     ui.note(ui.dim('hint:  raise it with --timeout, e.g. --timeout 600'));
   } else if (result.truncated) {
     ui.warn('output was clamped — re-run writing to a file and `husk cp` it out');
