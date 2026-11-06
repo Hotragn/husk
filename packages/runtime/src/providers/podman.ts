@@ -42,6 +42,7 @@ export class PodmanProvider extends OciProvider {
     try {
       const { stdout } = await execFileAsync('podman', ['version', '--format', '{{.Client.Version}}'], {
         timeout: 10_000,
+        windowsHide: true,
       });
       clientVersion = stdout.trim();
     } catch (err) {
@@ -72,7 +73,7 @@ export class PodmanProvider extends OciProvider {
       const { stdout } = await execFileAsync(
         'podman',
         ['info', '--format', '{{.Version.Version}}|{{.Host.Security.Rootless}}'],
-        { timeout: 15_000 },
+        { timeout: 15_000, windowsHide: true },
       );
       const [engineVersion, rootless] = stdout.trim().split('|');
       const version = `podman ${engineVersion || clientVersion}${rootless === 'true' ? ' (rootless)' : ''}`;
@@ -175,6 +176,7 @@ async function machineState(): Promise<MachineState> {
   try {
     const { stdout } = await execFileAsync('podman', ['machine', 'list', '--format', '{{.Name}}\t{{.Running}}'], {
       timeout: 15_000,
+      windowsHide: true,
     });
     const rows = stdout
       .split('\n')
