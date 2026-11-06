@@ -209,17 +209,25 @@ if (failures === failuresBeforeBins) ok('every published bin runs');
 // --------------------------------------------------------------- registry
 console.log('\nregistry');
 const failuresBeforeRegistry = failures;
+// A version already on npm from the commit being released is this release,
+// part-way: a re-run of a publish that stopped, or one finished by hand. The
+// release workflow skips it. From any other commit it is a version nobody bumped.
+const head = (await run('git', ['rev-parse', 'HEAD'])).stdout.trim();
 for (const dir of ORDER) {
   const p = pkgs[dir];
   if (!p) continue;
+  let published;
   try {
-    const { stdout } = await run('npm', ['view', `${p.name}@${p.version}`, 'version']);
-    if (stdout.trim()) bad(`${p.name}@${p.version} is already published -- bump the version`);
+    const { stdout } = await run('npm', ['view', `${p.name}@${p.version}`, 'version', 'gitHead', '--json']);
+    published = JSON.parse(stdout.trim() || 'null');
   } catch {
-    // A 404 is the good case: this version does not exist yet.
+    continue; // A 404 is the good case: this version does not exist yet.
   }
+  if (!published) continue;
+  if (published.gitHead === head) ok(`${p.name}@${p.version} is already published from this commit -- the release skips it`);
+  else bad(`${p.name}@${p.version} is already published${published.gitHead ? ` from ${published.gitHead.slice(0, 7)}` : ''} -- bump the version`);
 }
-if (failures === failuresBeforeRegistry) ok('no version collides with what is already on the registry');
+if (failures === failuresBeforeRegistry) ok('no version collides with one published from another commit');
 
 try {
   const { stdout } = await run('npm', ['whoami']);
