@@ -26,10 +26,13 @@ interface ServerModule {
     host: string;
     port: number;
     daemon?: boolean;
+    mintToken?: boolean;
     deps?: { runTool?: unknown; remoteMcp?: unknown };
     remote?: { publicUrl: string; provider: string; port?: number; host?: string };
   }): Promise<RunningServer>;
   parsePublicUrl(raw: string): URL;
+  /** The server's own rule for a loopback bind, the one it refuses others by. */
+  isLoopbackHost(host: string): boolean;
 }
 
 /** Where to listen: the flags, then HUSK_HOST and HUSK_PORT, as a service's unit file sets them, then the defaults. */
@@ -99,7 +102,13 @@ export async function run(argv: string[]): Promise<number> {
         remote: { publicUrl, provider, ...(remotePort !== undefined ? { port: remotePort } : {}), ...(remoteHost ? { host: remoteHost } : {}) },
       });
     } else {
-      server = await mod.serve({ host, port, daemon: true, deps: { runTool } });
+      // A token on loopback too, as the Husk a chat starts has: without one, any
+      // program on this machine could drive the computers -- another account, a
+      // container that reaches the host, a page another local port serves. Past
+      // loopback HUSK_TOKEN is still required, so a server meant to be reached
+      // from elsewhere gets a token its owner chose. (Not core's isLoopbackHost:
+      // that one counts 0.0.0.0, which as a destination does reach this machine.)
+      server = await mod.serve({ host, port, daemon: true, mintToken: mod.isLoopbackHost(host), deps: { runTool } });
     }
   } catch (err) {
     spin.stop();
@@ -116,12 +125,15 @@ export async function run(argv: string[]): Promise<number> {
   }
 
   ui.print(`${ui.green('✓')} control plane on ${ui.bold(server.url)}`);
-  // Never the token itself: terminals keep scrollback and logs get shared.
+  // TODO(human): how someone opens the console, now that `husk serve` on loopback
+  // always has a token. The lines below are the old ones: they only say where the
+  // token is in remote mode, so a plain `husk serve` now prints a bare link that
+  // opens a console unable to sign in.
   const signIn = process.env.HUSK_TOKEN ? '  (sign in with your HUSK_TOKEN)' : values.remote === true ? '  (its token is in ~/.husk/daemon.json, readable only by you)' : '';
   ui.print(`  console  ${server.url}/${signIn ? ui.dim(signIn) : ''}`);
   ui.print(ui.dim(`  health   ${server.url}/health`));
   ui.print(ui.dim(`  doctor   ${server.url}/v1/doctor`));
-  ui.print(ui.dim(`  clients  new HuskClient({ baseUrl: "${server.url}" })  // @husk-ai/sdk`));
+  ui.print(ui.dim(`  clients  new HuskClient({ baseUrl: "${server.url}", token })  // @husk-ai/sdk; the token is in ~/.husk/daemon.json`));
   if (publicUrl && values.remote === true) {
     const origin = new URL(publicUrl).origin;
     const published = server.remotePort ?? port + 1;

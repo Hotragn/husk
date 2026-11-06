@@ -35,23 +35,27 @@ curl -s localhost:7377/health
 
 ### Auth
 
-When `HUSK_TOKEN` is set, every request to a `/v1` route but `/v1/a/*` and a signed
-`/v1/w/*` needs `Authorization: Bearer <token>`. Comparison is constant-time.
+Every request to a `/v1` route but `/v1/a/*` and a signed `/v1/w/*` needs
+`Authorization: Bearer <token>`. Comparison is constant-time. The token is `HUSK_TOKEN`
+when it is set. Otherwise `husk serve` on a loopback address mints one when it starts, as
+the shared Husk a chat starts does, and writes it to `~/.husk/daemon.json`, readable only
+by you.
 
-When it is not set, no token is asked for — but the server only ever reaches that state
-on a loopback bind, because it refuses to start otherwise:
+Without `HUSK_TOKEN`, it refuses to start on any other address:
 
 ```text
 error refusing to bind 0.0.0.0 without an auth token: this API can execute shell commands
 hint:  set HUSK_TOKEN=$(openssl rand -hex 32) before `husk serve --host 0.0.0.0`, or bind 127.0.0.1
 ```
 
-Token or not, a web page cannot drive the server:
+On top of the token:
 
 - A request whose `Origin` is not `localhost`, `127.x` or `[::1]` is refused with 403,
   WebSockets included.
-- On a loopback bind, a request whose `Host` is not one of those names is refused, with
-  401 without a token and 403 with one, so DNS rebinding reaches nothing.
+- On a loopback bind, a request whose `Host` is not one of those names is refused, so DNS
+  rebinding reaches nothing.
+
+Neither check stops a program on the same machine, which is what the token is for.
 
 Browsers cannot set headers on `EventSource` or `WebSocket`, so for those two
 transports only — detected by `Accept: text/event-stream` or an `Upgrade: websocket`

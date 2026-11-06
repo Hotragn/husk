@@ -445,6 +445,9 @@ pre-release of 7 October.
 
 ### Security
 
+- **`husk serve` uses a token on loopback too**, as the shared Husk a chat starts always
+  has. It mints one when it starts and writes it to `~/.husk/daemon.json`, readable only
+  by you, unless `HUSK_TOKEN` is set. Any other address still needs `HUSK_TOKEN`.
 - **The fixed `glob` and `minimatch` under `@fastify/static`**, which serves the console:
   `glob` 13.0.6 to 14.0.3, out of [GHSA-3g3m-2fjr-6pw4](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4),
   and `minimatch` 10.2.6 to 11.0.3, out of [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249).
