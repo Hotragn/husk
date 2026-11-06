@@ -158,7 +158,12 @@ describe('buildMachineConfig', () => {
 
   it('asks for a shared guest sized from the spec', () => {
     const cfg = buildMachineConfig({ cpus: 2, memoryMb: 2048 }, 'img', '/work') as Record<string, any>;
-    expect(cfg.guest).toEqual({ cpu_kind: 'shared', cpus: 2, memory_mb: 2048 });
+    expect(cfg.guest).toEqual({ cpu_kind: 'shared', cpus: 2, memory_mb: 2048, persist_rootfs: 'always' });
+  });
+
+  it('keeps the root filesystem, where /work is, when a stopped machine starts again', () => {
+    // Fly's default is `never`: a stopped machine comes back reset to its image.
+    expect((buildMachineConfig({}, 'i', '/work') as any).guest.persist_rootfs).toBe('always');
   });
 
   it('rounds memory up to the 256MB step fly requires', () => {
@@ -170,7 +175,7 @@ describe('buildMachineConfig', () => {
 
   it('defaults to one shared cpu and a gigabyte', () => {
     const guest = (buildMachineConfig({}, 'i', '/work') as any).guest;
-    expect(guest).toEqual({ cpu_kind: 'shared', cpus: 1, memory_mb: 1024 });
+    expect(guest).toEqual({ cpu_kind: 'shared', cpus: 1, memory_mb: 1024, persist_rootfs: 'always' });
   });
 
   it('tags the machine so list() can tell ours from the rest of the app', () => {
@@ -262,7 +267,7 @@ describe('create', () => {
     expect(body.region).toBe('iad');
     expect(body.name).toMatch(/^husk-/);
     expect(body.config.image).toBe('python:3.12-slim');
-    expect(body.config.guest).toEqual({ cpu_kind: 'shared', cpus: 2, memory_mb: 1024 });
+    expect(body.config.guest).toEqual({ cpu_kind: 'shared', cpus: 2, memory_mb: 1024, persist_rootfs: 'always' });
     expect(body.config.env.HUSK).toBe('1');
 
     const wait = created.calls[1]!;

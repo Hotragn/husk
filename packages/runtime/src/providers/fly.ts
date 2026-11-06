@@ -255,6 +255,10 @@ export function buildMachineConfig(spec: ComputerSpec, image: string, workdir: s
       cpus: spec.cpus ?? 1,
       // Fly requires memory in 256MB steps and at least 256 per shared cpu.
       memory_mb: Math.max(256, Math.ceil((spec.memoryMb ?? 1024) / 256) * 256),
+      // /work lives on the root filesystem, and Fly resets it when a stopped
+      // machine starts again unless told to keep it. A chat's computer stops
+      // after 10 idle minutes, so a chat came back from a break to an empty /work.
+      persist_rootfs: 'always',
     },
     env: { ...spec.env, HUSK: '1', HUSK_WORKDIR: workdir },
     // Without an init the machine runs the image's entrypoint and may exit
