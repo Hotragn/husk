@@ -233,7 +233,7 @@ pre-release of 7 October.
 - **Fly computers lost their files at every stop.** Fly resets a stopped machine's root
   filesystem when it starts again unless told to keep it, and `/work` is on it, so a
   chat's computer, stopped after 10 idle minutes, came back empty. Husk now asks Fly to
-  keep it.
+  keep it ([#282](https://github.com/Hotragn/husk/pull/282)).
 - **Stopping a wedged browser on `local` killed other computers' scripts** ([#222](https://github.com/Hotragn/husk/pull/222)).
 - **Stopping a command stopped only the client.** On Docker, Podman and SSH the command
   ran on inside the computer while the chat was told it "was killed". It is now ended
