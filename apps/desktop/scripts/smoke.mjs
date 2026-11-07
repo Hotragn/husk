@@ -55,6 +55,19 @@ const ollama = createServer((req, res) => {
 await new Promise((resolve) => ollama.listen(0, '127.0.0.1', resolve));
 
 const home = mkdtempSync(join(tmpdir(), 'husk-desktop-smoke-'));
+// The Husk and job host the app starts, read while it runs: on its way out the
+// app asks its Husk to stop, and each record goes with its process.
+const pids = new Set();
+const watch = setInterval(() => {
+  for (const name of ['daemon.json', 'jobs.json']) {
+    try {
+      const { pid } = JSON.parse(readFileSync(join(home, name), 'utf8'));
+      if (typeof pid === 'number') pids.add(pid);
+    } catch {
+      // not written yet, or already gone
+    }
+  }
+}, 250);
 try {
   const env = { ...process.env, HUSK_HOME: home, HUSK_DESKTOP_SMOKE: '1', OLLAMA_HOST: `http://127.0.0.1:${ollama.address().port}` };
   // Not spawnSync: the stand-in Ollama answers from this process while the app runs.
@@ -67,8 +80,41 @@ try {
   console.log(`${exe}\nexit ${status}\n--- desktop.log\n${log}\n--- daemon.log\n${daemon}`);
   if (status !== 0 || !/SMOKE loaded Husk console/.test(log)) process.exitCode = 1;
 } finally {
+  clearInterval(watch);
   ollama.close();
-  // The app asks its Husk to stop and exits without waiting, and Windows will
-  // not delete a folder a running process works in: retry while it stops.
-  rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  // Windows will not delete a folder a running process works in, and the
+  // app's Husk works in this one. The app asks it to stop and exits without
+  // waiting, and retries alone lost that race: wait for it, end it if it stays.
+  await stopped(pids);
+  await removed(home);
+}
+
+/** Deletes a folder, retrying while Windows lets go of it: rmSync's own retries skip EPERM. */
+async function removed(dir, ms = 10_000) {
+  for (const end = Date.now() + ms; ; ) {
+    try {
+      return rmSync(dir, { recursive: true, force: true });
+    } catch (e) {
+      if (Date.now() > end) throw e;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+}
+
+/** Resolves once every pid has exited, ending any still running after `ms`. */
+async function stopped(pids, ms = 15_000) {
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (e) {
+      return e.code === 'EPERM';
+    }
+  };
+  const end = Date.now() + ms;
+  while ([...pids].some(alive) && Date.now() < end) await new Promise((r) => setTimeout(r, 250));
+  for (const pid of [...pids].filter(alive)) {
+    console.log(`process ${pid} was still running ${ms / 1000}s after the app quit: ended it`);
+    process.kill(pid);
+  }
 }
