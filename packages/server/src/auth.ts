@@ -235,7 +235,7 @@ export function installAuth(app: FastifyInstance, opts: AuthOptions): void {
       reply,
       401,
       supplied ? 'bearer token is not valid' : 'missing Authorization: Bearer <token>',
-      'HUSK_TOKEN is set on this server -- send the same value as a bearer token',
+      'run `husk console` on this machine to sign in, or send this server\'s token (HUSK_TOKEN, or the one in ~/.husk/daemon.json) as a bearer token',
     );
   });
 }

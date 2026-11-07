@@ -26,6 +26,7 @@ import { createTriggerHost } from './triggers/index.js';
 import { claimsSignature } from './triggers/webhook.js';
 import { toolRoutes } from './routes/tools.js';
 import { setupRoutes } from './routes/setup.js';
+import { consoleRoutes } from './routes/console.js';
 import { isRemotePath } from './remote/oauth.js';
 import type { Remote } from './remote/oauth.js';
 import { remoteRoutes } from './remote/routes.js';
@@ -137,6 +138,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   await app.register(handoffRoutes);
   await app.register(toolRoutes);
   await app.register(setupRoutes);
+  await app.register(consoleRoutes, { token: config.token });
   if (remote) await app.register(async (scope) => remoteRoutes(scope, remote, deps.remoteMcp));
 
   // A newer Husk asks an older one to step aside, and the desktop app's "Quit

@@ -1,5 +1,6 @@
 import { DEFAULT_CONFIG, HuskError } from '@husk-ai/core';
 import { parse, parseCount } from '../args.js';
+import { consoleLink } from '../lib/console-link.js';
 import { orientBriefly } from '../lib/first-run.js';
 import { interruptSignal } from '../signal.js';
 import * as ui from '../ui.js';
@@ -125,12 +126,16 @@ export async function run(argv: string[]): Promise<number> {
   }
 
   ui.print(`${ui.green('✓')} control plane on ${ui.bold(server.url)}`);
-  // TODO(human): how someone opens the console, now that `husk serve` on loopback
-  // always has a token. The lines below are the old ones: they only say where the
-  // token is in remote mode, so a plain `husk serve` now prints a bare link that
-  // opens a console unable to sign in.
-  const signIn = process.env.HUSK_TOKEN ? '  (sign in with your HUSK_TOKEN)' : values.remote === true ? '  (its token is in ~/.husk/daemon.json, readable only by you)' : '';
-  ui.print(`  console  ${server.url}/${signIn ? ui.dim(signIn) : ''}`);
+  // A sign-in link that works once, within 10 minutes, never the token itself:
+  // terminals keep scrollback and logs get shared. On a terminal only, because a
+  // service's output is a log, and a chat that ran this would carry the code.
+  const link = process.env.HUSK_TOKEN || !process.stdout.isTTY ? undefined : await consoleLink();
+  const signIn = process.env.HUSK_TOKEN
+    ? '  (sign in with your HUSK_TOKEN)'
+    : link
+      ? '  (works once, within 10 minutes; `husk console` makes another)'
+      : '  (`husk console` prints a link that signs you in)';
+  ui.print(`  console  ${link ?? `${server.url}/`}${ui.dim(signIn)}`);
   ui.print(ui.dim(`  health   ${server.url}/health`));
   ui.print(ui.dim(`  doctor   ${server.url}/v1/doctor`));
   ui.print(ui.dim(`  clients  new HuskClient({ baseUrl: "${server.url}", token })  // @husk-ai/sdk; the token is in ~/.husk/daemon.json`));

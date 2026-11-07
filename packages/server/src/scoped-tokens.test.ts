@@ -46,6 +46,19 @@ describe('scoped tokens', () => {
     expect(tokens.verify(t)).toBeUndefined();
   });
 
+  it('can be spent once, only for its own scope, and only while it lives', () => {
+    const c = clock();
+    const tokens = new ScopedTokens(1000, 10_000, c.now);
+    const code = tokens.mint('console');
+    expect(tokens.take(code, 'computer:cmp_a')).toBe(false);
+    expect(tokens.take(code, 'console')).toBe(true);
+    expect(tokens.take(code, 'console')).toBe(false);
+    expect(tokens.verify(code)).toBeUndefined();
+    const late = tokens.mint('console');
+    c.advance(1001);
+    expect(tokens.take(late, 'console')).toBe(false);
+  });
+
   it('can be revoked by scope', () => {
     const tokens = new ScopedTokens();
     const t = tokens.mint('handoff:hnd_1');

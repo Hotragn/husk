@@ -26,6 +26,8 @@ vi.mock('../signal.js', () => ({
   },
 }));
 vi.mock('../lib/first-run.js', () => ({ orientBriefly: () => {} }));
+// What the Husk would mint: a link that works once, carrying no token.
+vi.mock('../lib/console-link.js', () => ({ consoleLink: async () => 'http://127.0.0.1:7399/#code=c0de' }));
 
 describe('husk serve: where it listens', () => {
   it('takes the flags, then HUSK_HOST and HUSK_PORT, then the defaults', () => {
@@ -44,5 +46,32 @@ describe('husk serve: its token', () => {
     expect(serve.mock.calls.at(-1)?.[0]).toMatchObject({ host: '127.0.0.1', mintToken: true });
     await run(['--host', '0.0.0.0', '--port', '7399']);
     expect(serve.mock.calls.at(-1)?.[0]).toMatchObject({ host: '0.0.0.0', mintToken: false });
+  });
+});
+
+describe('husk serve: the console line', () => {
+  const consoleLine = async (tty: boolean): Promise<string> => {
+    const printed: string[] = [];
+    vi.spyOn(ui, 'print').mockImplementation((line?: string) => void printed.push(line ?? ''));
+    for (const fn of ['note', 'warn'] as const) vi.spyOn(ui, fn).mockImplementation(() => {});
+    const was = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { value: tty, configurable: true });
+    try {
+      await run(['--host', '127.0.0.1', '--port', '7399']);
+    } finally {
+      if (was) Object.defineProperty(process.stdout, 'isTTY', was);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+    }
+    return printed.find((l) => l.includes('console')) ?? '';
+  };
+
+  it('is a link that signs you in once, on a terminal', async () => {
+    expect(await consoleLine(true)).toContain('http://127.0.0.1:7399/#code=c0de');
+  });
+
+  it('is the plain address anywhere else, where it could land in a log or a chat', async () => {
+    const line = await consoleLine(false);
+    expect(line).not.toContain('#code=');
+    expect(line).toContain('husk console');
   });
 });

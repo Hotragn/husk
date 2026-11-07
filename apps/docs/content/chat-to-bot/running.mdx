@@ -184,12 +184,11 @@ hint:  set HUSK_TOKEN=$(openssl rand -hex 32) before `husk serve --host <host>`,
 {`$ husk serve
 starting the control plane on 127.0.0.1:7377...
 info  [husk] husk serve listening on http://127.0.0.1:7377
-info  [husk] no HUSK_TOKEN set -- loopback connections only
 ✓ control plane on http://127.0.0.1:7377
-  console  http://127.0.0.1:7377/
+  console  http://127.0.0.1:7377/#code=9f2c…  (works once, within 10 minutes; \`husk console\` makes another)
   health   http://127.0.0.1:7377/health
   doctor   http://127.0.0.1:7377/v1/doctor
-  clients  new HuskClient({ baseUrl: "http://127.0.0.1:7377" })  // @husk-ai/sdk
+  clients  new HuskClient({ baseUrl: "http://127.0.0.1:7377", token })  // @husk-ai/sdk; the token is in ~/.husk/daemon.json
 
 Ctrl-C to stop.`}
 </Terminal>

@@ -75,6 +75,27 @@ describe('a computer link from an in-chat card', () => {
   });
 });
 
+describe('a sign-in link from husk console', () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('takes the code out of the address bar, keeps the panel, and stores nothing until it is traded', () => {
+    window.history.replaceState(null, '', '/#code=c0de&panel=handoffs');
+    expect(readViewerToken()).toEqual({ token: '', fromLink: true, code: 'c0de' });
+    expect(window.location.hash).toBe('#/handoffs');
+    expect(window.location.href).not.toContain('c0de');
+    expect(window.sessionStorage.getItem('husk.console.token')).toBeNull();
+  });
+
+  it('keeps the session the tab had, in case the code was already spent', () => {
+    storeViewerToken('earlier');
+    window.history.replaceState(null, '', '/#code=c0de');
+    expect(readViewerToken()).toEqual({ token: 'earlier', fromLink: true, code: 'c0de' });
+  });
+});
+
 describe('a link from the desktop app', () => {
   it('opens the named panel and drops the token from the address bar', () => {
     window.history.replaceState(null, '', '/#token=ghi789&panel=connect');

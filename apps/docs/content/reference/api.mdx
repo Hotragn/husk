@@ -57,6 +57,15 @@ On top of the token:
 
 Neither check stops a program on the same machine, which is what the token is for.
 
+A browser never gets the token in a URL, since a URL lands in history. `husk console`
+prints a link that signs the console in with a code instead. The code works once, dies
+after 10 minutes if it is not used, and opens nothing but that sign-in:
+
+```text
+POST /v1/console/link     -> { code }    with the server's token only
+POST /v1/scoped/console   -> { token }   with Bearer <code>; once, never cached
+```
+
 Browsers cannot set headers on `EventSource` or `WebSocket`, so for those two
 transports only — detected by `Accept: text/event-stream` or an `Upgrade: websocket`
 header — a `?token=` or `?access_token=` query parameter is accepted.

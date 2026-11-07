@@ -55,6 +55,20 @@ final class ServerConfigTests: XCTestCase {
         XCTAssertFalse(c.takeOverURL.absoluteString.contains("abc"))
     }
 
+    func testSignsInWithAOneUseCodeAndNeverTheToken() {
+        let c = ServerConfig(environment: ["HUSK_TOKEN": "abc"])!
+        let request = c.signInRequest()!
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:7377/v1/console/link")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer abc")
+        let url = c.signInURL(panel: "handoffs", code: "c0de")
+        XCTAssertEqual(url.absoluteString, "http://127.0.0.1:7377/#code=c0de&panel=handoffs")
+        XCTAssertFalse(url.absoluteString.contains("abc"))
+        XCTAssertEqual(decodeSignInCode(Data(#"{"code":"c0de"}"#.utf8)), "c0de")
+        XCTAssertNil(decodeSignInCode(Data(#"{"code":"not hex"}"#.utf8)))
+        XCTAssertNil(ServerConfig(environment: [:])!.signInRequest())
+    }
+
     func testDecodesAnOverviewAndRejectsGarbage() {
         let json = """
         {"computers":[{"id":"cmp_1","state":"running","provider":"docker","platform":"Cursor","chatLabel":"Cursor · chat started 09:12","extra":1}],

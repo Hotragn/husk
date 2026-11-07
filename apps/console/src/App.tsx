@@ -25,6 +25,7 @@ import { HusksPanel } from './panels/HusksPanel';
 import { DoctorPanel } from './panels/DoctorPanel';
 import { EventsPanel } from './panels/EventsPanel';
 import { DisconnectedScreen } from './panels/DisconnectedScreen';
+import { SignInScreen } from './panels/SignInScreen';
 import { HomePanel } from './panels/HomePanel';
 import { OverviewPanel } from './panels/OverviewPanel';
 import { ChatPanel } from './panels/ChatPanel';
@@ -118,13 +119,15 @@ function Shell() {
     setActiveComputer((prev) => (prev && rows.some((c) => c.id === prev) ? prev : (rows[0]?.id ?? null)));
   }, [rows]);
 
-  const connTone = status === 'connected' ? 'success' : status === 'connecting' ? 'info' : 'danger';
+  const connTone = status === 'connected' ? 'success' : status === 'connecting' ? 'info' : status === 'unauthorized' ? 'warn' : 'danger';
   const connLabel =
     status === 'connected'
       ? `Connected · v${health?.version ?? '?'}`
       : status === 'connecting'
         ? 'Connecting'
-        : 'Not connected';
+        : status === 'unauthorized'
+          ? 'Not signed in'
+          : 'Not connected';
 
   return (
     <>
@@ -183,6 +186,8 @@ function Shell() {
 
         {status === 'disconnected' ? (
           <DisconnectedScreen />
+        ) : status === 'unauthorized' ? (
+          <SignInScreen />
         ) : (
           <main id="main" className="app-main" tabIndex={-1}>
             {panel === 'home' ? (
