@@ -178,7 +178,7 @@ pre-release of 7 October.
   token never leaves `~/.husk/daemon.json`. `husk serve` and `husk setup` print one in a
   terminal, and Husk Bar opens the console with one. A tab that is not signed in shows
   "Sign in to this Husk", which says to run `husk console`, and takes a pasted code or
-  the server's token.
+  the server's token ([#284](https://github.com/Hotragn/husk/pull/284)).
 
 ### Changed
 
@@ -455,7 +455,7 @@ pre-release of 7 October.
   has. It mints one when it starts and writes it to `~/.husk/daemon.json`, readable only
   by you, unless `HUSK_TOKEN` is set. Any other address still needs `HUSK_TOKEN`. The
   console signs in with a code that works once (`husk console`, above), never the token in
-  a URL, where a browser keeps it.
+  a URL, where a browser keeps it ([#284](https://github.com/Hotragn/husk/pull/284)).
 - **The fixed `glob` and `minimatch` under `@fastify/static`**, which serves the console:
   `glob` 13.0.6 to 14.0.3, out of [GHSA-3g3m-2fjr-6pw4](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4),
   and `minimatch` 10.2.6 to 11.0.3, out of [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249).
