@@ -135,7 +135,14 @@ jobs:
         run: |
           set -euo pipefail
           npm whoami --registry https://registry.npmjs.org || { echo "npm auth failed — check NPM_TOKEN secret"; exit 1; }
+          version="$(node -p "require('./package.json').version")"
           for pkg in core runtime models browser sessions agent adapters workspaces console-assets server mcp sdk cli; do
+            # Preflight let a published version through only if it came from
+            # this commit: this release, stopped part-way and run again.
+            if [ -n "$(npm view "@husk-ai/$pkg@$version" version 2>/dev/null || true)" ]; then
+              echo "@husk-ai/$pkg@$version is already on npm from this commit: skipped"
+              continue
+            fi
             echo "publishing @husk-ai/$pkg"
             npm publish --workspace="@husk-ai/$pkg" --access public --provenance
           done
