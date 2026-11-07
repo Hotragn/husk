@@ -264,9 +264,14 @@ turned up these. Each is fixed and has a test:
   slug and its filename — but the cached copy of your own file is not rewritten.
 - **No remote execution by default.** `husk serve` binds loopback, and it refuses to start
   on a non-loopback address without `HUSK_TOKEN` set. Remote access (above) is the one
-  exception, and only when you start it. The shared Husk that a chat starts
-  also binds loopback, always with a token it mints and writes to `~/.husk/daemon.json`
-  (owner-only); any program running as you can read that file. The links Husk gives a
+  exception, and only when you start it. On loopback, `husk serve` and the shared Husk
+  that a chat starts both use a token: `HUSK_TOKEN`, or one they mint and write to
+  `~/.husk/daemon.json` (owner-only). Any program running as you can read that file. The
+  token never goes into a URL, which a browser keeps in its history: `husk console`,
+  `husk serve`, `husk setup` and Husk Bar open the console with a sign-in code instead.
+  The code works once and dies after ten minutes unused; the console trades it for the
+  token, keeps that in the tab's session storage, and removes the code from the address
+  bar. The code opens nothing else, and never from remote access's public URL. The links Husk gives a
   chat, so it can show you a computer, carry a short-lived token scoped to that one
   computer (ten minutes unused, eight hours at most). The chat sees the link, so it holds
   that token too.

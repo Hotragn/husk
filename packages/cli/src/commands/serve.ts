@@ -1,5 +1,6 @@
 import { DEFAULT_CONFIG, HuskError } from '@husk-ai/core';
 import { parse, parseCount } from '../args.js';
+import { consoleLink } from '../lib/console-link.js';
 import { orientBriefly } from '../lib/first-run.js';
 import { interruptSignal } from '../signal.js';
 import * as ui from '../ui.js';
@@ -26,10 +27,13 @@ interface ServerModule {
     host: string;
     port: number;
     daemon?: boolean;
+    mintToken?: boolean;
     deps?: { runTool?: unknown; remoteMcp?: unknown };
     remote?: { publicUrl: string; provider: string; port?: number; host?: string };
   }): Promise<RunningServer>;
   parsePublicUrl(raw: string): URL;
+  /** The server's own rule for a loopback bind, the one it refuses others by. */
+  isLoopbackHost(host: string): boolean;
 }
 
 /** Where to listen: the flags, then HUSK_HOST and HUSK_PORT, as a service's unit file sets them, then the defaults. */
@@ -99,7 +103,13 @@ export async function run(argv: string[]): Promise<number> {
         remote: { publicUrl, provider, ...(remotePort !== undefined ? { port: remotePort } : {}), ...(remoteHost ? { host: remoteHost } : {}) },
       });
     } else {
-      server = await mod.serve({ host, port, daemon: true, deps: { runTool } });
+      // A token on loopback too, as the Husk a chat starts has: without one, any
+      // program on this machine could drive the computers -- another account, a
+      // container that reaches the host, a page another local port serves. Past
+      // loopback HUSK_TOKEN is still required, so a server meant to be reached
+      // from elsewhere gets a token its owner chose. (Not core's isLoopbackHost:
+      // that one counts 0.0.0.0, which as a destination does reach this machine.)
+      server = await mod.serve({ host, port, daemon: true, mintToken: mod.isLoopbackHost(host), deps: { runTool } });
     }
   } catch (err) {
     spin.stop();
@@ -116,12 +126,19 @@ export async function run(argv: string[]): Promise<number> {
   }
 
   ui.print(`${ui.green('✓')} control plane on ${ui.bold(server.url)}`);
-  // Never the token itself: terminals keep scrollback and logs get shared.
-  const signIn = process.env.HUSK_TOKEN ? '  (sign in with your HUSK_TOKEN)' : values.remote === true ? '  (its token is in ~/.husk/daemon.json, readable only by you)' : '';
-  ui.print(`  console  ${server.url}/${signIn ? ui.dim(signIn) : ''}`);
+  // A sign-in link that works once, within 10 minutes, never the token itself:
+  // terminals keep scrollback and logs get shared. On a terminal only, because a
+  // service's output is a log, and a chat that ran this would carry the code.
+  const link = process.env.HUSK_TOKEN || !process.stdout.isTTY ? undefined : await consoleLink();
+  const signIn = process.env.HUSK_TOKEN
+    ? '  (sign in with your HUSK_TOKEN)'
+    : link
+      ? '  (works once, within 10 minutes; `husk console` makes another)'
+      : '  (`husk console` prints a link that signs you in)';
+  ui.print(`  console  ${link ?? `${server.url}/`}${ui.dim(signIn)}`);
   ui.print(ui.dim(`  health   ${server.url}/health`));
   ui.print(ui.dim(`  doctor   ${server.url}/v1/doctor`));
-  ui.print(ui.dim(`  clients  new HuskClient({ baseUrl: "${server.url}" })  // @husk-ai/sdk`));
+  ui.print(ui.dim(`  clients  new HuskClient({ baseUrl: "${server.url}", token })  // @husk-ai/sdk; the token is in ~/.husk/daemon.json`));
   if (publicUrl && values.remote === true) {
     const origin = new URL(publicUrl).origin;
     const published = server.remotePort ?? port + 1;

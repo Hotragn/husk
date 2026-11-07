@@ -38,9 +38,13 @@ invents endpoints the other does not know about.
   `stopReason: "step_limit"`. Both keep the output a thrown error would discard.
   `E_EXEC_TIMEOUT` keeps its 504 so a gateway timeout still decodes into a
   sensible `HuskError`.
-- Auth: when `HUSK_TOKEN` is set, every request needs `Authorization: Bearer <token>`.
-  When it is not set the server binds loopback only, and **refuses to start on a
-  non-loopback host without a token**. On a loopback bind, token or not, it answers
+- Auth: when the server has a token, every request needs `Authorization: Bearer <token>`.
+  `husk serve` always has one: `HUSK_TOKEN` when it is set, or else one it mints on a
+  loopback address and writes to `~/.husk/daemon.json`, readable only by you. A server
+  with no token binds loopback only, and **refuses to start on a non-loopback host
+  without a token**. A browser signs in to the console with a code that works once,
+  never the token in a URL: see [Signing in the console](#signing-in-the-console).
+  On a loopback bind, token or not, it answers
   only requests whose `Host` is `localhost`, `127.x` or `[::1]`, so a web page cannot
   reach it through DNS rebinding. A request carrying an `Origin` that is not one of
   those names is refused (403), WebSockets included: a web page cannot drive it. The
@@ -122,6 +126,26 @@ confused user can read it and know what to do.
 is `null` when the provider could not be probed at all; `isolationKind` is
 `kernel`, `machine` or `guardrails` and is omitted when the probe returned none.
 
+## Signing in the console
+
+```
+POST /v1/console/link     -> { code }    (with the server's token only)
+POST /v1/scoped/console   -> { token }   (with Bearer <code>; once)
+```
+
+A URL lands in browser history, so the console's token never rides in one.
+`husk console`, `husk serve`, `husk setup` and Husk Bar ask for a code with the token,
+then open `/#code=<code>` (Husk Bar adds `&panel=<panel>`). The console removes the
+fragment from the address bar at once, trades the code for the token, and keeps the
+token in that tab's session storage. The answer is never cached (`Cache-Control:
+no-store`).
+
+A code works once, and dies after 10 minutes if it is not used. It opens this trade
+and nothing else: not the API, not a computer's link, and not the public URL, where
+only tokens minted `public` count. A code that is spent, expired or unknown is a 401
+`E_NO_CREDENTIALS`, and so is any other token sent to the trade, the server's own
+included.
+
 ## Computers
 
 ```
@@ -197,7 +221,7 @@ the machine's one Husk: it writes `~/.husk/daemon.json` (`url`, a minted `token`
 `pid`, `version`; owner-only), and a chat's MCP process forwards its computer tools
 here, starting `husk-mcp --daemon` if nothing answers. The Husk a chat starts mints a
 token, since nobody is there to configure one; `husk serve` uses `HUSK_TOKEN` if set,
-and is otherwise tokenless on loopback, as before. That is what lets the console show a
+and otherwise mints one the same way. That is what lets the console show a
 chat's browser and what it is doing. The result has the MCP shape,
 `{ content: [...], isError? }`; a tool failure is a 200 with `isError: true`. While a
 person holds the computer in a handoff, every tool but `computer_info` is refused.

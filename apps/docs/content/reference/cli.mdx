@@ -537,6 +537,10 @@ husk serve [--port 7377] [--host 127.0.0.1] [--remote --public-url https://<host
 | `--remote-port` | `--port` plus one. Remote access's own port, the one the tunnel publishes |
 | `--remote-host` | `127.0.0.1`. Where that port listens |
 
+On a loopback address without `HUSK_TOKEN`, it makes a token as it starts and keeps it
+in `~/.husk/daemon.json`, readable only by you. In a terminal it prints a console link
+that signs you in once; [`husk console`](#husk-console) prints another.
+
 Binding a non-loopback host without `HUSK_TOKEN` is a hard error, because this API can
 execute shell commands. [Self-hosting](/guides/self-hosting) is the full setup.
 
@@ -544,6 +548,18 @@ execute shell commands. [Self-hosting](/guides/self-hosting) is the full setup.
 refused without them. Remote access will not start while a high or critical security
 advisory stands against the install. [Chat apps on the web](/guides/remote-access) is
 the full setup.
+
+### `husk console`
+
+```bash
+husk console [--json]
+```
+
+Prints a link to the console of the Husk running on this machine, with a code in it that
+signs you in. The code works once, within 10 minutes, so the link is worth nothing to
+anyone who finds it later in scrollback, a log or browser history. The token itself never
+leaves `~/.husk/daemon.json`. Run it again for another link, or when the console asks you
+to sign in. `--json` prints `{ "url": "…" }`.
 
 ### `husk remote`
 

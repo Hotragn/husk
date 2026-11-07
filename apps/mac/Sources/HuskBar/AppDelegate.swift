@@ -17,11 +17,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         config = Self.findHusk()
-        status = StatusItemController(open: { [weak self] in self?.open(\.consoleURL) },
-                                      takeOver: { [weak self] in self?.open(\.takeOverURL) },
+        status = StatusItemController(open: { [weak self] in self?.open(panel: "home", fallback: \.consoleURL) },
+                                      takeOver: { [weak self] in self?.open(panel: "handoffs", fallback: \.takeOverURL) },
                                       quit: { NSApp.terminate(nil) })
-        pill = NotchPillController(open: { [weak self] in self?.open(\.consoleURL) },
-                                   takeOver: { [weak self] in self?.open(\.takeOverURL) })
+        pill = NotchPillController(open: { [weak self] in self?.open(panel: "home", fallback: \.consoleURL) },
+                                   takeOver: { [weak self] in self?.open(panel: "handoffs", fallback: \.takeOverURL) })
         render()
         poll()
         timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.poll() }
@@ -78,8 +78,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pill?.update(summary: summary, overview: overview)
     }
 
-    private func open(_ url: KeyPath<ServerConfig, URL>) {
+    /// The console on `panel`, signed in: Husk mints a code that works once, and
+    /// the browser opens with that, never the token. A Husk that cannot mint one,
+    /// older or without a token, gets the plain page.
+    private func open(panel: String, fallback plain: KeyPath<ServerConfig, URL>) {
         guard let config else { return }
-        NSWorkspace.shared.open(config[keyPath: url])
+        guard let request = config.signInRequest() else {
+            NSWorkspace.shared.open(config[keyPath: plain])
+            return
+        }
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            let code = (response as? HTTPURLResponse)?.statusCode == 200 ? data.flatMap(decodeSignInCode) : nil
+            DispatchQueue.main.async {
+                NSWorkspace.shared.open(code.map { config.signInURL(panel: panel, code: $0) } ?? config[keyPath: plain])
+            }
+        }.resume()
     }
 }
