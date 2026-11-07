@@ -288,6 +288,18 @@ export const COMMANDS: HelpEntry[] = [
     examples: ['husk remote', 'husk remote claim', 'husk remote off', 'husk remote reset'],
   },
   {
+    name: 'console',
+    group: 'system',
+    summary: 'Print a link that opens the console signed in',
+    usage: 'husk console [--json]',
+    details:
+      'Asks the Husk running on this machine for a sign-in code, and prints the console link with it.\n'
+      + 'The link works once, within 10 minutes, so it is worthless to anyone who finds it later in a\n'
+      + "terminal's scrollback, a log or browser history. Run it again for another.",
+    flags: [['--json', 'the link as JSON']],
+    examples: ['husk console'],
+  },
+  {
     name: 'mcp',
     group: 'system',
     summary: 'Run the MCP server on stdio',

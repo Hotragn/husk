@@ -148,6 +148,29 @@ export class HuskApi {
     });
   }
 
+  /**
+   * `POST /v1/scoped/console`: trade a sign-in code from `husk console` for this
+   * Husk's token. The code is the bearer here, and it works once.
+   */
+  async redeemSignIn(code: string): Promise<string> {
+    const url = this.client.http.url('/v1/scoped/console');
+    let res: Response;
+    try {
+      res = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${code}` } });
+    } catch (err) {
+      throw transportError(err, url);
+    }
+    const body = await safeJson(res);
+    if (!res.ok) throw errorFromResponse(res.status, body, url);
+    const token = (body as { token?: unknown } | undefined)?.token;
+    return typeof token === 'string' ? token : '';
+  }
+
+  /** Whether this tab is signed in: `/health` needs no token, so one cheap call behind it. */
+  signedIn(signal?: AbortSignal): Promise<unknown> {
+    return this.client.http.request('GET', '/v1/handoffs', { ...(signal ? { signal } : {}), timeoutMs: 4000 });
+  }
+
   /** `GET /v1/doctor`. Correct path in the SDK; the SDK's return type is stale. */
   doctor(signal?: AbortSignal): Promise<DoctorReport> {
     return this.client.http.request<DoctorReport>('GET', '/v1/doctor', {
@@ -657,6 +680,11 @@ export interface DisplayError {
   message: string;
   hint?: string;
   details?: string;
+}
+
+/** The server turned this tab's credential away: it needs a sign-in, not a retry. */
+export function isSignedOut(err: unknown): boolean {
+  return isHuskError(err) && err.code === 'E_NO_CREDENTIALS';
 }
 
 export function toDisplayError(err: unknown): DisplayError {

@@ -13,7 +13,7 @@ Build tested: commit `________` · Windows build `________` · macOS `________` 
   - `data\<computer id>`: one line per tool call on that computer.
 - What `husk doctor` prints (or the Husk window: Advanced → Doctor), and what http://127.0.0.1:7377/health shows.
 - The chat app's name and version, the computer's id (`cmp_…`), and a screenshot.
-- Never share `daemon.json`, `jobs.json`, `.env`, the `remote` folder, or a console link with `#token=` in it. They hold Husk's tokens and keys.
+- Never share `daemon.json`, `jobs.json`, `.env`, the `remote` folder, or a console link with `#token=` in it. They hold Husk's tokens and keys. A link with `#code=` in it stops working once it is used, or 10 minutes after it was made.
 - To undo Husk's change to a chat app's settings, use the copy next to that file that ends in `.husk-backup-<time>`.
 
 ## How to read the steps
@@ -91,6 +91,7 @@ Signed installers, once the certificates are repository secrets:
 - [ ] Press Enter. With docker or podman, press Enter again at "Include a browser? The image is larger, and pages render like in Chrome." You should see: "CHAT APPS ON THIS MACHINE", each app found, connected, not found, or "older Husk, moves here". The apps you connected in 3a show "older Husk, moves here", because their entry starts the Husk app and not this build.
 - [ ] Type Claude Code's number only, then press Enter at "Connect these? Each file is backed up first." You should see: `will edit claude mcp add --scope user husk -- <node> <repo>…bin.js`; `✓ Claude Code: added to Claude Code. Start a new Claude Code session.`; with docker, "getting the computer image, once: mcr.microsoft.com/playwright:v1.59.1-noble (about 2 GB, with the browser)" if it was not there yet; then NEXT with `computer`, a `console` link, and `try it   ask your chat: "Use Husk to tell me what OS your computer runs."`.
 - [ ] Start a new Claude Code session and ask that. You should see: the answer, and its computer in the corner.
+- [ ] Open the `console` link from NEXT in your browser. You should see: the console, signed in, with no `#code=` left in the address bar. Open the same link in a private window. You should see: "Sign in to this Husk" and "That sign-in link was already used, or has expired". Run `husk console` and open its link in that private window. You should see: the console, signed in. Run `husk console` once more and wait 11 minutes before you open its link. You should see: "already used, or has expired" again.
 - [ ] Back on Connect, Claude Code now shows older Husk. Click Update. You should see: Claude Code starts the Husk app again (section 8 needs that).
 - [ ] After the release only: Connect → "Or let your chat set it up" → pick Claude Code → Copy prompt, and paste it into Claude Code. You should see: the chat runs `npx -y @husk-ai/cli@~0.2 setup --computer auto --apps claude-code --yes` and tells you to restart. Before the release this fails: npm has no 0.2.
 

@@ -356,7 +356,9 @@ export class OciComputer implements Computer {
   }
 
   private cli(args: string[], timeoutMs = 60_000) {
-    return execFileAsync(this.cfg.binary, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 });
+    // The shared Husk runs with no console, so on Windows every docker call
+    // without windowsHide opens a window of its own, several times a second.
+    return execFileAsync(this.cfg.binary, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024, windowsHide: true });
   }
 
   async refresh(): Promise<ComputerInfo> {
@@ -599,7 +601,7 @@ export class OciComputer implements Computer {
    */
   protected execWithStdin(args: string[], input: Buffer): Promise<void> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.cfg.binary, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+      const child = spawn(this.cfg.binary, args, { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
       let stderr = '';
       child.stderr?.on('data', (b: Buffer) => {
         stderr += b.toString('utf8');
@@ -656,7 +658,7 @@ export class OciComputer implements Computer {
   /** Run the CLI and collect stdout as raw bytes, so binaries survive intact. Past `limit` bytes it stops reading. */
   protected execCapture(args: string[], limit = Number.POSITIVE_INFINITY): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.cfg.binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(this.cfg.binary, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       const chunks: Buffer[] = [];
       let got = 0;
       let stderr = '';
@@ -1003,7 +1005,7 @@ export abstract class OciProvider implements ComputerProvider {
   }
 
   protected cli(args: string[], timeoutMs = 60_000) {
-    return execFileAsync(this.cfg.binary, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 });
+    return execFileAsync(this.cfg.binary, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024, windowsHide: true });
   }
 
   /**

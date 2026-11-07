@@ -1,8 +1,17 @@
 const TOKEN_KEY = 'husk.console.token';
 
 /** A fragment stays out of HTTP requests; remove it before rendering or navigating. */
-export function readViewerToken(): { token: string; fromLink: boolean } {
+export function readViewerToken(): { token: string; fromLink: boolean; code?: string } {
   const fragment = new URLSearchParams(window.location.hash.slice(1));
+  // A sign-in link from `husk console`: a code that works once, traded for the
+  // token as the page loads (state/connection.tsx). The tab keeps any session
+  // it had, in case the code was already spent.
+  const code = fragment.get('code');
+  if (code !== null) {
+    const panel = fragment.get('panel');
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${panel && /^[a-z]{1,20}$/.test(panel) ? `#/${panel}` : ''}`);
+    return { token: storedViewerToken(), fromLink: true, code };
+  }
   const linked = fragment.get('token');
   if (linked !== null) {
     storeViewerToken(linked);
@@ -26,10 +35,14 @@ export function readViewerToken(): { token: string; fromLink: boolean } {
     window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${keep}`);
     return { token: linked, fromLink: true };
   }
+  return { token: storedViewerToken(), fromLink: false };
+}
+
+function storedViewerToken(): string {
   try {
-    return { token: window.sessionStorage.getItem(TOKEN_KEY) ?? '', fromLink: false };
+    return window.sessionStorage.getItem(TOKEN_KEY) ?? '';
   } catch {
-    return { token: '', fromLink: false };
+    return '';
   }
 }
 

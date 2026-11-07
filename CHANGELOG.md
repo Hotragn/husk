@@ -173,6 +173,12 @@ pre-release of 7 October.
   held 548 MB, and opened its first page in less than half the time; each call after that
   costs the same. Chrome is still the default
   ([#270](https://github.com/Hotragn/husk/pull/270)).
+- **`husk console`, a link that opens the console signed in.** It works once, within 10
+  minutes, so it is worth nothing in scrollback, a log or browser history later, and the
+  token never leaves `~/.husk/daemon.json`. `husk serve` and `husk setup` print one in a
+  terminal, and Husk Bar opens the console with one. A tab that is not signed in shows
+  "Sign in to this Husk", which says to run `husk console`, and takes a pasted code or
+  the server's token ([#284](https://github.com/Hotragn/husk/pull/284)).
 
 ### Changed
 
@@ -225,6 +231,10 @@ pre-release of 7 October.
 - **A Windows PC without WSL gave a misleading browser error**: to check `husk ps` for a
   machine that was up, or to install Python 3. It now says the browser needs Linux, and
   how to get WSL ([#275](https://github.com/Hotragn/husk/pull/275)).
+- **On Windows, a console window flashed every 2 seconds** for anyone with Docker or
+  Podman installed, and on every file read or write: eight `docker` and `podman` calls
+  left out `windowsHide`. They hide it now, and a test fails on any call that leaves it
+  out ([#280](https://github.com/Hotragn/husk/pull/280)).
 - **A Chromium that died stayed dead** until the shared Husk restarted. The next call now
   starts it again, keeping its logins. A failed launch, and a computer reaped for
   idleness, no longer leave a Chromium behind ([#217](https://github.com/Hotragn/husk/pull/217)).
@@ -449,6 +459,11 @@ pre-release of 7 October.
 
 ### Security
 
+- **`husk serve` uses a token on loopback too**, as the shared Husk a chat starts always
+  has. It mints one when it starts and writes it to `~/.husk/daemon.json`, readable only
+  by you, unless `HUSK_TOKEN` is set. Any other address still needs `HUSK_TOKEN`. The
+  console signs in with a code that works once (`husk console`, above), never the token in
+  a URL, where a browser keeps it ([#284](https://github.com/Hotragn/husk/pull/284)).
 - **The fixed `glob` and `minimatch` under `@fastify/static`**, which serves the console:
   `glob` 13.0.6 to 14.0.3, out of [GHSA-3g3m-2fjr-6pw4](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4),
   and `minimatch` 10.2.6 to 11.0.3, out of [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249).

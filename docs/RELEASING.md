@@ -59,6 +59,12 @@ because that step had been sitting on `main`, unused, since `0.1.2`.
    `npm whoami` before building. The Release it cuts carries the extension,
    `build/*.mcpb`, and its `.sha256`.
 
+   If it stops part-way, run it again. Preflight lets through only versions this
+   commit already published, and the publish skips them, so it carries on where it
+   stopped. The token must be able to create packages in the `@husk-ai` scope, not
+   only update them: `@husk-ai/workspaces` and `@husk-ai/console-assets` are new in
+   0.2.0, and a token limited to the existing packages stops after `adapters`.
+
 7. **Verify from outside the repo**, against the registry rather than the workflow:
 
    ```bash

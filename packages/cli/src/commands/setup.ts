@@ -5,6 +5,7 @@ import { leftOutOfAuto } from '@husk-ai/runtime';
 import { collect, type DoctorProbes, type DoctorReport, type ProviderRow } from './doctor.js';
 import { ask, confirm, interactive } from '../lib/prompt.js';
 import { UsageError, parse } from '../args.js';
+import { consoleLink } from '../lib/console-link.js';
 import * as ui from '../ui.js';
 import { EXIT_OK, EXIT_USAGE } from '../exit.js';
 
@@ -104,7 +105,9 @@ export async function run(argv: string[], probes?: DoctorProbes): Promise<number
       const { connectDaemon } = await import('@husk-ai/mcp/daemon');
       const daemon = await connectDaemon({ log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as never });
       const rec = readDaemonRecord();
-      if (daemon && rec) consoleUrl = `${rec.url}/#token=${rec.token ?? ''}`;
+      // A sign-in link that works once, and only on a terminal: the paste-in setup
+      // runs this from a chat, and what it prints goes to the chat's AI provider.
+      if (daemon && rec) consoleUrl = (process.stdout.isTTY && values.json !== true ? await consoleLink(rec) : undefined) ?? `${rec.url}/`;
     } finally {
       started.stop();
     }
@@ -117,7 +120,10 @@ export async function run(argv: string[], probes?: DoctorProbes): Promise<number
   ui.print();
   ui.print(ui.heading('NEXT'));
   ui.print(`  ${ui.dim('computer')} ${provider}${flavor ? ui.dim(` · ${flavor}`) : ''}`);
-  if (consoleUrl) ui.print(`  ${ui.dim('console ')} ${consoleUrl}`);
+  if (consoleUrl) {
+    const signIn = consoleUrl.includes('#code=') ? 'works once, within 10 minutes' : '`husk console` prints a link that signs you in';
+    ui.print(`  ${ui.dim('console ')} ${consoleUrl}  ${ui.dim(`(${signIn})`)}`);
+  }
   else if (values['no-start'] !== true) ui.print(`  ${ui.dim('console ')} ${ui.yellow('Husk did not start')} ${ui.dim('-- chats still work; see ~/.husk/daemon.log')}`);
   ui.print(`  ${ui.dim('try it  ')} ask your chat: "Use Husk to tell me what OS your computer runs."`);
   return results.every((r) => r.ok) ? EXIT_OK : 1;

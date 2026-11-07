@@ -64,6 +64,32 @@ public struct ServerConfig: Equatable {
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         return req
     }
+
+    /// Asks Husk for a console sign-in code, with the token. Nil without a token:
+    /// a Husk with none needs no sign-in, and the plain pages open it.
+    public func signInRequest() -> URLRequest? {
+        guard let token else { return nil }
+        var req = URLRequest(url: baseURL.appendingPathComponent("v1/console/link"), timeoutInterval: 5)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return req
+    }
+
+    /// The console on `panel`, signed in by a code that works once, so the URL
+    /// is worth nothing when it turns up later in browser history.
+    public func signInURL(panel: String, code: String) -> URL {
+        var base = baseURL.absoluteString
+        while base.hasSuffix("/") { base.removeLast() }
+        return URL(string: "\(base)/#code=\(code)&panel=\(panel)")!
+    }
+}
+
+/// The code from a sign-in request's answer, or nil.
+public func decodeSignInCode(_ data: Data) -> String? {
+    struct Answer: Decodable { let code: String }
+    guard let code = (try? JSONDecoder().decode(Answer.self, from: data))?.code, !code.isEmpty,
+          code.allSatisfy({ $0.isHexDigit }) else { return nil }
+    return code
 }
 
 /// The Husk desktop app's bundle id. While it runs, its own notch shows the

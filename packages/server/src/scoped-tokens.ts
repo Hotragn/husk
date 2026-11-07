@@ -58,6 +58,19 @@ export class ScopedTokens {
   }
 
   /**
+   * Spend a token minted for exactly `scope`: true the first time, never again.
+   * It is gone before the answer is known, so two requests racing with one
+   * token cannot both win. A console sign-in code is one of these.
+   */
+  take(token: string, scope: string): boolean {
+    const entry = this.tokens.get(token);
+    if (!entry || entry.scope !== scope) return false;
+    this.tokens.delete(token);
+    const t = this.now();
+    return t <= entry.idleUntil && t <= entry.deadline;
+  }
+
+  /**
    * End every token for a scope, e.g. when its handoff ends. A computer deleted
    * elsewhere is not revoked here; its tokens open nothing once it is gone,
    * and they idle out.

@@ -8,18 +8,35 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { HuskApi, isAbort, toDisplayError } from '../api/client';
+import { HuskApi, isAbort, isSignedOut, toDisplayError } from '../api/client';
 import type { DisplayError } from '../api/client';
 import { backoffMs, openManagedSocket } from '../api/sockets';
 import type { ManagedSocket } from '../api/sockets';
 import { EVENT_TOPICS, isWireEvent } from '../api/wire';
 import type { HealthReport, HuskWireEvent } from '../api/wire';
-import { ownerSession, readViewerToken, storeViewerToken } from './viewerToken';
+import { linkedComputerId, linkedHandoffId, ownerSession, readViewerToken, storeViewerToken } from './viewerToken';
 
 const BASE_URL_KEY = 'husk.console.baseUrl';
 const MAX_EVENTS = 200;
+const SPENT = 'That sign-in link was already used, or has expired. Run `husk console` for a new one.';
+const NOT_ACCEPTED = "That did not sign you in. Paste the code from a new link, or this server's token.";
 
-export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+/** `unauthorized`: Husk answers, and this tab is not signed in to it. */
+export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'unauthorized';
+
+/**
+ * One trade per code. React's StrictMode runs effects twice in development,
+ * and a code works once: a second trade would find it spent.
+ */
+const redemptions = new Map<string, Promise<string>>();
+function redeemOnce(api: HuskApi, code: string): Promise<string> {
+  let trade = redemptions.get(code);
+  if (!trade) {
+    trade = api.redeemSignIn(code);
+    redemptions.set(code, trade);
+  }
+  return trade;
+}
 
 export interface ConnectionValue {
   api: HuskApi;
@@ -32,6 +49,10 @@ export interface ConnectionValue {
   baseUrl: string;
   token: string;
   configure(next: { baseUrl?: string; token?: string }): void;
+  /** Why the last sign-in did not work, for the sign-in screen. */
+  signInError: string | null;
+  /** Sign in with the code from a sign-in link, or with the server's token itself. */
+  signIn(input: string): Promise<void>;
   /** Live feed from `WS /v1/events`, newest first. */
   events: HuskWireEvent[];
   clearEvents(): void;
@@ -66,6 +87,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [initialToken] = useState(readViewerToken);
   const [baseUrl, setBaseUrl] = useState(() => initialToken.fromLink || initialToken.token ? window.location.origin : readStored(BASE_URL_KEY, window.location.origin));
   const [token, setToken] = useState(initialToken.token);
+  // A sign-in link's code, until it is traded for the token.
+  const [code, setCode] = useState(initialToken.code);
+  const [signInError, setSignInError] = useState<string | null>(null);
 
   // A link under remote access's public URL also carries the owner session its passkey page added.
   const api = useMemo(() => new HuskApi({ baseUrl, token, owner: ownerSession() }), [baseUrl, token]);
@@ -100,6 +124,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   // -- liveness probe -------------------------------------------------------
 
   useEffect(() => {
+    // A sign-in link's code is traded first, so the probe sees the token it brings.
+    if (code) return;
     let cancelled = false;
     const controller = new AbortController();
 
@@ -128,6 +154,22 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       try {
         const report = await api.health(controller.signal);
         if (cancelled) return;
+        // `/health` needs no token, so one call behind it says whether this tab is
+        // signed in. Not on a link to one computer or handoff: its token opens only that.
+        if (report.mode !== 'starter' && !linkedComputerId() && !linkedHandoffId()) {
+          try {
+            await api.signedIn(controller.signal);
+          } catch (err) {
+            if (cancelled || isAbort(err)) return;
+            if (isSignedOut(err)) {
+              attemptRef.current = 0;
+              setHealth(report);
+              setError(null);
+              setStatus('unauthorized');
+              return;
+            }
+          }
+        }
         attemptRef.current = 0;
         setHealth(report);
         setError(null);
@@ -139,6 +181,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         // fetch on mount, so there is nothing yet to invalidate.
         if (staleRef.current) invalidate();
         staleRef.current = false;
+        setSignInError(null);
         setStatus('connected');
       } catch (err) {
         if (cancelled || isAbort(err)) return;
@@ -162,7 +205,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       stopTimers();
       probeRef.current = null;
     };
-  }, [api, invalidate, stopTimers]);
+  }, [api, code, invalidate, stopTimers]);
 
   // -- event firehose -------------------------------------------------------
 
@@ -210,6 +253,50 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // -- signing in -----------------------------------------------------------
+
+  useEffect(() => {
+    if (!code) return;
+    let cancelled = false;
+    redeemOnce(api, code).then(
+      (signedIn) => {
+        if (cancelled) return;
+        configure({ token: signedIn });
+        setCode(undefined);
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        // The tab keeps whatever session it had: the probe says whether that still works.
+        setSignInError(isSignedOut(err) ? SPENT : toDisplayError(err).message);
+        setCode(undefined);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [api, code, configure]);
+
+  const signIn = useCallback(
+    async (input: string) => {
+      const value = input.trim();
+      if (!value) return;
+      setSignInError(null);
+      try {
+        configure({ token: await redeemOnce(api, value) });
+      } catch (err) {
+        if (!isSignedOut(err)) {
+          setSignInError(toDisplayError(err).message);
+          return;
+        }
+        // Not a code this Husk made: it may be the server's token itself. The probe
+        // clears the message if it is.
+        setSignInError(NOT_ACCEPTED);
+        configure({ token: value });
+      }
+    },
+    [api, configure],
+  );
+
   const value = useMemo<ConnectionValue>(
     () => ({
       api,
@@ -221,12 +308,14 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       baseUrl,
       token,
       configure,
+      signInError,
+      signIn,
       events,
       clearEvents: () => setEvents([]),
       revision,
       invalidate,
     }),
-    [api, status, health, error, retryInMs, baseUrl, token, configure, events, revision, invalidate],
+    [api, status, health, error, retryInMs, baseUrl, token, configure, signInError, signIn, events, revision, invalidate],
   );
 
   return <ConnectionContext.Provider value={value}>{children}</ConnectionContext.Provider>;

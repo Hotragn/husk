@@ -82,7 +82,7 @@ export function DisconnectedScreen() {
                 placeholder="http://127.0.0.1:7377"
               />
             </Field>
-            <Field label="Bearer token" htmlFor="conn-token" note="Only needed when HUSK_TOKEN is set on the server.">
+            <Field label="Bearer token" htmlFor="conn-token" note="husk serve keeps it in ~/.husk/daemon.json, or uses HUSK_TOKEN if you set one.">
               <input
                 id="conn-token"
                 className="input mono"

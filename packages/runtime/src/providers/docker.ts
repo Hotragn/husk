@@ -35,6 +35,7 @@ export class DockerProvider extends OciProvider {
     try {
       const { stdout } = await execFileAsync('docker', ['info', '--format', '{{.ServerVersion}}'], {
         timeout: 10_000,
+        windowsHide: true,
       });
       const version = stdout.trim();
       if (version) return { available: true, version, isolated: true, isolationKind: 'kernel' };
