@@ -11,10 +11,10 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@vercel/analytics": "^2.0.1",
     "gray-matter": "^4.0.3",
     "next": "16.4.3",
     "next-mdx-remote": "^6.0.0",
+    "posthog-js": "^1.438.13",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "rehype-autolink-headings": "^7.1.0",

@@ -53,7 +53,7 @@ it is not a claim that eight hours of elapsed time or user testing has already o
 | Confirmed model capabilities and deterministic default ordering | Avoids choosing the first tiny local model merely because it is listed first | [Issue 121](https://github.com/Hotragn/husk/issues/121); size tier is a heuristic, not a quality benchmark |
 | Sequential distillation, failure cutoff, accurate extraction notes | Reduces repeated failed model calls and explains fallback | Failed extraction reports attempted model and heuristic result |
 | Browser prerequisite inspection before downloads | Explains unavailable environments before spending time downloading | [Issue 122](https://github.com/Hotragn/husk/issues/122) |
-| Beginner documentation and narrower claims | Helps users distinguish workspaces, computers, host AI processing, and site analytics | Installed product has no telemetry; hosted sites use [Vercel Web Analytics](https://vercel.com/docs/analytics/privacy-policy) |
+| Beginner documentation and narrower claims | Helps users distinguish workspaces, computers, host AI processing, and site analytics | Installed product has no telemetry; hosted sites use PostHog analytics, described on the docs' privacy page |
 
 ## Verification and release boundary
 
