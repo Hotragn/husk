@@ -244,7 +244,8 @@ Needs: Docker running; a Tailscale account with Funnel; a claude.ai account (the
 
 - [ ] Create a Fly app and set `HUSK_FLY_TOKEN` and `HUSK_FLY_APP` (apps/docs/content/computers/providers.mdx). It costs a little. You should see: `husk setup` lists fly but does not recommend it.
 - [ ] `husk up flybox --provider fly`, then `husk exec flybox --json --timeout 10 -- sleep 60`. You should see: after about 10 s, `"exitCode": 124`, `"timedOut": true`, and `"stderr": "fly api timed out after 10000ms"` with no "[husk] the command may still be running inside the computer: stopping it could not be confirmed". (unverified: what Fly itself answers when its own timeout fires.)
-- [ ] `husk exec flybox -- 'cat /proc/[0-9]*/cmdline | tr "\0" " " | grep -c "[s]leep 60"'`. You should see: `0`. Then `husk rm flybox`.
+- [ ] `husk exec flybox -- 'cat /proc/[0-9]*/cmdline | tr "\0" " " | grep -c "[s]leep 60"'`. You should see: `0`.
+- [ ] `husk exec flybox -- 'echo kept > /work/keep.txt'`, then `husk stop flybox`, `husk start flybox` and `husk exec flybox -- cat /work/keep.txt`. You should see: `kept`. A chat's computer stops this way after 10 idle minutes. Then `husk rm flybox`.
 - [ ] Watching a fly computer: on Connect pick fly and click Connect again for one app; have a chat open a page; open its tab in the Computers window. You should see: "Each picture of this screen is a command on the computer, which keeps it awake, so it shows when you look." and a Look button; Look shows the screen for about a minute; while you hold the computer, it shows all the time. Connect the app back to your usual computer.
 
 ### The OCI box (sweep)
