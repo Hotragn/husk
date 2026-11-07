@@ -225,6 +225,10 @@ pre-release of 7 October.
 - **A Windows PC without WSL gave a misleading browser error**: to check `husk ps` for a
   machine that was up, or to install Python 3. It now says the browser needs Linux, and
   how to get WSL ([#275](https://github.com/Hotragn/husk/pull/275)).
+- **On Windows, a console window flashed every 2 seconds** for anyone with Docker or
+  Podman installed, and on every file read or write: eight `docker` and `podman` calls
+  left out `windowsHide`. They hide it now, and a test fails on any call that leaves it
+  out ([#280](https://github.com/Hotragn/husk/pull/280)).
 - **A Chromium that died stayed dead** until the shared Husk restarted. The next call now
   starts it again, keeping its logins. A failed launch, and a computer reaped for
   idleness, no longer leave a Chromium behind ([#217](https://github.com/Hotragn/husk/pull/217)).
