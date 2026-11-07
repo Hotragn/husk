@@ -248,7 +248,7 @@ function next(report: DoctorReport, proved: boolean): void {
     ui.print(`  ${ui.cyan('husk doctor')} ${ui.dim('— start with what this machine can do')}`);
   }
   ui.print('');
-  ui.print(ui.dim('  Full docs: https://husk-dev.vercel.app/  ·  husk help <command> for any of them.'));
+  ui.print(ui.dim('  Full docs: https://docs.huskai.dev/  ·  husk help <command> for any of them.'));
   ui.print('');
 }
 

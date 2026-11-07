@@ -10,6 +10,8 @@ import { SITE_URL } from '@/lib/site-url';
  * forty-odd and gains one whenever someone adds a file, so a hand-written list
  * is a list that is already wrong.
  */
+export const dynamic = 'force-static';
+
 export default function sitemap(): MetadataRoute.Sitemap {
   const lastModified = new Date();
   return [

@@ -52,6 +52,7 @@ const HELP: Array<{ title: string; href: string }> = [
   { title: "FAQ", href: "/faq" },
   { title: "Troubleshooting", href: "/troubleshooting" },
   { title: "Errors", href: "/reference/errors" },
+  { title: "Privacy", href: "/privacy" },
 ];
 
 const DOC_INDEX_PATHS = new Set(["/start", "/computers", "/mcp", "/models", "/security"]);

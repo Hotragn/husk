@@ -1,0 +1,55 @@
+---
+title: Privacy
+description: What the Husk websites send to PostHog when you visit, and what the installed software sends to us (nothing).
+order: 3
+---
+
+This page covers two websites, **www.huskai.dev** and **docs.huskai.dev**. It also
+covers the Husk software you install.
+
+## The software you install
+
+The `husk` CLI, the MCP server, the console and the other packages have no product
+telemetry. They send nothing to the Husk project: no usage counts, no crash reports, no
+version check. What they do send goes to services you configure yourself, such as a model
+provider or a computer provider. [Security](/security) lists where it connects.
+
+## The websites: PostHog
+
+Both sites count visits with [PostHog](https://posthog.com), using PostHog's US cloud
+(`us.i.posthog.com`). PostHog handles that data under
+[its own privacy policy](https://posthog.com/privacy). Nothing is sent from `localhost`,
+from preview deployments or from any host other than huskai.dev.
+
+**What is sent, for each page you view:**
+
+- the page's address, its path, the page you came from and its domain, plus any
+  campaign tags in the link (such as `utm_source`);
+- that you viewed the page and, later, that you left it;
+- clicks on links, buttons and form controls, with the element's text, tag, CSS
+  classes and link address, and rapid repeated clicks;
+- your browser and its version, operating system and version, device type, screen and
+  window size, browser language and time zone;
+- a random visitor ID and session ID.
+
+**What is not collected, and how it is set up:**
+
+- **No cookies and no local storage.** The visitor ID is held in the page's memory
+  only, so it is gone when you close or reload the tab. The sites cannot recognise you
+  on a later visit.
+- **No names, emails or accounts.** There is no sign-in, and no person profiles are
+  created.
+- **No session recording, heatmaps, surveys, error reports or performance timings.**
+  These are switched off in the sites' code, so they stay off whatever the PostHog
+  project's settings say. No extra PostHog scripts are loaded.
+- **IP addresses are not stored.** Your browser's IP address reaches PostHog's servers,
+  as it does with any request. The PostHog project is set to discard it rather than
+  store it with events, and the sites ask PostHog not to look up a location from it.
+
+**Turning it off:** if your browser sends Do Not Track or Global Privacy Control,
+nothing is sent. Blocking `us.i.posthog.com` in your browser or an ad blocker has the
+same effect, and the sites work the same either way.
+
+## Questions
+
+Open an issue on [GitHub](https://github.com/Hotragn/husk/issues).

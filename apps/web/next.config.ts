@@ -3,52 +3,34 @@ import type { NextConfig } from "next";
 /**
  * `trailingSlash: false` is Next's default and is written down anyway, because
  * it is the canonical-URL contract the rest of the site is built on: every
- * `sitemap.ts` entry, every `alternates.canonical`, and the 308 a reader gets
- * for `/manifesto/` all assume the no-slash form. A default that changes across
- * a major version would move all of them at once, silently.
- *
- * Deliberately no `vercel.json`. On a Next project Vercel reads redirects,
- * headers, `cleanUrls` and `trailingSlash` from the build output, and declaring
- * them in both places is how a site ends up serving two redirects for one URL.
- * Root Directory — the one setting that actually matters for this monorepo — is
- * a project setting and cannot be expressed in a committed file at all.
+ * `sitemap.ts` entry, every `alternates.canonical`, and the redirect a reader
+ * gets for `/manifesto/` all assume the no-slash form. A default that changes
+ * across a major version would move all of them at once, silently.
  */
 const nextConfig: NextConfig = {
   trailingSlash: false,
-  poweredByHeader: false,
 
   /**
-   * Security headers, on every response.
+   * A static export: `next build` writes every page, Open Graph card,
+   * robots.txt and sitemap.xml to `out/`, and Cloudflare serves that directory
+   * (`wrangler.jsonc`). Nothing runs per request, which is why every metadata
+   * route declares `dynamic = "force-static"` -- an export refuses to build one
+   * that does not -- and why next/image's optimizer, a server, is off.
    *
-   * HSTS is belt and braces: `.dev` is on the browser preload list at the TLD,
-   * so browsers refuse plain HTTP here regardless. The CSP is deliberately
-   * partial. `frame-ancestors`, `base-uri`, `object-src` and `form-action`
-   * close clickjacking, base-tag injection and plugin embeds without touching
-   * how the page loads; nothing on this site frames another page, is framed,
-   * or posts a form.
+   * Security headers are in `public/_headers`, because an export ignores a
+   * `headers()` function here and Cloudflare reads `_headers` from the output.
+   * HSTS there is belt and braces: `.dev` is on the browser preload list at the
+   * TLD. The CSP is deliberately partial. `frame-ancestors`, `base-uri`,
+   * `object-src` and `form-action` close clickjacking, base-tag injection and
+   * plugin embeds without touching how the page loads; nothing on this site
+   * frames another page, is framed, or posts a form.
    *
    * ponytail: no script-src/style-src. Next inlines its bootstrap scripts and
-   * styles, so a real script policy needs per-request nonces from middleware.
-   * Add that if the site ever renders user-supplied content.
+   * styles, and a static file has no per-request nonce to give them. Hash the
+   * inline scripts at build time if the site ever renders user-supplied content.
    */
-  async headers() {
-    return [
-      {
-        source: "/:path*",
-        headers: [
-          { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
-          { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "X-Frame-Options", value: "DENY" },
-          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), browsing-topics=()" },
-          {
-            key: "Content-Security-Policy",
-            value: "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'",
-          },
-        ],
-      },
-    ];
-  },
+  output: "export",
+  images: { unoptimized: true },
 
   /**
    * Lighthouse flagged "missing source maps for large first-party JavaScript".

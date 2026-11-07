@@ -46,7 +46,7 @@ export const PREVIEWS = {
   },
   source: {
     href: "https://github.com/Hotragn/husk",
-    image: "/preview/source",
+    image: "/preview/source.png",
     title: "Hotragn/husk",
     summary: "Apache-2.0. Every claim on this site is checkable against it.",
     external: true,

@@ -3,8 +3,7 @@ import type { NextConfig } from 'next';
 /**
  * The docs site is a static content pipeline: MDX on disk, compiled at build
  * time, served as HTML. There is no database, no CMS, and no request-time
- * rendering, so `output: 'export'` stays a one-line change if a plain file host
- * is ever wanted.
+ * rendering, so it ships as a static export (below).
  *
  * The workspace root is left to Next's own detection: this app is an npm workspace and
  * both `next` and the lockfile live at the monorepo root, so pinning the root here
@@ -15,40 +14,28 @@ const nextConfig: NextConfig = {
   // loader, so pages can live outside app/ and the sidebar can be generated
   // from their frontmatter.
   pageExtensions: ['ts', 'tsx'],
-  poweredByHeader: false,
 
   /**
-   * Security headers, on every response.
+   * A static export: `next build` writes every page, Open Graph card,
+   * robots.txt and sitemap.xml to `out/`, and Cloudflare serves that directory
+   * (`wrangler.jsonc`). Nothing runs per request, which is why every metadata
+   * route declares `dynamic = 'force-static'` -- an export refuses to build one
+   * that does not -- and why next/image's optimizer, a server, is off.
    *
-   * HSTS is belt and braces: `.dev` is on the browser preload list at the TLD,
-   * so browsers refuse plain HTTP here regardless. The CSP is deliberately
-   * partial. `frame-ancestors`, `base-uri`, `object-src` and `form-action`
-   * close clickjacking, base-tag injection and plugin embeds without touching
-   * how the page loads; nothing on this site frames another page, is framed,
-   * or posts a form.
+   * Security headers are in `public/_headers`, because an export ignores a
+   * `headers()` function here and Cloudflare reads `_headers` from the output.
+   * HSTS there is belt and braces: `.dev` is on the browser preload list at the
+   * TLD. The CSP is deliberately partial. `frame-ancestors`, `base-uri`,
+   * `object-src` and `form-action` close clickjacking, base-tag injection and
+   * plugin embeds without touching how the page loads; nothing on this site
+   * frames another page, is framed, or posts a form.
    *
    * ponytail: no script-src/style-src. Next inlines its bootstrap scripts and
-   * styles, so a real script policy needs per-request nonces from middleware.
-   * Add that if the site ever renders user-supplied content.
+   * styles, and a static file has no per-request nonce to give them. Hash the
+   * inline scripts at build time if the site ever renders user-supplied content.
    */
-  async headers() {
-    return [
-      {
-        source: "/:path*",
-        headers: [
-          { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
-          { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "X-Frame-Options", value: "DENY" },
-          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), browsing-topics=()" },
-          {
-            key: "Content-Security-Policy",
-            value: "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'",
-          },
-        ],
-      },
-    ];
-  },
+  output: 'export',
+  images: { unoptimized: true },
   // Next's default, written down: `sitemap.ts` emits the no-slash form for all
   // thirty-eight pages, and `/start/quickstart/` 308s to `/start/quickstart`.
   // A default that moves across a major version would move every canonical URL

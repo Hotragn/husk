@@ -17,12 +17,18 @@ import { ogCard } from '@/lib/og-card';
  * its canonical metadata declares — so the social unfurl, the hover preview
  * and the page itself cannot disagree.
  *
- * Prerendered alongside the pages rather than rendered per request.
+ * Prerendered alongside the pages rather than rendered per request, and the
+ * last segment carries `.png`. The static export writes each card as a file,
+ * and `/preview/computers` cannot be a file while `/preview/computers/providers`
+ * needs it to be a folder; the extension is also how the host knows to serve
+ * an image.
  */
 export const dynamic = 'force-static';
 
 export function generateStaticParams() {
-  return allDocs().map((doc) => ({ slug: doc.slug }));
+  return allDocs().map((doc) => ({
+    slug: [...doc.slug.slice(0, -1), `${doc.slug.at(-1)}.png`],
+  }));
 }
 
 export async function GET(
@@ -30,7 +36,7 @@ export async function GET(
   { params }: { params: Promise<{ slug: string[] }> },
 ) {
   const { slug } = await params;
-  const doc = docBySlug(slug);
+  const doc = docBySlug(slug.join('/').replace(/\.png$/, '').split('/'));
   return ogCard({
     eyebrow: doc?.sectionTitle,
     title: doc?.frontmatter.title ?? 'Husk documentation',
