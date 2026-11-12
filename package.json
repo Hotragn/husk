@@ -39,16 +39,16 @@
   },
   "devDependencies": {
     "@anthropic-ai/mcpb": "2.1.2",
-    "@fastify/cors": "^11.3.1",
-    "@fastify/static": "^10.1.7",
-    "@fastify/websocket": "^11.3.4",
+    "@fastify/cors": "^11.4.1",
+    "@fastify/static": "^10.1.10",
+    "@fastify/websocket": "^11.3.7",
     "@modelcontextprotocol/client": "^2.4.0",
     "@types/node": "^22.20.1",
     "@types/ws": "^8.18.1",
-    "fastify": "^5.12.7",
+    "fastify": "^5.12.8",
     "typescript": "^5.9.3",
     "vitest": "^5.0.5",
-    "ws": "^8.21.3",
+    "ws": "^8.22.1",
     "yaml": "^2.9.0"
   }
 }
